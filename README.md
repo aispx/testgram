@@ -21,7 +21,7 @@
 - Bot Support
 - Stories
 - Privacy Settings & 2FA
-- Voice & Video Calls
+- Voice & Video Calls (WebRTC)
 
 ### Soon...
 - End-to-End Encrypted Chat
@@ -73,6 +73,36 @@ Key `.env` settings:
 | `App__AccessHashSecretKey` | Random secret key |
 | `App__EncryptionConfig__MessageKeys__0__Key` | Base64 encryption key |
 | `App__FixedVerifyCode` | Fixed SMS code for testing (leave empty in production) |
+
+### Voice & Video Calls Setup
+
+Voice and video calls **require** a TURN/STUN server. Install Coturn:
+
+```bash
+sudo apt-get install coturn
+# Configure /etc/turnserver.conf (see docs/CALLS_SETUP.md)
+sudo systemctl start coturn
+```
+
+Configure WebRTC in `.env`:
+
+```bash
+# REQUIRED for calls to work
+App__WebRtcConnections__0__Ip=YOUR_SERVER_IP
+App__WebRtcConnections__0__Port=3478
+App__WebRtcConnections__0__Turn=True
+App__WebRtcConnections__0__Stun=True
+App__WebRtcConnections__0__UserName=testgram
+App__WebRtcConnections__0__Password=testgram123
+```
+
+Setup MongoDB indexes (automatic on first start):
+
+```bash
+cd scripts && ./setup_call_indexes.sh  # Optional: manual setup
+```
+
+See [docs/CALLS_SETUP.md](docs/CALLS_SETUP.md) for complete setup instructions.
 
 ## Building Docker Images
 

@@ -89,8 +89,48 @@ services:
       timeout: 5s
       retries: 5
 
+  ### Coturn (STUN/TURN server for WebRTC calls)
+  coturn:
+    image: coturn/coturn:latest
+    restart: always
+    networks:
+      - tg-net
+    ports:
+      - "3478:3478"
+      - "3479:3479"
+      - "49152-49172:49152-49172/udp"
+    volumes:
+      - ./data/coturn:/var/lib/coturn
+    command: >
+      --verbose
+      --external-ip 31.128.45.9
+      --realm testgram
+      --server-name testgram
+      --listening-port 3478
+      --min-port 49152
+      --max-port 49172
+      --lt-cred-mech
+      --user testgram:testgram2024
+      --log-file stdout
+
 
   ################### MyTelegram server
+
+  ### Call system init (setup indexes)
+  call-init:
+    image: mongo:8
+    networks:
+      - tg-net
+    environment:
+      ConnectionStrings__Default: ${ConnectionStrings__Default}
+      App__DatabaseName: ${App__DatabaseName}
+    volumes:
+      - ./init-calls.sh:/init-calls.sh:ro
+    command: ["/bin/bash", "/init-calls.sh"]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
 
 ### Data seeder
   data-seeder:
@@ -176,7 +216,7 @@ services:
       # App__Servers__3__KeyPemFilePath: ${App__Servers__3__KeyPemFilePath}
       # App__Servers__3__EnableProxyProtocolV2: ${App__Servers__3__EnableProxyProtocolV2}
       # App__Servers__3__MediaOnly: ${App__Servers__3__MediaOnly}
-      # App__Servers__4__Enabled: ${App__Servers__4__Enabled}
+      #       App__Servers__4__Enabled: ${App__Servers__4__Enabled}
       # App__Servers__4__ServerType: ${App__Servers__4__ServerType}
       # App__Servers__4__Ip: ${App__Servers__4__Ip}
       # App__Servers__4__Ipv6: ${App__Servers__4__Ipv6}
@@ -186,7 +226,7 @@ services:
       # App__Servers__4__KeyPemFilePath: ${App__Servers__4__KeyPemFilePath}
       # App__Servers__4__EnableProxyProtocolV2: ${App__Servers__4__EnableProxyProtocolV2}
       # App__Servers__4__MediaOnly: ${App__Servers__4__MediaOnly}
-      # App__Servers__5__Enabled: ${App__Servers__5__Enabled}
+      #       App__Servers__5__Enabled: ${App__Servers__5__Enabled}
       # App__Servers__5__ServerType: ${App__Servers__5__ServerType}
       # App__Servers__5__Ip: ${App__Servers__5__Ip}
       # App__Servers__5__Ipv6: ${App__Servers__5__Ipv6}
@@ -346,6 +386,13 @@ services:
     restart: always
     networks:
       - tg-net
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      call-init:
+        condition: service_completed_successfully
     environment:
       Serilog__MinimumLevel__Default: ${Serilog__MinimumLevel__Default}
       ConnectionStrings__Default: ${ConnectionStrings__Default}
@@ -371,13 +418,12 @@ services:
       # App__EnableFutureAuthToken: ${App__EnableFutureAuthToken}
       # App__SetPremiumToTrueAfterUserCreated: ${App__SetPremiumToTrueAfterUserCreated}
       # App__SendWelcomeMessageAfterUserSignIn: ${App__SendWelcomeMessageAfterUserSignIn}
-      # App__WebRtcConnections__0__Ip: ${App__WebRtcConnections__0__Ip}
-      # App__WebRtcConnections__0__Ipv6: ${App__WebRtcConnections__0__Ipv6}
-      # App__WebRtcConnections__0__Port: ${App__WebRtcConnections__0__Port}
-      # App__WebRtcConnections__0__Turn: ${App__WebRtcConnections__0__Turn}
-      # App__WebRtcConnections__0__Stun: ${App__WebRtcConnections__0__Stun}
-      # App__WebRtcConnections__0__UserName: ${App__WebRtcConnections__0__UserName}
-      # App__WebRtcConnections__0__Password: ${App__WebRtcConnections__0__Password}
+      App__WebRtcConnections__0__Ip: ${App__WebRtcConnections__0__Ip}
+      App__WebRtcConnections__0__Port: ${App__WebRtcConnections__0__Port}
+      App__WebRtcConnections__0__Turn: ${App__WebRtcConnections__0__Turn}
+      App__WebRtcConnections__0__Stun: ${App__WebRtcConnections__0__Stun}
+      App__WebRtcConnections__0__UserName: ${App__WebRtcConnections__0__UserName}
+      App__WebRtcConnections__0__Password: ${App__WebRtcConnections__0__Password}
       App__PasskeyRpId: ${App__PasskeyRpId}
       App__PasskeyRpName: ${App__PasskeyRpName}
       App__Stripe__PublishableKey: ${App__Stripe__PublishableKey}
@@ -473,13 +519,12 @@ services:
       # App__EnableFutureAuthToken: ${App__EnableFutureAuthToken}
       # App__SetPremiumToTrueAfterUserCreated: ${App__SetPremiumToTrueAfterUserCreated}
       # App__SendWelcomeMessageAfterUserSignIn: ${App__SendWelcomeMessageAfterUserSignIn}
-      # App__WebRtcConnections__0__Ip: ${App__WebRtcConnections__0__Ip}
-      # App__WebRtcConnections__0__Ipv6: ${App__WebRtcConnections__0__Ipv6}
-      # App__WebRtcConnections__0__Port: ${App__WebRtcConnections__0__Port}
-      # App__WebRtcConnections__0__Turn: ${App__WebRtcConnections__0__Turn}
-      # App__WebRtcConnections__0__Stun: ${App__WebRtcConnections__0__Stun}
-      # App__WebRtcConnections__0__UserName: ${App__WebRtcConnections__0__UserName}
-      # App__WebRtcConnections__0__Password: ${App__WebRtcConnections__0__Password}
+      App__WebRtcConnections__0__Ip: ${App__WebRtcConnections__0__Ip}
+      App__WebRtcConnections__0__Port: ${App__WebRtcConnections__0__Port}
+      App__WebRtcConnections__0__Turn: ${App__WebRtcConnections__0__Turn}
+      App__WebRtcConnections__0__Stun: ${App__WebRtcConnections__0__Stun}
+      App__WebRtcConnections__0__UserName: ${App__WebRtcConnections__0__UserName}
+      App__WebRtcConnections__0__Password: ${App__WebRtcConnections__0__Password}
       App__PasskeyRpId: ${App__PasskeyRpId}
       App__PasskeyRpName: ${App__PasskeyRpName}
       App__Stripe__PublishableKey: ${App__Stripe__PublishableKey}
@@ -569,6 +614,7 @@ services:
       RabbitMQ__Connections__Default__Password: ${RabbitMQ__Connections__Default__Password}
       #RabbitMQ__EventBus__ClientName: ${RabbitMQ__EventBus__ClientName}
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
+      TelegramBotSms__Enabled: "true"
       TelegramBotSms__SenderApiUrl: http://172.18.0.1:5005/send
     volumes:
       - ./data/mytelegram/sms-sender/logs:/app/Logs

@@ -9,7 +9,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class ConfirmCallHandler(
     IMongoDatabase mongoDatabase,
     IUserConverterService userConverterService,
-    IObjectMessageSender objectMessageSender)
+    IObjectMessageSender objectMessageSender,
+    IOptions<MyTelegramMessengerServerOptions> optionsAccessor)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestConfirmCall, MyTelegram.Schema.Phone.IPhoneCall>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -62,31 +63,50 @@ internal sealed class ConfirmCallHandler(
 
         var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        var connections = new TVector<MyTelegram.Schema.IPhoneConnection>
+        var connections = new TVector<MyTelegram.Schema.IPhoneConnection>();
+        var webRtcConnections = optionsAccessor.Value.WebRtcConnections;
+
+        if (webRtcConnections != null && webRtcConnections.Count > 0)
         {
-            new MyTelegram.Schema.TPhoneConnectionWebrtc
+            long connectionId = 1;
+            foreach (var webRtcConfig in webRtcConnections)
             {
-                Id = 1,
-                Ip = "172.18.0.1",
-                Ipv6 = "",
-                Port = 3478,
-                Turn = false,
-                Stun = true,
-                Username = "",
-                Password = ""
-            },
-            new MyTelegram.Schema.TPhoneConnectionWebrtc
-            {
-                Id = 2,
-                Ip = "172.18.0.1",
-                Ipv6 = "",
-                Port = 3478,
-                Turn = true,
-                Stun = false,
-                Username = "testgram",
-                Password = "testgram"
+                if (webRtcConfig.Stun)
+                {
+                    connections.Add(new MyTelegram.Schema.TPhoneConnectionWebrtc
+                    {
+                        Id = connectionId++,
+                        Ip = webRtcConfig.Ip,
+                        Ipv6 = webRtcConfig.Ipv6 ?? "",
+                        Port = webRtcConfig.Port,
+                        Turn = false,
+                        Stun = true,
+                        Username = "",
+                        Password = ""
+                    });
+                }
+
+                if (webRtcConfig.Turn)
+                {
+                    connections.Add(new MyTelegram.Schema.TPhoneConnectionWebrtc
+                    {
+                        Id = connectionId++,
+                        Ip = webRtcConfig.Ip,
+                        Ipv6 = webRtcConfig.Ipv6 ?? "",
+                        Port = webRtcConfig.Port,
+                        Turn = true,
+                        Stun = false,
+                        Username = webRtcConfig.UserName,
+                        Password = webRtcConfig.Password
+                    });
+                }
             }
-        };
+        }
+
+        if (connections.Count == 0)
+        {
+            throw new InvalidOperationException("WebRTC connections not configured. Please configure App__WebRtcConnections in .env file.");
+        }
 
         var phoneCall = new Schema.TPhoneCall
         {
