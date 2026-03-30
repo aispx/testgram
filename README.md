@@ -21,10 +21,10 @@
 - Bot Support
 - Stories
 - Privacy Settings & 2FA
+- Voice & Video Calls
 
 ### Soon...
 - End-to-End Encrypted Chat
-- Voice & Video Calls
 - Stickers
 - Forum Topics
 - Themes & Wallpapers
