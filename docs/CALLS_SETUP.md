@@ -1,34 +1,34 @@
-# Настройка голосовых и видео звонков в Testgram
+# Voice & Video Calls Setup in Testgram
 
-## Обзор
+## Overview
 
-Testgram поддерживает голосовые и видео звонки через WebRTC. Для работы звонков **обязательно** необходимо настроить собственный STUN/TURN сервер.
+Testgram supports voice and video calls via WebRTC. For calls to work, you **must** configure your own STUN/TURN server.
 
-## Быстрая настройка
+## Quick Setup
 
-### 1. Установка Coturn TURN сервера (обязательно)
+### 1. Install Coturn TURN Server (Required)
 
-Для работы звонков необходим собственный TURN сервер:
+Calls require your own TURN server:
 
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
 sudo apt-get install coturn
 
-# Включить сервис
+# Enable service
 sudo systemctl enable coturn
 ```
 
-### 2. Конфигурация Coturn
+### 2. Configure Coturn
 
-Отредактируйте `/etc/turnserver.conf`:
+Edit `/etc/turnserver.conf`:
 
 ```conf
 # Listening port
 listening-port=3478
 tls-listening-port=5349
 
-# External IP (замените на IP вашего сервера)
+# External IP (replace with your server IP)
 external-ip=YOUR_SERVER_IP
 
 # Realm
@@ -43,7 +43,7 @@ fingerprint
 # Long-term credentials
 lt-cred-mech
 
-# Verbose logging (для отладки)
+# Verbose logging (for debugging)
 verbose
 
 # Log file
@@ -60,27 +60,27 @@ no-tls
 no-dtls
 ```
 
-### 3. Запуск Coturn
+### 3. Start Coturn
 
 ```bash
 sudo systemctl start coturn
 sudo systemctl status coturn
 ```
 
-### 4. Открытие портов в файрволе
+### 4. Open Firewall Ports
 
 ```bash
 sudo ufw allow 3478/udp
 sudo ufw allow 3478/tcp
-sudo ufw allow 49152:65535/udp  # Диапазон портов для relay
+sudo ufw allow 49152:65535/udp  # Port range for relay
 ```
 
-### 5. Настройка WebRTC в Testgram
+### 5. Configure WebRTC in Testgram
 
-Отредактируйте файл `.env`:
+Edit `.env` file:
 
 ```bash
-# ОБЯЗАТЕЛЬНАЯ конфигурация для звонков
+# REQUIRED configuration for calls
 App__WebRtcConnections__0__Ip=YOUR_SERVER_IP
 App__WebRtcConnections__0__Ipv6=
 App__WebRtcConnections__0__Port=3478
@@ -89,7 +89,7 @@ App__WebRtcConnections__0__Stun=True
 App__WebRtcConnections__0__UserName=testgram
 App__WebRtcConnections__0__Password=testgram123
 
-# Дополнительный сервер для резервирования (опционально)
+# Additional server for redundancy (optional)
 App__WebRtcConnections__1__Ip=BACKUP_SERVER_IP
 App__WebRtcConnections__1__Port=3478
 App__WebRtcConnections__1__Turn=True
@@ -98,171 +98,171 @@ App__WebRtcConnections__1__UserName=testgram
 App__WebRtcConnections__1__Password=testgram123
 ```
 
-### 6. Установка индексов MongoDB
+### 6. Setup MongoDB Indexes
 
-Индексы создаются **автоматически** при запуске серверов через init-контейнер `call-init`.
+Indexes are created **automatically** on server startup via the `call-init` container.
 
-Если нужно создать индексы вручную:
+To create indexes manually:
 
 ```bash
 cd /root/testgram/scripts
 ./setup_call_indexes.sh
 ```
 
-Или через mongosh:
+Or via mongosh:
 
 ```bash
 docker compose exec mongodb mongosh tg < scripts/setup_call_indexes.js
 ```
 
-### 7. Запуск серверов
+### 7. Start Servers
 
 ```bash
 cd /root/testgram/docker/compose
 docker compose up -d
 ```
 
-При первом запуске автоматически:
-- Создадутся индексы для коллекции `call_sessions`
-- Настроится TTL для автоматической очистки старых записей
-- Проверится готовность MongoDB
+On first startup, automatically:
+- Indexes for `call_sessions` collection are created
+- TTL is configured for automatic cleanup of old records
+- MongoDB readiness is verified
 
-Проверьте логи init-контейнера:
+Check init container logs:
 ```bash
 docker compose logs call-init
 ```
 
-## Тестирование звонков
+## Testing Calls
 
-### 1. Проверка конфигурации
+### 1. Configuration Check
 
-Используйте Telegram клиент для проверки:
+Use Telegram client to test:
 
-1. Войдите с двух разных аккаунтов
-2. Инициируйте звонок между ними
-3. Проверьте логи сервера:
+1. Login with two different accounts
+2. Initiate a call between them
+3. Check server logs:
 
 ```bash
 docker compose logs -f messenger-command-server | grep -i call
 ```
 
-### 2. Проверка STUN/TURN сервера
+### 2. Test STUN/TURN Server
 
-Используйте онлайн инструмент: https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/
+Use online tool: https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/
 
-Или через командную строку:
+Or via command line:
 
 ```bash
-# Установка stuntman
+# Install stuntman
 sudo apt-get install stuntman-client
 
-# Проверка STUN
+# Test STUN
 stunclient YOUR_SERVER_IP 3478
 
-# Проверка TURN
+# Test TURN
 turnutils_uclient -v -u testgram -w testgram123 YOUR_SERVER_IP
 ```
 
-## Архитектура звонков
+## Call Architecture
 
-### Поток данных
+### Data Flow
 
-1. **RequestCall** - Инициатор создает звонок
-   - Создается запись в MongoDB `call_sessions`
-   - Отправляется `UpdatePhoneCall` получателю
+1. **RequestCall** - Initiator creates call
+   - Record created in MongoDB `call_sessions`
+   - `UpdatePhoneCall` sent to receiver
    
-2. **AcceptCall** - Получатель принимает звонок
-   - Обновляется состояние на "accepted"
-   - Отправляется обновление инициатору
+2. **AcceptCall** - Receiver accepts call
+   - State updated to "accepted"
+   - Update sent to initiator
 
-3. **ConfirmCall** - Инициатор подтверждает звонок
-   - Обмен ключами шифрования (Diffie-Hellman)
-   - Возвращаются WebRTC connections (STUN/TURN серверы)
-   - Состояние меняется на "confirmed"
+3. **ConfirmCall** - Initiator confirms call
+   - Encryption keys exchanged (Diffie-Hellman)
+   - WebRTC connections returned (STUN/TURN servers)
+   - State changed to "confirmed"
 
-4. **SendSignalingData** - Обмен WebRTC сигналами
+4. **SendSignalingData** - Exchange WebRTC signals
    - ICE candidates
    - SDP offers/answers
-   - Передается через `UpdatePhoneCallSignalingData`
+   - Transmitted via `UpdatePhoneCallSignalingData`
 
-5. **DiscardCall** - Завершение звонка
-   - Сохраняется длительность и причина завершения
-   - Состояние меняется на "discarded"
+5. **DiscardCall** - End call
+   - Duration and reason saved
+   - State changed to "discarded"
 
-### Состояния звонка
+### Call States
 
-- `requested` - Звонок инициирован
-- `accepted` - Звонок принят
-- `confirmed` - Ключи обменены, WebRTC соединение устанавливается
-- `discarded` - Звонок завершен
+- `requested` - Call initiated
+- `accepted` - Call accepted
+- `confirmed` - Keys exchanged, WebRTC connection establishing
+- `discarded` - Call ended
 
-## Улучшения в этом обновлении
+## Improvements in This Update
 
-### 1. Поддержка нескольких WebRTC серверов
-- Можно настроить несколько STUN/TURN серверов
-- Автоматический fallback на публичные STUN серверы Google
+### 1. Multiple WebRTC Server Support
+- Configure multiple STUN/TURN servers
+- Automatic fallback to Google public STUN servers
 
-### 2. Улучшенная конфигурация
-- Поддержка UDP и TCP транспортов для TURN
-- Правильные параметры протокола (minLayer, maxLayer)
-- Поддержка IPv6
+### 2. Improved Configuration
+- Support for UDP and TCP transports for TURN
+- Correct protocol parameters (minLayer, maxLayer)
+- IPv6 support
 
-### 3. Оптимизация базы данных
-- Индексы для быстрого поиска звонков
-- Автоматическое удаление старых записей (TTL 30 дней)
-- Уникальный индекс по CallId + AccessHash
+### 3. Database Optimization
+- Indexes for fast call lookup
+- Automatic deletion of old records (TTL 30 days)
+- Unique index on CallId + AccessHash
 
-### 4. Улучшенная обработка ошибок
-- Проверка состояний звонка
-- Валидация участников
-- Правильные RPC ошибки
+### 4. Improved Error Handling
+- Call state validation
+- Participant validation
+- Proper RPC errors
 
 ## Troubleshooting
 
-### Звонки не соединяются
+### Calls Not Connecting
 
-1. Проверьте логи:
+1. Check logs:
 ```bash
 docker compose logs messenger-command-server | grep -i "call\|webrtc"
 ```
 
-2. Проверьте MongoDB:
+2. Check MongoDB:
 ```bash
 docker compose exec mongodb mongosh tg
 db.call_sessions.find().sort({Date: -1}).limit(5)
 ```
 
-3. Проверьте конфигурацию WebRTC:
+3. Check WebRTC configuration:
 ```bash
 docker compose exec messenger-command-server env | grep WebRtc
 ```
 
-### TURN сервер не работает
+### TURN Server Not Working
 
-1. Проверьте статус Coturn:
+1. Check Coturn status:
 ```bash
 sudo systemctl status coturn
 sudo tail -f /var/log/turnserver.log
 ```
 
-2. Проверьте порты:
+2. Check ports:
 ```bash
 sudo netstat -tulpn | grep 3478
 ```
 
-3. Проверьте файрвол:
+3. Check firewall:
 ```bash
 sudo ufw status
 ```
 
-### Плохое качество звука/видео
+### Poor Audio/Video Quality
 
-1. Увеличьте диапазон портов для relay в Coturn
-2. Проверьте пропускную способность сети
-3. Используйте несколько TURN серверов в разных локациях
+1. Increase relay port range in Coturn
+2. Check network bandwidth
+3. Use multiple TURN servers in different locations
 
-## Дополнительные ресурсы
+## Additional Resources
 
-- [WebRTC документация](https://webrtc.org/)
-- [Coturn документация](https://github.com/coturn/coturn)
-- [Telegram MTProto звонки](https://core.telegram.org/api/calls)
+- [WebRTC Documentation](https://webrtc.org/)
+- [Coturn Documentation](https://github.com/coturn/coturn)
+- [Telegram MTProto Calls](https://core.telegram.org/api/calls)
