@@ -22,16 +22,16 @@
 - Stories
 - Privacy Settings & 2FA
 - Voice & Video Calls (WebRTC)
+- Telegram Business
+- Auto-Delete Messages
 
 ### Soon...
 - End-to-End Encrypted Chat
 - Stickers
 - Forum Topics
 - Themes & Wallpapers
-- Auto-Delete Messages
 - Scheduled Messages
 - Chatlist
-- Telegram Business
 - Email Login
 - Email Sender
 - Push Notifications (Firebase)
