@@ -1,20 +1,39 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Messages;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
-/// <summary>
-/// Rename a <a href="https://corefork.telegram.org/api/business#quick-reply-shortcuts">quick reply shortcut</a>.<br/>
-/// This will emit an <a href="https://corefork.telegram.org/constructor/updateQuickReplies">updateQuickReplies</a> update to other logged-in sessions.
-/// Possible errors
-/// Code Type Description
-/// 403 PREMIUM_ACCOUNT_REQUIRED A premium account is required to execute this action.
-/// 400 SHORTCUT_INVALID The specified shortcut is invalid.
-/// <para><c>See <a href="https://corefork.telegram.org/method/messages.editQuickReplyShortcut"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class EditQuickReplyShortcutHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditQuickReplyShortcut, IBool>
+
+internal sealed class EditQuickReplyShortcutHandler : RpcResultObjectHandler<RequestEditQuickReplyShortcut, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestEditQuickReplyShortcut obj)
+    private readonly IMongoDatabase _database;
+
+    public EditQuickReplyShortcutHandler(IMongoDatabase database)
     {
-        throw new NotImplementedException();
+        _database = database;
+    }
+
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestEditQuickReplyShortcut obj)
+    {
+        var userId = input.UserId;
+        var shortcutId = obj.ShortcutId;
+        var newTitle = obj.Shortcut;
+
+        var collection = _database.GetCollection<BsonDocument>("quickreplys");
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("UserId", userId),
+            Builders<BsonDocument>.Filter.Eq("ShortcutId", shortcutId)
+        );
+
+        var update = Builders<BsonDocument>.Update.Set("Title", newTitle);
+        var result = await collection.UpdateOneAsync(filter, update);
+
+        if (result.MatchedCount == 0)
+        {
+            RpcErrors.RpcErrors400.ShortcutInvalid.ThrowRpcError();
+        }
+
+        return new TBoolTrue();
     }
 }

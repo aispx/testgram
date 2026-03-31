@@ -1,19 +1,37 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Messages;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
-/// <summary>
-/// Completely delete a <a href="https://corefork.telegram.org/api/business#quick-reply-shortcuts">quick reply shortcut</a>.<br/>
-/// This will also emit an <a href="https://corefork.telegram.org/constructor/updateDeleteQuickReply">updateDeleteQuickReply</a> update to other logged-in sessions (and <em>no</em> <a href="https://corefork.telegram.org/constructor/updateDeleteQuickReplyMessages">updateDeleteQuickReplyMessages</a> updates, even if all the messages in the shortcuts are also deleted by this method).
-/// Possible errors
-/// Code Type Description
-/// 400 SHORTCUT_INVALID The specified shortcut is invalid.
-/// <para><c>See <a href="https://corefork.telegram.org/method/messages.deleteQuickReplyShortcut"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class DeleteQuickReplyShortcutHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDeleteQuickReplyShortcut, IBool>
+
+internal sealed class DeleteQuickReplyShortcutHandler : RpcResultObjectHandler<RequestDeleteQuickReplyShortcut, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestDeleteQuickReplyShortcut obj)
+    private readonly IMongoDatabase _database;
+
+    public DeleteQuickReplyShortcutHandler(IMongoDatabase database)
     {
-        throw new NotImplementedException();
+        _database = database;
+    }
+
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestDeleteQuickReplyShortcut obj)
+    {
+        var userId = input.UserId;
+        var shortcutId = obj.ShortcutId;
+
+        var collection = _database.GetCollection<BsonDocument>("quickreplys");
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("UserId", userId),
+            Builders<BsonDocument>.Filter.Eq("ShortcutId", shortcutId)
+        );
+
+        var result = await collection.DeleteOneAsync(filter);
+
+        if (result.DeletedCount == 0)
+        {
+            RpcErrors.RpcErrors400.ShortcutInvalid.ThrowRpcError();
+        }
+
+        return new TBoolTrue();
     }
 }
