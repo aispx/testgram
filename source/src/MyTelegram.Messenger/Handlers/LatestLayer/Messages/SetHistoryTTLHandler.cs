@@ -4,6 +4,7 @@ using MyTelegram.Messenger.Services;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Messages;
 
+// Fixed: InvalidCastException when disabling auto-delete (Period=0)
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 
 public class SetHistoryTTLHandler : RpcResultObjectHandler<RequestSetHistoryTTL, IUpdates>
@@ -56,7 +57,7 @@ public class SetHistoryTTLHandler : RpcResultObjectHandler<RequestSetHistoryTTL,
         }
 
         var dialogId = DialogId.Create(input.UserId, peerType, peerId);
-        var dialogCollection = _mongoDatabase.GetCollection<DialogReadModel>("dialogs");
+        var dialogCollection = _mongoDatabase.GetCollection<DialogReadModel>("eventflow-dialogreadmodel");
         var filter = Builders<DialogReadModel>.Filter.Eq(d => d.Id, dialogId.Value);
         var dialog = await dialogCollection.Find(filter).FirstOrDefaultAsync();
 
