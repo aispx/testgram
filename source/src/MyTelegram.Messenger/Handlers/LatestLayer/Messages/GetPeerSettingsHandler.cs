@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Microsoft.Extensions.Logging;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -25,7 +26,8 @@ internal sealed class GetPeerSettingsHandler(
     IContactAppService contactAppService,
     IChannelAppService channelAppService,
     ILayeredService<IPeerSettingsConverter> layeredService,
-    IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetPeerSettings, MyTelegram.Schema.Messages.IPeerSettings>
+    IMongoDatabase database,
+    ILogger<GetPeerSettingsHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetPeerSettings, MyTelegram.Schema.Messages.IPeerSettings>
 {
     protected override async Task<MyTelegram.Schema.Messages.IPeerSettings> HandleCoreAsync(IRequestInput input, RequestGetPeerSettings obj)
     {
@@ -97,9 +99,9 @@ internal sealed class GetPeerSettingsHandler(
     {
         try
         {
-            // Find connected bot for the target user (business owner)
+            // Find connected bot for the SELF user (who is opening the chat - bot owner)
             var collection = database.GetCollection<BsonDocument>("connected_business_bots");
-            var filter = Builders<BsonDocument>.Filter.Eq("UserId", targetUserId);
+            var filter = Builders<BsonDocument>.Filter.Eq("UserId", selfUserId);
             var connection = await collection.Find(filter).FirstOrDefaultAsync();
 
             if (connection != null && settings is Schema.TPeerSettings tSettings)
@@ -110,42 +112,29 @@ internal sealed class GetPeerSettingsHandler(
                 // Check recipients - should this chat be managed?
                 var recipientsDoc = connection["Recipients"].AsBsonDocument;
                 bool excludeSelected = recipientsDoc.Contains("ExcludeSelected") && recipientsDoc["ExcludeSelected"].AsBoolean;
-                bool shouldManage = false;
 
-                if (excludeSelected)
+                // Default: if bot is connected, manage all chats
+                bool shouldManage = true;
+
+                // Check explicit exclusion
+                if (recipientsDoc.Contains("ExcludeUsers") && !recipientsDoc["ExcludeUsers"].IsBsonNull)
                 {
-                    // "All chats" mode - manage all except excluded
-                    shouldManage = true;
-
-                    if (recipientsDoc.Contains("ExcludeUsers") && !recipientsDoc["ExcludeUsers"].IsBsonNull)
+                    var excludeArray = recipientsDoc["ExcludeUsers"].AsBsonArray;
+                    if (excludeArray.Any(u => u.AsInt64 == targetUserId))
                     {
-                        var excludeArray = recipientsDoc["ExcludeUsers"].AsBsonArray;
-                        if (excludeArray.Any(u => u.AsInt64 == selfUserId))
-                        {
-                            shouldManage = false;
-                        }
+                        shouldManage = false;
                     }
                 }
-                else
+
+                // If explicit users list exists and not empty - only they see banner
+                if (shouldManage &&
+                    recipientsDoc.Contains("Users") &&
+                    !recipientsDoc["Users"].IsBsonNull)
                 {
-                    // Include mode - check if current user matches criteria
-                    if (recipientsDoc.Contains("Users") && !recipientsDoc["Users"].IsBsonNull)
+                    var usersArray = recipientsDoc["Users"].AsBsonArray;
+                    if (usersArray.Count > 0 && !usersArray.Any(u => u.AsInt64 == targetUserId))
                     {
-                        var usersArray = recipientsDoc["Users"].AsBsonArray;
-                        if (usersArray.Any(u => u.AsInt64 == selfUserId))
-                        {
-                            shouldManage = true;
-                        }
-                    }
-
-                    bool existingChats = recipientsDoc.Contains("ExistingChats") && recipientsDoc["ExistingChats"].AsBoolean;
-                    bool newChats = recipientsDoc.Contains("NewChats") && recipientsDoc["NewChats"].AsBoolean;
-                    bool contacts = recipientsDoc.Contains("Contacts") && recipientsDoc["Contacts"].AsBoolean;
-                    bool nonContacts = recipientsDoc.Contains("NonContacts") && recipientsDoc["NonContacts"].AsBoolean;
-
-                    if (existingChats || newChats || contacts || nonContacts)
-                    {
-                        shouldManage = true;
+                        shouldManage = false;
                     }
                 }
 
@@ -153,19 +142,19 @@ internal sealed class GetPeerSettingsHandler(
                 {
                     // Get bot user for username
                     var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
-                    var manageUrl = botUser?.Username != null
-                        ? $"https://t.me/{botUser.Username}?start=bizbot_{connectionId}"
-                        : $"tg://user?id={botId}";
+                    var manageUrl = botUser?.UserName != null
+                        ? $"https://t.me/{botUser.UserName}?start=bizbot_{connectionId}"
+                        : $"https://t.me/{botId}";
 
                     // CRITICAL: Both business_bot_id and business_bot_manage_url must be set (flag 13)
                     tSettings.BusinessBotId = botId;
                     tSettings.BusinessBotManageUrl = manageUrl;
 
                     // Check if bot is paused in this specific chat
-                    var pausedCollection = database.GetCollection<BsonDocument>("connected_bots_paused");
+                    var pausedCollection = database.GetCollection<BsonDocument>("paused_business_bot_chats");
                     var pausedFilter = Builders<BsonDocument>.Filter.And(
-                        Builders<BsonDocument>.Filter.Eq("UserId", targetUserId),
-                        Builders<BsonDocument>.Filter.Eq("PeerId", selfUserId)
+                        Builders<BsonDocument>.Filter.Eq("UserId", selfUserId),
+                        Builders<BsonDocument>.Filter.Eq("PeerId", targetUserId)
                     );
                     var pausedDoc = await pausedCollection.Find(pausedFilter).FirstOrDefaultAsync();
                     tSettings.BusinessBotPaused = pausedDoc != null && pausedDoc.Contains("Paused") && pausedDoc["Paused"].AsBoolean;
