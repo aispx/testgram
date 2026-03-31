@@ -132,6 +132,30 @@ services:
         condition: service_healthy
     restart: "no"
 
+  business-init:
+    image: mongo:8
+    networks:
+      - tg-net
+    volumes:
+      - ./init-business.sh:/init-business.sh:ro
+    command: ["/bin/bash", "/init-business.sh"]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+
+  xiefather-init:
+    image: mongo:8
+    networks:
+      - tg-net
+    volumes:
+      - ./init-xiefather.sh:/init-xiefather.sh:ro
+    command: ["/bin/bash", "/init-xiefather.sh"]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+
 ### Data seeder
   data-seeder:
     image: ${MyTelegramRegistry}/mytelegram-data-seeder:${MyTelegramVersion}
@@ -392,6 +416,10 @@ services:
       rabbitmq:
         condition: service_healthy
       call-init:
+        condition: service_completed_successfully
+      business-init:
+        condition: service_completed_successfully
+      xiefather-init:
         condition: service_completed_successfully
     environment:
       Serilog__MinimumLevel__Default: ${Serilog__MinimumLevel__Default}
