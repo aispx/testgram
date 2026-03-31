@@ -73,6 +73,36 @@ docker compose up -d
 | `App__EncryptionConfig__MessageKeys__0__Key` | Ключ шифрования в Base64 |
 | `App__FixedVerifyCode` | Фиксированный SMS-код для тестирования (оставьте пустым в продакшене) |
 
+### Настройка голосовых и видеозвонков
+
+Голосовые и видеозвонки **требуют** TURN/STUN сервер. Установите Coturn:
+
+```bash
+sudo apt-get install coturn
+# Настройте /etc/turnserver.conf (см. docs/CALLS_SETUP.md)
+sudo systemctl start coturn
+```
+
+Настройте WebRTC в `.env`:
+
+```bash
+# ОБЯЗАТЕЛЬНО для работы звонков
+App__WebRtcConnections__0__Ip=YOUR_SERVER_IP
+App__WebRtcConnections__0__Port=3478
+App__WebRtcConnections__0__Turn=True
+App__WebRtcConnections__0__Stun=True
+App__WebRtcConnections__0__UserName=testgram
+App__WebRtcConnections__0__Password=testgram123
+```
+
+Настройка индексов MongoDB (автоматически при первом запуске):
+
+```bash
+cd scripts && ./setup_call_indexes.sh  # Опционально: ручная настройка
+```
+
+См. [docs/CALLS_SETUP.md](docs/CALLS_SETUP.md) для полной инструкции по настройке.
+
 ## Сборка Docker-образов
 
 ```bash
