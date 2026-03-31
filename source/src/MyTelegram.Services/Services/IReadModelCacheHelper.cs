@@ -7,4 +7,5 @@ public interface IReadModelCacheHelper<TReadModel>
     bool TryGetReadModel(string readModelId, out TReadModel? readModel);
     void Add(long id, string readModelId, TReadModel readModel);
     void Remove(string readModelId);
+    void RemoveById(long id);
 }

@@ -1,15 +1,52 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Messages;
+using TQuickReply = MyTelegram.Schema.TQuickReply;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
-/// <summary>
-/// Fetch basic info about all existing <a href="https://corefork.telegram.org/api/business#quick-reply-shortcuts">quick reply shortcuts</a>.
-/// <para><c>See <a href="https://corefork.telegram.org/method/messages.getQuickReplies"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class GetQuickRepliesHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetQuickReplies, MyTelegram.Schema.Messages.IQuickReplies>
+
+internal sealed class GetQuickRepliesHandler : RpcResultObjectHandler<RequestGetQuickReplies, IQuickReplies>
 {
-    protected override Task<MyTelegram.Schema.Messages.IQuickReplies> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetQuickReplies obj)
+    private readonly IMongoDatabase _database;
+
+    public GetQuickRepliesHandler(IMongoDatabase database)
     {
-        return Task.FromResult<MyTelegram.Schema.Messages.IQuickReplies>(new TQuickReplies { Chats = new(), Messages = new(), QuickReplies = new(), Users = new() });
+        _database = database;
+    }
+
+    protected override async Task<IQuickReplies> HandleCoreAsync(IRequestInput input, RequestGetQuickReplies obj)
+    {
+        var userId = input.UserId;
+        var collection = _database.GetCollection<BsonDocument>("quickreplys");
+        
+        var filter = Builders<BsonDocument>.Filter.Eq("UserId", userId);
+        var documents = await collection.Find(filter).ToListAsync();
+
+        var quickReplies = new TVector<IQuickReply>();
+
+        foreach (var doc in documents)
+        {
+            var shortcutId = doc.GetValue("ShortcutId", 0).AsInt32;
+            var title = doc.GetValue("Title", "").AsString;
+            var topMessage = doc.GetValue("TopMessage", 0).AsInt32;
+            var count = doc.GetValue("Count", 0).AsInt32;
+
+            quickReplies.Add(new TQuickReply
+            {
+                ShortcutId = shortcutId,
+                Shortcut = title,
+                TopMessage = topMessage,
+                Count = count
+            });
+        }
+
+        return new TQuickReplies
+        {
+            QuickReplies = quickReplies,
+            Messages = new TVector<IMessage>(),
+            Chats = new TVector<IChat>(),
+            Users = new TVector<IUser>()
+        };
     }
 }

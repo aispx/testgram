@@ -59,6 +59,11 @@ public class ReadModelCacheHelper<TReadModel> : IReadModelCacheHelper<TReadModel
         }
     }
 
+    public void RemoveById(long id)
+    {
+        ReadModels.TryRemove(id, out _);
+    }
+
     public TReadModel? Get(string readModelId)
     {
         if (ReadModelIds.TryGetValue(readModelId, out var id))

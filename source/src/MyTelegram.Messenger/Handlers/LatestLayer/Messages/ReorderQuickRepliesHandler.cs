@@ -1,18 +1,37 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Messages;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
-/// <summary>
-/// Reorder <a href="https://corefork.telegram.org/api/business#quick-reply-shortcuts">quick reply shortcuts</a>.This will emit an <a href="https://corefork.telegram.org/constructor/updateQuickReplies">updateQuickReplies</a> update to other logged-in sessions.
-/// Possible errors
-/// Code Type Description
-/// 403 PREMIUM_ACCOUNT_REQUIRED A premium account is required to execute this action.
-/// <para><c>See <a href="https://corefork.telegram.org/method/messages.reorderQuickReplies"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class ReorderQuickRepliesHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReorderQuickReplies, IBool>
+
+internal sealed class ReorderQuickRepliesHandler : RpcResultObjectHandler<RequestReorderQuickReplies, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReorderQuickReplies obj)
+    private readonly IMongoDatabase _database;
+
+    public ReorderQuickRepliesHandler(IMongoDatabase database)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        _database = database;
+    }
+
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestReorderQuickReplies obj)
+    {
+        var userId = input.UserId;
+        var order = obj.Order.ToList();
+
+        var collection = _database.GetCollection<BsonDocument>("quickreplys");
+        
+        for (int i = 0; i < order.Count; i++)
+        {
+            var shortcutId = order[i];
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                Builders<BsonDocument>.Filter.Eq("ShortcutId", shortcutId)
+            );
+            var update = Builders<BsonDocument>.Update.Set("Order", i);
+            await collection.UpdateOneAsync(filter, update);
+        }
+
+        return new TBoolTrue();
     }
 }
