@@ -310,6 +310,17 @@ public class UserConverterService(
                 userReadModel.UserId, AccessHashType.User);
         }
 
+        // Set BotBusiness flag from MongoDB if user is a bot
+        if (userReadModel.Bot && user is TUser tUser)
+        {
+            var userCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel");
+            var botUserDoc = userCollection.Find(Builders<BsonDocument>.Filter.Eq("UserId", userReadModel.UserId)).FirstOrDefault();
+            if (botUserDoc != null && botUserDoc.Contains("BotBusiness"))
+            {
+                tUser.BotBusiness = botUserDoc["BotBusiness"].AsBoolean;
+            }
+        }
+
         if (userReadModel.IsDeleted == true)
         {
             user.Deleted = true;

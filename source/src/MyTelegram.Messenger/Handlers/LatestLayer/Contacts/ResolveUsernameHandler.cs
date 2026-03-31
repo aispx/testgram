@@ -23,9 +23,12 @@ IChatConverterService chatConverterService, IUserConverterService userConverterS
             var userNameReadModel = await queryProcessor.ProcessAsync(new GetUserNameByNameQuery(obj.Username), default);
             if (userNameReadModel != null)
             {
+                Console.WriteLine($"[ResolveUsername] Username={obj.Username}, PeerId={userNameReadModel.PeerId}, PeerType={userNameReadModel.PeerType} ({(int)userNameReadModel.PeerType})");
+
                 switch (userNameReadModel.PeerType)
                 {
                     case PeerType.User:
+                        Console.WriteLine($"[ResolveUsername] Resolving as User");
                         var user = await userConverterService.GetUserAsync(input, userNameReadModel.PeerId, false, false, input.Layer);
                         return new TResolvedPeer
                         {
@@ -37,27 +40,29 @@ IChatConverterService chatConverterService, IUserConverterService userConverterS
                             Users = new TVector<IUser>(user)
                         };
                     case PeerType.Channel:
-                    {
-                        var channelReadModel = await channelAppService.GetAsync(userNameReadModel.PeerId);
-                        if (channelReadModel != null)
+                        Console.WriteLine($"[ResolveUsername] Resolving as Channel");
                         {
-                            var photoReadModel = await photoAppService.GetAsync(channelReadModel.PhotoId);
-                            var channelMemberReadModel = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channelReadModel.ChannelId, input.UserId));
-                            return new TResolvedPeer
+                            var channelReadModel = await channelAppService.GetAsync(userNameReadModel.PeerId);
+                            if (channelReadModel != null)
                             {
-                                Chats = new TVector<IChat>(chatConverterService.ToChannel(input, channelReadModel, photoReadModel, channelMemberReadModel, channelMemberReadModel?.Left ?? true, input.Layer)),
-                                Peer = new TPeerChannel
+                                var photoReadModel = await photoAppService.GetAsync(channelReadModel.PhotoId);
+                                var channelMemberReadModel = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channelReadModel.ChannelId, input.UserId));
+                                return new TResolvedPeer
                                 {
-                                    ChannelId = userNameReadModel.PeerId
-                                },
-                                Users = []
-                            };
+                                    Chats = new TVector<IChat>(chatConverterService.ToChannel(input, channelReadModel, photoReadModel, channelMemberReadModel, channelMemberReadModel?.Left ?? true, input.Layer)),
+                                    Peer = new TPeerChannel
+                                    {
+                                        ChannelId = userNameReadModel.PeerId
+                                    },
+                                    Users = []
+                                };
+                            }
                         }
-                    }
 
                         break;
                     default:
-                        throw new ArgumentOutOfRangeException();
+                        Console.WriteLine($"[ResolveUsername] ERROR: Unknown PeerType={userNameReadModel.PeerType} ({(int)userNameReadModel.PeerType})");
+                        throw new ArgumentOutOfRangeException($"Unknown PeerType: {userNameReadModel.PeerType}");
                 }
             }
         }

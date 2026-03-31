@@ -41,6 +41,14 @@ internal sealed class UserMapper
         destination.BotHasMainApp = source.BotHasMainApp;
         destination.BotActiveUsers = source.BotActiveUsers;
 
+        // Read BotBusiness from MongoDB directly since it's not in IUserReadModel
+        // This is a temporary solution until BotBusiness is added to the read model
+        if (source.Bot)
+        {
+            // BotBusiness flag will be set by UserConverterService
+            destination.BotBusiness = false; // Default value, will be overridden if needed
+        }
+
         return destination;
     }
 }
