@@ -67,7 +67,21 @@ public class XieFatherBotService(
         {
             case "/start":
                 await ClearStateAsync(fromUserId);
-                await SendAsync(input, fromUserId, WelcomeText, entities: new TVector<IMessageEntity>(BoldEntities(WelcomeText)));
+                // Check for deep link parameter
+                var startParam = text.Length > 7 ? text.Substring(7).Trim() : "";
+                if (startParam.StartsWith("bizChat"))
+                {
+                    // Handle business chat deep link: /start bizChat<user_chat_id>
+                    var chatIdStr = startParam.Substring(7);
+                    await SendAsync(input, fromUserId,
+                        $"Managing business chat {chatIdStr}\n\n" +
+                        "This is where you would manage the business connection for this specific chat. " +
+                        "You can configure bot behavior, view chat history, and manage permissions.");
+                }
+                else
+                {
+                    await SendAsync(input, fromUserId, WelcomeText, entities: new TVector<IMessageEntity>(BoldEntities(WelcomeText)));
+                }
                 break;
             case "/newbot":
                 await ClearStateAsync(fromUserId);
@@ -115,10 +129,18 @@ public class XieFatherBotService(
 
     public async Task HandleCallbackAsync(IRequestInput input, long fromUserId, int msgId, string data)
     {
+        Console.WriteLine($"[XieFather] HandleCallbackAsync called: fromUserId={fromUserId}, msgId={msgId}, data={data}");
+
         var parts = data.Split(':');
-        if (parts.Length < 2) return;
+        if (parts.Length < 2)
+        {
+            Console.WriteLine($"[XieFather] Invalid callback data format: {data}");
+            return;
+        }
         var action = parts[0];
         var username = parts.Length > 1 ? parts[1] : "";
+
+        Console.WriteLine($"[XieFather] Parsed action={action}, username={username}");
 
         switch (action)
         {
@@ -160,6 +182,22 @@ public class XieFatherBotService(
                 await EditMessageAsync(input, fromUserId, msgId,
                     $"Done! New token for @{username}:\n`{newToken}`",
                     InlineRows(InlineRow(Btn("« Back to Bot", $"bot_select:{username}"))));
+                break;
+            case "business_mode":
+                await SendBusinessModeMenuAsync(input, fromUserId, msgId, username);
+                break;
+            case "business_enable":
+                await EnableBotBusinessModeAsync(input, fromUserId, username);
+                await SendBusinessModeMenuAsync(input, fromUserId, msgId, username);
+                break;
+            case "business_disable":
+                await DisableBotBusinessModeAsync(input, fromUserId, username);
+                await SendBusinessModeMenuAsync(input, fromUserId, msgId, username);
+                break;
+            case "edit_field":
+                var field = parts.Length > 2 ? parts[1] : "";
+                var botUsername = parts.Length > 2 ? parts[2] : "";
+                await HandleEditFieldAsync(input, fromUserId, msgId, field, botUsername);
                 break;
             case "soon":
                 // no-op, just answer callback
@@ -224,6 +262,31 @@ public class XieFatherBotService(
                         .UpdateOneAsync(new BsonDocument("UserName", extra), new BsonDocument("$set", new BsonDocument("About", text)));
                     await SendAsync(input, fromUserId, $"Success! About text for @{extra} updated.");
                 }
+                break;
+        }
+    }
+
+    private async Task HandleEditFieldAsync(IRequestInput input, long fromUserId, int msgId, string field, string username)
+    {
+        switch (field)
+        {
+            case "name":
+                await SetStateAsync(fromUserId, $"setname:input:{username}");
+                await EditMessageAsync(input, fromUserId, msgId,
+                    $"OK. Send me the new name for @{username}.",
+                    InlineRows(InlineRow(Btn("« Cancel", $"edit_bot:{username}"))));
+                break;
+            case "about":
+                await SetStateAsync(fromUserId, $"setabouttext:input:{username}");
+                await EditMessageAsync(input, fromUserId, msgId,
+                    $"OK. Send me the new about text for @{username}.",
+                    InlineRows(InlineRow(Btn("« Cancel", $"edit_bot:{username}"))));
+                break;
+            case "desc":
+                await SetStateAsync(fromUserId, $"setdescription:input:{username}");
+                await EditMessageAsync(input, fromUserId, msgId,
+                    $"OK. Send me the new description for @{username}.",
+                    InlineRows(InlineRow(Btn("« Cancel", $"edit_bot:{username}"))));
                 break;
         }
     }
@@ -299,7 +362,7 @@ public class XieFatherBotService(
         await EditMessageAsync(input, fromUserId, msgId,
             $"Settings for @{username}.",
             InlineRows(
-                InlineRow(Btn("Inline Mode", $"soon:{username}"), Btn("Business Mode", $"soon:{username}")),
+                InlineRow(Btn("Inline Mode", $"soon:{username}"), Btn("Business Mode", $"business_mode:{username}")),
                 InlineRow(Btn("Allow Groups?", $"soon:{username}"), Btn("Group Privacy", $"soon:{username}")),
                 InlineRow(Btn("Group Admin Rights", $"soon:{username}"), Btn("Channel Admin Rights", $"soon:{username}")),
                 InlineRow(Btn("Payments", $"soon:{username}"), Btn("Domain", $"soon:{username}")),
@@ -354,8 +417,10 @@ public class XieFatherBotService(
             return "Sorry, this username is already taken. Please choose a different username.";
 
         var newUserId = await GetNextUserIdAsync();
+        var accessHash = Random.Shared.NextInt64();
         var token = $"{newUserId}:{GenerateToken()}";
 
+        // Store bot metadata (owner, token)
         var col = mongoDatabase.GetCollection<BsonDocument>(BotCollection);
         await col.InsertOneAsync(new BsonDocument
         {
@@ -364,33 +429,81 @@ public class XieFatherBotService(
             { "CreatedAt", DateTime.UtcNow }
         });
 
+        // Create bot user in read model
         var now = DateTime.UtcNow;
-        await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel").InsertOneAsync(new BsonDocument
+        var userCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel");
+        await userCollection.InsertOneAsync(new BsonDocument
         {
-            { "_id", $"user-bot-{username}" }, { "About", "" },
-            { "AccessHash", Random.Shared.NextInt64() }, { "AccountTtl", 365 },
-            { "Birthday", BsonNull.Value }, { "Bot", true }, { "BotActiveUsers", BsonNull.Value },
-            { "BotHasMainApp", false }, { "BotInfoVersion", 1 }, { "BotChatHistory", false }, { "BotNochats", false },
+            { "_id", $"user-{newUserId}" },
+            { "UserId", newUserId },
+            { "AccessHash", accessHash },
+            { "PhoneNumber", "0" },
+            { "FirstName", name },
+            { "LastName", "" },
+            { "UserName", username },
+            { "Bot", true },
+            { "About", "" },
+            { "AccountTtl", 365 },
+            { "Birthday", BsonNull.Value },
+            { "BotActiveUsers", BsonNull.Value },
+            { "BotHasMainApp", false },
+            { "BotInfoVersion", 1 },
+            { "BotChatHistory", false },
+            { "BotNochats", false },
+            { "BotBusiness", false },
             { "Color", new BsonDocument { { "Color", 0 }, { "BackgroundEmojiId", BsonNull.Value } } },
-            { "CreationTime", now }, { "Email", BsonNull.Value }, { "EmojiStatusDocumentId", BsonNull.Value },
-            { "EmojiStatusValidUntil", BsonNull.Value }, { "FallbackPhotoId", BsonNull.Value },
-            { "FirstName", name }, { "GlobalPrivacySettings", new BsonDocument {
-                { "ArchiveAndMuteNewNoncontactPeers", false }, { "KeepArchivedUnmuted", false },
-                { "KeepArchivedFolders", false }, { "HideReadMarks", false },
-                { "NewNoncontactPeersRequirePremium", false }, { "NoncontactPeersPaidStars", BsonNull.Value },
-                { "DisallowUnlimitedStargifts", false }, { "DisallowLimitedStargifts", false },
-                { "DisallowUniqueStargifts", false }, { "DisallowPremiumGifts", false }
+            { "CreationTime", now },
+            { "Email", BsonNull.Value },
+            { "EmojiStatusDocumentId", BsonNull.Value },
+            { "EmojiStatusValidUntil", BsonNull.Value },
+            { "FallbackPhotoId", BsonNull.Value },
+            { "GlobalPrivacySettings", new BsonDocument {
+                { "ArchiveAndMuteNewNoncontactPeers", false },
+                { "KeepArchivedUnmuted", false },
+                { "KeepArchivedFolders", false },
+                { "HideReadMarks", false },
+                { "NewNoncontactPeersRequirePremium", false },
+                { "NoncontactPeersPaidStars", BsonNull.Value },
+                { "DisallowUnlimitedStargifts", false },
+                { "DisallowLimitedStargifts", false },
+                { "DisallowUniqueStargifts", false },
+                { "DisallowPremiumGifts", false }
             }},
-            { "HasPassword", false }, { "IsOnline", false }, { "LastName", "" }, { "LastUpdateDate", now },
-            { "PersonalChannelId", BsonNull.Value }, { "PersonalPhotoId", BsonNull.Value },
-            { "PhoneNumber", "0" }, { "PinnedMsgId", BsonNull.Value }, { "PinnedMsgIdList", new BsonArray() },
-            { "Premium", false }, { "ProfileColor", BsonNull.Value }, { "ProfilePhoto", BsonNull.Value },
-            { "ProfilePhotoId", BsonNull.Value }, { "ProfilePhotoUpdateDate", BsonNull.Value },
-            { "RecentEmojiStatuses", new BsonArray() }, { "SensitiveCanChange", false }, { "SensitiveEnabled", false },
-            { "ShowContactSignUpNotification", false }, { "Fake", false }, { "Scam", false }, { "Support", false },
-            { "UserId", newUserId }, { "UserName", username }, { "Usernames", BsonNull.Value },
-            { "UserNameUpdateDate", BsonNull.Value }, { "IsDeleted", false }, { "Verified", false },
-            { "Version", 1L }, { "VideoEmojiMarkup", BsonNull.Value }
+            { "HasPassword", false },
+            { "IsOnline", false },
+            { "LastUpdateDate", now },
+            { "PersonalChannelId", BsonNull.Value },
+            { "PersonalPhotoId", BsonNull.Value },
+            { "PinnedMsgId", BsonNull.Value },
+            { "PinnedMsgIdList", new BsonArray() },
+            { "Premium", false },
+            { "ProfileColor", BsonNull.Value },
+            { "ProfilePhoto", BsonNull.Value },
+            { "ProfilePhotoId", BsonNull.Value },
+            { "ProfilePhotoUpdateDate", BsonNull.Value },
+            { "RecentEmojiStatuses", new BsonArray() },
+            { "SensitiveCanChange", false },
+            { "SensitiveEnabled", false },
+            { "ShowContactSignUpNotification", false },
+            { "Fake", false },
+            { "Scam", false },
+            { "Support", false },
+            { "Usernames", BsonNull.Value },
+            { "UserNameUpdateDate", BsonNull.Value },
+            { "IsDeleted", false },
+            { "Verified", false },
+            { "Version", 1L },
+            { "VideoEmojiMarkup", BsonNull.Value }
+        });
+
+        // Add username to eventflow-usernamereadmodel for username resolution
+        await mongoDatabase.GetCollection<BsonDocument>("eventflow-usernamereadmodel").InsertOneAsync(new BsonDocument
+        {
+            { "_id", $"username-{username.ToLower()}" },
+            { "UserName", username },
+            { "PeerId", newUserId },
+            { "PeerType", 3 }, // 3 = User
+            { "IsActive", true }
         });
 
         var text = $"Done! Congratulations on your new bot. You will find it at t.me/{username}.\n\n" +
@@ -463,9 +576,9 @@ public class XieFatherBotService(
 
     private static string GenerateToken()
     {
-        var bytes = new byte[24];
+        var bytes = new byte[32];
         Random.Shared.NextBytes(bytes);
-        return Convert.ToBase64String(bytes).Replace("+", "").Replace("/", "").Replace("=", "")[..32];
+        return Convert.ToBase64String(bytes).Replace("+", "-").Replace("/", "_").Replace("=", "");
     }
 
     // --- Messaging helpers ---
@@ -473,6 +586,37 @@ public class XieFatherBotService(
     private async Task SendAsync(IRequestInput input, long toUserId, string text,
         IReplyMarkup? replyMarkup = null, TVector<IMessageEntity>? entities = null)
     {
+        Console.WriteLine($"[XieFather.SendAsync] toUserId={toUserId}, text={text}, hasReplyMarkup={replyMarkup != null}");
+        if (replyMarkup != null)
+        {
+            Console.WriteLine($"[XieFather.SendAsync] ReplyMarkup type: {replyMarkup.GetType().Name}");
+            if (replyMarkup is TReplyInlineMarkup inlineMarkup)
+            {
+                Console.WriteLine($"[XieFather.SendAsync] Inline markup rows count: {inlineMarkup.Rows?.Count ?? 0}");
+                if (inlineMarkup.Rows != null)
+                {
+                    foreach (var row in inlineMarkup.Rows)
+                    {
+                        if (row is TKeyboardButtonRow btnRow)
+                        {
+                            Console.WriteLine($"[XieFather.SendAsync] Row buttons count: {btnRow.Buttons?.Count ?? 0}");
+                            if (btnRow.Buttons != null)
+                            {
+                                foreach (var btn in btnRow.Buttons)
+                                {
+                                    Console.WriteLine($"[XieFather.SendAsync] Button type: {btn.GetType().Name}");
+                                    if (btn is TKeyboardButtonCallback callbackBtn)
+                                    {
+                                        Console.WriteLine($"[XieFather.SendAsync] Callback button text: {callbackBtn.Text}, data length: {callbackBtn.Data?.Length ?? 0}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         var botReq = RequestInfo.Empty with
         {
             UserId = BotUserId, Layer = input.Layer,
@@ -550,5 +694,77 @@ public class XieFatherBotService(
             offset += line.Length + 1;
         }
         return entities;
+    }
+
+    private async Task SendBusinessModeMenuAsync(IRequestInput input, long fromUserId, int msgId, string username)
+    {
+        // Check if business mode is enabled for the BOT (not the user)
+        var bot = await GetBotAsync(fromUserId, username);
+        if (bot == null) return;
+
+        var botUserId = bot["BotUserId"].AsInt64;
+        var userCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel");
+        var filter = new BsonDocument("UserId", botUserId);
+        var botUser = await userCollection.Find(filter).FirstOrDefaultAsync();
+
+        var isEnabled = botUser != null && botUser.Contains("BotBusiness") && botUser["BotBusiness"].AsBoolean;
+        var status = isEnabled ? "✅ Enabled" : "❌ Disabled";
+
+        await EditMessageAsync(input, fromUserId, msgId,
+            $"Business Mode for @{username}\n\nStatus: {status}\n\n" +
+            "When enabled, this bot can:\n" +
+            "• Connect to Telegram Business accounts\n" +
+            "• Receive business messages\n" +
+            "• Send messages on behalf of business users\n" +
+            "• Access business chat history\n\n" +
+            "Note: Users must have Telegram Business subscription to connect bots.",
+            InlineRows(
+                InlineRow(
+                    isEnabled
+                        ? Btn("❌ Disable Business Mode", $"business_disable:{username}")
+                        : Btn("✅ Enable Business Mode", $"business_enable:{username}")
+                ),
+                InlineRow(Btn("« Back to Settings", $"bot_settings:{username}"))
+            ));
+    }
+
+    private async Task EnableBotBusinessModeAsync(IRequestInput input, long ownerId, string username)
+    {
+        var bot = await GetBotAsync(ownerId, username);
+        if (bot == null) return;
+
+        var botUserId = bot["BotUserId"].AsInt64;
+
+        // Set BotBusiness flag for the bot user
+        var userCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel");
+        var filter = new BsonDocument("UserId", botUserId);
+        var update = new BsonDocument("$set", new BsonDocument
+        {
+            { "BotBusiness", true }
+        });
+
+        await userCollection.UpdateOneAsync(filter, update);
+    }
+
+    private async Task DisableBotBusinessModeAsync(IRequestInput input, long ownerId, string username)
+    {
+        var bot = await GetBotAsync(ownerId, username);
+        if (bot == null) return;
+
+        var botUserId = bot["BotUserId"].AsInt64;
+
+        // Remove BotBusiness flag from the bot user
+        var userCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel");
+        var filter = new BsonDocument("UserId", botUserId);
+        var update = new BsonDocument("$unset", new BsonDocument
+        {
+            { "BotBusiness", "" }
+        });
+
+        await userCollection.UpdateOneAsync(filter, update);
+
+        // Disconnect all business connections for this bot
+        var connectionsCollection = mongoDatabase.GetCollection<BsonDocument>("connected_business_bots");
+        await connectionsCollection.DeleteManyAsync(new BsonDocument("BotId", botUserId));
     }
 }
