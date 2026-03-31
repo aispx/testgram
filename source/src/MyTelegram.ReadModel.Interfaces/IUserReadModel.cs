@@ -1,4 +1,6 @@
-﻿namespace MyTelegram.ReadModel.Interfaces;
+﻿using MyTelegram.Schema;
+
+namespace MyTelegram.ReadModel.Interfaces;
 
 public interface IUserReadModel : IReadModel
 {
@@ -52,4 +54,12 @@ public interface IUserReadModel : IReadModel
     int? ProfilePhotoUpdateDate { get; }
     int? UserNameUpdateDate { get; }
     bool? IsDeleted { get; }
+
+    TBusinessWorkHours? BusinessWorkHours { get; }
+    TBusinessLocation? BusinessLocation { get; }
+    TBusinessGreetingMessage? BusinessGreetingMessage { get; }
+    TBusinessAwayMessage? BusinessAwayMessage { get; }
+    TBusinessIntro? BusinessIntro { get; }
+
+    int? DefaultHistoryTTL { get; }
 }

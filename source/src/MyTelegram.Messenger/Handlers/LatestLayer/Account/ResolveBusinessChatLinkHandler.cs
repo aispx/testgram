@@ -1,19 +1,52 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Account;
+using TBusinessChatLink = MyTelegram.Schema.TBusinessChatLink;
+using TPeerUser = MyTelegram.Schema.TPeerUser;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
-/// <summary>
-/// Resolve a <a href="https://corefork.telegram.org/api/business#business-chat-links">business chat deep link »</a>.
-/// Possible errors
-/// Code Type Description
-/// 400 CHATLINK_SLUG_EMPTY The specified slug is empty.
-/// 400 CHATLINK_SLUG_EXPIRED The specified <a href="https://corefork.telegram.org/api/business#business-chat-links">business chat link</a> has expired.
-/// <para><c>See <a href="https://corefork.telegram.org/method/account.resolveBusinessChatLink"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class ResolveBusinessChatLinkHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestResolveBusinessChatLink, MyTelegram.Schema.Account.IResolvedBusinessChatLinks>
+
+internal sealed class ResolveBusinessChatLinkHandler : RpcResultObjectHandler<RequestResolveBusinessChatLink, IResolvedBusinessChatLinks>
 {
-    protected override Task<MyTelegram.Schema.Account.IResolvedBusinessChatLinks> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestResolveBusinessChatLink obj)
+    private readonly IMongoDatabase _database;
+
+    public ResolveBusinessChatLinkHandler(IMongoDatabase database)
     {
-        throw new NotImplementedException();
+        _database = database;
+    }
+
+    protected override async Task<IResolvedBusinessChatLinks> HandleCoreAsync(IRequestInput input, RequestResolveBusinessChatLink obj)
+    {
+        var slug = obj.Slug;
+
+        if (string.IsNullOrEmpty(slug))
+        {
+            RpcErrors.RpcErrors400.ChatLinkSlugEmpty.ThrowRpcError();
+        }
+
+        var collection = _database.GetCollection<BsonDocument>("businesschatlinks");
+        var filter = Builders<BsonDocument>.Filter.Eq("Slug", slug);
+        
+        var doc = await collection.Find(filter).FirstOrDefaultAsync();
+
+        if (doc == null)
+        {
+            RpcErrors.RpcErrors400.ChatLinkSlugExpired.ThrowRpcError();
+        }
+
+        var incUpdate = Builders<BsonDocument>.Update.Inc("Views", 1);
+        await collection.UpdateOneAsync(filter, incUpdate);
+
+        var userId = doc.GetValue("UserId", 0).AsInt64;
+        var message = doc.GetValue("Message", "").AsString;
+
+        return new TResolvedBusinessChatLinks
+        {
+            Peer = new TPeerUser { UserId = userId },
+            Message = message,
+            Chats = new TVector<IChat>(),
+            Users = new TVector<IUser>()
+        };
     }
 }

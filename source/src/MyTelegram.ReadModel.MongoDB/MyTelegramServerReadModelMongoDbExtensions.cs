@@ -37,6 +37,23 @@ public static class MyTelegramServerReadModelMongoDbExtensions
         // when deserializing interface-typed fields (e.g. IMessageAction, IMessageEntity)
         BsonSerializer.RegisterSerializationProvider(new IObjectInterfaceSerializationProvider(baseType));
 
+        // Register interface serializers for Business types
+        var businessInterfaceTypes = new[]
+        {
+            typeof(IBusinessWorkHours),
+            typeof(IBusinessLocation),
+            typeof(IBusinessGreetingMessage),
+            typeof(IBusinessAwayMessage),
+            typeof(IBusinessIntro)
+        };
+        
+        foreach (var interfaceType in businessInterfaceTypes)
+        {
+            var serializerType = typeof(DiscriminatedInterfaceSerializer<>).MakeGenericType(interfaceType);
+            var serializer = (IBsonSerializer)Activator.CreateInstance(serializerType)!;
+            try { BsonSerializer.RegisterSerializer(interfaceType, serializer); } catch (Exception) { }
+        }
+
         var baseInterfaceTypes = asm
             .GetTypes()
             .Where(t => t.IsInterface && t.IsAssignableTo(baseType) &&

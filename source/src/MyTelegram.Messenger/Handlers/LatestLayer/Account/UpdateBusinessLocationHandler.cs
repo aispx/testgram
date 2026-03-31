@@ -1,15 +1,60 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Interfaces;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Account;
+using TBusinessLocation = MyTelegram.Schema.TBusinessLocation;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
-/// <summary>
-/// <a href="https://corefork.telegram.org/api/business#location">Businesses »</a> may advertise their location using this method, see <a href="https://corefork.telegram.org/api/business#location">here »</a> for more info.To remove business location information invoke the method without setting any of the parameters.
-/// <para><c>See <a href="https://corefork.telegram.org/method/account.updateBusinessLocation"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class UpdateBusinessLocationHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdateBusinessLocation, IBool>
+
+internal sealed class UpdateBusinessLocationHandler : RpcResultObjectHandler<RequestUpdateBusinessLocation, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUpdateBusinessLocation obj)
+    private readonly IMongoDatabase _database;
+    private readonly IUserAppService _userAppService;
+
+    public UpdateBusinessLocationHandler(IMongoDatabase database, IUserAppService userAppService)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        _database = database;
+        _userAppService = userAppService;
+    }
+
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestUpdateBusinessLocation obj)
+    {
+        var userId = input.UserId;
+        var collection = _database.GetCollection<BsonDocument>("eventflow-userreadmodel");
+        var filter = Builders<BsonDocument>.Filter.Eq("UserId", userId);
+
+        if (obj.Flags.IsBitSet(0) && obj.Address != null)
+        {
+            IGeoPoint? geoPoint = null;
+            if (obj.GeoPoint is TInputGeoPoint inputGeoPoint)
+            {
+                geoPoint = new TGeoPoint
+                {
+                    Lat = inputGeoPoint.Lat,
+                    Long = inputGeoPoint.Long,
+                    AccessHash = 0
+                };
+            }
+
+            var businessLocation = new TBusinessLocation
+            {
+                Flags = obj.Flags,
+                GeoPoint = geoPoint,
+                Address = obj.Address
+            };
+
+            var update = Builders<BsonDocument>.Update.Set("BusinessLocation", businessLocation.ToBsonDocument());
+            await collection.UpdateOneAsync(filter, update);
+        }
+        else
+        {
+            var update = Builders<BsonDocument>.Update.Unset("BusinessLocation");
+            await collection.UpdateOneAsync(filter, update);
+        }
+
+        _userAppService.InvalidateCache(userId);
+
+        return new TBoolTrue();
     }
 }

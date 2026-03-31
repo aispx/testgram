@@ -25,6 +25,12 @@ public class UserAppService(IQueryProcessor queryProcessor,
             () => queryProcessor.ProcessAsync(new GetUserFullQuery(userId)), p => p.Id);
     }
 
+    public void InvalidateCache(long userId)
+    {
+        userReadModelCacheHelper.RemoveById(userId);
+        userFullReadModelCacheHelper.RemoveById(userId);
+    }
+
     protected override async Task<IUserReadModel?> GetReadModelAsync(long id)
     {
         var userReadModel = await queryProcessor.ProcessAsync(new GetUserByIdQuery(id));

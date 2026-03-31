@@ -1,19 +1,56 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Account;
+using TBusinessChatLink = MyTelegram.Schema.TBusinessChatLink;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
-/// <summary>
-/// Edit a created <a href="https://corefork.telegram.org/api/business#business-chat-links">business chat deep link »</a>.
-/// Possible errors
-/// Code Type Description
-/// 400 CHATLINK_SLUG_EMPTY The specified slug is empty.
-/// 403 PREMIUM_ACCOUNT_REQUIRED A premium account is required to execute this action.
-/// <para><c>See <a href="https://corefork.telegram.org/method/account.editBusinessChatLink"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class EditBusinessChatLinkHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestEditBusinessChatLink, MyTelegram.Schema.IBusinessChatLink>
+
+internal sealed class EditBusinessChatLinkHandler : RpcResultObjectHandler<RequestEditBusinessChatLink, IBusinessChatLink>
 {
-    protected override Task<MyTelegram.Schema.IBusinessChatLink> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestEditBusinessChatLink obj)
+    private readonly IMongoDatabase _database;
+
+    public EditBusinessChatLinkHandler(IMongoDatabase database)
     {
-        throw new NotImplementedException();
+        _database = database;
+    }
+
+    protected override async Task<IBusinessChatLink> HandleCoreAsync(IRequestInput input, RequestEditBusinessChatLink obj)
+    {
+        var userId = input.UserId;
+        var slug = obj.Slug;
+        var linkInput = obj.Link;
+
+        if (string.IsNullOrEmpty(slug))
+        {
+            RpcErrors.RpcErrors400.ChatLinkSlugEmpty.ThrowRpcError();
+        }
+
+        var collection = _database.GetCollection<BsonDocument>("businesschatlinks");
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("UserId", userId),
+            Builders<BsonDocument>.Filter.Eq("Slug", slug)
+        );
+
+        var update = Builders<BsonDocument>.Update
+            .Set("Title", linkInput.Title ?? "")
+            .Set("Message", linkInput.Message ?? "");
+
+        var result = await collection.UpdateOneAsync(filter, update);
+
+        if (result.MatchedCount == 0)
+        {
+            RpcErrors.RpcErrors400.ChatLinkSlugExpired.ThrowRpcError();
+        }
+
+        var doc = await collection.Find(filter).FirstOrDefaultAsync();
+
+        return new TBusinessChatLink
+        {
+            Link = $"t.me/biz/{slug}",
+            Title = doc?.GetValue("Title", "").AsString ?? "",
+            Message = doc?.GetValue("Message", "").AsString ?? "",
+            Views = doc?.GetValue("Views", 0).AsInt32 ?? 0
+        };
     }
 }

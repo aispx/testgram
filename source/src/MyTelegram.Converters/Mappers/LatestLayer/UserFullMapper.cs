@@ -58,6 +58,33 @@ internal sealed class UserFullMapper
             };
         }
 
+        // Map Business fields
+        if (source.BusinessWorkHours != null)
+        {
+            destination.BusinessWorkHours = source.BusinessWorkHours;
+            destination.Flags2 = destination.Flags2.SetBit(0);
+        }
+        if (source.BusinessLocation != null)
+        {
+            destination.BusinessLocation = source.BusinessLocation;
+            destination.Flags2 = destination.Flags2.SetBit(1);
+        }
+        if (source.BusinessGreetingMessage != null)
+        {
+            destination.BusinessGreetingMessage = source.BusinessGreetingMessage;
+            destination.Flags2 = destination.Flags2.SetBit(2);
+        }
+        if (source.BusinessAwayMessage != null)
+        {
+            destination.BusinessAwayMessage = source.BusinessAwayMessage;
+            destination.Flags2 = destination.Flags2.SetBit(3);
+        }
+        if (source.BusinessIntro != null)
+        {
+            destination.BusinessIntro = source.BusinessIntro;
+            destination.Flags2 = destination.Flags2.SetBit(4);
+        }
+
         return destination;
     }
 }

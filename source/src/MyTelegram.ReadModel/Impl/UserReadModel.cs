@@ -1,4 +1,10 @@
 ﻿using MyTelegram.Domain.Extensions;
+using MyTelegram.Schema;
+using TBusinessWorkHours = MyTelegram.Schema.TBusinessWorkHours;
+using TBusinessLocation = MyTelegram.Schema.TBusinessLocation;
+using TBusinessGreetingMessage = MyTelegram.Schema.TBusinessGreetingMessage;
+using TBusinessAwayMessage = MyTelegram.Schema.TBusinessAwayMessage;
+using TBusinessIntro = MyTelegram.Schema.TBusinessIntro;
 
 namespace MyTelegram.ReadModel.Impl;
 
@@ -73,6 +79,16 @@ public class UserReadModel : IUserReadModel,
     public virtual long? Version { get; set; }
 
     public VideoSizeEmojiMarkup? VideoEmojiMarkup { get; private set; }
+
+    // Business fields
+    public TBusinessWorkHours? BusinessWorkHours { get; private set; }
+    public TBusinessLocation? BusinessLocation { get; private set; }
+    public TBusinessGreetingMessage? BusinessGreetingMessage { get; private set; }
+    public TBusinessAwayMessage? BusinessAwayMessage { get; private set; }
+    public TBusinessIntro? BusinessIntro { get; private set; }
+
+    // Auto-delete default TTL (in seconds)
+    public int? DefaultHistoryTTL { get; private set; }
 
     public Task ApplyAsync(IReadModelContext context,
             IDomainEvent<MessageAggregate, MessageId, InboxMessagePinnedUpdatedEvent> domainEvent,
