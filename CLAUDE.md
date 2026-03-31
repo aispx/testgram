@@ -2,6 +2,187 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## CRITICAL: Always Check External Resources
+
+**BEFORE implementing ANY Telegram feature, you MUST:**
+
+1. **Check official Telegram API documentation** at https://core.telegram.org/
+2. **Read the specific method documentation** at https://core.telegram.org/method/<method_name>
+3. **Check related API pages** for context and requirements
+4. **Look at official Telegram client implementations** for reference
+
+### Required Resources to Check
+
+**When working on ANY feature, check these resources:**
+
+#### Core API Documentation
+- **Main API**: https://core.telegram.org/api
+- **Methods Index**: https://core.telegram.org/methods
+- **Types Index**: https://core.telegram.org/types
+- **Schema**: https://core.telegram.org/schema
+- **MTProto Protocol**: https://core.telegram.org/mtproto
+
+#### Feature-Specific Documentation
+
+**Stars & Payments**:
+- https://core.telegram.org/api/stars
+- https://core.telegram.org/api/payments
+- https://core.telegram.org/api/paid-messages
+
+**Gifts**:
+- https://core.telegram.org/api/gifts
+- https://core.telegram.org/api/gift-marketplaces
+- https://core.telegram.org/api/gift-upgrades
+
+**Business Features**:
+- https://core.telegram.org/api/business
+- https://core.telegram.org/api/business-intro
+- https://core.telegram.org/api/business-chat-links
+
+**Calls**:
+- https://core.telegram.org/api/calls
+- https://core.telegram.org/api/end-to-end/voice-calls
+- https://core.telegram.org/api/end-to-end/video-calls
+
+**Messages**:
+- https://core.telegram.org/api/messages
+- https://core.telegram.org/api/scheduled-messages
+- https://core.telegram.org/api/quick-replies
+- https://core.telegram.org/api/drafts
+
+**Channels & Groups**:
+- https://core.telegram.org/api/channel
+- https://core.telegram.org/api/invites
+- https://core.telegram.org/api/discussion
+- https://core.telegram.org/api/forum
+
+**Stories**:
+- https://core.telegram.org/api/stories
+- https://core.telegram.org/api/stories-stealth
+
+**Bots**:
+- https://core.telegram.org/api/bots
+- https://core.telegram.org/api/bots/webapps
+- https://core.telegram.org/api/bots/inline
+- https://core.telegram.org/api/bots/payments
+
+**Media**:
+- https://core.telegram.org/api/files
+- https://core.telegram.org/api/stickers
+- https://core.telegram.org/api/animated-stickers
+- https://core.telegram.org/api/custom-emoji
+
+**Privacy & Security**:
+- https://core.telegram.org/api/privacy
+- https://core.telegram.org/api/end-to-end
+- https://core.telegram.org/api/srp
+- https://core.telegram.org/api/two-factor-auth
+
+**Other Features**:
+- https://core.telegram.org/api/reactions
+- https://core.telegram.org/api/folders
+- https://core.telegram.org/api/themes
+- https://core.telegram.org/api/wallpapers
+- https://core.telegram.org/api/translation
+- https://core.telegram.org/api/premium
+- https://core.telegram.org/api/links
+- https://core.telegram.org/api/mentions
+
+### How to Use External Resources
+
+**Step 1: Read Method Documentation**
+
+Example: Implementing `account.toggleUsername`
+1. Go to: https://core.telegram.org/method/account.toggleUsername
+2. Read parameters, return type, possible errors
+3. Check related methods and types
+4. Understand the business logic
+
+**Step 2: Check API Context Pages**
+
+Example: Implementing star gifts
+1. Read: https://core.telegram.org/api/gifts
+2. Read: https://core.telegram.org/api/gift-marketplaces
+3. Read: https://core.telegram.org/api/gift-upgrades
+4. Understand the complete flow
+
+**Step 3: Look at Client Implementation**
+
+Check official Telegram clients for reference:
+- **Android**: https://github.com/DrKLO/Telegram
+- **iOS**: https://github.com/TelegramMessenger/Telegram-iOS
+- **Desktop**: https://github.com/telegramdesktop/tdesktop
+- **Web**: https://github.com/morethanwords/tweb
+
+Search for the method name in client code to see how it's used.
+
+**Step 4: Check TL Schema**
+
+- Current schema: https://core.telegram.org/schema
+- Layer 222: https://corefork.telegram.org/schema/mtproto
+- Compare with `source/src/MyTelegram.Schema/`
+
+### Example Workflow
+
+**Task**: Implement `messages.sendReaction`
+
+1. **Read method docs**: https://core.telegram.org/method/messages.sendReaction
+   - Parameters: `peer`, `msg_id`, `reaction`, `big`, `add_to_recent`
+   - Returns: `Updates`
+   - Errors: `MESSAGE_ID_INVALID`, `REACTION_INVALID`, etc.
+
+2. **Read API context**: https://core.telegram.org/api/reactions
+   - Understand reaction types (emoji, custom emoji)
+   - Check reaction limits
+   - Understand reaction updates
+
+3. **Check client code**: Search "sendReaction" in Telegram-Android
+   - See how UI handles reactions
+   - Check validation logic
+   - Understand user flow
+
+4. **Implement handler**:
+```csharp
+internal sealed class SendReactionHandler 
+    : RpcResultObjectHandler<RequestSendReaction, IUpdates>
+{
+    // Implementation based on documentation
+}
+```
+
+5. **Test**: Compare behavior with official client
+
+### When Implementing New Features
+
+**ALWAYS follow this checklist**:
+
+- [ ] Read official method documentation
+- [ ] Check all related API pages
+- [ ] Look at client implementation
+- [ ] Understand complete user flow
+- [ ] Check for edge cases in docs
+- [ ] Implement with proper error handling
+- [ ] Test against official client behavior
+- [ ] Add MongoDB indexes if needed
+- [ ] Update read models if needed
+
+### Common Mistakes to Avoid
+
+❌ **DON'T**: Implement based on method name alone
+✅ **DO**: Read full documentation first
+
+❌ **DON'T**: Guess parameter meanings
+✅ **DO**: Check TL schema and docs
+
+❌ **DON'T**: Ignore error codes in docs
+✅ **DO**: Implement all documented errors
+
+❌ **DON'T**: Skip client code review
+✅ **DO**: See how official clients handle it
+
+❌ **DON'T**: Assume simple implementation
+✅ **DO**: Check for related features and dependencies
+
 ## Project Overview
 
 **Testgram** is a self-hosted C# implementation of the Telegram server-side API, forked from MyTelegram. It implements MTProto 2.0 protocol and supports API Layer 222.
@@ -823,12 +1004,138 @@ mc mirror minio/tg-files /backup/files
 
 ## Additional Resources
 
-- **Telegram API**: https://core.telegram.org/api
-- **MTProto**: https://core.telegram.org/mtproto
-- **EventFlow**: https://github.com/eventflow/EventFlow
-- **MongoDB**: https://docs.mongodb.com/
-- **RabbitMQ**: https://www.rabbitmq.com/documentation.html
-- **Coturn**: https://github.com/coturn/coturn
+### Official Telegram Documentation
+
+**Core API**:
+- Main API: https://core.telegram.org/api
+- Methods: https://core.telegram.org/methods
+- Types: https://core.telegram.org/types
+- Schema: https://core.telegram.org/schema
+- MTProto: https://core.telegram.org/mtproto
+
+**Feature Documentation** (ALWAYS check before implementing):
+- Stars & Payments: https://core.telegram.org/api/stars
+- Gifts: https://core.telegram.org/api/gifts
+- Gift Marketplaces: https://core.telegram.org/api/gift-marketplaces
+- Gift Upgrades: https://core.telegram.org/api/gift-upgrades
+- Business Features: https://core.telegram.org/api/business
+- Business Chat Links: https://core.telegram.org/api/business-chat-links
+- Calls: https://core.telegram.org/api/calls
+- Voice Calls: https://core.telegram.org/api/end-to-end/voice-calls
+- Video Calls: https://core.telegram.org/api/end-to-end/video-calls
+- Messages: https://core.telegram.org/api/messages
+- Quick Replies: https://core.telegram.org/api/quick-replies
+- Scheduled Messages: https://core.telegram.org/api/scheduled-messages
+- Reactions: https://core.telegram.org/api/reactions
+- Stories: https://core.telegram.org/api/stories
+- Channels: https://core.telegram.org/api/channel
+- Bots: https://core.telegram.org/api/bots
+- WebApps: https://core.telegram.org/api/bots/webapps
+- Stickers: https://core.telegram.org/api/stickers
+- Custom Emoji: https://core.telegram.org/api/custom-emoji
+- Premium: https://core.telegram.org/api/premium
+- Folders: https://core.telegram.org/api/folders
+- Privacy: https://core.telegram.org/api/privacy
+- Two-Factor Auth: https://core.telegram.org/api/two-factor-auth
+
+**Method Examples** (check specific methods):
+- account.toggleUsername: https://core.telegram.org/method/account.toggleUsername
+- messages.sendMessage: https://core.telegram.org/method/messages.sendMessage
+- messages.sendReaction: https://core.telegram.org/method/messages.sendReaction
+- phone.requestCall: https://core.telegram.org/method/phone.requestCall
+- account.createBusinessChatLink: https://core.telegram.org/method/account.createBusinessChatLink
+- messages.getQuickReplies: https://core.telegram.org/method/messages.getQuickReplies
+- payments.getStarsTransactions: https://core.telegram.org/method/payments.getStarsTransactions
+
+### Official Telegram Clients (for reference)
+
+**Android**:
+- Repository: https://github.com/DrKLO/Telegram
+- Search methods: https://github.com/DrKLO/Telegram/search?q=sendReaction
+
+**iOS**:
+- Repository: https://github.com/TelegramMessenger/Telegram-iOS
+- Search methods: https://github.com/TelegramMessenger/Telegram-iOS/search?q=sendReaction
+
+**Desktop (TDesktop)**:
+- Repository: https://github.com/telegramdesktop/tdesktop
+- Search methods: https://github.com/telegramdesktop/tdesktop/search?q=sendReaction
+
+**Web (TWeb)**:
+- Repository: https://github.com/morethanwords/tweb
+- Search methods: https://github.com/morethanwords/tweb/search?q=sendReaction
+
+### How to Search Client Code
+
+**Example**: Finding how `messages.sendReaction` is implemented
+
+1. Go to Android client: https://github.com/DrKLO/Telegram
+2. Search for "sendReaction": https://github.com/DrKLO/Telegram/search?q=sendReaction
+3. Look at:
+   - Request creation
+   - Parameter validation
+   - Response handling
+   - UI updates
+   - Error handling
+
+4. Check multiple clients to understand complete flow
+
+### Testgram Client Repositories
+
+**For testing your implementation**:
+- Android: https://github.com/glebxdlolreal/testgram-android
+- Desktop: https://github.com/glebxdlolreal/testgram-tdesktop
+- iOS: https://github.com/loyldg/mytelegram-iOS
+- WebK: https://github.com/loyldg/mytelegram-webk
+- WebA: https://github.com/loyldg/mytelegram-weba
+
+### Other Resources
+
+- EventFlow: https://github.com/eventflow/EventFlow
+- MongoDB: https://docs.mongodb.com/
+- RabbitMQ: https://www.rabbitmq.com/documentation.html
+- Coturn: https://github.com/coturn/coturn
+- WebRTC: https://webrtc.org/
+
+## Implementation Checklist
+
+**Before starting ANY feature implementation:**
+
+1. [ ] Read method documentation at https://core.telegram.org/method/<method_name>
+2. [ ] Read related API pages (stars, gifts, business, etc.)
+3. [ ] Check TL schema at https://core.telegram.org/schema
+4. [ ] Search implementation in official clients (Android, iOS, Desktop)
+5. [ ] Understand complete user flow
+6. [ ] Check error codes and edge cases
+7. [ ] Plan MongoDB collections/indexes if needed
+8. [ ] Plan read model updates if needed
+9. [ ] Implement handler with proper validation
+10. [ ] Test with official Telegram client
+11. [ ] Test with Testgram client
+12. [ ] Verify error handling
+13. [ ] Check performance and indexes
+
+**Example URLs to check for stars feature**:
+- https://core.telegram.org/api/stars
+- https://core.telegram.org/method/payments.getStarsTransactions
+- https://core.telegram.org/method/payments.sendStarsForm
+- https://github.com/DrKLO/Telegram/search?q=stars
+- https://github.com/telegramdesktop/tdesktop/search?q=StarsTransaction
+
+**Example URLs to check for gifts feature**:
+- https://core.telegram.org/api/gifts
+- https://core.telegram.org/api/gift-marketplaces
+- https://core.telegram.org/api/gift-upgrades
+- https://core.telegram.org/method/payments.getStarGifts
+- https://github.com/DrKLO/Telegram/search?q=starGift
+- https://github.com/telegramdesktop/tdesktop/search?q=StarGift
+
+**Example URLs to check for business features**:
+- https://core.telegram.org/api/business
+- https://core.telegram.org/api/business-chat-links
+- https://core.telegram.org/method/account.createBusinessChatLink
+- https://core.telegram.org/method/account.updateBusinessWorkHours
+- https://github.com/DrKLO/Telegram/search?q=businessChatLink
 
 ## Getting Help
 
