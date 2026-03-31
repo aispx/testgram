@@ -36,7 +36,8 @@ public record SendMessageInput
         bool silent = false,
         int? scheduleDate = null,
         bool invertMedia = false,
-        long? paidMessageStars = null
+        long? paidMessageStars = null,
+        int? ttlPeriod = null
         )
     {
         RequestInfo = requestInfo;
@@ -70,6 +71,7 @@ public record SendMessageInput
         ScheduleDate = scheduleDate;
         InvertMedia = invertMedia;
         PaidMessageStars = paidMessageStars;
+        TtlPeriod = ttlPeriod;
     }
 
     public bool ClearDraft { get; }
@@ -90,6 +92,7 @@ public record SendMessageInput
     public int? ScheduleDate { get; }
     public bool InvertMedia { get; }
     public long? PaidMessageStars { get; }
+    public int? TtlPeriod { get; }
     public IMessageMedia? Media { get; }
     public IInputMedia? InputMedia { get; }
 

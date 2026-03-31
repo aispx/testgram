@@ -1,4 +1,6 @@
 using System.Text;
+using MongoDB.Bson;
+using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -58,7 +60,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IMessageAppService messageAppService, IDataEncryptionHelper dataEncryptionHelper, IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
+internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IMessageAppService messageAppService, IDataEncryptionHelper dataEncryptionHelper, IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
 {
     private static byte[]? _encryptionKey;
     private static KeyConfig? _keyConfig;
@@ -134,6 +136,88 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         var hashtags = messageAppService.GetHashtags(obj.Message);
         var command = new EditOutboxMessageCommand(MessageId.Create(ownerPeerId, obj.Id, obj.QuickReplyShortcutId.HasValue), input.ToRequestInfo(), obj.Id, message, CurrentDate, entities, media, obj.ReplyMarkup, obj.InvertMedia, hashtags, encryptedData, inboxMessageEncryptedData);
         await commandBus.PublishAsync(command);
+
+        // Notify connected business bots about edited message
+        await NotifyBusinessBotsEditAsync(input.UserId, peer.PeerId, obj.Id, obj.Message ?? message);
+
         return null !;
+    }
+
+    private async Task NotifyBusinessBotsEditAsync(long userId, long peerId, int messageId, string newText)
+    {
+        var collection = mongoDatabase.GetCollection<BsonDocument>("connected_business_bots");
+        var filter = Builders<BsonDocument>.Filter.Eq("UserId", userId);
+        var connections = await collection.Find(filter).ToListAsync();
+
+        foreach (var conn in connections)
+        {
+            var botId = conn["BotId"].AsInt64;
+            var connectionId = conn["ConnectionId"].AsString;
+
+            // Check if chat is paused
+            var pausedCollection = mongoDatabase.GetCollection<BsonDocument>("paused_business_bot_chats");
+            var pausedFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                Builders<BsonDocument>.Filter.Eq("PeerId", peerId)
+            );
+            var isPaused = await pausedCollection.Find(pausedFilter).AnyAsync();
+            if (isPaused) continue;
+
+            // Check if peer is in ExcludeUsers
+            var recipientsDoc = conn["Recipients"].AsBsonDocument;
+            if (recipientsDoc.Contains("ExcludeUsers"))
+            {
+                var excludeArray = recipientsDoc["ExcludeUsers"].AsBsonArray;
+                if (excludeArray.Any(u => u.AsInt64 == peerId)) continue;
+            }
+
+            // Check if bot has ReadMessages right
+            var rightsDoc = conn["Rights"].AsBsonDocument;
+            if (!rightsDoc.Contains("ReadMessages") || !rightsDoc["ReadMessages"].AsBoolean)
+                continue;
+
+            // Get Qts
+            var countersCollection = mongoDatabase.GetCollection<BsonDocument>("counters");
+            var qtsFilter = Builders<BsonDocument>.Filter.Eq("_id", $"qts_{botId}");
+            var qtsUpdate = Builders<BsonDocument>.Update.Inc("seq", 1);
+            var qtsOptions = new FindOneAndUpdateOptions<BsonDocument>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After
+            };
+            var qtsResult = await countersCollection.FindOneAndUpdateAsync(qtsFilter, qtsUpdate, qtsOptions);
+            var qts = qtsResult["seq"].AsInt32;
+
+            // Create updateBotEditBusinessMessage
+            var updateBotEditBusinessMessage = new TUpdateBotEditBusinessMessage
+            {
+                ConnectionId = connectionId,
+                Message = new TMessage
+                {
+                    Id = messageId,
+                    FromId = new TPeerUser { UserId = userId },
+                    PeerId = new TPeerUser { UserId = peerId },
+                    Message = newText,
+                    Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    Out = false
+                },
+                Qts = qts,
+                ReplyToMessage = null
+            };
+
+            var botUpdates = new TUpdates
+            {
+                Updates = new TVector<IUpdate> { updateBotEditBusinessMessage },
+                Users = new TVector<IUser>(),
+                Chats = new TVector<IChat>(),
+                Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
+
+            await objectMessageSender.PushMessageToPeerAsync(
+                new Peer(PeerType.User, botId),
+                botUpdates,
+                pts: 0
+            );
+        }
     }
 }

@@ -493,7 +493,8 @@ public class MessageAppService(
 			EncryptedData: encryptedData,
             InboxMessageEncryptedData: inboxMessageEncryptedData,
             SavedPeerId: channelReadModel?.IsMonoforum == true ? new Peer(PeerType.User, input.SenderUserId) : null,
-            PaidMessageStars: input.PaidMessageStars
+            PaidMessageStars: input.PaidMessageStars,
+            TtlPeriod: input.TtlPeriod
         );
 
         var sendMessageItem = new SendMessageItem(messageItem, input.ClearDraft, mentionedUserIds, []);

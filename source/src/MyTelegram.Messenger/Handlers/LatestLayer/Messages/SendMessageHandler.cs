@@ -1,6 +1,7 @@
 using MyTelegram.Messenger.Services.Bots;
 ﻿using StackExchange.Redis;
 using MongoDB.Driver;
+using MongoDB.Bson;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -85,7 +86,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IXieFatherBotService xieFatherBotService) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
+internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IXieFatherBotService xieFatherBotService, IObjectMessageSender objectMessageSender, IUserConverterService userConverterService) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMessage obj)
     {
@@ -132,8 +133,31 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
                 paidMessageStars = requiredStars;
             }
         }
-        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars);
+
+        // Get TTL period from dialog
+        int? ttlPeriod = null;
+        var dialogId = DialogId.Create(input.UserId, toPeer.PeerType, toPeer.PeerId);
+        var dialogCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-dialogreadmodel");
+        var dialogFilter = Builders<BsonDocument>.Filter.Eq("_id", dialogId.Value);
+        var dialog = await dialogCollection.Find(dialogFilter).FirstOrDefaultAsync();
+        if (dialog != null && dialog.Contains("TtlPeriod"))
+        {
+            var ttl = dialog["TtlPeriod"];
+            if (!ttl.IsBsonNull && ttl.AsInt32 > 0)
+            {
+                ttlPeriod = ttl.AsInt32;
+            }
+        }
+
+        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod);
         await messageAppService.SendMessageAsync([sendMessageInput]);
+
+        // Send updateBotNewBusinessMessage to connected business bots
+        if (toPeer.PeerType == PeerType.User)
+        {
+            await NotifyConnectedBusinessBotsAsync(input.UserId, toPeer.PeerId, obj.Message, obj.RandomId);
+        }
+
         if (toPeer.PeerType == PeerType.User && toPeer.PeerId == XieFatherBotService.BotUserId)
             _ = Task.Run(() => xieFatherBotService.HandleMessageAsync(input, input.UserId, obj.Message));
         return null !;
@@ -182,5 +206,83 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
         }
 
         return media;
+    }
+
+    private async Task NotifyConnectedBusinessBotsAsync(long userId, long peerId, string message, long randomId)
+    {
+        var collection = mongoDatabase.GetCollection<BsonDocument>("connected_business_bots");
+        var filter = Builders<BsonDocument>.Filter.Eq("UserId", userId);
+        var connections = await collection.Find(filter).ToListAsync();
+
+        foreach (var conn in connections)
+        {
+            var botId = conn["BotId"].AsInt64;
+            var connectionId = conn["ConnectionId"].AsString;
+
+            // Check if chat is paused
+            var pausedCollection = mongoDatabase.GetCollection<BsonDocument>("paused_business_bot_chats");
+            var pausedFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                Builders<BsonDocument>.Filter.Eq("PeerId", peerId)
+            );
+            var isPaused = await pausedCollection.Find(pausedFilter).AnyAsync();
+            if (isPaused) continue;
+
+            // Check if peer is in ExcludeUsers
+            var recipientsDoc = conn["Recipients"].AsBsonDocument;
+            if (recipientsDoc.Contains("ExcludeUsers"))
+            {
+                var excludeArray = recipientsDoc["ExcludeUsers"].AsBsonArray;
+                if (excludeArray.Any(u => u.AsInt64 == peerId)) continue;
+            }
+
+            // Check if bot has ReadMessages right
+            var rightsDoc = conn["Rights"].AsBsonDocument;
+            if (!rightsDoc.Contains("ReadMessages") || !rightsDoc["ReadMessages"].AsBoolean)
+                continue;
+
+            // Get Qts
+            var countersCollection = mongoDatabase.GetCollection<BsonDocument>("counters");
+            var qtsFilter = Builders<BsonDocument>.Filter.Eq("_id", $"qts_{botId}");
+            var qtsUpdate = Builders<BsonDocument>.Update.Inc("seq", 1);
+            var qtsOptions = new FindOneAndUpdateOptions<BsonDocument>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After
+            };
+            var qtsResult = await countersCollection.FindOneAndUpdateAsync(qtsFilter, qtsUpdate, qtsOptions);
+            var qts = qtsResult["seq"].AsInt32;
+
+            // Create updateBotNewBusinessMessage
+            var updateBotNewBusinessMessage = new TUpdateBotNewBusinessMessage
+            {
+                ConnectionId = connectionId,
+                Message = new TMessage
+                {
+                    Id = 0, // Will be set by message service
+                    FromId = new TPeerUser { UserId = userId },
+                    PeerId = new TPeerUser { UserId = peerId },
+                    Message = message,
+                    Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    Out = false
+                },
+                Qts = qts,
+                ReplyToMessage = null
+            };
+
+            var botUpdates = new TUpdates
+            {
+                Updates = new TVector<IUpdate> { updateBotNewBusinessMessage },
+                Users = new TVector<IUser>(),
+                Chats = new TVector<IChat>(),
+                Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
+
+            await objectMessageSender.PushMessageToPeerAsync(
+                new Peer(PeerType.User, botId),
+                botUpdates,
+                pts: 0
+            );
+        }
     }
 }
