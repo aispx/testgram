@@ -1,15 +1,27 @@
+using MongoDB.Driver;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Messages;
+using TDefaultHistoryTTL = MyTelegram.Schema.TDefaultHistoryTTL;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
-/// <summary>
-/// Gets the default value of the Time-To-Live setting, applied to all new chats.
-/// <para><c>See <a href="https://corefork.telegram.org/method/messages.getDefaultHistoryTTL"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class GetDefaultHistoryTTLHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetDefaultHistoryTTL, MyTelegram.Schema.IDefaultHistoryTTL>
+
+public class GetDefaultHistoryTTLHandler : RpcResultObjectHandler<RequestGetDefaultHistoryTTL, IDefaultHistoryTTL>
 {
-    protected override Task<MyTelegram.Schema.IDefaultHistoryTTL> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetDefaultHistoryTTL obj)
+    private readonly IMongoDatabase _mongoDatabase;
+
+    public GetDefaultHistoryTTLHandler(IMongoDatabase mongoDatabase)
     {
-        return Task.FromResult<MyTelegram.Schema.IDefaultHistoryTTL>(new TDefaultHistoryTTL { Period = 0 });
+        _mongoDatabase = mongoDatabase;
+    }
+
+    protected override async Task<IDefaultHistoryTTL> HandleCoreAsync(IRequestInput input, RequestGetDefaultHistoryTTL obj)
+    {
+        var userCollection = _mongoDatabase.GetCollection<UserReadModel>("users");
+        var filter = Builders<UserReadModel>.Filter.Eq(u => u.UserId, input.UserId);
+        var user = await userCollection.Find(filter).FirstOrDefaultAsync();
+
+        var period = user?.DefaultHistoryTTL ?? 0;
+
+        return new TDefaultHistoryTTL { Period = period };
     }
 }
