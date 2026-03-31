@@ -37,6 +37,10 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         var peerSettingReadModel = await peerSettingsAppService.GetPeerSettingsAsync(input.UserId, targetPeer.PeerId);
         var contactType = contactHelper.GetContactType(myContactReadModel, targetUserContactReadModel);
         var peerSettings = peerSettingsLayeredService.GetConverter(input.Layer).ToPeerSettings(input.UserId, targetPeer.PeerId, peerSettingReadModel, contactType);
+
+        // Add business bot fields to peer settings
+        await SetBusinessBotFieldsAsync(peerSettings, selfUserId, targetUserId);
+
         var peerNotifySettings = peerNotifySettingsLayeredService.GetConverter(input.Layer).ToPeerNotifySettings(peerNotifySettingReadModel?.NotifySettings ?? PeerNotifySettings.DefaultSettings);
         var userFull = userConverterService.ToUserFull(input, userReadModel, photoReadModels, contactReadModels, privacyReadModels, input.Layer);
         userFull.Settings = peerSettings;
@@ -243,5 +247,89 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         var bv = new TBotVerification { BotId = doc.BotId, Icon = doc.Icon, Description = doc.Description };
         if (userFull != null) userFull.BotVerification = bv;
         if (user is TUser tUser) tUser.BotVerificationIcon = doc.Icon;
+    }
+
+    private async Task SetBusinessBotFieldsAsync(Schema.IPeerSettings settings, long selfUserId, long targetUserId)
+    {
+        try
+        {
+            var collection = mongoDatabase.GetCollection<BsonDocument>("connected_business_bots");
+            var filter = Builders<BsonDocument>.Filter.Eq("UserId", selfUserId);
+            var connection = await collection.Find(filter).FirstOrDefaultAsync();
+
+            if (connection != null && settings is Schema.TPeerSettings tSettings)
+            {
+                var recipientsDoc = connection["Recipients"].AsBsonDocument;
+                bool excludeSelected = recipientsDoc.Contains("ExcludeSelected") && recipientsDoc["ExcludeSelected"].AsBoolean;
+
+                bool shouldManage = false;
+
+                if (excludeSelected)
+                {
+                    // "All chats" mode - manage all except excluded
+                    shouldManage = true;
+
+                    if (recipientsDoc.Contains("ExcludeUsers") && !recipientsDoc["ExcludeUsers"].IsBsonNull)
+                    {
+                        var excludeArray = recipientsDoc["ExcludeUsers"].AsBsonArray;
+                        if (excludeArray.Any(u => u.AsInt64 == targetUserId))
+                        {
+                            shouldManage = false;
+                        }
+                    }
+                }
+                else
+                {
+                    // Include mode
+                    bool existingChats = recipientsDoc.Contains("ExistingChats") && recipientsDoc["ExistingChats"].AsBoolean;
+                    bool newChats = recipientsDoc.Contains("NewChats") && recipientsDoc["NewChats"].AsBoolean;
+                    bool contacts = recipientsDoc.Contains("Contacts") && recipientsDoc["Contacts"].AsBoolean;
+                    bool nonContacts = recipientsDoc.Contains("NonContacts") && recipientsDoc["NonContacts"].AsBoolean;
+
+                    if (recipientsDoc.Contains("Users") && !recipientsDoc["Users"].IsBsonNull)
+                    {
+                        var usersArray = recipientsDoc["Users"].AsBsonArray;
+                        if (usersArray.Any(u => u.AsInt64 == targetUserId))
+                        {
+                            shouldManage = true;
+                        }
+                    }
+
+                    if (existingChats || newChats || contacts || nonContacts)
+                    {
+                        shouldManage = true;
+                    }
+                }
+
+                if (shouldManage)
+                {
+                    var botId = connection["BotId"].AsInt64;
+                    tSettings.BusinessBotId = botId;
+                    tSettings.BusinessBotManageUrl = $"tg://resolve?domain=botfather&start=manage_{botId}";
+
+                    // Check if bot is paused in this specific chat
+                    var pausedCollection = mongoDatabase.GetCollection<BsonDocument>("connected_bots_paused");
+                    var pausedFilter = Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("UserId", selfUserId),
+                        Builders<BsonDocument>.Filter.Eq("PeerId", targetUserId)
+                    );
+                    var pausedDoc = await pausedCollection.Find(pausedFilter).FirstOrDefaultAsync();
+
+                    if (pausedDoc != null && pausedDoc.Contains("Paused") && pausedDoc["Paused"].AsBoolean)
+                    {
+                        tSettings.BusinessBotPaused = true;
+                        tSettings.BusinessBotCanReply = false;
+                    }
+                    else
+                    {
+                        tSettings.BusinessBotCanReply = true;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore errors
+        }
     }
 }
