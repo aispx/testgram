@@ -527,10 +527,34 @@ public class RpcErrors
        /// channels.inviteToChannel
        /// </code>
        /// </summary>
-       public static readonly RpcError BotsTooMuch = new(ErrorCode, "BOTS_TOO_MUCH");
- 
-       /// <summary>
-       /// Broadcast ID invalid.
+        public static readonly RpcError BotsTooMuch = new(ErrorCode, "BOTS_TOO_MUCH");
+  
+        /// <summary>
+        /// Too many business chat links.
+        /// <code>
+        /// account.createBusinessChatLink
+        /// </code>
+        /// </summary>
+        public static readonly RpcError ChatLinksTooMuch = new(ErrorCode, "CHAT_LINKS_TOO_MUCH");
+  
+        /// <summary>
+        /// The business chat link slug is empty.
+        /// <code>
+        /// account.resolveBusinessChatLink
+        /// </code>
+        /// </summary>
+        public static readonly RpcError ChatLinkSlugEmpty = new(ErrorCode, "CHAT_LINK_SLUG_EMPTY");
+  
+        /// <summary>
+        /// The business chat link slug has expired.
+        /// <code>
+        /// account.resolveBusinessChatLink
+        /// </code>
+        /// </summary>
+        public static readonly RpcError ChatLinkSlugExpired = new(ErrorCode, "CHAT_LINK_SLUG_EXPIRED");
+  
+        /// <summary>
+        /// Broadcast ID invalid.
        /// <code>
        /// channels.setDiscussionGroup
        /// </code>

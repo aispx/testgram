@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Messenger.Services;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
 using MyTelegram.Services.Services;
@@ -9,7 +10,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class AcceptCallHandler(
     IMongoDatabase mongoDatabase,
     IUserConverterService userConverterService,
-    IObjectMessageSender objectMessageSender)
+    IObjectMessageSender objectMessageSender,
+    IMessageAppService messageAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestAcceptCall, MyTelegram.Schema.Phone.IPhoneCall>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -88,6 +90,8 @@ internal sealed class AcceptCallHandler(
                 Date = currentDate
             });
 
+        await SendCallAcceptedServiceMessageAsync(input, session.CallId, session.CallerId, session.CalleeId);
+
         return new MyTelegram.Schema.Phone.TPhoneCall
         {
             PhoneCall = phoneCallAccepted,
@@ -106,5 +110,26 @@ internal sealed class AcceptCallHandler(
             MaxLayer = p?.MaxLayer ?? 92,
             LibraryVersions = new TVector<string> { "2.7.7" }
         };
+    }
+
+    private async Task SendCallAcceptedServiceMessageAsync(IRequestInput input, long callId, long callerId, long calleeId)
+    {
+        var action = new TMessageActionPhoneCall
+        {
+            CallId = callId,
+            Video = false
+        };
+
+        var sendInput = new SendMessageInput(
+            input.ToRequestInfo() with { ReqMsgId = 0 },
+            callerId,
+            new Peer(PeerType.User, callerId),
+            string.Empty,
+            Random.Shared.NextInt64(),
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            messageAction: action
+        );
+        await messageAppService.SendMessageAsync([sendInput]);
     }
 }

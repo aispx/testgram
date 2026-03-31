@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Messenger.Services;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
 using MyTelegram.Services.Services;
@@ -9,7 +10,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class DiscardCallHandler(
     IMongoDatabase mongoDatabase,
     IUserConverterService userConverterService,
-    IObjectMessageSender objectMessageSender)
+    IObjectMessageSender objectMessageSender,
+    IMessageAppService messageAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDiscardCall, IUpdates>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -78,6 +80,8 @@ internal sealed class DiscardCallHandler(
                 Date = currentDate
             });
 
+        await SendCallDiscardedServiceMessageAsync(input, session.CallId, session.CallerId, session.CalleeId, obj.Duration, obj.Reason);
+
         return new TUpdates
         {
             Updates = new TVector<IUpdate> { updatePhoneCall },
@@ -98,5 +102,31 @@ internal sealed class DiscardCallHandler(
             TPhoneCallDiscardReasonMigrateConferenceCall => "migrate",
             _ => null
         };
+    }
+
+    private async Task SendCallDiscardedServiceMessageAsync(IRequestInput input, long callId, long callerId, long calleeId, int? duration, IPhoneCallDiscardReason? reason)
+    {
+        var isCaller = input.UserId == callerId;
+        var targetUserId = isCaller ? calleeId : callerId;
+
+        var action = new TMessageActionPhoneCall
+        {
+            CallId = callId,
+            Reason = reason,
+            Duration = duration,
+            Video = false
+        };
+
+        var sendInput = new SendMessageInput(
+            input.ToRequestInfo() with { ReqMsgId = 0 },
+            targetUserId,
+            new Peer(PeerType.User, targetUserId),
+            string.Empty,
+            Random.Shared.NextInt64(),
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            messageAction: action
+        );
+        await messageAppService.SendMessageAsync([sendInput]);
     }
 }
