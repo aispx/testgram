@@ -35,6 +35,7 @@ public class MediaHelper(
             TMessageMediaInvoice => MessageType.Voice,
             TMessageMediaPhoto => MessageType.Photo,
             TMessageMediaPoll => MessageType.Poll,
+            TMessageMediaToDo => MessageType.Text,
             TMessageMediaUnsupported => MessageType.Text,
             TMessageMediaVenue => MessageType.Geo,
             TMessageMediaWebPage => MessageType.Url,
@@ -468,8 +469,19 @@ public class MediaHelper(
                 return CreateMediaVenue(inputMediaVenue);
             case TInputMediaWebPage inputMediaWebPage:
                 return await CreateMediaWebPageAsync(inputMediaWebPage);
+            case TInputMediaTodo inputMediaTodo:
+                return CreateMediaTodo(inputMediaTodo);
             default:
                 return null;
         }
+    }
+
+    private IMessageMedia CreateMediaTodo(TInputMediaTodo inputMediaTodo)
+    {
+        return new TMessageMediaToDo
+        {
+            Todo = inputMediaTodo.Todo,
+            Completions = new TVector<ITodoCompletion>()
+        };
     }
 }

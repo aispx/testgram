@@ -181,6 +181,11 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             await CreatePollAsync(input.UserId, toPeer, inputMediaPoll);
         }
 
+        if (obj.Media is TInputMediaTodo inputMediaTodo)
+        {
+            ValidateTodoList(inputMediaTodo.Todo);
+        }
+
         var media = await mediaHelper.SaveMediaAsync(obj.Media);
         int? replyToMsgId = null;
         int? topMsgId = null;
@@ -207,5 +212,50 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
 
         var command = new CreatePollCommand(PollId.Create(poll.Id), toPeer, poll.Id, poll.MultipleChoice, poll.Quiz, inputMediaPoll.Poll.PublicVoters, poll.Question.Text, poll.Answers.Select(p => new PollAnswer(p.Text.Text, p.Option, p.Text.Entities.ToBytes())).ToList(), inputMediaPoll.CorrectAnswers?.ToList(), inputMediaPoll.Solution, solutionEntities, poll.Question.Entities, creatorUserId);
         await commandBus.PublishAsync(command);
+    }
+
+    private void ValidateTodoList(ITodoList todoList)
+    {
+        const int TODO_TITLE_LENGTH_MAX = 255;
+        const int TODO_ITEM_LENGTH_MAX = 200;
+        const int TODO_ITEMS_MAX = 30;
+
+        // Validate title length
+        if (todoList.Title.Text.Length > TODO_TITLE_LENGTH_MAX)
+        {
+            RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
+        }
+
+        // Validate items count
+        if (todoList.List.Count == 0)
+        {
+            RpcErrors.RpcErrors400.TodoItemsEmpty.ThrowRpcError();
+        }
+
+        if (todoList.List.Count > TODO_ITEMS_MAX)
+        {
+            RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
+        }
+
+        // Validate item IDs are unique and positive
+        var ids = new HashSet<int>();
+        foreach (var item in todoList.List)
+        {
+            if (item.Id <= 0)
+            {
+                RpcErrors.RpcErrors400.TodoItemDuplicate.ThrowRpcError();
+            }
+
+            if (!ids.Add(item.Id))
+            {
+                RpcErrors.RpcErrors400.TodoItemDuplicate.ThrowRpcError();
+            }
+
+            // Validate item title length
+            if (item.Title.Text.Length > TODO_ITEM_LENGTH_MAX)
+            {
+                RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
+            }
+        }
     }
 }

@@ -16,6 +16,14 @@ internal sealed class AppendTodoListHandler(IQueryProcessor queryProcessor, ICom
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestAppendTodoList obj)
     {
+        const int TODO_ITEM_LENGTH_MAX = 200;
+        const int TODO_ITEMS_MAX = 30;
+
+        if (obj.List.Count == 0)
+        {
+            RpcErrors.RpcErrors400.TodoNotModified.ThrowRpcError();
+        }
+
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = obj.Peer.ToPeer(input.UserId);
         var ownerPeerId = peer.PeerId;
@@ -35,12 +43,34 @@ internal sealed class AppendTodoListHandler(IQueryProcessor queryProcessor, ICom
         {
             if (messageReadModel.SenderUserId != input.UserId && !messageMediaToDo.Todo.OthersCanAppend)
             {
-                RpcErrors.RpcErrors400.MessageNotModified.ThrowRpcError();
+                RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
             }
 
+            // Check total items limit
+            if (messageMediaToDo.Todo.List.Count + obj.List.Count > TODO_ITEMS_MAX)
+            {
+                RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
+            }
+
+            // Check for duplicate IDs
+            var existingIds = messageMediaToDo.Todo.List.Select(x => x.Id).ToHashSet();
             foreach (var todoItem in obj.List)
             {
-                todoItem.Id = messageMediaToDo.Todo.List.Count + 1;
+                if (todoItem.Id <= 0)
+                {
+                    RpcErrors.RpcErrors400.TodoItemDuplicate.ThrowRpcError();
+                }
+
+                if (existingIds.Contains(todoItem.Id))
+                {
+                    RpcErrors.RpcErrors400.TodoItemDuplicate.ThrowRpcError();
+                }
+
+                if (todoItem.Title.Text.Length > TODO_ITEM_LENGTH_MAX)
+                {
+                    RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
+                }
+
                 messageMediaToDo.Todo.List.Add(todoItem);
             }
         }
