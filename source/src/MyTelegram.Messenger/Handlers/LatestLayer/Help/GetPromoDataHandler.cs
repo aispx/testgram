@@ -60,7 +60,7 @@ internal sealed class GetPromoDataHandler : RpcResultObjectHandler<MyTelegram.Sc
         {
             Expires = int.MaxValue, // Never expires
             Peer = new TPeerChannel { ChannelId = channelId },
-            PsaType = "xiegram", // PSA type identifier
+            PsaType = "info", // PSA type identifier
             PsaMessage = "sub to Xiegram", // PSA message shown in banner
             Chats = new TVector<IChat> { channelObj },
             Users = new TVector<IUser>(),
