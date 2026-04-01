@@ -12,7 +12,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class AppendTodoListHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAppendTodoList, MyTelegram.Schema.IUpdates>
+internal sealed class AppendTodoListHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IAccessHashHelper accessHashHelper, IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAppendTodoList, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestAppendTodoList obj)
     {
@@ -77,6 +77,21 @@ internal sealed class AppendTodoListHandler(IQueryProcessor queryProcessor, ICom
 
         var command = new EditOutboxMessageCommand(MessageId.Create(ownerPeerId, obj.MsgId), input.ToRequestInfo(), obj.MsgId, string.Empty, CurrentDate, null, media, null, false, null);
         await commandBus.PublishAsync(command);
+
+        // Send service message about appended tasks
+        var action = new TMessageActionTodoAppendTasks { List = obj.List };
+        var sendInput = new SendMessageInput(
+            input.ToRequestInfo() with { ReqMsgId = 0 },
+            input.UserId,
+            peer,
+            string.Empty,
+            Random.Shared.NextInt64(),
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            messageAction: action
+        );
+        await messageAppService.SendMessageAsync([sendInput]);
+
         return null !;
     }
 }
