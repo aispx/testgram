@@ -319,6 +319,18 @@ public class UserConverterService(
             {
                 tUser.BotBusiness = botUserDoc["BotBusiness"].AsBoolean;
             }
+
+            // Set BotCanEdit flag if current user owns this bot
+            var botOwnersCollection = mongoDatabase.GetCollection<BsonDocument>("bot-owners");
+            var ownerDoc = botOwnersCollection.Find(Builders<BsonDocument>.Filter.Eq("BotId", userReadModel.UserId)).FirstOrDefault();
+            if (ownerDoc != null)
+            {
+                var ownerId = ownerDoc["OwnerId"].AsInt64;
+                if (ownerId == request.UserId)
+                {
+                    tUser.BotCanEdit = true;
+                }
+            }
         }
 
         if (userReadModel.IsDeleted == true)
