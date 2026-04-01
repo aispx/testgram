@@ -24,10 +24,10 @@
 - Voice & Video Calls (WebRTC)
 - Telegram Business
 - Auto-Delete Messages
+- Stickers
 
 ### Soon...
 - End-to-End Encrypted Chat
-- Stickers
 - Forum Topics
 - Themes & Wallpapers
 - Scheduled Messages
