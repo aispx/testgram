@@ -429,6 +429,14 @@ public class XieFatherBotService(
             { "CreatedAt", DateTime.UtcNow }
         });
 
+        // Add bot owner to bot-owners collection for bot_can_edit flag
+        var botOwnersCol = mongoDatabase.GetCollection<BsonDocument>("bot-owners");
+        await botOwnersCol.InsertOneAsync(new BsonDocument
+        {
+            { "BotId", newUserId },
+            { "OwnerId", fromUserId }
+        });
+
         // Create bot user in read model
         var now = DateTime.UtcNow;
         var userCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel");
