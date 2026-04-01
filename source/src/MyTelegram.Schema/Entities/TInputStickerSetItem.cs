@@ -63,3 +63,4 @@ public sealed partial class TInputStickerSetItem : IInputStickerSetItem
         if (Flags.IsBitSet(1)) { Keywords = buffer.ReadString(); }
     }
 }
+

@@ -13,6 +13,38 @@ internal sealed class SuggestShortNameHandler : RpcResultObjectHandler<MyTelegra
 {
     protected override Task<MyTelegram.Schema.Stickers.ISuggestedShortName> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stickers.RequestSuggestShortName obj)
     {
-        throw new NotImplementedException();
+        // Validate title: must not start with digit
+        if (!string.IsNullOrEmpty(obj.Title) && char.IsDigit(obj.Title[0]))
+        {
+            RpcErrors.RpcErrors400.TitleInvalid.ThrowRpcError();
+        }
+
+        // Generate short_name from title
+        // Replace spaces with underscores, keep only alphanumeric and underscores, convert to lowercase
+        var shortName = new string(obj.Title
+            .Replace(' ', '_')
+            .ToLowerInvariant()
+            .Where(c => char.IsLetterOrDigit(c) || c == '_')
+            .Take(32)
+            .ToArray());
+
+        // Remove leading/trailing underscores
+        shortName = shortName.Trim('_');
+
+        // If empty after filtering, throw error
+        if (string.IsNullOrEmpty(shortName))
+        {
+            RpcErrors.RpcErrors400.TitleInvalid.ThrowRpcError();
+        }
+
+        // Add random suffix (3 digits like in original Telegram)
+        shortName += Random.Shared.Next(100, 999);
+
+        return Task.FromResult<MyTelegram.Schema.Stickers.ISuggestedShortName>(
+            new MyTelegram.Schema.Stickers.TSuggestedShortName
+            {
+                ShortName = shortName
+            });
     }
 }
+ 
