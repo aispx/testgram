@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "WebFetch(*)",
+      "WebSearch",
+      "Read(**)",
+      "Edit(**)",
+
+      "Bash(chmod:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(git rebase:*)",
+      "Bash(git *:*",
+      "Bash(docker compose:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker:*)",
+      "Bash(ls:*)",
+      "Bash(cd:*)",
+      "Bash(find:*)",
+
+      "Bash(/root/testgram/build/docker/*.sh)",
+      "Bash(/root/testgram/CLAUDE.md:*)",
+      "Bash(/root/testgram/docs/CALLS_SETUP.md:*)",
+      "Bash(./1.build-messenger-command-server.sh)",
+
+      "WebFetch(domain:core.telegram.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:gitlab.com)",
+      "WebFetch(domain:docker.com)"
+    ]
+  }
+}
