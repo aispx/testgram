@@ -103,7 +103,7 @@ services:
       - ./data/coturn:/var/lib/coturn
     command: >
       --verbose
-      --external-ip 31.128.45.9
+      --external-ip 90.156.168.199
       --realm testgram
       --server-name testgram
       --listening-port 3478
