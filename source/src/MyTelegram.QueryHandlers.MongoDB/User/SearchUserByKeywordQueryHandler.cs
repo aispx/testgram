@@ -19,34 +19,30 @@ public class SearchUserByKeywordQueryHandler(IQueryOnlyReadModelStore<UserReadMo
         }
 
         var qLower = q.ToLowerInvariant();
+        var qUpper = q.ToUpperInvariant();
 
+        // Use case-sensitive search in MongoDB, then filter in memory
         Expression<Func<UserReadModel, bool>> predicate = p =>
-            // Exact username match (highest priority)
-            (p.UserName != null && p.UserName.ToLower() == qLower) ||
-            // Username starts with query
-            (p.UserName != null && p.UserName.ToLower().StartsWith(qLower)) ||
-            // Username contains query
-            (p.UserName != null && p.UserName.ToLower().Contains(qLower)) ||
-            // First name starts with query
-            p.FirstName.ToLower().StartsWith(qLower) ||
-            // First name contains query
-            p.FirstName.ToLower().Contains(qLower) ||
-            // Last name starts with query
-            (p.LastName != null && p.LastName.ToLower().StartsWith(qLower)) ||
-            // Last name contains query
-            (p.LastName != null && p.LastName.ToLower().Contains(qLower)) ||
-            // Full name contains query (FirstName + LastName)
-            (p.LastName != null && (p.FirstName + " " + p.LastName).ToLower().Contains(qLower)) ||
-            // Phone contains query (for phone number search)
+            // Username matches
+            (p.UserName != null && (p.UserName.StartsWith(q) || p.UserName.StartsWith(qLower) || p.UserName.StartsWith(qUpper) || p.UserName.Contains(q) || p.UserName.Contains(qLower))) ||
+            // First name matches
+            (p.FirstName.StartsWith(q) || p.FirstName.StartsWith(qLower) || p.FirstName.StartsWith(qUpper) || p.FirstName.Contains(q) || p.FirstName.Contains(qLower)) ||
+            // Last name matches
+            (p.LastName != null && (p.LastName.StartsWith(q) || p.LastName.StartsWith(qLower) || p.LastName.StartsWith(qUpper) || p.LastName.Contains(q) || p.LastName.Contains(qLower))) ||
+            // Phone contains query
             (p.PhoneNumber != null && p.PhoneNumber.Contains(q));
 
-        // Sort by relevance: exact match > starts with > contains
-        var results = await store.FindAsync(predicate, 0, 100,
+        var results = await store.FindAsync(predicate, 0, 200,
             new SortOptions<UserReadModel>(p => p.FirstName, SortType.Ascending),
             cancellationToken);
 
-        // Re-sort by relevance in memory for better results
+        // Re-sort by relevance in memory with proper case-insensitive comparison
         return results
+            .Where(u =>
+                (u.UserName != null && u.UserName.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
+                u.FirstName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (u.LastName != null && u.LastName.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
+                (u.PhoneNumber != null && u.PhoneNumber.Contains(q)))
             .OrderByDescending(u => u.UserName?.Equals(qLower, StringComparison.OrdinalIgnoreCase) == true ? 3 : 0)
             .ThenByDescending(u => u.UserName?.StartsWith(qLower, StringComparison.OrdinalIgnoreCase) == true ? 2 : 0)
             .ThenByDescending(u => u.FirstName.StartsWith(qLower, StringComparison.OrdinalIgnoreCase) ? 1 : 0)

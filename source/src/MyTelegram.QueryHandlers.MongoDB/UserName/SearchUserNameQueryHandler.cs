@@ -19,16 +19,23 @@ public class SearchUserNameQueryHandler(IQueryOnlyReadModelStore<UserNameReadMod
 
         var qLower = q.ToLowerInvariant();
 
-        // Search for usernames that start with or contain the query
+        // Use case-insensitive search without ToLower() in query
+        // MongoDB will do case-sensitive comparison, so we search in memory after fetching
         var results = await store.FindAsync(
-            p => p.UserName.ToLower().StartsWith(qLower) || p.UserName.ToLower().Contains(qLower),
-            limit: 100,
+            p => p.UserName.StartsWith(q) ||
+                 p.UserName.StartsWith(q.ToUpper()) ||
+                 p.UserName.StartsWith(qLower) ||
+                 p.UserName.Contains(q) ||
+                 p.UserName.Contains(qLower),
+            limit: 200,
             cancellationToken: cancellationToken);
 
-        // Sort by relevance: exact match > starts with > contains
+        // Filter and sort by relevance in memory with case-insensitive comparison
         return results
-            .OrderByDescending(u => u.UserName.Equals(qLower, StringComparison.OrdinalIgnoreCase) ? 2 : 0)
-            .ThenByDescending(u => u.UserName.StartsWith(qLower, StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .Where(u => u.UserName.Contains(q, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(u => u.UserName.Equals(qLower, StringComparison.OrdinalIgnoreCase) ? 3 : 0)
+            .ThenByDescending(u => u.UserName.StartsWith(qLower, StringComparison.OrdinalIgnoreCase) ? 2 : 0)
+            .ThenByDescending(u => u.UserName.StartsWith(q, StringComparison.OrdinalIgnoreCase) ? 1 : 0)
             .ThenBy(u => u.UserName.Length)
             .ThenBy(u => u.UserName)
             .Take(50)
