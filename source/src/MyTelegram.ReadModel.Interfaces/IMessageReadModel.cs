@@ -11,7 +11,9 @@ public interface IMessageReadModel : IReadModel, IReactionItem
     long? GroupedId { get; }
     string Id { get; }
     byte[]? Media { get; }
+    string? MediaJson { get; }
     IMessageMedia? Media2 { get; }
+    long? DocumentId { get; }
     string Message { get; }
     string? MessageActionData { get; }
     IMessageAction? MessageAction { get; }

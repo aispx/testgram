@@ -63,8 +63,7 @@ internal sealed class GetPromoDataHandler : RpcResultObjectHandler<MyTelegram.Sc
         {
             Expires = int.MaxValue, // Never expires
             Peer = new TPeerChannel { ChannelId = channelId },
-            PsaType = "info", // PSA type identifier
-            PsaMessage = "sub to Xiegram", // PSA message shown in banner
+            // No PsaType/PsaMessage = PROMO_TYPE_OTHER (shows below folders, not as banner)
             Chats = new TVector<IChat> { channelObj },
             Users = new TVector<IUser>(),
             PendingSuggestions = new TVector<string>(),

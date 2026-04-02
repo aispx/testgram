@@ -13,6 +13,7 @@ internal sealed class DocumentMapper
 
     public TDocument Map(IDocumentReadModel source)
     {
+        Console.WriteLine($"[DEBUG] DocumentMapper.Map called for DocumentId={source.DocumentId}");
         return Map(source, new TDocument());
     }
 
@@ -74,9 +75,17 @@ internal sealed class DocumentMapper
         destination.DcId = source.DcId;
         //destination.Attributes = source.Attributes;
 
-        destination.Attributes = source.Attributes2 != null
-            ? [.. source.Attributes2]
-            : source.Attributes.ToTObject<TVector<IDocumentAttribute>>();
+        // Use Attributes2 if available (has stickerset info), otherwise fall back to Attributes
+        if (source.Attributes2 != null && source.Attributes2.Count > 0)
+        {
+            destination.Attributes = [.. source.Attributes2];
+            Console.WriteLine($"[DEBUG] DocumentMapper: Using Attributes2 ({source.Attributes2.Count} attributes) for DocumentId={source.DocumentId}");
+        }
+        else
+        {
+            destination.Attributes = source.Attributes.ToTObject<TVector<IDocumentAttribute>>();
+            Console.WriteLine($"[DEBUG] DocumentMapper: Using Attributes (fallback) for DocumentId={source.DocumentId}");
+        }
 
         return destination;
     }

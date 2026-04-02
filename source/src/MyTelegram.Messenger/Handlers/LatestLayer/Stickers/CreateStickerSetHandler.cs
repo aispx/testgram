@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Stickers;
@@ -86,6 +87,30 @@ internal sealed class CreateStickerSetHandler(
                 logger.LogWarning("Sticker document {DocId} not found when creating sticker set", docId);
                 continue;
             }
+
+            // Update document with stickerset information in Attributes2
+            var stickerAttribute = new TDocumentAttributeSticker
+            {
+                Alt = sticker.Emoji,
+                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                Mask = obj.Masks
+            };
+
+            var attributes2List = new List<IDocumentAttribute> { stickerAttribute };
+
+            // Preserve existing attributes if any
+            if (existingDoc.Contains("Attributes2") && existingDoc["Attributes2"] != BsonNull.Value)
+            {
+                // Keep non-sticker attributes
+                var existingAttrs = BsonSerializer.Deserialize<List<IDocumentAttribute>>(existingDoc["Attributes2"].ToJson());
+                attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker));
+            }
+
+            var updateDoc = Builders<BsonDocument>.Update.Set("Attributes2", attributes2List.ToBsonDocument());
+            await docCol.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("DocumentId", docId),
+                updateDoc
+            );
 
             documentIds.Add(docId);
 

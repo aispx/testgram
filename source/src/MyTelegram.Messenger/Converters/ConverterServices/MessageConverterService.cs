@@ -1,5 +1,8 @@
 ﻿using System.Buffers.Binary;
 using System.Text;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Converters.ConverterServices;
 
@@ -10,7 +13,9 @@ public class MessageConverterService(
     ILayeredService<IMessageFwdHeaderConverter> messageFwdHeaderLayeredService,
     ILayeredService<IPollConverter> pollLayeredService,
     IDataEncryptionHelper dataEncryptionHelper,
-    IOptionsMonitor<MyTelegramMessengerServerOptions> options
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options,
+    IMongoDatabase mongoDatabase,
+    ILogger<MessageConverterService> logger
 ) : IMessageConverterService, ITransientDependency
 {
     private static Dictionary<int, byte[]> _keys = [];
@@ -84,7 +89,25 @@ public class MessageConverterService(
             default:
                 {
                     var m = messageLayeredService.GetConverter(layer).ToMessage(readModel);
+                    logger.LogInformation("[DEBUG] ToMessage: MessageId={MessageId}, Media2={Media2Type}, Media length={MediaLength}",
+                        readModel.MessageId, readModel.Media2?.GetType().Name ?? "null", readModel.Media?.Length ?? 0);
+
                     var media = readModel.Media2 ?? readModel.Media.ToTObject<IMessageMedia>();
+                    logger.LogInformation("[DEBUG] ToMessage: After deserialization, media type={MediaType}", media?.GetType().Name ?? "null");
+
+                    // If Media2 is null, try to reconstruct from DocumentId
+                    if (media == null && readModel.DocumentId.HasValue && readModel.DocumentId.Value > 0)
+                    {
+                        logger.LogInformation("[DEBUG] Attempting to reconstruct media from DocumentId={DocumentId} for message {MessageId}",
+                            readModel.DocumentId, readModel.MessageId);
+                        // TODO: Implement document reconstruction
+                    }
+
+                    // Enrich documents in media with Attributes2 from database
+                    logger.LogInformation("[DEBUG] ToMessage: About to call EnrichMediaDocuments");
+                    media = EnrichMediaDocuments(media);
+                    logger.LogInformation("[DEBUG] ToMessage: After EnrichMediaDocuments");
+
                     m.Media = messageMediaResponseService.ToLayeredData(media, layer);
                     m.Out = readModel.SenderPeerId == selfUserId;
                     m.FromId = fromId;
@@ -268,7 +291,9 @@ public class MessageConverterService(
 
             default:
                 {
-                    var media = messageMediaResponseService.ToLayeredData(item.Media, layer);
+                    // Enrich documents in media with Attributes2 from database
+                    var enrichedMedia = EnrichMediaDocuments(item.Media);
+                    var media = messageMediaResponseService.ToLayeredData(enrichedMedia, layer);
                     var m = messageLayeredService.GetConverter(layer).ToMessage(item);
 
                     m.Media = media;
@@ -409,5 +434,73 @@ public class MessageConverterService(
         {
             ArrayPool<byte>.Shared.Return(tempBytes);
         }
+    }
+
+    private IMessageMedia? EnrichMediaDocuments(IMessageMedia? media)
+    {
+        if (media is not TMessageMediaDocument mediaDoc || mediaDoc.Document is not TDocument doc)
+        {
+            return media;
+        }
+
+        try
+        {
+            // Load document from MongoDB to get Attributes2 with stickerset info
+            var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
+            var filter = Builders<BsonDocument>.Filter.Eq("DocumentId", doc.Id);
+            var docBson = docCol.Find(filter).FirstOrDefault();
+
+            if (docBson != null && docBson.Contains("Attributes2") && docBson["Attributes2"] != BsonNull.Value)
+            {
+                // Deserialize Attributes2 - handle both short and full type names
+                var attributes2Array = docBson["Attributes2"].AsBsonArray;
+                var attributes2 = new List<IDocumentAttribute>();
+
+                foreach (var attrBson in attributes2Array)
+                {
+                    var attrDoc = attrBson.AsBsonDocument;
+                    var typeName = attrDoc["_t"].AsString;
+
+                    // Handle both "TDocumentAttributeSticker" and "MyTelegram.Schema.TDocumentAttributeSticker"
+                    if (typeName.EndsWith("TDocumentAttributeSticker"))
+                    {
+                        var stickerAttr = new TDocumentAttributeSticker
+                        {
+                            Alt = attrDoc.Contains("Alt") ? attrDoc["Alt"].AsString : "",
+                            Mask = attrDoc.Contains("Mask") && attrDoc["Mask"].AsBoolean
+                        };
+
+                        if (attrDoc.Contains("Stickerset") && attrDoc["Stickerset"] != BsonNull.Value)
+                        {
+                            var stickersetDoc = attrDoc["Stickerset"].AsBsonDocument;
+                            var stickersetType = stickersetDoc["_t"].AsString;
+
+                            if (stickersetType.EndsWith("TInputStickerSetID"))
+                            {
+                                stickerAttr.Stickerset = new TInputStickerSetID
+                                {
+                                    Id = stickersetDoc["Id"].ToInt64(),
+                                    AccessHash = stickersetDoc["AccessHash"].ToInt64()
+                                };
+                            }
+                        }
+
+                        attributes2.Add(stickerAttr);
+                    }
+                    // Add other attribute types here if needed
+                }
+
+                if (attributes2.Count > 0)
+                {
+                    doc.Attributes = new TVector<IDocumentAttribute>(attributes2);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "EnrichMediaDocuments failed for doc {DocumentId}", doc.Id);
+        }
+
+        return media;
     }
 }

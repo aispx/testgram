@@ -170,6 +170,35 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
                     fileRef = [];
                 }
 
+                // Use Attributes2 if available, otherwise create default sticker attribute
+                TVector<IDocumentAttribute> attributes;
+                if (d.Contains("Attributes2") && !d["Attributes2"].IsBsonNull)
+                {
+                    try
+                    {
+                        attributes = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(d["Attributes2"].ToJson());
+                    }
+                    catch
+                    {
+                        // Fallback to default attribute
+                        attributes = [new TDocumentAttributeSticker
+                        {
+                            Alt = alt,
+                            Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                            Mask = false,
+                        }];
+                    }
+                }
+                else
+                {
+                    attributes = [new TDocumentAttributeSticker
+                    {
+                        Alt = alt,
+                        Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                        Mask = false,
+                    }];
+                }
+
                 return (IDocument)new TDocument
                 {
                     Id = GetInt64(d["DocumentId"]),
@@ -179,12 +208,7 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
                     MimeType = d["MimeType"].AsString,
                     Size = GetInt64(d["Size"]),
                     DcId = GetInt32(d["DcId"]),
-                    Attributes = [new TDocumentAttributeSticker
-                    {
-                        Alt = alt,
-                        Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                        Mask = false,
-                    }],
+                    Attributes = attributes,
                     Thumbs = [],
                     VideoThumbs = [],
                 };

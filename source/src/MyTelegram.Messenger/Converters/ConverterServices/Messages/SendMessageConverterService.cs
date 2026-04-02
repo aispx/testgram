@@ -2,7 +2,8 @@
 
 internal sealed class SendMessageConverterService(
     IMessageConverterService messageConverterService,
-    IObjectMapper objectMapper)
+    IObjectMapper objectMapper,
+    ILogger<SendMessageConverterService> logger)
     : ISendMessageConverterService, ITransientDependency
 {
     public IUpdates ToUpdates(ReceiveInboxMessageCompletedSagaEvent data)
