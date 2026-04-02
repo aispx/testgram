@@ -21,9 +21,10 @@ internal sealed class CreateStickerSetHandler(
             RpcErrors.RpcErrors400.PackTitleInvalid.ThrowRpcError();
         }
 
+        // Auto-generate ShortName from Title if not provided
         if (string.IsNullOrWhiteSpace(obj.ShortName))
         {
-            RpcErrors.RpcErrors400.PackShortNameInvalid.ThrowRpcError();
+            obj.ShortName = GenerateShortName(obj.Title, input.UserId);
         }
 
         if (obj.Stickers.Count == 0)
@@ -232,5 +233,31 @@ internal sealed class CreateStickerSetHandler(
             BsonType.Double => (int)v.AsDouble,
             _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int32")
         };
+    }
+
+    private static string GenerateShortName(string title, long userId)
+    {
+        // Use same logic as SuggestShortNameHandler
+        // Replace spaces with underscores, keep only alphanumeric and underscores, convert to lowercase
+        var shortName = new string(title
+            .Replace(' ', '_')
+            .ToLowerInvariant()
+            .Where(c => char.IsLetterOrDigit(c) || c == '_')
+            .Take(32)
+            .ToArray());
+
+        // Remove leading/trailing underscores
+        shortName = shortName.Trim('_');
+
+        // If empty after filtering, use default
+        if (string.IsNullOrEmpty(shortName))
+        {
+            shortName = "sticker";
+        }
+
+        // Add random suffix (3 digits)
+        shortName += Random.Shared.Next(100, 999);
+
+        return shortName;
     }
 }
