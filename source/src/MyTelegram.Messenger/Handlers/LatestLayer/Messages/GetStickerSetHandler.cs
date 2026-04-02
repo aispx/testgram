@@ -152,11 +152,29 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
             {
                 var d = docMap[id];
                 var alt = emoticon ?? string.Empty;
+
+                // Handle FileReference safely
+                byte[] fileRef;
+                if (d.Contains("FileReference") && !d["FileReference"].IsBsonNull)
+                {
+                    var fr = d["FileReference"];
+                    if (fr.BsonType == BsonType.Binary)
+                        fileRef = fr.AsBsonBinaryData.Bytes;
+                    else if (fr.BsonType == BsonType.Array)
+                        fileRef = fr.AsBsonArray.Select(b => (byte)GetInt32(b)).ToArray();
+                    else
+                        fileRef = [];
+                }
+                else
+                {
+                    fileRef = [];
+                }
+
                 return (IDocument)new TDocument
                 {
                     Id = GetInt64(d["DocumentId"]),
                     AccessHash = GetInt64(d["AccessHash"]),
-                    FileReference = d["FileReference"].AsBsonArray.Select(b => (byte)GetInt32(b)).ToArray(),
+                    FileReference = fileRef,
                     Date = GetInt32(d["Date"]),
                     MimeType = d["MimeType"].AsString,
                     Size = GetInt64(d["Size"]),

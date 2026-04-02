@@ -53,7 +53,10 @@ internal sealed class GetPromoDataHandler : RpcResultObjectHandler<MyTelegram.Sc
             Scam = channelDoc.GetValue("Scam", false).AsBoolean,
             Fake = channelDoc.GetValue("Fake", false).AsBoolean,
             Date = channelDoc.GetValue("Date", 0).AsInt32,
-            ParticipantsCount = channelDoc.GetValue("ParticipantsCount", 0).AsInt32
+            ParticipantsCount = channelDoc.GetValue("ParticipantsCount", 0).AsInt32,
+            // Add required fields to prevent NullReferenceException
+            Photo = new TChatPhotoEmpty(),
+            RestrictionReason = new TVector<IRestrictionReason>()
         };
 
         return new TPromoData
