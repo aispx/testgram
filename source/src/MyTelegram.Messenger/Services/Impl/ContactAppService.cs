@@ -93,7 +93,8 @@ public class ContactAppService(
     public async Task<SearchContactOutput> SearchAsync(long selfUserId,
         string keyword, int limit)
     {
-        if (keyword?.Length > 4)
+        // Changed from > 4 to >= 1 to allow shorter searches like "chat"
+        if (keyword?.Length >= 1)
         {
             var searchKeyword = keyword;
             if (searchKeyword.StartsWith("@"))
@@ -120,7 +121,8 @@ public class ContactAppService(
             channelIdList = channelIdList.Distinct().ToList();
 
             var userIdList = contactReadModels.Select(p => p.TargetUserId).ToList();
-            userIdList.AddRange(userNameReadModels.Where(p => p.PeerType == PeerType.User).Select(p => p.PeerId));
+            // Include both regular users and bots (PeerType.User and other peer types)
+            userIdList.AddRange(userNameReadModels.Where(p => p.PeerType == PeerType.User || p.PeerType == (PeerType)5).Select(p => p.PeerId));
 
             var userReadModels = await userAppService.GetListAsync(userIdList);
             var allUserReadModels = userReadModels.ToList();
