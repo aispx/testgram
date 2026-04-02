@@ -113,6 +113,7 @@ public class ContactAppService(
             var userNameReadModels = await queryProcessor
                 .ProcessAsync(new SearchUserNameQuery(searchKeyword));
 
+            // Collect channel IDs from username search and keyword search
             var channelIdList = userNameReadModels.Where(p => p.PeerType == PeerType.Channel).Select(p => p.PeerId)
                 .ToList();
             var channelIds2 =
@@ -120,8 +121,8 @@ public class ContactAppService(
             channelIdList.AddRange(channelIds2);
             channelIdList = channelIdList.Distinct().ToList();
 
+            // Collect user IDs from contacts and username search (includes both users and bots)
             var userIdList = contactReadModels.Select(p => p.TargetUserId).ToList();
-            // Include all users from username search (both regular users and bots)
             userIdList.AddRange(userNameReadModels.Where(p => p.PeerType == PeerType.User).Select(p => p.PeerId));
 
             var userReadModels = await userAppService.GetListAsync(userIdList);
@@ -136,6 +137,23 @@ public class ContactAppService(
             }
 
             var channelReadModels = await channelAppService.GetListAsync(channelIdList);
+
+            // Also search for chats (groups) by keyword
+            var chatReadModels = new List<IChannelReadModel>();
+            try
+            {
+                var chatIds = await queryProcessor.ProcessAsync(new GetChannelIdsByKeywordQuery(selfUserId, keyword, defaultLimit));
+                if (chatIds.Any())
+                {
+                    var chats = await channelAppService.GetListAsync(chatIds);
+                    chatReadModels = chats.Where(c => !c.Broadcast).ToList(); // Groups are non-broadcast channels
+                }
+            }
+            catch
+            {
+                // Ignore errors in chat search
+            }
+
             var photoReadModels =
                 await photoAppService.GetPhotosAsync(allUserReadModels, contactReadModels, channelReadModels);
 
@@ -143,7 +161,7 @@ public class ContactAppService(
                 allUserReadModels,
                 photoReadModels,
                 contactReadModels,
-                [],
+                chatReadModels,
                 channelReadModels,
                 [],
                 []
