@@ -21,10 +21,12 @@ internal sealed class CreateStickerSetHandler(
             RpcErrors.RpcErrors400.PackTitleInvalid.ThrowRpcError();
         }
 
+        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
+
         // Auto-generate ShortName from Title if not provided
         if (string.IsNullOrWhiteSpace(obj.ShortName))
         {
-            obj.ShortName = GenerateShortName(obj.Title, input.UserId);
+            obj.ShortName = await GenerateUniqueShortNameAsync(obj.Title, setCol);
         }
 
         if (obj.Stickers.Count == 0)
@@ -37,7 +39,6 @@ internal sealed class CreateStickerSetHandler(
             RpcErrors.RpcErrors400.PackShortNameInvalid.ThrowRpcError();
         }
 
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
         var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
         var userSetCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-userinstalledstickersetreadmodel");
 
@@ -235,11 +236,10 @@ internal sealed class CreateStickerSetHandler(
         };
     }
 
-    private static string GenerateShortName(string title, long userId)
+    private static async Task<string> GenerateUniqueShortNameAsync(string title, IMongoCollection<BsonDocument> setCol)
     {
-        // Use same logic as SuggestShortNameHandler
-        // Replace spaces with underscores, keep only alphanumeric and underscores, convert to lowercase
-        var shortName = new string(title
+        // Generate base short_name from title
+        var baseShortName = new string(title
             .Replace(' ', '_')
             .ToLowerInvariant()
             .Where(c => char.IsLetterOrDigit(c) || c == '_')
@@ -247,17 +247,45 @@ internal sealed class CreateStickerSetHandler(
             .ToArray());
 
         // Remove leading/trailing underscores
-        shortName = shortName.Trim('_');
+        baseShortName = baseShortName.Trim('_');
 
         // If empty after filtering, use default
-        if (string.IsNullOrEmpty(shortName))
+        if (string.IsNullOrEmpty(baseShortName))
         {
-            shortName = "sticker";
+            baseShortName = "sticker";
         }
 
-        // Add random suffix (3 digits)
-        shortName += Random.Shared.Next(100, 999);
+        // First try without suffix
+        var shortName = baseShortName;
+        var exists = await setCol.Find(Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Eq("ShortName", shortName),
+            Builders<BsonDocument>.Filter.Eq("Slug", shortName)
+        )).AnyAsync();
 
+        if (!exists)
+        {
+            return shortName;
+        }
+
+        // If taken, try with random 3-digit suffix
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            var suffix = Random.Shared.Next(100, 999);
+            shortName = baseShortName + suffix;
+
+            exists = await setCol.Find(Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Eq("ShortName", shortName),
+                Builders<BsonDocument>.Filter.Eq("Slug", shortName)
+            )).AnyAsync();
+
+            if (!exists)
+            {
+                return shortName;
+            }
+        }
+
+        // Fallback: use timestamp
+        shortName = baseShortName + DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return shortName;
     }
 }
