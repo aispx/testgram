@@ -54,9 +54,13 @@ internal sealed class UserMapper
                 });
             }
 
-            // CRITICAL: According to Fragment API docs, when collectible usernames exist,
-            // user.username must NOT be set - client will use user.usernames array instead
-            // Leave destination.Username as null
+            // Set primary username (first active editable, or first active)
+            var primary = source.Usernames.FirstOrDefault(u => u.Active && u.Editable)
+                          ?? source.Usernames.FirstOrDefault(u => u.Active);
+            if (primary != null)
+            {
+                destination.Username = primary.Username;
+            }
         }
         else
         {
