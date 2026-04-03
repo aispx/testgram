@@ -12,6 +12,7 @@ internal sealed class SendPaymentFormHandler(
     IMongoDatabase mongoDatabase,
     IOptions<MyTelegramMessengerServerOptions> options,
     IMessageAppService messageAppService,
+    IPeerHelper peerHelper,
     ILogger<SendPaymentFormHandler> logger)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestSendPaymentForm, MyTelegram.Schema.Payments.IPaymentResult>
 {
@@ -21,6 +22,10 @@ internal sealed class SendPaymentFormHandler(
         // Auction bid (XTR payment, no Stripe)
         if (obj.Invoice is TInputInvoiceStarGiftAuctionBid auctionBid)
             return await HandleAuctionBidAsync(input, auctionBid);
+
+        // Star Gift sending (XTR payment, no Stripe)
+        if (obj.Invoice is TInputInvoiceStarGift starGiftInvoice)
+            return await HandleStarGiftSendAsync(input, starGiftInvoice);
 
         if (obj.Invoice is not TInputInvoiceStars)
             throw new NotImplementedException();
@@ -171,5 +176,134 @@ internal sealed class SendPaymentFormHandler(
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"Stripe confirm error: {doc.GetProperty("error").GetProperty("message").GetString()}");
         return paymentMethodId;
+    }
+
+    private async Task<IPaymentResult> HandleStarGiftSendAsync(IRequestInput input, TInputInvoiceStarGift invoice)
+    {
+        // Get gift from MongoDB
+        var giftCol = mongoDatabase.GetCollection<StarGiftDocument>("star-gifts");
+        var gift = await giftCol.Find(d => d.GiftId == invoice.GiftId).FirstOrDefaultAsync();
+        if (gift == null)
+            RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
+
+        // Calculate total cost
+        long totalStars = gift!.Stars;
+        if (invoice.IncludeUpgrade && gift.UpgradeStars.HasValue)
+            totalStars += gift.UpgradeStars.Value;
+
+        // Check sender's balance
+        var senderBalance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+        if (senderBalance < totalStars)
+            RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
+
+        // Get recipient peer
+        var recipientPeer = peerHelper.GetPeer(invoice.Peer, input.UserId);
+        if (recipientPeer == null)
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+
+        // Deduct stars from sender
+        await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -totalStars);
+        await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -totalStars,
+            title: $"Gift: {gift.Title}", peerUserId: recipientPeer.PeerId);
+
+        // Create SavedStarGiftDocument for recipient
+        var now = DateTime.UtcNow.ToTimestamp();
+        var randomId = Random.Shared.NextInt64();
+        var savedGift = new SavedStarGiftDocument
+        {
+            OwnerUserId = recipientPeer.PeerType == PeerType.User ? recipientPeer.PeerId : 0,
+            OwnerChannelId = recipientPeer.PeerType == PeerType.Channel ? recipientPeer.PeerId : 0,
+            FromUserId = input.UserId,
+            MessageId = 0, // Will be set after message is created
+            GiftId = gift.GiftId,
+            Stars = gift.Stars,
+            ConvertStars = gift.ConvertStars,
+            UpgradeStars = gift.UpgradeStars,
+            NameHidden = invoice.HideName,
+            Saved = false, // Not saved to profile by default
+            Date = now,
+            MessageText = (invoice.Message as TTextWithEntities)?.Text,
+            RandomId = randomId,
+            PinnedToTop = false,
+            IsUnique = false,
+            PrepaidUpgrade = invoice.IncludeUpgrade,
+            DocumentId = gift.DocumentId,
+            DocumentAccessHash = gift.DocumentAccessHash,
+            FileReference = gift.FileReference,
+            DocumentDate = gift.DocumentDate,
+            MimeType = gift.MimeType,
+            DocumentSize = gift.DocumentSize,
+            DcId = gift.DcId,
+        };
+
+        var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
+        await savedCol.InsertOneAsync(savedGift);
+
+        // Build TStarGift for message action
+        var starGiftTl = new TStarGift
+        {
+            Id = gift.GiftId,
+            Stars = gift.Stars,
+            ConvertStars = gift.ConvertStars,
+            UpgradeStars = gift.UpgradeStars,
+            Limited = gift.Limited,
+            SoldOut = gift.SoldOut,
+            Birthday = gift.Birthday,
+            RequirePremium = gift.RequirePremium,
+            LimitedPerUser = gift.LimitedPerUser,
+            AvailabilityRemains = gift.AvailabilityRemains,
+            AvailabilityTotal = gift.AvailabilityTotal,
+            FirstSaleDate = gift.FirstSaleDate,
+            LastSaleDate = gift.LastSaleDate,
+            ResellMinStars = gift.ResellMinStars,
+            Title = gift.Title,
+            PerUserTotal = gift.PerUserTotal,
+            PerUserRemains = gift.PerUserRemains,
+            LockedUntilDate = gift.LockedUntilDate,
+            Sticker = new TDocument
+            {
+                Id = gift.DocumentId,
+                AccessHash = gift.DocumentAccessHash,
+                FileReference = gift.FileReference,
+                Date = gift.DocumentDate,
+                MimeType = gift.MimeType,
+                Size = gift.DocumentSize,
+                DcId = gift.DcId,
+                Attributes = [new TDocumentAttributeSticker { Alt = "🎁", Stickerset = new TInputStickerSetEmpty() }],
+            },
+        };
+
+        // Create service message with messageActionStarGift
+        var messageAction = new TMessageActionStarGift
+        {
+            NameHidden = invoice.HideName,
+            Saved = false,
+            CanUpgrade = gift.UpgradeStars.HasValue && !invoice.IncludeUpgrade,
+            PrepaidUpgrade = invoice.IncludeUpgrade,
+            Gift = starGiftTl,
+            Message = invoice.Message,
+            ConvertStars = gift.ConvertStars,
+            UpgradeStars = gift.UpgradeStars,
+            FromId = invoice.HideName ? null : new TPeerUser { UserId = input.UserId },
+        };
+
+        await messageAppService.SendMessageAsync([new SendMessageInput(
+            input.ToRequestInfo() with { ReqMsgId = 0 },
+            input.UserId,
+            recipientPeer,
+            string.Empty,
+            randomId,
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            messageAction: messageAction
+        )]);
+
+        logger.LogInformation("Star gift sent: giftId={GiftId} from={From} to={To} stars={Stars} prepaidUpgrade={PrepaidUpgrade}",
+            gift.GiftId, input.UserId, recipientPeer.PeerId, totalStars, invoice.IncludeUpgrade);
+
+        return new TPaymentResult
+        {
+            Updates = new TUpdates { Updates = [], Users = [], Chats = [], Date = now, Seq = 0 }
+        };
     }
 }
