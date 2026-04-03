@@ -2,73 +2,111 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
+
 /// <summary>
-/// Reorder usernames associated to a bot we own.
-/// Possible errors
-/// Code Type Description
-/// 400 BOT_INVALID This is not a valid bot.
-/// 400 USERNAME_NOT_MODIFIED The username was not modified.
-/// <para><c>See <a href="https://corefork.telegram.org/method/bots.reorderUsernames"/> </c></para>
+/// Reorder usernames associated with a bot
+/// See https://core.telegram.org/method/bots.reorderUsernames
 /// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class ReorderUsernamesHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestReorderUsernames, IBool>
+internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestReorderUsernames, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestReorderUsernames obj)
+    private readonly IMongoDatabase _database;
+
+    public ReorderUsernamesHandler(IMongoDatabase database)
     {
-        // Get bot user ID
-        long botUserId;
-        if (obj.Bot is TInputUser inputUser)
+        _database = database;
+    }
+
+    protected override async Task<IBool> HandleCoreAsync(
+        IRequestInput input,
+        MyTelegram.Schema.Bots.RequestReorderUsernames obj)
+    {
+        if (obj.Bot is not TInputUser inputUser)
         {
-            botUserId = inputUser.UserId;
-        }
-        else
-        {
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
             return null!;
         }
 
-        // Check if user is a bot and we own it
-        var botOwnersCol = mongoDatabase.GetCollection<BsonDocument>("bot-owners");
-        var ownerDoc = await botOwnersCol.Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId)).FirstOrDefaultAsync();
+        var botUserId = inputUser.UserId;
 
-        if (ownerDoc == null || ownerDoc["OwnerId"].AsInt64 != input.UserId)
+        // Get bot from MongoDB
+        var userCollection = _database.GetCollection<BsonDocument>("eventflow-userreadmodel");
+        var botFilter = Builders<BsonDocument>.Filter.Eq("UserId", botUserId);
+        var bot = await userCollection.Find(botFilter).FirstOrDefaultAsync();
+
+        if (bot == null)
         {
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+            return null!;
         }
 
-        // Get bot's usernames
-        var userCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel");
-        var userFilter = Builders<BsonDocument>.Filter.Eq("UserId", botUserId);
-        var userDoc = await userCollection.Find(userFilter).FirstOrDefaultAsync();
+        // Get current usernames
+        var usernames = bot.Contains("Usernames") && !bot["Usernames"].IsBsonNull
+            ? bot["Usernames"].AsBsonArray
+            : new BsonArray();
 
-        if (userDoc == null || !userDoc.GetValue("Bot", false).AsBoolean)
+        // Build username map
+        var usernameMap = new Dictionary<string, BsonDocument>(StringComparer.OrdinalIgnoreCase);
+        var activeUsernames = new List<string>();
+        
+        foreach (var item in usernames)
         {
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+            if (item.IsBsonDocument)
+            {
+                var doc = item.AsBsonDocument;
+                if (doc.Contains("Username"))
+                {
+                    var username = doc["Username"].AsString;
+                    usernameMap[username] = doc;
+                    
+                    if (doc.Contains("Active") && doc["Active"].AsBoolean)
+                    {
+                        activeUsernames.Add(username.ToLower());
+                    }
+                }
+            }
         }
 
-        var currentUsernames = userDoc.Contains("Usernames") && !userDoc["Usernames"].IsBsonNull
-            ? userDoc["Usernames"].AsBsonArray.Select(x => x.AsString).ToList()
-            : new List<string>();
+        // Validate order
+        var orderLower = obj.Order.Select(u => u.ToLower()).ToList();
+        var activeSet = new HashSet<string>(activeUsernames);
+        var orderSet = new HashSet<string>(orderLower);
 
-        var newOrder = obj.Order.Select(u => u.ToLowerInvariant()).ToList();
-
-        // Validate that all usernames in new order exist in current usernames
-        if (newOrder.Count != currentUsernames.Count || !newOrder.All(u => currentUsernames.Contains(u)))
+        if (!activeSet.SetEquals(orderSet))
         {
-            RpcErrors.RpcErrors400.UsernameInvalid.ThrowRpcError();
+            RpcErrors.RpcErrors400.OrderInvalid.ThrowRpcError();
+            return null!;
         }
 
-        // Check if order actually changed
-        if (currentUsernames.SequenceEqual(newOrder))
+        // Reorder usernames
+        var reorderedUsernames = new BsonArray();
+        
+        foreach (var username in obj.Order)
         {
-            RpcErrors.RpcErrors400.UsernameNotModified.ThrowRpcError();
+            if (usernameMap.TryGetValue(username, out var doc))
+            {
+                reorderedUsernames.Add(doc);
+            }
+        }
+        
+        foreach (var item in usernames)
+        {
+            if (item.IsBsonDocument)
+            {
+                var doc = item.AsBsonDocument;
+                if (doc.Contains("Username"))
+                {
+                    var isActive = doc.Contains("Active") && doc["Active"].AsBoolean;
+                    if (!isActive)
+                    {
+                        reorderedUsernames.Add(doc);
+                    }
+                }
+            }
         }
 
-        // Update usernames order
-        var update = Builders<BsonDocument>.Update.Set("Usernames", new BsonArray(newOrder));
-        await userCollection.UpdateOneAsync(userFilter, update);
+        // Save back to MongoDB
+        var update = Builders<BsonDocument>.Update.Set("Usernames", reorderedUsernames);
+        await userCollection.UpdateOneAsync(botFilter, update);
 
         return new TBoolTrue();
     }

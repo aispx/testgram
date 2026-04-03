@@ -1,18 +1,69 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
+
 /// <summary>
-/// Disable all purchased usernames of a supergroup or channel
-/// Possible errors
-/// Code Type Description
-/// 400 CHANNEL_INVALID The provided channel is invalid.
-/// <para><c>See <a href="https://corefork.telegram.org/method/channels.deactivateAllUsernames"/> </c></para>
+/// Deactivate all collectible usernames for a channel
+/// See https://core.telegram.org/method/channels.deactivateAllUsernames
 /// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
 internal sealed class DeactivateAllUsernamesHandler : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestDeactivateAllUsernames, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestDeactivateAllUsernames obj)
+    private readonly IMongoDatabase _database;
+
+    public DeactivateAllUsernamesHandler(IMongoDatabase database)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        _database = database;
+    }
+
+    protected override async Task<IBool> HandleCoreAsync(
+        IRequestInput input,
+        MyTelegram.Schema.Channels.RequestDeactivateAllUsernames obj)
+    {
+        if (obj.Channel is not TInputChannel inputChannel)
+        {
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var channelId = inputChannel.ChannelId;
+
+        // Get channel from MongoDB
+        var channelCollection = _database.GetCollection<BsonDocument>("eventflow-channelreadmodel");
+        var channelFilter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
+        var channel = await channelCollection.Find(channelFilter).FirstOrDefaultAsync();
+
+        if (channel == null)
+        {
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        // Get current usernames
+        var usernames = channel.Contains("Usernames") && !channel["Usernames"].IsBsonNull
+            ? channel["Usernames"].AsBsonArray
+            : new BsonArray();
+
+        // Deactivate all non-editable (Fragment) usernames
+        foreach (var item in usernames)
+        {
+            if (item.IsBsonDocument)
+            {
+                var doc = item.AsBsonDocument;
+                var isEditable = doc.Contains("Editable") && doc["Editable"].AsBoolean;
+                
+                // Only deactivate Fragment usernames (non-editable)
+                if (!isEditable)
+                {
+                    doc["Active"] = false;
+                }
+            }
+        }
+
+        // Save back to MongoDB
+        var update = Builders<BsonDocument>.Update.Set("Usernames", usernames);
+        await channelCollection.UpdateOneAsync(channelFilter, update);
+
+        return new TBoolTrue();
     }
 }

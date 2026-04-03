@@ -1,4 +1,4 @@
-﻿using MyTelegram.Schema;
+using MyTelegram.Schema;
 
 namespace MyTelegram.ReadModel.Interfaces;
 
@@ -50,6 +50,7 @@ public interface IUserReadModel : IReadModel
     int? BotActiveUsers { get; }
 
     List<string>? Usernames { get; }
+    List<UsernameInfo>? UsernamesV2 { get; }  // NEW: Full Username objects with Editable/Active
     DateTime? CreationTime { get; }
     int? ProfilePhotoUpdateDate { get; }
     int? UserNameUpdateDate { get; }

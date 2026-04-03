@@ -1,4 +1,4 @@
-﻿namespace MyTelegram.Converters.Mappers.LatestLayer;
+namespace MyTelegram.Converters.Mappers.LatestLayer;
 
 internal sealed class ChannelMapper
     : IObjectMapper<IChannelReadModel, TChannel>,
@@ -77,7 +77,34 @@ internal sealed class ChannelMapper
 
         destination.SignatureProfiles = source.SignatureProfiles;
         destination.SubscriptionUntilDate = source.SubscriptionUntilDate;
-        if (source.Usernames?.Count > 0)
+
+        // Use UsernamesV2 if available (with Editable/Active fields)
+        if (source.UsernamesV2 != null && source.UsernamesV2.Count > 0)
+        {
+            destination.Usernames = new TVector<IUsername>();
+            foreach (var usernameInfo in source.UsernamesV2)
+            {
+                destination.Usernames.Add(new TUsername
+                {
+                    Username = usernameInfo.Username,
+                    Editable = usernameInfo.Editable,
+                    Active = usernameInfo.Active
+                });
+            }
+
+            // Set primary username (first active username)
+            var primaryUsername = source.UsernamesV2.FirstOrDefault(u => u.Active);
+            if (primaryUsername != null)
+            {
+                destination.Username = primaryUsername.Username;
+            }
+            else
+            {
+                destination.Username = null;
+            }
+        }
+        // Fallback to old Usernames field (List<string>)
+        else if (source.Usernames?.Count > 0)
         {
             destination.Usernames = [];
             if (!string.IsNullOrEmpty(destination.Username))
@@ -88,7 +115,6 @@ internal sealed class ChannelMapper
                     Editable = true,
                     Username = destination.Username
                 });
-                destination.Username = null;
             }
 
             foreach (var username in source.Usernames)
@@ -99,6 +125,12 @@ internal sealed class ChannelMapper
                     Editable = false,
                     Username = username
                 });
+            }
+
+            // Set primary username from first username
+            if (destination.Usernames.Count > 0)
+            {
+                destination.Username = destination.Usernames[0].Username;
             }
         }
 

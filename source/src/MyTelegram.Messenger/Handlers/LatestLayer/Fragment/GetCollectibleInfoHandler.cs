@@ -1,21 +1,68 @@
-using MyTelegram.Schema.Fragment;
+using MongoDB.Bson;
+using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Fragment;
+
 /// <summary>
-/// Fetch information about a <a href="https://corefork.telegram.org/api/fragment#fetching-info-about-fragment-collectibles">fragment collectible, see here »</a> for more info on the full flow.
-/// Possible errors
-/// Code Type Description
-/// 400 COLLECTIBLE_INVALID The specified collectible is invalid.
-/// 400 COLLECTIBLE_NOT_FOUND The specified collectible could not be found.
-/// <para><c>See <a href="https://corefork.telegram.org/method/fragment.getCollectibleInfo"/> </c></para>
+/// Fetch information about a fragment collectible (username or phone number purchased on Fragment.com)
+/// See https://core.telegram.org/method/fragment.getCollectibleInfo
 /// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
 internal sealed class GetCollectibleInfoHandler : RpcResultObjectHandler<MyTelegram.Schema.Fragment.RequestGetCollectibleInfo, MyTelegram.Schema.Fragment.ICollectibleInfo>
 {
-    protected override Task<MyTelegram.Schema.Fragment.ICollectibleInfo> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Fragment.RequestGetCollectibleInfo obj)
+    private readonly IMongoDatabase _database;
+
+    public GetCollectibleInfoHandler(IMongoDatabase database)
     {
-        return Task.FromResult<MyTelegram.Schema.Fragment.ICollectibleInfo>(new TCollectibleInfo { PurchaseDate = CurrentDate, Currency = "USD", Amount = 10000000, CryptoCurrency = "BTC", CryptoAmount = 1, Url = "https://fragment.com/" });
+        _database = database;
+    }
+
+    protected override async Task<MyTelegram.Schema.Fragment.ICollectibleInfo> HandleCoreAsync(
+        IRequestInput input,
+        MyTelegram.Schema.Fragment.RequestGetCollectibleInfo obj)
+    {
+        var collection = _database.GetCollection<BsonDocument>("fragment_collectibles");
+        BsonDocument? doc = null;
+
+        // Check if it's a username or phone collectible
+        if (obj.Collectible is TInputCollectibleUsername usernameInput)
+        {
+            if (string.IsNullOrWhiteSpace(usernameInput.Username))
+            {
+                RpcErrors.RpcErrors400.CollectibleInvalid.ThrowRpcError();
+            }
+
+            var filter = Builders<BsonDocument>.Filter.Eq("username", usernameInput.Username.ToLower());
+            doc = await collection.Find(filter).FirstOrDefaultAsync();
+        }
+        else if (obj.Collectible is TInputCollectiblePhone phoneInput)
+        {
+            if (string.IsNullOrWhiteSpace(phoneInput.Phone))
+            {
+                RpcErrors.RpcErrors400.CollectibleInvalid.ThrowRpcError();
+            }
+
+            var filter = Builders<BsonDocument>.Filter.Eq("phone", phoneInput.Phone);
+            doc = await collection.Find(filter).FirstOrDefaultAsync();
+        }
+        else
+        {
+            RpcErrors.RpcErrors400.CollectibleInvalid.ThrowRpcError();
+        }
+
+        if (doc == null)
+        {
+            RpcErrors.RpcErrors400.CollectibleNotFound.ThrowRpcError();
+        }
+
+        // Build response
+        return new MyTelegram.Schema.Fragment.TCollectibleInfo
+        {
+            PurchaseDate = doc["purchase_date"].AsInt32,
+            Currency = doc["currency"].AsString,
+            Amount = doc["amount"].AsInt64,
+            CryptoCurrency = doc["crypto_currency"].AsString,
+            CryptoAmount = doc["crypto_amount"].AsInt64,
+            Url = doc["url"].AsString
+        };
     }
 }

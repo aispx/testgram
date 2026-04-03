@@ -858,4 +858,262 @@ This project uses Claude Code with the following setup:
 
 ---
 
-**Last Updated:** 2026-04-02
+**Last Updated:** 2026-04-03
+
+---
+
+## Fragment API
+
+### Overview
+Fragment API позволяет получать информацию о коллекционных username и phone номерах, купленных на Fragment.com.
+
+### Username Architecture
+
+**CRITICAL: Multiple Usernames Support**
+
+Users and channels can have multiple usernames:
+- **Basic username** (Editable=true): Regular username, always active, cannot be deactivated
+- **Fragment NFT username** (Editable=false): Purchased on Fragment.com, can be activated/deactivated
+
+**Data Structure:**
+
+```csharp
+// ReadModel: UsernameInfo class
+public class UsernameInfo
+{
+    public string Username { get; set; }
+    public bool Editable { get; set; }  // true = basic, false = Fragment NFT
+    public bool Active { get; set; }    // true = active, false = inactive
+}
+
+// IUserReadModel / IChannelReadModel
+List<UsernameInfo>? UsernamesV2 { get; }  // NEW: Full username objects
+
+// TL Schema: TUsername
+public sealed class TUsername : IUsername
+{
+    public bool Editable { get; set; }  // Flag bit 0
+    public bool Active { get; set; }    // Flag bit 1
+    public string Username { get; set; }
+}
+```
+
+**MongoDB Storage:**
+
+```javascript
+// eventflow-userreadmodel
+{
+  UserId: Long("2010001"),
+  UserName: "glebxdlol",           // Primary username (legacy)
+  Username: "blockchain",          // Current active username (legacy)
+  Usernames: ["blockchain"],       // Legacy array
+  UsernamesV2: [                   // NEW: Full username objects
+    { Username: "glebxdlol", Editable: true, Active: true },
+    { Username: "blockchain", Editable: false, Active: true }
+  ]
+}
+```
+
+**Mapper: UserMapper.cs / ChannelMapper.cs**
+
+```csharp
+// Convert UsernamesV2 to TVector<IUsername>
+if (source.UsernamesV2 != null && source.UsernamesV2.Count > 0)
+{
+    destination.Usernames = new TVector<IUsername>();
+    foreach (var usernameInfo in source.UsernamesV2)
+    {
+        destination.Usernames.Add(new TUsername
+        {
+            Username = usernameInfo.Username,
+            Editable = usernameInfo.Editable,
+            Active = usernameInfo.Active
+        });
+    }
+}
+```
+
+**Client Display:**
+
+When client receives `user.usernames: [TL_username]`:
+- Shows all active usernames in profile
+- NFT usernames (Editable=false) display with Fragment icon
+- Clicking NFT username opens `FragmentUsernameBottomSheet` with purchase info
+
+### MongoDB Collection: `fragment_collectibles`
+
+```javascript
+{
+  _id: "fragment-username-testgram",
+  type: "username",              // "username" или "phone"
+  username: "testgram",          // для type="username"
+  phone: "888123456",            // для type="phone"
+  purchase_date: 1704067200,     // Unix timestamp
+  currency: "USD",               // ISO 4217 код валюты
+  amount: 14500,                 // Цена в минимальных единицах (145.00 USD)
+  crypto_currency: "TON",        // Название криптовалюты
+  crypto_amount: 50000000000,    // Цена в минимальных единицах TON
+  url: "https://fragment.com/username/testgram"
+}
+```
+
+### Handler: GetCollectibleInfoHandler
+
+**Location:** `source/src/MyTelegram.Messenger/Handlers/LatestLayer/Fragment/GetCollectibleInfoHandler.cs`
+
+**Request:** `fragment.getCollectibleInfo`
+- `collectible`: `InputCollectible` (username или phone)
+
+**Response:** `fragment.CollectibleInfo`
+- `purchase_date`: дата покупки (unixtime)
+- `currency`: валюта (USD, EUR, etc)
+- `amount`: цена в минимальных единицах
+- `crypto_currency`: криптовалюта (TON)
+- `crypto_amount`: цена в минимальных единицах криптовалюты
+- `url`: ссылка на Fragment.com
+
+**Errors:**
+- `COLLECTIBLE_INVALID` (400): неверный формат collectible
+- `COLLECTIBLE_NOT_FOUND` (400): collectible не найден
+
+### Как добавить Fragment collectible
+
+```bash
+# Username
+docker-compose exec -T mongodb mongosh tg --quiet --eval "
+db.fragment_collectibles.insertOne({
+  _id: 'fragment-username-myusername',
+  type: 'username',
+  username: 'myusername',
+  purchase_date: $(date +%s),
+  currency: 'USD',
+  amount: 14500,
+  crypto_currency: 'TON',
+  crypto_amount: 50000000000,
+  url: 'https://fragment.com/username/myusername'
+});
+"
+
+# Phone (должен начинаться с 888)
+docker-compose exec -T mongodb mongosh tg --quiet --eval "
+db.fragment_collectibles.insertOne({
+  _id: 'fragment-phone-888999888',
+  type: 'phone',
+  phone: '888999888',
+  purchase_date: $(date +%s),
+  currency: 'USD',
+  amount: 29900,
+  crypto_currency: 'TON',
+  crypto_amount: 100000000000,
+  url: 'https://fragment.com/number/888999888'
+});
+"
+```
+
+### Как это работает в клиенте
+
+1. **ProfileActivity.java** (строка 7120, 7160, 7205):
+   - При клике на username/phone проверяется `!usernameObj.editable` или `phone.startsWith("888")`
+   - Отправляется `fragment.getCollectibleInfo`
+   - Открывается `FragmentUsernameBottomSheet`
+
+2. **FragmentUsernameBottomSheet.java**:
+   - `TYPE_USERNAME = 0`: для username
+   - `TYPE_PHONE = 1`: для phone номеров
+   - Показывает информацию о покупке (дата, цена в TON и USD)
+   - Кнопка "View on Fragment" открывает `info.url`
+
+### Примеры использования
+
+```csharp
+// Handler автоматически определяет тип collectible
+if (obj.Collectible is TInputCollectibleUsername usernameInput)
+{
+    // Поиск по username
+    var filter = Builders<BsonDocument>.Filter.Eq("username", usernameInput.Username.ToLower());
+}
+else if (obj.Collectible is TInputCollectiblePhone phoneInput)
+{
+    // Поиск по phone
+    var filter = Builders<BsonDocument>.Filter.Eq("phone", phoneInput.Phone);
+}
+```
+
+### Username Management Handlers
+
+**Implemented handlers for managing multiple usernames:**
+
+1. **account.toggleUsername** - Activate/deactivate user's Fragment username
+   - Location: `Handlers/LatestLayer/Account/ToggleUsernameHandler.cs`
+   - Cannot deactivate basic username (Editable=true)
+   - Max 10 active usernames limit
+
+2. **account.reorderUsernames** - Reorder user's active usernames
+   - Location: `Handlers/LatestLayer/Account/ReorderUsernamesHandler.cs`
+   - Only active usernames can be reordered
+   - First username becomes primary
+
+3. **channels.toggleUsername** - Activate/deactivate channel's Fragment username
+   - Location: `Handlers/LatestLayer/Channels/ToggleUsernameHandler.cs`
+
+4. **channels.reorderUsernames** - Reorder channel's active usernames
+   - Location: `Handlers/LatestLayer/Channels/ReorderUsernamesHandler.cs`
+
+5. **channels.deactivateAllUsernames** - Deactivate all Fragment usernames for channel
+   - Location: `Handlers/LatestLayer/Channels/DeactivateAllUsernamesHandler.cs`
+   - Keeps basic usernames (Editable=true) active
+
+6. **bots.toggleUsername** - Activate/deactivate bot's Fragment username
+   - Location: `Handlers/LatestLayer/Bots/ToggleUsernameHandler.cs`
+
+7. **bots.reorderUsernames** - Reorder bot's active usernames
+   - Location: `Handlers/LatestLayer/Bots/ReorderUsernamesHandler.cs`
+
+### Как назначить NFT username пользователю
+
+```bash
+# 1. Добавить Fragment collectible
+docker-compose exec -T mongodb mongosh tg --quiet --eval "
+db.fragment_collectibles.insertOne({
+  _id: 'fragment-username-blockchain',
+  type: 'username',
+  username: 'blockchain',
+  purchase_date: $(date +%s),
+  currency: 'USD',
+  amount: 14500,
+  crypto_currency: 'TON',
+  crypto_amount: 50000000000,
+  url: 'https://fragment.com/username/blockchain'
+});
+"
+
+# 2. Обновить UsernamesV2 пользователя
+docker-compose exec -T mongodb mongosh tg --quiet --eval '
+db["eventflow-userreadmodel"].updateOne(
+  { UserId: NumberLong("2010001") },
+  { 
+    $set: { 
+      UsernamesV2: [
+        { Username: "glebxdlol", Editable: true, Active: true },
+        { Username: "blockchain", Editable: false, Active: true }
+      ]
+    }
+  }
+)'
+
+# 3. Перезапустить сервер
+docker-compose restart messenger-command-server
+
+# 4. В клиенте: убить процесс, очистить кэш, войти заново
+```
+
+### Важные моменты
+
+1. **Username**: хранится в lowercase для поиска
+2. **Phone**: должен начинаться с 888 для Fragment номеров
+3. **Amount**: в минимальных единицах (145.00 USD = 14500)
+4. **CryptoAmount**: в минимальных единицах TON (50 TON = 50000000000)
+5. **URL**: должен вести на Fragment.com
+6. **UsernamesV2**: ВСЕГДА включает основной username (Editable=true) первым
+7. **Client cache**: После изменения username нужно очистить кэш клиента
+

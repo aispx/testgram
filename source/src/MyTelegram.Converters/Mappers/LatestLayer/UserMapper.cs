@@ -1,4 +1,4 @@
-﻿namespace MyTelegram.Converters.Mappers.LatestLayer;
+namespace MyTelegram.Converters.Mappers.LatestLayer;
 
 internal sealed class UserMapper
     : IObjectMapper<IUserReadModel, TUser>,
@@ -23,7 +23,6 @@ internal sealed class UserMapper
         destination.AccessHash = source.AccessHash;
         destination.Bot = source.Bot;
         destination.BotInfoVersion = source.BotInfoVersion;
-        destination.Username = source.UserName;
         destination.Phone = source.PhoneNumber;
         destination.FirstName = source.FirstName;
         destination.LastName = source.LastName;
@@ -40,6 +39,33 @@ internal sealed class UserMapper
             destination.SendPaidMessagesStars = source.GlobalPrivacySettings.NoncontactPeersPaidStars;
         destination.BotHasMainApp = source.BotHasMainApp;
         destination.BotActiveUsers = source.BotActiveUsers;
+
+        // Map UsernamesV2 to TVector<IUsername> and set primary Username
+        if (source.UsernamesV2 != null && source.UsernamesV2.Count > 0)
+        {
+            destination.Usernames = new TVector<IUsername>();
+            foreach (var usernameInfo in source.UsernamesV2)
+            {
+                destination.Usernames.Add(new TUsername
+                {
+                    Username = usernameInfo.Username,
+                    Editable = usernameInfo.Editable,
+                    Active = usernameInfo.Active
+                });
+            }
+
+            // Set primary username (first active username)
+            var primaryUsername = source.UsernamesV2.FirstOrDefault(u => u.Active);
+            if (primaryUsername != null)
+            {
+                destination.Username = primaryUsername.Username;
+            }
+        }
+        else
+        {
+            // Fallback to legacy UserName field
+            destination.Username = source.UserName;
+        }
 
         // Read BotBusiness from MongoDB directly since it's not in IUserReadModel
         // This is a temporary solution until BotBusiness is added to the read model

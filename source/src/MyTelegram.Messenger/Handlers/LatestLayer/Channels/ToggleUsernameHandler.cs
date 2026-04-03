@@ -1,25 +1,115 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
+
 /// <summary>
-/// Activate or deactivate a purchased <a href="https://fragment.com/">fragment.com</a> username associated to a <a href="https://corefork.telegram.org/api/channel">supergroup or channel</a> we own.
-/// Possible errors
-/// Code Type Description
-/// 400 CHANNEL_INVALID The provided channel is invalid.
-/// 400 CHANNEL_PRIVATE You haven't joined this channel/supergroup.
-/// 400 CHAT_ADMIN_REQUIRED You must be an admin in this chat to do this.
-/// 400 CHAT_NOT_MODIFIED No changes were made to chat information because the new information you passed is identical to the current information.
-/// 400 USERNAMES_ACTIVE_TOO_MUCH The maximum number of active usernames was reached.
-/// 400 USERNAME_INVALID The provided username is not valid.
-/// 400 USERNAME_NOT_MODIFIED The username was not modified.
-/// <para><c>See <a href="https://corefork.telegram.org/method/channels.toggleUsername"/> </c></para>
+/// Activate or deactivate a purchased fragment.com username for a channel
+/// See https://core.telegram.org/method/channels.toggleUsername
 /// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class ToggleUsernameHandler(IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleUsername, IBool>
+internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleUsername, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestToggleUsername obj)
+    private readonly IMongoDatabase _database;
+
+    public ToggleUsernameHandler(IMongoDatabase database)
     {
-        await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, adminRights => adminRights.ChangeInfo);
+        _database = database;
+    }
+
+    protected override async Task<IBool> HandleCoreAsync(
+        IRequestInput input,
+        MyTelegram.Schema.Channels.RequestToggleUsername obj)
+    {
+        if (obj.Channel is not TInputChannel inputChannel)
+        {
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var channelId = inputChannel.ChannelId;
+        var username = obj.Username.ToLower();
+
+        // Get channel from MongoDB
+        var channelCollection = _database.GetCollection<BsonDocument>("eventflow-channelreadmodel");
+        var channelFilter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
+        var channel = await channelCollection.Find(channelFilter).FirstOrDefaultAsync();
+
+        if (channel == null)
+        {
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        // Get current usernames
+        var usernames = channel.Contains("Usernames") && !channel["Usernames"].IsBsonNull
+            ? channel["Usernames"].AsBsonArray
+            : new BsonArray();
+
+        // Find the username
+        BsonDocument? targetUsername = null;
+        foreach (var item in usernames)
+        {
+            if (item.IsBsonDocument)
+            {
+                var doc = item.AsBsonDocument;
+                if (doc.Contains("Username") && doc["Username"].AsString.ToLower() == username)
+                {
+                    targetUsername = doc;
+                    break;
+                }
+            }
+        }
+
+        if (targetUsername == null)
+        {
+            RpcErrors.RpcErrors400.UsernameInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        // Check if it's editable (basic username cannot be deactivated)
+        var isEditable = targetUsername.Contains("Editable") && targetUsername["Editable"].AsBoolean;
+        if (isEditable && !obj.Active)
+        {
+            RpcErrors.RpcErrors400.UsernameNotModified.ThrowRpcError();
+            return null!;
+        }
+
+        // Check current active state
+        var currentActive = targetUsername.Contains("Active") && targetUsername["Active"].AsBoolean;
+        if (currentActive == obj.Active)
+        {
+            RpcErrors.RpcErrors400.UsernameNotModified.ThrowRpcError();
+            return null!;
+        }
+
+        // Count active usernames
+        var activeCount = 0;
+        foreach (var item in usernames)
+        {
+            if (item.IsBsonDocument)
+            {
+                var doc = item.AsBsonDocument;
+                if (doc.Contains("Active") && doc["Active"].AsBoolean)
+                {
+                    activeCount++;
+                }
+            }
+        }
+
+        // Check max active usernames (10)
+        if (obj.Active && activeCount >= 10)
+        {
+            RpcErrors.RpcErrors400.UsernamesActiveTooMuch.ThrowRpcError();
+            return null!;
+        }
+
+        // Update username active state
+        targetUsername["Active"] = obj.Active;
+
+        // Save back to MongoDB
+        var update = Builders<BsonDocument>.Update.Set("Usernames", usernames);
+        await channelCollection.UpdateOneAsync(channelFilter, update);
+
         return new TBoolTrue();
     }
 }

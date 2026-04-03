@@ -70,6 +70,7 @@ public class UserReadModel : IUserReadModel,
     public virtual string? UserName { get; private set; }
 
     public List<string>? Usernames { get; private set; }
+    public List<UsernameInfo>? UsernamesV2 { get; private set; }
     public int? UserNameUpdateDate { get; private set; }
     public bool? IsDeleted { get; set; }
     public virtual bool Verified { get; private set; }
