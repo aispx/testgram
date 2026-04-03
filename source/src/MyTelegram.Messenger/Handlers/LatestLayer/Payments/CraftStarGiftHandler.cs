@@ -7,10 +7,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// Craft star gift by combining 3-4 identical gifts
 /// From madrik1337/telelakel findings:
 /// - Can only craft SAME gift type (4 cakes, not 3 cakes + 1 lollipop)
-/// - Number taken RANDOMLY from used gifts (not first slot!)
+/// - Number taken from FIRST SLOT gift (not random!)
+/// - Blockchain gifts CAN be used, but NOT in first slot (number won't transfer)
 /// - Craft can FAIL - gifts burn without result
 /// - Supply decreases by number of gifts used
-/// - Blockchain gifts CANNOT be used at all
 /// <para><c>See <a href="https://corefork.telegram.org/method/payments.craftStarGift"/> </c></para>
 /// </summary>
 internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessageAppService messageAppService, IPtsHelper ptsHelper)
@@ -45,7 +45,11 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
                 unique = await uniqueCol.Find(d => d.UniqueId == c.SavedId && d.OwnerUserId == input.UserId).FirstOrDefaultAsync();
             }
 
-            if (unique == null) RpcErrors.RpcErrors400.StargiftNotFound.ThrowRpcError();
+            if (unique == null)
+            {
+                // Check if gift was already burned (used in previous craft)
+                throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_BURNED"));
+            }
             gifts.Add(unique);
         }
 
@@ -54,8 +58,9 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
         if (gifts.Any(g => g.GiftId != firstGiftId))
             RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
-        // Validate: no blockchain gifts allowed at all
-        if (gifts.Any(g => g.WasOnBlockchain))
+        // Validate: first slot cannot be blockchain gift (number won't transfer)
+        // From telelakel: "blockchain gifts can't be placed in the first slot"
+        if (gifts[0].WasOnBlockchain)
             RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
         // Get gift definition
@@ -90,40 +95,41 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
             return new TUpdates { Updates = [], Users = [], Chats = [], Date = now, Seq = 0 };
         }
 
-        // Craft succeeded - pick random gift to keep
-        var selectedGift = gifts[Random.Shared.Next(gifts.Count)];
+        // Craft succeeded - use FIRST SLOT gift as base
+        // Number from first slot is kept (not random!)
+        var firstGift = gifts[0];
 
         // Generate NEW crafted attributes with higher rarity
         var newAttrs = await UniqueStarGiftHelper.GenerateAttributesAsync(mongoDatabase, giftDoc!, crafted: true);
 
-        // Update selected gift with new crafted attributes
-        // Keep: UniqueId, Slug, Num (from randomly selected gift), GiftId
-        selectedGift.Attributes = newAttrs;
-        selectedGift.Date = now;
-        selectedGift.TransferLockedUntil = null; // Can transfer immediately
+        // Update first gift with new crafted attributes
+        // Keep: UniqueId, Slug, Num (from FIRST slot), GiftId
+        firstGift.Attributes = newAttrs;
+        firstGift.Date = now;
+        firstGift.TransferLockedUntil = null; // Can transfer immediately
 
-        await uniqueCol.InsertOneAsync(selectedGift);
+        await uniqueCol.InsertOneAsync(firstGift);
 
         // Re-create saved gift entry
         await savedCol.InsertOneAsync(new SavedStarGiftDocument
         {
             OwnerUserId = input.UserId,
-            FromUserId = selectedGift.FromUserId,
-            GiftId = selectedGift.GiftId,
+            FromUserId = firstGift.FromUserId,
+            GiftId = firstGift.GiftId,
             Stars = 0,
             IsUnique = true,
-            UniqueSlug = selectedGift.Slug,
-            RandomId = selectedGift.UniqueId,
+            UniqueSlug = firstGift.Slug,
+            RandomId = firstGift.UniqueId,
             Saved = true,
             Date = now,
-            GiftNum = selectedGift.Num, // Number from randomly selected gift
-            DocumentId = selectedGift.DocumentId,
-            DocumentAccessHash = selectedGift.DocumentAccessHash,
-            FileReference = selectedGift.FileReference,
-            DocumentDate = selectedGift.DocumentDate,
-            MimeType = selectedGift.MimeType,
-            DocumentSize = selectedGift.DocumentSize,
-            DcId = selectedGift.DcId,
+            GiftNum = firstGift.Num, // Number from FIRST slot
+            DocumentId = firstGift.DocumentId,
+            DocumentAccessHash = firstGift.DocumentAccessHash,
+            FileReference = firstGift.FileReference,
+            DocumentDate = firstGift.DocumentDate,
+            MimeType = firstGift.MimeType,
+            DocumentSize = firstGift.DocumentSize,
+            DcId = firstGift.DcId,
         });
 
         return new TUpdates { Updates = [], Users = [], Chats = [], Date = now, Seq = 0 };
