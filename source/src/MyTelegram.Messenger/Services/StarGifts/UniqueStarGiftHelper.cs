@@ -110,7 +110,9 @@ public static class UniqueStarGiftHelper
     // Generate random attributes from DB config, fallback to gift sticker if no config
     public static async Task<UniqueGiftAttribute[]> GenerateAttributesAsync(IMongoDatabase db, StarGiftDocument gift, bool crafted = false)
     {
-        var col = db.GetCollection<UpgradeConfigEntry>("star-gift-upgrade-config");
+        // Use craft config for crafted gifts, upgrade config for regular upgrades
+        var collectionName = crafted ? "star-gift-craft-config" : "star-gift-upgrade-config";
+        var col = db.GetCollection<UpgradeConfigEntry>(collectionName);
         var all = await col.Find(Builders<UpgradeConfigEntry>.Filter.In("gift_id", new[] { gift.GiftId, 0L })).ToListAsync();
 
         var models    = all.Where(e => e.Type == "model"   && e.GiftId == gift.GiftId).ToList();

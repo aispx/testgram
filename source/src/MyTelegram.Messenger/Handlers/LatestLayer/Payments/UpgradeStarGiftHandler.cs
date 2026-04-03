@@ -22,8 +22,24 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
             _ => null
         };
 
-        if (saved == null) RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
-        if (saved!.IsUnique) RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
+        if (saved == null)
+            throw new RpcException(new RpcError(400, "STARGIFT_NOT_FOUND"));
+
+        if (saved!.IsUnique)
+            throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_UPGRADED"));
+
+        // Check if upgrade is available
+        if (!saved.UpgradeStars.HasValue || saved.UpgradeStars.Value <= 0)
+            throw new RpcException(new RpcError(400, "STARGIFT_UPGRADE_UNAVAILABLE"));
+
+        // Check if this is a unique gift that was burned
+        if (saved.IsUnique && !string.IsNullOrEmpty(saved.UniqueSlug))
+        {
+            var uniqueCol = mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts");
+            var uniqueDoc = await uniqueCol.Find(d => d.Slug == saved.UniqueSlug).FirstOrDefaultAsync();
+            if (uniqueDoc?.Burned == true)
+                throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_BURNED"));
+        }
 
         // Deduct upgrade stars only if not prepaid
         if (!saved.PrepaidUpgrade && saved.UpgradeStars.HasValue && saved.UpgradeStars.Value > 0)

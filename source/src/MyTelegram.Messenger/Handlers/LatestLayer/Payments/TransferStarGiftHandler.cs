@@ -34,6 +34,10 @@ internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMes
         if (doc == null) RpcErrors.RpcErrors400.StargiftNotFound.ThrowRpcError();
         if (!ownerVerified && doc!.OwnerUserId != input.UserId) RpcErrors.RpcErrors400.StargiftOwnerInvalid.ThrowRpcError();
 
+        // Check if gift was burned (used in crafting)
+        if (doc!.Burned)
+            throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_BURNED"));
+
         // Check transfer cooldown (21 days after purchase/upgrade, or 7 days after new login)
         var currentTime = DateTime.UtcNow.ToTimestamp();
         if (doc!.TransferLockedUntil.HasValue && doc.TransferLockedUntil.Value > currentTime)

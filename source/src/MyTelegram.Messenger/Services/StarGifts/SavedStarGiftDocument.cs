@@ -34,6 +34,9 @@ public class SavedStarGiftDocument
     public string? PrepaidUpgradeHash { get; set; }
     public int? CanResellAt { get; set; }  // won from auction — cannot be resold
 
+    // Layer 223+ craft field
+    public int? CanCraftAt { get; set; }   // Unix timestamp - can't craft before this date
+
     // Sticker fields
     public long DocumentId { get; set; }
     public long DocumentAccessHash { get; set; }

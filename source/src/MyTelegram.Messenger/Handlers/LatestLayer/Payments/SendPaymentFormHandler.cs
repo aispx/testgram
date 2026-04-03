@@ -184,10 +184,31 @@ internal sealed class SendPaymentFormHandler(
         var giftCol = mongoDatabase.GetCollection<StarGiftDocument>("star-gifts");
         var gift = await giftCol.Find(d => d.GiftId == invoice.GiftId).FirstOrDefaultAsync();
         if (gift == null)
-            RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
+            throw new RpcException(new RpcError(400, "STARGIFT_NOT_FOUND"));
+
+        // Check if gift is sold out (STARGIFT_USAGE_LIMITED)
+        if (gift!.SoldOut || (gift.AvailabilityRemains.HasValue && gift.AvailabilityRemains.Value <= 0))
+            throw new RpcException(new RpcError(400, "STARGIFT_USAGE_LIMITED"));
+
+        // Check per-user limit (STARGIFT_USER_USAGE_LIMITED)
+        if (gift.LimitedPerUser && gift.PerUserTotal.HasValue && gift.PerUserRemains.HasValue)
+        {
+            var userGiftCount = await mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts")
+                .CountDocumentsAsync(d =>
+                    d.FromUserId == input.UserId &&
+                    d.GiftId == gift.GiftId);
+
+            if (userGiftCount >= gift.PerUserTotal.Value)
+                throw new RpcException(new RpcError(400, "STARGIFT_USER_USAGE_LIMITED"));
+        }
+
+        // Check if gift is locked (not yet available for purchase)
+        var currentTime = DateTime.UtcNow.ToTimestamp();
+        if (gift.LockedUntilDate.HasValue && gift.LockedUntilDate.Value > currentTime)
+            throw new RpcException(new RpcError(400, "STARGIFT_INVALID"));
 
         // Calculate total cost
-        long totalStars = gift!.Stars;
+        long totalStars = gift.Stars;
         if (invoice.IncludeUpgrade && gift.UpgradeStars.HasValue)
             totalStars += gift.UpgradeStars.Value;
 
@@ -199,12 +220,30 @@ internal sealed class SendPaymentFormHandler(
         // Get recipient peer
         var recipientPeer = peerHelper.GetPeer(invoice.Peer, input.UserId);
         if (recipientPeer == null)
-            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            throw new RpcException(new RpcError(400, "STARGIFT_PEER_INVALID"));
 
         // Deduct stars from sender
         await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -totalStars);
         await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -totalStars,
             title: $"Gift: {gift.Title}", peerUserId: recipientPeer.PeerId);
+
+        // Decrease availability if limited
+        if (gift.Limited && gift.AvailabilityRemains.HasValue)
+        {
+            await giftCol.UpdateOneAsync(
+                d => d.GiftId == gift.GiftId,
+                Builders<StarGiftDocument>.Update.Inc(d => d.AvailabilityRemains, -1)
+            );
+        }
+
+        // Decrease per-user availability if limited per user
+        if (gift.LimitedPerUser && gift.PerUserRemains.HasValue)
+        {
+            await giftCol.UpdateOneAsync(
+                d => d.GiftId == gift.GiftId,
+                Builders<StarGiftDocument>.Update.Inc(d => d.PerUserRemains, -1)
+            );
+        }
 
         // Create SavedStarGiftDocument for recipient
         var now = DateTime.UtcNow.ToTimestamp();

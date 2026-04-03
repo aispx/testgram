@@ -17,6 +17,10 @@ internal sealed class SendStarGiftOfferHandler(
         var doc = await col.Find(d => d.Slug == obj.Slug).FirstOrDefaultAsync();
         if (doc == null) RpcErrors.RpcErrors400.StargiftNotFound.ThrowRpcError();
 
+        // Check if gift was burned (used in crafting)
+        if (doc!.Burned)
+            throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_BURNED"));
+
         if (doc.OwnerUserId == input.UserId) RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
         var priceAmount = ((TStarsAmount)obj.Price).Amount;

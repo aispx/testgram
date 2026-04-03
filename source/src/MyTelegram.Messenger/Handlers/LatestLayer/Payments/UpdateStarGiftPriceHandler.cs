@@ -32,6 +32,11 @@ internal sealed class UpdateStarGiftPriceHandler(IMongoDatabase mongoDatabase) :
         }
 
         if (doc == null) RpcErrors.RpcErrors400.StargiftNotFound.ThrowRpcError();
+
+        // Check if gift was burned (used in crafting)
+        if (doc!.Burned)
+            throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_BURNED"));
+
         if (doc!.OwnerUserId != input.UserId && doc.OwnerChannelId == 0) RpcErrors.RpcErrors400.StargiftOwnerInvalid.ThrowRpcError();
 
         long resellStars = obj.ResellAmount is TStarsAmount sa ? sa.Amount : 0;

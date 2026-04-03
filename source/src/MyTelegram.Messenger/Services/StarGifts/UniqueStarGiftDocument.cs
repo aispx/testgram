@@ -46,6 +46,15 @@ public class UniqueStarGiftDocument
     // Transfer restrictions (from telelakel findings)
     public int? TransferLockedUntil { get; set; }  // Unix timestamp - can't transfer before this date
     public bool WasOnBlockchain { get; set; }      // If true, can't be used in first crafting slot
+    public bool IsFromBlockchain { get; set; }     // Bot API 9.2+ - blockchain-assigned gift
+
+    // Layer 223+ craft fields
+    public bool Burned { get; set; }               // Gift was burned in crafting
+    public bool Crafted { get; set; }              // Gift was created via crafting
+    public int? CraftChancePermille { get; set; }  // Craft success chance (0-1000)
+
+    // Bot API 9.1+ resale tracking
+    public long? LastResaleStars { get; set; }     // Last resale price
 }
 
 public class UniqueGiftAttribute
@@ -54,6 +63,7 @@ public class UniqueGiftAttribute
     public string Name { get; set; } = "";
     public int RarityPermille { get; set; }
     public bool Crafted { get; set; } // Set to true for crafted gifts (Layer 222+)
+    public string? RarityTier { get; set; } // "uncommon", "rare", "epic", "legendary"
 
     // model/pattern
     public long? DocumentId { get; set; }

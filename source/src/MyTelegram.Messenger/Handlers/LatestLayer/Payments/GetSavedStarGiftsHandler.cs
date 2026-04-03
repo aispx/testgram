@@ -193,6 +193,7 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
                 GiftNum = doc.GiftNum,
                 PrepaidUpgradeHash = doc.PrepaidUpgradeHash,
                 CanResellAt = doc.CanResellAt,
+                CanCraftAt = doc.CanCraftAt, // Layer 223+ craft cooldown
             });
         }
 

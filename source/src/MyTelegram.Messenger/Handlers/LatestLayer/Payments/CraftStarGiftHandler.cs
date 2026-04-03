@@ -24,6 +24,28 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
         var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
         var uniqueCol = mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts");
 
+        // Check craft cooldown on first gift
+        var currentTime = DateTime.UtcNow.ToTimestamp();
+        SavedStarGiftDocument? firstSaved = null;
+        if (obj.Stargift[0] is TInputSavedStarGiftUser firstUser)
+        {
+            firstSaved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.IsUnique && (d.MessageId == firstUser.MsgId || d.RandomId == firstUser.MsgId)).FirstOrDefaultAsync();
+        }
+        else if (obj.Stargift[0] is TInputSavedStarGiftSlug firstSlug)
+        {
+            firstSaved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.IsUnique && d.UniqueSlug == firstSlug.Slug).FirstOrDefaultAsync();
+        }
+        else if (obj.Stargift[0] is TInputSavedStarGiftChat firstChat)
+        {
+            firstSaved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.IsUnique && d.RandomId == firstChat.SavedId).FirstOrDefaultAsync();
+        }
+
+        if (firstSaved?.CanCraftAt.HasValue == true && firstSaved.CanCraftAt.Value > currentTime)
+        {
+            var secondsToWait = firstSaved.CanCraftAt.Value - currentTime;
+            throw new RpcException(new RpcError(400, $"STARGIFT_CRAFT_TOO_EARLY_{secondsToWait}"));
+        }
+
         // Load all gifts to craft
         var gifts = new List<UniqueStarGiftDocument>();
         foreach (var input_gift in obj.Stargift)
@@ -58,6 +80,10 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
         if (gifts.Any(g => g.GiftId != firstGiftId))
             RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
+        // Validate: cannot craft already crafted gifts
+        if (gifts.Any(g => g.Crafted))
+            throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_CRAFTED"));
+
         // Validate: first slot cannot be blockchain gift (number won't transfer)
         // From telelakel: "blockchain gifts can't be placed in the first slot"
         if (gifts[0].WasOnBlockchain)
@@ -76,7 +102,10 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
         // Delete all source gifts (they burn regardless of success)
         foreach (var gift in gifts)
         {
-            await uniqueCol.DeleteOneAsync(d => d.UniqueId == gift.UniqueId);
+            // Mark as burned (Layer 223+)
+            gift.Burned = true;
+            gift.OwnerUserId = 0; // Remove owner
+            await uniqueCol.ReplaceOneAsync(d => d.UniqueId == gift.UniqueId, gift);
             await savedCol.DeleteOneAsync(d => d.IsUnique && d.UniqueSlug == gift.Slug);
         }
 
@@ -102,11 +131,17 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
         // Generate NEW crafted attributes with higher rarity
         var newAttrs = await UniqueStarGiftHelper.GenerateAttributesAsync(mongoDatabase, giftDoc!, crafted: true);
 
+        // Calculate total Initial Price from all gifts used in craft
+        var totalInitialPrice = gifts.Sum(g => g.InitialSaleStars);
+
         // Update first gift with new crafted attributes
         // Keep: UniqueId, Slug, Num (from FIRST slot), GiftId
         firstGift.Attributes = newAttrs;
         firstGift.Date = now;
         firstGift.TransferLockedUntil = null; // Can transfer immediately
+        firstGift.Crafted = true; // Mark as crafted (Layer 223+)
+        firstGift.CraftChancePermille = (int)(successChance * 1000); // Store craft chance
+        firstGift.InitialSaleStars = totalInitialPrice; // Sum of all gifts' Initial Price
 
         await uniqueCol.InsertOneAsync(firstGift);
 
@@ -116,7 +151,7 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
             OwnerUserId = input.UserId,
             FromUserId = firstGift.FromUserId,
             GiftId = firstGift.GiftId,
-            Stars = 0,
+            Stars = totalInitialPrice, // Sum of all gifts' Initial Price
             IsUnique = true,
             UniqueSlug = firstGift.Slug,
             RandomId = firstGift.UniqueId,

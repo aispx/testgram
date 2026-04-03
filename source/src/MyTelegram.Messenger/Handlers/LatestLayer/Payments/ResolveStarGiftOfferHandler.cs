@@ -40,6 +40,10 @@ internal sealed class ResolveStarGiftOfferHandler(
         var doc = await uniqueCol.Find(d => d.Slug == offer.Slug).FirstOrDefaultAsync();
         if (doc == null) RpcErrors.RpcErrors400.StargiftNotFound.ThrowRpcError();
 
+        // Check if gift was burned (used in crafting)
+        if (doc!.Burned)
+            throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_BURNED"));
+
         // SECURITY FIX: Atomic update to prevent race conditions
         // Only mark as resolved if still unresolved (prevents double-processing)
         var updateResult = await offerCol.UpdateOneAsync(
