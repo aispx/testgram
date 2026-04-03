@@ -105,7 +105,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         }
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", reorderedUsernames);
+        var update = Builders<BsonDocument>.Update.Set("Usernames", reorderedUsernames);
         await userCollection.UpdateOneAsync(botFilter, update);
 
         return new TBoolTrue();

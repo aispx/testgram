@@ -54,11 +54,21 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetDisallowedGiftsAsync(targetUserId, userFull);
         await SetBotVerificationAsync(targetUserId, 0, userFull, user);
         await SetUserStoriesAsync(targetUserId, userFull, input.UserId);
+
+        // CRITICAL: Cast to concrete TUser for proper serialization
+        // ILayeredUser interface doesn't serialize correctly in TVector
+        var tUser = user as TUser;
+        var usersList = new List<IUser>();
+        if (tUser != null)
+        {
+            usersList.Add(tUser);
+        }
+
         return new TUserFull
         {
-            Chats = [],
+            Chats = new TVector<IChat>(),
             FullUser = userFull,
-            Users = new TVector<IUser>(user)
+            Users = new TVector<IUser>(usersList)
         };
     }
     

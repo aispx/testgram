@@ -40,9 +40,9 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
             return null!;
         }
 
-        // Get current usernames from UsernamesV2
-        var usernamesV2 = channel.Contains("UsernamesV2") && !channel["UsernamesV2"].IsBsonNull
-            ? channel["UsernamesV2"].AsBsonArray
+        // Get current usernames from Usernames
+        var usernamesV2 = channel.Contains("Usernames") && !channel["Usernames"].IsBsonNull
+            ? channel["Usernames"].AsBsonArray
             : new BsonArray();
 
         if (usernamesV2.Count == 0)
@@ -116,7 +116,7 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         usernamesV2[targetIndex] = targetUsername;
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", usernamesV2);
+        var update = Builders<BsonDocument>.Update.Set("Usernames", usernamesV2);
         await channelCollection.UpdateOneAsync(channelFilter, update);
 
         return new TBoolTrue();

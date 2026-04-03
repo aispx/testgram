@@ -32,9 +32,9 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
             RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
         }
 
-        // Get current usernames from UsernamesV2
-        var usernamesV2 = user.Contains("UsernamesV2") && !user["UsernamesV2"].IsBsonNull
-            ? user["UsernamesV2"].AsBsonArray
+        // Get current usernames from Usernames
+        var usernamesV2 = user.Contains("Usernames") && !user["Usernames"].IsBsonNull
+            ? user["Usernames"].AsBsonArray
             : new BsonArray();
 
         if (usernamesV2.Count == 0)
@@ -108,7 +108,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         }
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", reorderedUsernames);
+        var update = Builders<BsonDocument>.Update.Set("Usernames", reorderedUsernames);
         await userCollection.UpdateOneAsync(userFilter, update);
 
         return new TBoolTrue();

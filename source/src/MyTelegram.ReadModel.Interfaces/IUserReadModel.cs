@@ -49,8 +49,7 @@ public interface IUserReadModel : IReadModel
     bool BotHasMainApp { get; }
     int? BotActiveUsers { get; }
 
-    List<string>? Usernames { get; }
-    List<UsernameInfo>? UsernamesV2 { get; }  // NEW: Full Username objects with Editable/Active
+    List<UsernameInfo>? Usernames { get; }
     DateTime? CreationTime { get; }
     int? ProfilePhotoUpdateDate { get; }
     int? UserNameUpdateDate { get; }

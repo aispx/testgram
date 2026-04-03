@@ -78,11 +78,11 @@ internal sealed class ChannelMapper
         destination.SignatureProfiles = source.SignatureProfiles;
         destination.SubscriptionUntilDate = source.SubscriptionUntilDate;
 
-        // Use UsernamesV2 if available (with Editable/Active fields)
-        if (source.UsernamesV2 != null && source.UsernamesV2.Count > 0)
+        // Use Usernames if available (with Editable/Active fields)
+        if (source.Usernames != null && source.Usernames.Count > 0)
         {
             destination.Usernames = new TVector<IUsername>();
-            foreach (var usernameInfo in source.UsernamesV2)
+            foreach (var usernameInfo in source.Usernames)
             {
                 destination.Usernames.Add(new TUsername
                 {
@@ -92,46 +92,14 @@ internal sealed class ChannelMapper
                 });
             }
 
-            // Set primary username (first active username)
-            var primaryUsername = source.UsernamesV2.FirstOrDefault(u => u.Active);
-            if (primaryUsername != null)
-            {
-                destination.Username = primaryUsername.Username;
-            }
-            else
-            {
-                destination.Username = null;
-            }
+            // CRITICAL: According to Fragment API docs, when collectible usernames exist,
+            // channel.username must NOT be set - client will use channel.usernames array instead
+            // Leave destination.Username as null
         }
-        // Fallback to old Usernames field (List<string>)
-        else if (source.Usernames?.Count > 0)
+        else
         {
-            destination.Usernames = [];
-            if (!string.IsNullOrEmpty(destination.Username))
-            {
-                destination.Usernames.Add(new TUsername
-                {
-                    Active = true,
-                    Editable = true,
-                    Username = destination.Username
-                });
-            }
-
-            foreach (var username in source.Usernames)
-            {
-                destination.Usernames.Add(new TUsername
-                {
-                    Active = true,
-                    Editable = false,
-                    Username = username
-                });
-            }
-
-            // Set primary username from first username
-            if (destination.Usernames.Count > 0)
-            {
-                destination.Username = destination.Usernames[0].Username;
-            }
+            // Fallback to legacy UserName field
+            destination.Username = source.UserName;
         }
 
         destination.JoinRequest = source.JoinRequest;

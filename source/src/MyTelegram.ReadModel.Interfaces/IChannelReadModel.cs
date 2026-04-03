@@ -48,8 +48,7 @@ public interface IChannelReadModel : IReadModel
     bool SignatureProfiles { get; }
     int? SubscriptionUntilDate { get; }
     bool HiddenPreHistory { get; }
-    List<string>? Usernames { get; }
-    List<UsernameInfo>? UsernamesV2 { get; }
+    List<UsernameInfo>? Usernames { get; }
     bool ParticipantsHidden { get; }
     bool JoinToSend { get; }
     bool JoinRequest { get; }

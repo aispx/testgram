@@ -40,11 +40,11 @@ internal sealed class UserMapper
         destination.BotHasMainApp = source.BotHasMainApp;
         destination.BotActiveUsers = source.BotActiveUsers;
 
-        // Map UsernamesV2 to TVector<IUsername> and set primary Username
-        if (source.UsernamesV2 != null && source.UsernamesV2.Count > 0)
+        // Map Usernames to TVector<IUsername>
+        if (source.Usernames != null && source.Usernames.Count > 0)
         {
             destination.Usernames = new TVector<IUsername>();
-            foreach (var usernameInfo in source.UsernamesV2)
+            foreach (var usernameInfo in source.Usernames)
             {
                 destination.Usernames.Add(new TUsername
                 {
@@ -54,12 +54,9 @@ internal sealed class UserMapper
                 });
             }
 
-            // Set primary username (first active username)
-            var primaryUsername = source.UsernamesV2.FirstOrDefault(u => u.Active);
-            if (primaryUsername != null)
-            {
-                destination.Username = primaryUsername.Username;
-            }
+            // CRITICAL: According to Fragment API docs, when collectible usernames exist,
+            // user.username must NOT be set - client will use user.usernames array instead
+            // Leave destination.Username as null
         }
         else
         {

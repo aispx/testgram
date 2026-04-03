@@ -83,8 +83,7 @@ public class ChannelReadModel : IChannelReadModel,
     public bool SignatureProfiles { get; private set; }
     public int? SubscriptionUntilDate { get; private set; }
     public bool HiddenPreHistory { get; private set; }
-    public List<string>? Usernames { get; private set; } = [];
-    public List<UsernameInfo>? UsernamesV2 { get; private set; }
+    public List<UsernameInfo>? Usernames { get; private set; }
     public bool ParticipantsHidden { get; private set; }
     public bool JoinToSend { get; private set; }
     public bool JoinRequest { get; private set; }
