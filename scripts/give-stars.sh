@@ -29,8 +29,11 @@ fi
 # Get current balance
 CURRENT_BALANCE=$(docker-compose exec -T mongodb mongosh tg --quiet --eval "
 var user = db['eventflow-userreadmodel'].findOne({UserId: NumberLong('$USER_ID')});
-if (user && user.StarsBalance) print(user.StarsBalance); else print('0');
-")
+if (user && user.StarsBalance) {
+  if (typeof user.StarsBalance === 'object') print(user.StarsBalance.toString());
+  else print(user.StarsBalance);
+} else print('0');
+" | tr -d '\r')
 
 echo "Current balance: $CURRENT_BALANCE stars"
 
