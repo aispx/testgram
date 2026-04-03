@@ -42,6 +42,10 @@ public class UniqueStarGiftDocument
     
     // Offer minimum stars for Layer 220 offers feature
     public int OfferMinStars { get; set; }
+
+    // Transfer restrictions (from telelakel findings)
+    public int? TransferLockedUntil { get; set; }  // Unix timestamp - can't transfer before this date
+    public bool WasOnBlockchain { get; set; }      // If true, can't be used in first crafting slot
 }
 
 public class UniqueGiftAttribute

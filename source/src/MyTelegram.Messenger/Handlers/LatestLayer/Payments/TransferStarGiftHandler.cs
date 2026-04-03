@@ -34,6 +34,14 @@ internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMes
         if (doc == null) RpcErrors.RpcErrors400.StargiftNotFound.ThrowRpcError();
         if (!ownerVerified && doc!.OwnerUserId != input.UserId) RpcErrors.RpcErrors400.StargiftOwnerInvalid.ThrowRpcError();
 
+        // Check transfer cooldown (21 days after purchase/upgrade, or 7 days after new login)
+        var currentTime = DateTime.UtcNow.ToTimestamp();
+        if (doc!.TransferLockedUntil.HasValue && doc.TransferLockedUntil.Value > currentTime)
+        {
+            var secondsToWait = doc.TransferLockedUntil.Value - currentTime;
+            throw new RpcException(new RpcError(400, $"STARGIFT_TRANSFER_TOO_EARLY_{secondsToWait}"));
+        }
+
         var toPeer = peerHelper.GetPeer(obj.ToId, input.UserId)!;
         var newOwnerUserId = toPeer.PeerType == PeerType.User ? toPeer.PeerId : 0L;
         var newOwnerChannelId = toPeer.PeerType == PeerType.Channel ? toPeer.PeerId : 0L;

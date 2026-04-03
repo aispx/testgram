@@ -83,6 +83,8 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
         var attrs = await UniqueStarGiftHelper.GenerateAttributesAsync(mongoDatabase, gift!);
         var title = baseTitle;
 
+        var currentTimestamp = DateTime.UtcNow.ToTimestamp();
+
         var uniqueDoc = new UniqueStarGiftDocument
         {
             Id = ObjectId.GenerateNewId(),
@@ -93,7 +95,7 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
             Num = num,
             OwnerUserId = effectiveUserId,
             FromUserId = saved.FromUserId,
-            Date = DateTime.UtcNow.ToTimestamp(),
+            Date = currentTimestamp,
             AvailabilityIssued = num,
             AvailabilityTotal = gift.AvailabilityTotal ?? 0,
             NameHidden = saved.NameHidden,
@@ -108,6 +110,8 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
             MimeType = saved.MimeType,
             DocumentSize = saved.DocumentSize,
             DcId = saved.DcId,
+            // Set 21-day transfer cooldown after upgrade (from telelakel: "21-day transfer cooldown")
+            TransferLockedUntil = currentTimestamp + (21 * 24 * 60 * 60),
         };
         await mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts").InsertOneAsync(uniqueDoc);
 

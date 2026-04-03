@@ -209,6 +209,11 @@ internal sealed class SendPaymentFormHandler(
         // Create SavedStarGiftDocument for recipient
         var now = DateTime.UtcNow.ToTimestamp();
         var randomId = Random.Shared.NextInt64();
+
+        // Set 21-day transfer cooldown for new gifts (from telelakel)
+        // Note: Some gifts have cooldown removed, but we apply it by default
+        int? canResellAt = now + (21 * 24 * 60 * 60);
+
         var savedGift = new SavedStarGiftDocument
         {
             OwnerUserId = recipientPeer.PeerType == PeerType.User ? recipientPeer.PeerId : 0,
@@ -227,6 +232,7 @@ internal sealed class SendPaymentFormHandler(
             PinnedToTop = false,
             IsUnique = false,
             PrepaidUpgrade = invoice.IncludeUpgrade,
+            CanResellAt = canResellAt,
             DocumentId = gift.DocumentId,
             DocumentAccessHash = gift.DocumentAccessHash,
             FileReference = gift.FileReference,
