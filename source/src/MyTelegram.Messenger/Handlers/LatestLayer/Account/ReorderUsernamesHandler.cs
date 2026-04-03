@@ -32,16 +32,22 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
             RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
         }
 
-        // Get current usernames
-        var usernames = user.Contains("Usernames") && !user["Usernames"].IsBsonNull
-            ? user["Usernames"].AsBsonArray
+        // Get current usernames from UsernamesV2
+        var usernamesV2 = user.Contains("UsernamesV2") && !user["UsernamesV2"].IsBsonNull
+            ? user["UsernamesV2"].AsBsonArray
             : new BsonArray();
+
+        if (usernamesV2.Count == 0)
+        {
+            RpcErrors.RpcErrors400.UsernameInvalid.ThrowRpcError();
+            return null!;
+        }
 
         // Build username map
         var usernameMap = new Dictionary<string, BsonDocument>(StringComparer.OrdinalIgnoreCase);
         var activeUsernames = new List<string>();
-        
-        foreach (var item in usernames)
+
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -50,7 +56,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
                 {
                     var username = doc["Username"].AsString;
                     usernameMap[username] = doc;
-                    
+
                     if (doc.Contains("Active") && doc["Active"].AsBoolean)
                     {
                         activeUsernames.Add(username.ToLower());
@@ -67,11 +73,12 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         if (!activeSet.SetEquals(orderSet))
         {
             RpcErrors.RpcErrors400.OrderInvalid.ThrowRpcError();
+            return null!;
         }
 
         // Reorder usernames: active ones first in specified order, then inactive ones
         var reorderedUsernames = new BsonArray();
-        
+
         // Add active usernames in new order
         foreach (var username in obj.Order)
         {
@@ -80,9 +87,9 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
                 reorderedUsernames.Add(doc);
             }
         }
-        
+
         // Add inactive usernames (keep their original order)
-        foreach (var item in usernames)
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -91,7 +98,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
                 {
                     var username = doc["Username"].AsString;
                     var isActive = doc.Contains("Active") && doc["Active"].AsBoolean;
-                    
+
                     if (!isActive)
                     {
                         reorderedUsernames.Add(doc);
@@ -101,7 +108,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         }
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("Usernames", reorderedUsernames);
+        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", reorderedUsernames);
         await userCollection.UpdateOneAsync(userFilter, update);
 
         return new TBoolTrue();

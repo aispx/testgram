@@ -41,15 +41,15 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         }
 
         // Get current usernames
-        var usernames = channel!.Contains("Usernames") && !channel["Usernames"].IsBsonNull
-            ? channel["Usernames"].AsBsonArray
+        var usernamesV2 = channel!.Contains("Usernames") && !channel["UsernamesV2"].IsBsonNull
+            ? channel["UsernamesV2"].AsBsonArray
             : new BsonArray();
 
         // Build username map
         var usernameMap = new Dictionary<string, BsonDocument>(StringComparer.OrdinalIgnoreCase);
         var activeUsernames = new List<string>();
         
-        foreach (var item in usernames)
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -89,7 +89,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
             }
         }
         
-        foreach (var item in usernames)
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -108,7 +108,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         }
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("Usernames", reorderedUsernames);
+        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", reorderedUsernames);
         await channelCollection.UpdateOneAsync(channelFilter, update);
 
         return new TBoolTrue();

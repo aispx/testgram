@@ -40,12 +40,12 @@ internal sealed class DeactivateAllUsernamesHandler : RpcResultObjectHandler<MyT
         }
 
         // Get current usernames
-        var usernames = channel.Contains("Usernames") && !channel["Usernames"].IsBsonNull
-            ? channel["Usernames"].AsBsonArray
+        var usernamesV2 = channel.Contains("UsernamesV2") && !channel["UsernamesV2"].IsBsonNull
+            ? channel["UsernamesV2"].AsBsonArray
             : new BsonArray();
 
         // Deactivate all non-editable (Fragment) usernames
-        foreach (var item in usernames)
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -61,7 +61,7 @@ internal sealed class DeactivateAllUsernamesHandler : RpcResultObjectHandler<MyT
         }
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("Usernames", usernames);
+        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", usernamesV2);
         await channelCollection.UpdateOneAsync(channelFilter, update);
 
         return new TBoolTrue();

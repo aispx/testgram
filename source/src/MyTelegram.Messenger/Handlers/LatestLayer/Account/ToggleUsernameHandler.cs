@@ -33,21 +33,29 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
             RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
         }
 
-        // Get current usernames
-        var usernames = user.Contains("Usernames") && !user["Usernames"].IsBsonNull
-            ? user["Usernames"].AsBsonArray
+        // Get current usernames from UsernamesV2
+        var usernamesV2 = user.Contains("UsernamesV2") && !user["UsernamesV2"].IsBsonNull
+            ? user["UsernamesV2"].AsBsonArray
             : new BsonArray();
+
+        if (usernamesV2.Count == 0)
+        {
+            RpcErrors.RpcErrors400.UsernameInvalid.ThrowRpcError();
+            return null!;
+        }
 
         // Find the username
         BsonDocument? targetUsername = null;
-        foreach (var item in usernames)
+        int targetIndex = -1;
+        for (int i = 0; i < usernamesV2.Count; i++)
         {
-            if (item.IsBsonDocument)
+            if (usernamesV2[i].IsBsonDocument)
             {
-                var doc = item.AsBsonDocument;
+                var doc = usernamesV2[i].AsBsonDocument;
                 if (doc.Contains("Username") && doc["Username"].AsString.ToLower() == username)
                 {
                     targetUsername = doc;
+                    targetIndex = i;
                     break;
                 }
             }
@@ -56,6 +64,7 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         if (targetUsername == null)
         {
             RpcErrors.RpcErrors400.UsernameInvalid.ThrowRpcError();
+            return null!;
         }
 
         // Check if it's editable (basic username cannot be deactivated)
@@ -63,6 +72,7 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         if (isEditable && !obj.Active)
         {
             RpcErrors.RpcErrors400.UsernameNotModified.ThrowRpcError();
+            return null!;
         }
 
         // Check current active state
@@ -70,11 +80,12 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         if (currentActive == obj.Active)
         {
             RpcErrors.RpcErrors400.UsernameNotModified.ThrowRpcError();
+            return null!;
         }
 
         // Count active usernames
         var activeCount = 0;
-        foreach (var item in usernames)
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -90,13 +101,15 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         if (obj.Active && activeCount >= 10)
         {
             RpcErrors.RpcErrors400.UsernamesActiveTooMuch.ThrowRpcError();
+            return null!;
         }
 
         // Update username active state
         targetUsername["Active"] = obj.Active;
+        usernamesV2[targetIndex] = targetUsername;
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("Usernames", usernames);
+        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", usernamesV2);
         await userCollection.UpdateOneAsync(userFilter, update);
 
         return new TBoolTrue();

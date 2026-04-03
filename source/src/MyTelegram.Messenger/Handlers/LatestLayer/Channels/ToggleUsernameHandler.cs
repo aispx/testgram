@@ -40,21 +40,29 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
             return null!;
         }
 
-        // Get current usernames
-        var usernames = channel.Contains("Usernames") && !channel["Usernames"].IsBsonNull
-            ? channel["Usernames"].AsBsonArray
+        // Get current usernames from UsernamesV2
+        var usernamesV2 = channel.Contains("UsernamesV2") && !channel["UsernamesV2"].IsBsonNull
+            ? channel["UsernamesV2"].AsBsonArray
             : new BsonArray();
+
+        if (usernamesV2.Count == 0)
+        {
+            RpcErrors.RpcErrors400.UsernameInvalid.ThrowRpcError();
+            return null!;
+        }
 
         // Find the username
         BsonDocument? targetUsername = null;
-        foreach (var item in usernames)
+        int targetIndex = -1;
+        for (int i = 0; i < usernamesV2.Count; i++)
         {
-            if (item.IsBsonDocument)
+            if (usernamesV2[i].IsBsonDocument)
             {
-                var doc = item.AsBsonDocument;
+                var doc = usernamesV2[i].AsBsonDocument;
                 if (doc.Contains("Username") && doc["Username"].AsString.ToLower() == username)
                 {
                     targetUsername = doc;
+                    targetIndex = i;
                     break;
                 }
             }
@@ -84,7 +92,7 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
 
         // Count active usernames
         var activeCount = 0;
-        foreach (var item in usernames)
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -105,9 +113,10 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
 
         // Update username active state
         targetUsername["Active"] = obj.Active;
+        usernamesV2[targetIndex] = targetUsername;
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("Usernames", usernames);
+        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", usernamesV2);
         await channelCollection.UpdateOneAsync(channelFilter, update);
 
         return new TBoolTrue();

@@ -40,7 +40,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         }
 
         // Get current usernames
-        var usernames = bot.Contains("Usernames") && !bot["Usernames"].IsBsonNull
+        var usernamesV2 = bot.Contains("Usernames") && !bot["Usernames"].IsBsonNull
             ? bot["Usernames"].AsBsonArray
             : new BsonArray();
 
@@ -48,7 +48,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         var usernameMap = new Dictionary<string, BsonDocument>(StringComparer.OrdinalIgnoreCase);
         var activeUsernames = new List<string>();
         
-        foreach (var item in usernames)
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -88,7 +88,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
             }
         }
         
-        foreach (var item in usernames)
+        foreach (var item in usernamesV2)
         {
             if (item.IsBsonDocument)
             {
@@ -105,7 +105,7 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         }
 
         // Save back to MongoDB
-        var update = Builders<BsonDocument>.Update.Set("Usernames", reorderedUsernames);
+        var update = Builders<BsonDocument>.Update.Set("UsernamesV2", reorderedUsernames);
         await userCollection.UpdateOneAsync(botFilter, update);
 
         return new TBoolTrue();
