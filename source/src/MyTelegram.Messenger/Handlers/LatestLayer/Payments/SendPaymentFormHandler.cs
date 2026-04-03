@@ -285,6 +285,13 @@ internal sealed class SendPaymentFormHandler(
             ConvertStars = gift.ConvertStars,
             UpgradeStars = gift.UpgradeStars,
             FromId = invoice.HideName ? null : new TPeerUser { UserId = input.UserId },
+            // Set Peer and SavedId for channel gifts (both use flags.12)
+            Peer = recipientPeer.PeerType == PeerType.Channel
+                ? new TPeerChannel { ChannelId = recipientPeer.PeerId }
+                : null,
+            SavedId = recipientPeer.PeerType == PeerType.Channel
+                ? savedGift.RandomId
+                : null,
         };
 
         await messageAppService.SendMessageAsync([new SendMessageInput(
