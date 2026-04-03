@@ -54,15 +54,26 @@ internal sealed class GetCollectibleInfoHandler : RpcResultObjectHandler<MyTeleg
             RpcErrors.RpcErrors400.CollectibleNotFound.ThrowRpcError();
         }
 
-        // Build response
+        // Build response with safe type conversion
         return new MyTelegram.Schema.Fragment.TCollectibleInfo
         {
             PurchaseDate = doc["purchase_date"].AsInt32,
             Currency = doc["currency"].AsString,
-            Amount = doc["amount"].AsInt64,
+            Amount = GetInt64(doc["amount"]),
             CryptoCurrency = doc["crypto_currency"].AsString,
-            CryptoAmount = doc["crypto_amount"].AsInt64,
+            CryptoAmount = GetInt64(doc["crypto_amount"]),
             Url = doc["url"].AsString
+        };
+    }
+
+    private static long GetInt64(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Int64 => value.AsInt64,
+            BsonType.Int32 => value.AsInt32,
+            BsonType.Double => (long)value.AsDouble,
+            _ => throw new InvalidCastException($"Cannot convert {value.BsonType} to Int64")
         };
     }
 }

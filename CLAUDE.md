@@ -887,7 +887,7 @@ public class UsernameInfo
 }
 
 // IUserReadModel / IChannelReadModel
-List<UsernameInfo>? UsernamesV2 { get; }  // NEW: Full username objects
+List<UsernameInfo>? Usernames { get; }  // Full username objects
 
 // TL Schema: TUsername
 public sealed class TUsername : IUsername
@@ -905,9 +905,7 @@ public sealed class TUsername : IUsername
 {
   UserId: Long("2010001"),
   UserName: "glebxdlol",           // Primary username (legacy)
-  Username: "blockchain",          // Current active username (legacy)
-  Usernames: ["blockchain"],       // Legacy array
-  UsernamesV2: [                   // NEW: Full username objects
+  Usernames: [                     // Full username objects
     { Username: "glebxdlol", Editable: true, Active: true },
     { Username: "blockchain", Editable: false, Active: true }
   ]
@@ -917,11 +915,11 @@ public sealed class TUsername : IUsername
 **Mapper: UserMapper.cs / ChannelMapper.cs**
 
 ```csharp
-// Convert UsernamesV2 to TVector<IUsername>
-if (source.UsernamesV2 != null && source.UsernamesV2.Count > 0)
+// Convert Usernames to TVector<IUsername>
+if (source.Usernames != null && source.Usernames.Count > 0)
 {
     destination.Usernames = new TVector<IUsername>();
-    foreach (var usernameInfo in source.UsernamesV2)
+    foreach (var usernameInfo in source.Usernames)
     {
         destination.Usernames.Add(new TUsername
         {
@@ -930,6 +928,19 @@ if (source.UsernamesV2 != null && source.UsernamesV2.Count > 0)
             Active = usernameInfo.Active
         });
     }
+    
+    // Set primary username (first active editable, or first active)
+    var primary = source.Usernames.FirstOrDefault(u => u.Active && u.Editable)
+                  ?? source.Usernames.FirstOrDefault(u => u.Active);
+    if (primary != null)
+    {
+        destination.Username = primary.Username;
+    }
+}
+else
+{
+    // Fallback to legacy UserName field
+    destination.Username = source.UserName;
 }
 ```
 
@@ -1082,18 +1093,18 @@ db.fragment_collectibles.insertOne({
   currency: 'USD',
   amount: 14500,
   crypto_currency: 'TON',
-  crypto_amount: 50000000000,
+  crypto_amount: NumberLong('50000000000'),
   url: 'https://fragment.com/username/blockchain'
 });
 "
 
-# 2. Обновить UsernamesV2 пользователя
+# 2. Обновить Usernames пользователя
 docker-compose exec -T mongodb mongosh tg --quiet --eval '
 db["eventflow-userreadmodel"].updateOne(
   { UserId: NumberLong("2010001") },
   { 
     $set: { 
-      UsernamesV2: [
+      Usernames: [
         { Username: "glebxdlol", Editable: true, Active: true },
         { Username: "blockchain", Editable: false, Active: true }
       ]
@@ -1101,19 +1112,20 @@ db["eventflow-userreadmodel"].updateOne(
   }
 )'
 
-# 3. Перезапустить сервер
-docker-compose restart messenger-command-server
+# 3. Перезапустить серверы
+docker-compose restart messenger-command-server messenger-query-server
 
 # 4. В клиенте: убить процесс, очистить кэш, войти заново
 ```
 
 ### Важные моменты
 
-1. **Username**: хранится в lowercase для поиска
+1. **Username**: хранится в lowercase для поиска в fragment_collectibles
 2. **Phone**: должен начинаться с 888 для Fragment номеров
-3. **Amount**: в минимальных единицах (145.00 USD = 14500)
-4. **CryptoAmount**: в минимальных единицах TON (50 TON = 50000000000)
+3. **Amount**: в минимальных единицах (145.00 USD = 14500) - хранится как Int32
+4. **CryptoAmount**: в минимальных единицах TON (50 TON = 50000000000) - хранится как Int64 (NumberLong)
 5. **URL**: должен вести на Fragment.com
-6. **UsernamesV2**: ВСЕГДА включает основной username (Editable=true) первым
+6. **Usernames**: ВСЕГДА включает основной username (Editable=true) первым
 7. **Client cache**: После изменения username нужно очистить кэш клиента
+8. **Primary username**: Устанавливается автоматически в mapper (первый active editable, или первый active)
 
