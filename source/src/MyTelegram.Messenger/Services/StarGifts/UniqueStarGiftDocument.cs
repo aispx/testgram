@@ -53,6 +53,7 @@ public class UniqueGiftAttribute
     public string Type { get; set; } = ""; // "model", "pattern", "backdrop"
     public string Name { get; set; } = "";
     public int RarityPermille { get; set; }
+    public bool Crafted { get; set; } // Set to true for crafted gifts (Layer 222+)
 
     // model/pattern
     public long? DocumentId { get; set; }

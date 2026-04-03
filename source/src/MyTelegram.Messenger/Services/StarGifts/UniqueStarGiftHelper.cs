@@ -29,6 +29,7 @@ public static class UniqueStarGiftHelper
                 },
                 _ => new TStarGiftAttributeModel
                 {
+                    Crafted = a.Crafted,
                     Name = a.Name,
                     Document = MakeDoc(a),
                     RarityPermille = a.RarityPermille,
@@ -107,7 +108,7 @@ public static class UniqueStarGiftHelper
     }
 
     // Generate random attributes from DB config, fallback to gift sticker if no config
-    public static async Task<UniqueGiftAttribute[]> GenerateAttributesAsync(IMongoDatabase db, StarGiftDocument gift)
+    public static async Task<UniqueGiftAttribute[]> GenerateAttributesAsync(IMongoDatabase db, StarGiftDocument gift, bool crafted = false)
     {
         var col = db.GetCollection<UpgradeConfigEntry>("star-gift-upgrade-config");
         var all = await col.Find(Builders<UpgradeConfigEntry>.Filter.In("gift_id", new[] { gift.GiftId, 0L })).ToListAsync();
@@ -126,6 +127,7 @@ public static class UniqueStarGiftHelper
                 {
                     Type = type, Name = gift.Title ?? "Gift",
                     RarityPermille = 100,
+                    Crafted = crafted,
                     DocumentId = gift.DocumentId, DocumentAccessHash = gift.DocumentAccessHash,
                     FileReference = gift.FileReference, DocumentDate = gift.DocumentDate,
                     MimeType = gift.MimeType, DocumentSize = gift.DocumentSize, DcId = gift.DcId,
@@ -134,6 +136,7 @@ public static class UniqueStarGiftHelper
             return new UniqueGiftAttribute
             {
                 Type = type, Name = e.Name, RarityPermille = e.RarityPermille,
+                Crafted = crafted,
                 DocumentId = e.DocumentId, DocumentAccessHash = e.DocumentAccessHash,
                 FileReference = e.FileReference, DocumentDate = e.DocumentDate,
                 MimeType = e.MimeType, DocumentSize = e.DocumentSize, DcId = e.DcId,
