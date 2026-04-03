@@ -89,24 +89,10 @@ public class MessageConverterService(
             default:
                 {
                     var m = messageLayeredService.GetConverter(layer).ToMessage(readModel);
-                    logger.LogInformation("[DEBUG] ToMessage: MessageId={MessageId}, Media2={Media2Type}, Media length={MediaLength}",
-                        readModel.MessageId, readModel.Media2?.GetType().Name ?? "null", readModel.Media?.Length ?? 0);
-
                     var media = readModel.Media2 ?? readModel.Media.ToTObject<IMessageMedia>();
-                    logger.LogInformation("[DEBUG] ToMessage: After deserialization, media type={MediaType}", media?.GetType().Name ?? "null");
-
-                    // If Media2 is null, try to reconstruct from DocumentId
-                    if (media == null && readModel.DocumentId.HasValue && readModel.DocumentId.Value > 0)
-                    {
-                        logger.LogInformation("[DEBUG] Attempting to reconstruct media from DocumentId={DocumentId} for message {MessageId}",
-                            readModel.DocumentId, readModel.MessageId);
-                        // TODO: Implement document reconstruction
-                    }
 
                     // Enrich documents in media with Attributes2 from database
-                    logger.LogInformation("[DEBUG] ToMessage: About to call EnrichMediaDocuments");
                     media = EnrichMediaDocuments(media);
-                    logger.LogInformation("[DEBUG] ToMessage: After EnrichMediaDocuments");
 
                     m.Media = messageMediaResponseService.ToLayeredData(media, layer);
                     m.Out = readModel.SenderPeerId == selfUserId;
@@ -427,7 +413,7 @@ public class MessageConverterService(
         }
         catch (System.Security.Cryptography.AuthenticationTagMismatchException)
         {
-            Console.WriteLine($"[DecryptMessage] Failed to decrypt ownerPeerId={ownerPeerId} messageId={messageId}");
+            logger.LogWarning("Failed to decrypt message: ownerPeerId={OwnerPeerId}, messageId={MessageId}", ownerPeerId, messageId);
             return string.Empty;
         }
         finally

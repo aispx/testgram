@@ -36,8 +36,6 @@ public class MessageReadModel : IMessageReadModel,
     public string Id { get; private set; } = null!;
     public byte[]? Media { get; private set; }
     public IMessageMedia? Media2 { get; private set; }
-    public string? MediaJson { get; private set; } // Store media as JSON for MongoDB
-    public long? DocumentId { get; private set; } // Store document ID for reconstruction
     public string Message { get; private set; } = null!;
     public string? MessageActionData { get; private set; }
     public IMessageAction? MessageAction { get; private set; }
@@ -124,26 +122,6 @@ public class MessageReadModel : IMessageReadModel,
         FwdHeader = messageItem.FwdHeader;
         SendMessageType = messageItem.SendMessageType;
         Media2 = messageItem.Media;
-        if (messageItem.Media != null)
-        {
-            if (messageItem.Media is MyTelegram.Schema.TMessageMediaDocument mediaDoc)
-            {
-                if (mediaDoc.Document is MyTelegram.Schema.TDocument doc)
-                {
-                    DocumentId = doc.Id;
-                }
-            }
-            // Serialize Media to byte[] and JSON as fallback
-            try
-            {
-                Media = messageItem.Media.ToBytes();
-                MediaJson = System.Text.Json.JsonSerializer.Serialize(messageItem.Media, messageItem.Media.GetType());
-            }
-            catch
-            {
-                // Ignore serialization errors
-            }
-        }
         GroupedId = messageItem.GroupId;
         Out = messageItem.IsOut;
         Views = messageItem.Views;
