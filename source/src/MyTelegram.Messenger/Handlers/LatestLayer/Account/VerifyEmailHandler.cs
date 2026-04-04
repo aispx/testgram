@@ -82,9 +82,10 @@ internal sealed class VerifyEmailHandler(IMongoDatabase database) : RpcResultObj
         // Delete used code
         await collection.DeleteOneAsync(filter);
 
-        // Update user's email in database based on purpose
-        if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposeLoginSetup or MyTelegram.Schema.TEmailVerifyPurposeLoginChange)
+        // Handle different purposes
+        if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposeLoginSetup loginSetup)
         {
+            // During login setup - verify email and send login code to phone
             var userCollection = database.GetCollection<BsonDocument>("eventflow-userreadmodel");
             var userFilter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
             var userUpdate = Builders<BsonDocument>.Update
@@ -93,6 +94,60 @@ internal sealed class VerifyEmailHandler(IMongoDatabase database) : RpcResultObj
                 .Set("EmailVerifiedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
             await userCollection.UpdateOneAsync(userFilter, userUpdate);
+
+            // Generate and send phone code
+            var phoneCode = Random.Shared.Next(10000, 99999).ToString();
+            var phoneCodeHash = Guid.NewGuid().ToString("N");
+            var phoneCodeNow = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var phoneCodeExpire = phoneCodeNow + 300;
+
+            var phoneCodeCollection = database.GetCollection<BsonDocument>("phone_verification_codes");
+            var phoneCodeDoc = new BsonDocument
+            {
+                ["PhoneNumber"] = loginSetup.PhoneNumber,
+                ["Code"] = phoneCode,
+                ["PhoneCodeHash"] = phoneCodeHash,
+                ["CreatedAt"] = phoneCodeNow,
+                ["ExpireDate"] = phoneCodeExpire,
+                ["UserId"] = input.UserId
+            };
+
+            await phoneCodeCollection.DeleteManyAsync(
+                Builders<BsonDocument>.Filter.Eq("PhoneNumber", loginSetup.PhoneNumber)
+            );
+            await phoneCodeCollection.InsertOneAsync(phoneCodeDoc);
+
+            Console.WriteLine($"[EMAIL LOGIN] Email verified: {email}, Phone code sent to {loginSetup.PhoneNumber}: {phoneCode}");
+
+            // Return emailVerifiedLogin with sentCode
+            return new MyTelegram.Schema.Account.TEmailVerifiedLogin
+            {
+                Email = email,
+                SentCode = new MyTelegram.Schema.Auth.TSentCode
+                {
+                    Type = new MyTelegram.Schema.Auth.TSentCodeTypeApp { Length = 5 },
+                    PhoneCodeHash = phoneCodeHash,
+                    NextType = new MyTelegram.Schema.Auth.TCodeTypeCall(),
+                    Timeout = 300
+                }
+            };
+        }
+        else if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposeLoginChange)
+        {
+            // Change login email after authorization
+            var userCollection = database.GetCollection<BsonDocument>("eventflow-userreadmodel");
+            var userFilter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
+            var userUpdate = Builders<BsonDocument>.Update
+                .Set("Email", email)
+                .Set("EmailVerified", true)
+                .Set("EmailVerifiedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+            await userCollection.UpdateOneAsync(userFilter, userUpdate);
+
+            return new MyTelegram.Schema.Account.TEmailVerified
+            {
+                Email = email
+            };
         }
         else if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposePassport)
         {
@@ -111,10 +166,15 @@ internal sealed class VerifyEmailHandler(IMongoDatabase database) : RpcResultObj
                 passportDoc,
                 new ReplaceOptions { IsUpsert = true }
             );
+
+            return new MyTelegram.Schema.Account.TEmailVerified
+            {
+                Email = email
+            };
         }
 
-        // Return appropriate response based on purpose
-        return new TEmailVerified
+        // Default response
+        return new MyTelegram.Schema.Account.TEmailVerified
         {
             Email = email
         };
