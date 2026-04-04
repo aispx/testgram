@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services;
 using MyTelegram.Schema.Users;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
@@ -11,14 +14,97 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetSavedMusicByIDHandler : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetSavedMusicByID, MyTelegram.Schema.Users.ISavedMusic>, IObjectHandler
+internal sealed class GetSavedMusicByIDHandler(
+    IPeerHelper peerHelper,
+    IAccessHashHelper accessHashHelper,
+    IUserAppService userAppService,
+    IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetSavedMusicByID, MyTelegram.Schema.Users.ISavedMusic>, IObjectHandler
 {
     protected override async Task<MyTelegram.Schema.Users.ISavedMusic> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetSavedMusicByID obj)
     {
+        // Validate access hash
+        await accessHashHelper.CheckAccessHashAsync(input, obj.Id);
+
+        // Get target user
+        var targetPeer = peerHelper.GetPeer(obj.Id, input.UserId);
+        var targetUserId = targetPeer.PeerId;
+
+        // Verify user exists
+        var userReadModel = await userAppService.GetAsync(targetUserId);
+        if (userReadModel == null)
+        {
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+        }
+
+        // Extract document IDs from InputDocument
+        var documentIds = new List<long>();
+        foreach (var inputDoc in obj.Documents)
+        {
+            if (inputDoc is MyTelegram.Schema.TInputDocument doc)
+            {
+                documentIds.Add(doc.Id);
+            }
+        }
+
+        if (documentIds.Count == 0)
+        {
+            return new TSavedMusic
+            {
+                Count = 0,
+                Documents = new TVector<MyTelegram.Schema.IDocument>()
+            };
+        }
+
+        // Check if these documents are in saved_music for this user
+        var savedMusicCol = database.GetCollection<BsonDocument>("saved_music");
+        var savedFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("UserId", targetUserId),
+            Builders<BsonDocument>.Filter.In("DocumentId", documentIds)
+        );
+        var savedDocs = await savedMusicCol.Find(savedFilter).ToListAsync();
+        var savedDocIds = savedDocs.Select(d => d["DocumentId"].AsInt64).ToHashSet();
+
+        // Load documents from eventflow-documentreadmodel
+        var docCollection = database.GetCollection<BsonDocument>("eventflow-documentreadmodel");
+        var docFilter = Builders<BsonDocument>.Filter.In("DocumentId", documentIds);
+        var docDocs = await docCollection.Find(docFilter).ToListAsync();
+
+        var documents = new TVector<MyTelegram.Schema.IDocument>();
+        foreach (var docDoc in docDocs)
+        {
+            var docId = docDoc["DocumentId"].AsInt64;
+            // Only include if it's in saved_music
+            if (savedDocIds.Contains(docId))
+            {
+                documents.Add(ConvertToDocument(docDoc));
+            }
+        }
+
         return new TSavedMusic
         {
-            Count = 0,
-            Documents = []
+            Count = documents.Count,
+            Documents = documents
+        };
+    }
+
+    private static MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
+    {
+        var fileRef = doc.Contains("FileReference") && !doc["FileReference"].IsBsonNull
+            ? doc["FileReference"].AsBsonBinaryData.Bytes
+            : Array.Empty<byte>();
+
+        return new MyTelegram.Schema.TDocument
+        {
+            Id = doc["DocumentId"].AsInt64,
+            AccessHash = doc["AccessHash"].AsInt64,
+            FileReference = fileRef,
+            Date = doc["Date"].AsInt32,
+            MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "audio/mpeg",
+            Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,
+            Thumbs = new TVector<MyTelegram.Schema.IPhotoSize>(),
+            VideoThumbs = new TVector<MyTelegram.Schema.IVideoSize>(),
+            DcId = doc.Contains("DcId") ? doc["DcId"].AsInt32 : 2,
+            Attributes = new TVector<MyTelegram.Schema.IDocumentAttribute>()
         };
     }
 }
