@@ -55,6 +55,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetBotVerificationAsync(targetUserId, 0, userFull, user);
         await SetUserStoriesAsync(targetUserId, userFull, input.UserId);
         await SetSavedMusicAsync(targetUserId, userFull);
+        await SetChatThemeAsync(input.UserId, targetUserId, userFull);
 
         // CRITICAL: Cast to concrete TUser for proper serialization
         // ILayeredUser interface doesn't serialize correctly in TVector
@@ -430,5 +431,32 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
             DcId = doc.Contains("DcId") ? doc["DcId"].AsInt32 : 2,
             Attributes = attributes
         };
+    }
+
+    private async Task SetChatThemeAsync(long selfUserId, long targetUserId, IUserFull userFull)
+    {
+        try
+        {
+            // Load chat theme from MongoDB
+            var collection = mongoDatabase.GetCollection<BsonDocument>("user_chat_themes");
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("UserId", selfUserId),
+                Builders<BsonDocument>.Filter.Eq("PeerType", 0), // PeerType.User
+                Builders<BsonDocument>.Filter.Eq("PeerId", targetUserId)
+            );
+
+            var themeDoc = await collection.Find(filter).FirstOrDefaultAsync();
+            if (themeDoc != null && themeDoc.Contains("Emoticon"))
+            {
+                userFull.Theme = new MyTelegram.Schema.TChatTheme
+                {
+                    Emoticon = themeDoc["Emoticon"].AsString
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load chat theme for user {SelfUserId} -> {TargetUserId}", selfUserId, targetUserId);
+        }
     }
 }
