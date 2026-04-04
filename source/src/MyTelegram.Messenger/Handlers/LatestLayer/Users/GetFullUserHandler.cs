@@ -54,6 +54,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetDisallowedGiftsAsync(targetUserId, userFull);
         await SetBotVerificationAsync(targetUserId, 0, userFull, user);
         await SetUserStoriesAsync(targetUserId, userFull, input.UserId);
+        await SetSavedMusicAsync(targetUserId, userFull);
 
         // CRITICAL: Cast to concrete TUser for proper serialization
         // ILayeredUser interface doesn't serialize correctly in TVector
@@ -333,5 +334,62 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         {
             // Ignore errors
         }
+    }
+
+    private async Task SetSavedMusicAsync(long targetUserId, IUserFull userFull)
+    {
+        try
+        {
+            // Query saved music from MongoDB
+            var collection = mongoDatabase.GetCollection<BsonDocument>("saved_music");
+            var filter = Builders<BsonDocument>.Filter.Eq("UserId", targetUserId);
+            var sort = Builders<BsonDocument>.Sort.Descending("Date");
+
+            // Get the first (most recent) saved music document
+            var savedMusicDoc = await collection.Find(filter)
+                .Sort(sort)
+                .Limit(1)
+                .FirstOrDefaultAsync();
+
+            if (savedMusicDoc != null)
+            {
+                var documentId = savedMusicDoc["DocumentId"].AsInt64;
+
+                // Load document from eventflow-documentreadmodel
+                var docCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
+                var docFilter = Builders<BsonDocument>.Filter.Eq("DocumentId", documentId);
+                var docDoc = await docCollection.Find(docFilter).FirstOrDefaultAsync();
+
+                if (docDoc != null)
+                {
+                    userFull.SavedMusic = ConvertToDocument(docDoc);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load saved music for user {UserId}", targetUserId);
+        }
+    }
+
+    private static IDocument ConvertToDocument(BsonDocument doc)
+    {
+        var fileRef = doc.Contains("FileReference") && !doc["FileReference"].IsBsonNull
+            ? doc["FileReference"].AsBsonBinaryData.Bytes
+            : Array.Empty<byte>();
+
+        return new TDocument
+        {
+            Id = doc["DocumentId"].AsInt64,
+            AccessHash = doc["AccessHash"].AsInt64,
+            FileReference = fileRef,
+            Date = doc["Date"].AsInt32,
+            MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "audio/mpeg",
+            Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,
+            Thumbs = new TVector<IPhotoSize>(),
+            VideoThumbs = new TVector<IVideoSize>(),
+            DcId = doc.Contains("DcId") ? doc["DcId"].AsInt32 : 2,
+            Attributes = new TVector<IDocumentAttribute>()
+        };
     }
 }
