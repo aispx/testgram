@@ -152,8 +152,10 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
         }
 
         // Check if messages can be forwarded (check for service messages - they cannot be forwarded)
+        // For personal chats, messages are stored with OwnerPeerId = current user's ID
+        var ownerPeerId = fromPeer.PeerType == PeerType.User ? input.UserId : fromPeer.PeerId;
         var messagesToCheck = await queryProcessor.ProcessAsync(new GetMessagesQuery(
-            fromPeer.PeerId,
+            ownerPeerId,
             MessageType.Unknown,
             null,
             obj.Id.ToList(),
