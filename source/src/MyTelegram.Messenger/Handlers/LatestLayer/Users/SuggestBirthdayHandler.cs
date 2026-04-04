@@ -16,7 +16,8 @@ internal sealed class SuggestBirthdayHandler(
     IPeerHelper peerHelper,
     IUserAppService userAppService,
     IAccessHashHelper accessHashHelper,
-    IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestSuggestBirthday, MyTelegram.Schema.IUpdates>
+    IMessageAppService messageAppService,
+    IPtsHelper ptsHelper) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestSuggestBirthday, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestSuggestBirthday obj)
     {
@@ -56,9 +57,21 @@ internal sealed class SuggestBirthdayHandler(
 
         await messageAppService.SendMessageAsync([sendInput]);
 
+        // Create immediate response with TUpdateNewMessage
+        var pts = await ptsHelper.IncrementPtsAsync(input.UserId, ptsHelper.GetCachedPts(input.UserId));
+        var serviceMsg = new TMessageService
+        {
+            Id = pts,
+            FromId = new TPeerUser { UserId = input.UserId },
+            PeerId = new TPeerUser { UserId = targetUserId },
+            Date = CurrentDate,
+            Action = action,
+            Out = true,
+        };
+
         return new MyTelegram.Schema.TUpdates
         {
-            Updates = new TVector<IUpdate>(),
+            Updates = new TVector<IUpdate> { new TUpdateNewMessage { Message = serviceMsg, Pts = pts, PtsCount = 1 } },
             Users = new TVector<IUser>(),
             Chats = new TVector<IChat>(),
             Date = CurrentDate,
