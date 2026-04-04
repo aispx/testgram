@@ -82,30 +82,38 @@ internal sealed class VerifyEmailHandler(IMongoDatabase database) : RpcResultObj
         // Delete used code
         await collection.DeleteOneAsync(filter);
 
-        // Return appropriate response based on purpose
-        if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposeLoginSetup)
+        // Update user's email in database based on purpose
+        if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposeLoginSetup or MyTelegram.Schema.TEmailVerifyPurposeLoginChange)
         {
-            return new TEmailVerified
-            {
-                Email = email
-            };
-        }
-        else if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposeLoginChange)
-        {
-            return new TEmailVerified
-            {
-                Email = email
-            };
+            var userCollection = database.GetCollection<BsonDocument>("eventflow-userreadmodel");
+            var userFilter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
+            var userUpdate = Builders<BsonDocument>.Update
+                .Set("Email", email)
+                .Set("EmailVerified", true)
+                .Set("EmailVerifiedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+            await userCollection.UpdateOneAsync(userFilter, userUpdate);
         }
         else if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposePassport)
         {
-            return new TEmailVerified
+            // For passport, store in separate collection
+            var passportCollection = database.GetCollection<BsonDocument>("passport_emails");
+            var passportDoc = new BsonDocument
             {
-                Email = email
+                ["_id"] = $"passport-email-{input.UserId}",
+                ["UserId"] = input.UserId,
+                ["Email"] = email,
+                ["VerifiedAt"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
             };
+
+            await passportCollection.ReplaceOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", passportDoc["_id"]),
+                passportDoc,
+                new ReplaceOptions { IsUpsert = true }
+            );
         }
 
-        // Default response
+        // Return appropriate response based on purpose
         return new TEmailVerified
         {
             Email = email
