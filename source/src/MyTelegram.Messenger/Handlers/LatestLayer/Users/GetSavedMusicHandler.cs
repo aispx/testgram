@@ -39,7 +39,7 @@ internal sealed class GetSavedMusicHandler(
         // Query saved music from MongoDB
         var collection = database.GetCollection<BsonDocument>("saved_music");
         var filter = Builders<BsonDocument>.Filter.Eq("UserId", targetUserId);
-        var sort = Builders<BsonDocument>.Sort.Descending("Date");
+        var sort = Builders<BsonDocument>.Sort.Ascending("Order"); // Sort by Order field for proper ordering
 
         var totalCount = (int)await collection.CountDocumentsAsync(filter);
 

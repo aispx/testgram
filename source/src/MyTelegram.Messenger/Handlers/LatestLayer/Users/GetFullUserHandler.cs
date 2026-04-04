@@ -343,9 +343,9 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
             // Query saved music from MongoDB
             var collection = mongoDatabase.GetCollection<BsonDocument>("saved_music");
             var filter = Builders<BsonDocument>.Filter.Eq("UserId", targetUserId);
-            var sort = Builders<BsonDocument>.Sort.Descending("Date");
+            var sort = Builders<BsonDocument>.Sort.Ascending("Order"); // Sort by Order field
 
-            // Get the first (most recent) saved music document
+            // Get the first (lowest order = most recent) saved music document
             var savedMusicDoc = await collection.Find(filter)
                 .Sort(sort)
                 .Limit(1)
