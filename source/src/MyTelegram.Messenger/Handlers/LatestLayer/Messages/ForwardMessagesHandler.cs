@@ -152,35 +152,39 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
         }
 
         // Check if messages can be forwarded (check for restricted service messages)
-        var messageCollection = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-messagereadmodel");
-        foreach (var msgId in obj.Id)
+        var messagesToCheck = await queryProcessor.ProcessAsync(new GetMessagesQuery(
+            fromPeer.PeerId,
+            MessageType.Unknown,
+            null,
+            obj.Id.ToList(),
+            0,
+            0,
+            null,
+            null,
+            0,
+            0,
+            0,
+            null,
+            null,
+            false,
+            false,
+            false,
+            null,
+            0
+        ));
+
+        foreach (var msg in messagesToCheck)
         {
-            var msgFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("OwnerPeerId", fromPeer.PeerId),
-                MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("MessageId", msgId)
-            );
-            var msgDoc = await messageCollection.Find(msgFilter).FirstOrDefaultAsync();
-
-            if (msgDoc != null)
+            // Check if it's a service message with action
+            if (msg.MessageAction != null && msg.MessageActionData != null)
             {
-                // Check if message has noforwards flag
-                if (msgDoc.Contains("Noforwards") && msgDoc["Noforwards"].AsBoolean)
+                var actionData = msg.MessageActionData;
+                // Restrict forwarding of certain service message types by checking action data
+                if (actionData.Contains("SuggestBirthday") ||
+                    actionData.Contains("StarGift") ||
+                    actionData.Contains("GiftCode"))
                 {
-                    RpcErrors.RpcErrors406.ChatForwardsRestricted.ThrowRpcError();
-                }
-
-                // Check if it's a service message with restricted action types
-                if (msgDoc.Contains("MessageActionType") && !msgDoc["MessageActionType"].IsBsonNull)
-                {
-                    var actionType = msgDoc["MessageActionType"].AsString;
-                    // Restrict forwarding of certain service message types
-                    if (actionType == "TMessageActionSuggestBirthday" ||
-                        actionType == "TMessageActionStarGift" ||
-                        actionType == "TMessageActionStarGiftUnique" ||
-                        actionType == "TMessageActionGiftCode")
-                    {
-                        RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
-                    }
+                    RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
                 }
             }
         }
