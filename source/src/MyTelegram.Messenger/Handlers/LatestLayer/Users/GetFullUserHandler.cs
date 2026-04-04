@@ -378,6 +378,45 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
             ? doc["FileReference"].AsBsonBinaryData.Bytes
             : Array.Empty<byte>();
 
+        var attributes = new TVector<IDocumentAttribute>();
+
+        // Use Attributes2 if available (proper serialization)
+        if (doc.Contains("Attributes2") && !doc["Attributes2"].IsBsonNull)
+        {
+            var attrs2 = doc["Attributes2"].AsBsonArray;
+            foreach (var attrBson in attrs2)
+            {
+                if (attrBson.IsBsonDocument)
+                {
+                    var attrDoc = attrBson.AsBsonDocument;
+                    var typeName = attrDoc["_t"].AsString;
+
+                    // Handle audio attributes
+                    if (typeName.EndsWith("TDocumentAttributeAudio"))
+                    {
+                        var audioAttr = new TDocumentAttributeAudio
+                        {
+                            Voice = attrDoc.Contains("Voice") && attrDoc["Voice"].AsBoolean,
+                            Duration = attrDoc.Contains("Duration") ? attrDoc["Duration"].AsInt32 : 0,
+                            Title = attrDoc.Contains("Title") ? attrDoc["Title"].AsString : null,
+                            Performer = attrDoc.Contains("Performer") ? attrDoc["Performer"].AsString : null,
+                            Waveform = attrDoc.Contains("Waveform") && !attrDoc["Waveform"].IsBsonNull
+                                ? attrDoc["Waveform"].AsByteArray : null
+                        };
+                        attributes.Add(audioAttr);
+                    }
+                    // Handle filename attributes
+                    else if (typeName.EndsWith("TDocumentAttributeFilename"))
+                    {
+                        attributes.Add(new TDocumentAttributeFilename
+                        {
+                            FileName = attrDoc.Contains("FileName") ? attrDoc["FileName"].AsString : ""
+                        });
+                    }
+                }
+            }
+        }
+
         return new TDocument
         {
             Id = doc["DocumentId"].AsInt64,
@@ -389,7 +428,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
             Thumbs = new TVector<IPhotoSize>(),
             VideoThumbs = new TVector<IVideoSize>(),
             DcId = doc.Contains("DcId") ? doc["DcId"].AsInt32 : 2,
-            Attributes = new TVector<IDocumentAttribute>()
+            Attributes = attributes
         };
     }
 }
