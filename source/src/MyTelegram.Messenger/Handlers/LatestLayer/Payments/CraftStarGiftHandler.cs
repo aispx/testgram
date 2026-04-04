@@ -4,13 +4,14 @@ using MyTelegram.Messenger.Services.StarGifts;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
 /// <summary>
-/// Craft star gift by combining 3-4 identical gifts
+/// Craft star gift by combining 1-4 identical gifts
 /// From madrik1337/telelakel findings:
 /// - Can only craft SAME gift type (4 cakes, not 3 cakes + 1 lollipop)
 /// - Number taken from FIRST SLOT gift (not random!)
 /// - Blockchain gifts CAN be used, but NOT in first slot (number won't transfer)
 /// - Craft can FAIL - gifts burn without result
 /// - Supply decreases by number of gifts used
+/// - Success rate: 1 gift = low chance, 2 gifts = medium, 3 gifts = 60%, 4 gifts = 85%
 /// <para><c>See <a href="https://corefork.telegram.org/method/payments.craftStarGift"/> </c></para>
 /// </summary>
 internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessageAppService messageAppService, IPtsHelper ptsHelper)
@@ -18,7 +19,7 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestCraftStarGift obj)
     {
-        if (obj.Stargift == null || obj.Stargift.Count < 3 || obj.Stargift.Count > 4)
+        if (obj.Stargift == null || obj.Stargift.Count < 1 || obj.Stargift.Count > 4)
             RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
         var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
@@ -96,7 +97,14 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
 
         // Calculate success chance (more gifts = better chance)
         // From madrik1337: craft can fail, gifts burn without result
-        var successChance = obj.Stargift.Count == 4 ? 0.85 : 0.60; // 85% for 4 gifts, 60% for 3
+        var successChance = obj.Stargift.Count switch
+        {
+            4 => 0.85,  // 85% for 4 gifts
+            3 => 0.60,  // 60% for 3 gifts
+            2 => 0.35,  // 35% for 2 gifts
+            1 => 0.10,  // 10% for 1 gift
+            _ => 0.60
+        };
         var craftSucceeded = Random.Shared.NextDouble() < successChance;
 
         // Delete all source gifts (they burn regardless of success)
