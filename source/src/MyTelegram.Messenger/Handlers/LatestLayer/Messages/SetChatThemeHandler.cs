@@ -110,8 +110,15 @@ internal sealed class SetChatThemeHandler(
 
         await messageAppService.SendMessageAsync([sendInput]);
 
-        // Return null to let event sourcing handle the update delivery
-        // The message will arrive via push notification
-        return null!;
+        // Return empty Updates - message will arrive via event sourcing
+        // Do NOT return null! as it causes client to retry the request
+        return new TUpdates
+        {
+            Updates = new TVector<IUpdate>(),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = CurrentDate,
+            Seq = 0
+        };
     }
 }
