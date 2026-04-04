@@ -160,6 +160,43 @@ var sendInput = new SendMessageInput(
 await _messageAppService.SendMessageAsync([sendInput]);
 ```
 
+**CRITICAL: Service Messages and Updates**
+
+When sending service messages via `SendMessageAsync`, the method works **asynchronously** through event sourcing and does NOT return the created message in the response. This is by design:
+
+- ✅ The message WILL be created and delivered
+- ✅ The recipient will receive it via push notification or sync
+- ✅ The message will appear in chat history
+- ❌ You CANNOT return the message in the immediate Updates response
+- ❌ Do NOT try to create fake message objects in Updates
+
+**Correct pattern for service message handlers:**
+```csharp
+// Send the service message
+await messageAppService.SendMessageAsync([sendInput]);
+
+// Return empty Updates (message will arrive via push)
+return new TUpdates
+{
+    Updates = new TVector<IUpdate>(),
+    Users = new TVector<IUser>(),
+    Chats = new TVector<IChat>(),
+    Date = CurrentDate,
+    Seq = 0
+};
+```
+
+**Why this works:**
+- Event sourcing processes the message asynchronously
+- Push notification system delivers the message to the client
+- Client receives the actual message with correct IDs and timestamps
+- Trying to return the message immediately would create inconsistencies
+
+**Examples:**
+- `SetHistoryTTLHandler` - sends service message, returns empty Updates
+- `SuggestBirthdayHandler` - sends service message, returns empty Updates
+- `SendMessageHandler` - returns `null!` because messages are async
+
 4. **Validate Access Hash:**
 ```csharp
 await _accessHashHelper.CheckAccessHashAsync(input, obj.Id);
