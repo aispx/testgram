@@ -37,6 +37,17 @@ internal sealed class ReplaceStickerHandler(
             RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
         }
 
+        var setId = GetInt64(setDoc["StickerSetId"]);
+
+        // Check if user is the creator of the sticker set
+        var creatorUserId = setDoc.Contains("CreatorUserId") ? GetInt64(setDoc["CreatorUserId"]) : 0;
+        if (creatorUserId != input.UserId)
+        {
+            logger.LogWarning("User {UserId} tried to replace sticker in set {SetId} created by {CreatorUserId}",
+                input.UserId, setId, creatorUserId);
+            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
+        }
+
         if (obj.NewSticker is not TInputStickerSetItem)
         {
             RpcErrors.RpcErrors400.StickerInvalid.ThrowRpcError();
@@ -60,7 +71,6 @@ internal sealed class ReplaceStickerHandler(
             RpcErrors.RpcErrors400.StickerFileInvalid.ThrowRpcError();
         }
 
-        var setId = GetInt64(setDoc["StickerSetId"]);
         var accessHash = GetInt64(setDoc["AccessHash"]);
 
         var docIds = new List<long>();

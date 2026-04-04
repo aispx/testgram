@@ -38,6 +38,15 @@ internal sealed class RemoveStickerFromSetHandler(
             RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
         }
 
+        // Check if user is the creator of the sticker set
+        var creatorUserId = setDoc.Contains("CreatorUserId") ? GetInt64(setDoc["CreatorUserId"]) : 0;
+        if (creatorUserId != input.UserId)
+        {
+            logger.LogWarning("User {UserId} tried to remove sticker from set {SetId} created by {CreatorUserId}",
+                input.UserId, setId, creatorUserId);
+            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
+        }
+
         var docIds = new List<long>();
         if (setDoc.Contains("DocumentIds") && setDoc["DocumentIds"].IsBsonArray)
         {

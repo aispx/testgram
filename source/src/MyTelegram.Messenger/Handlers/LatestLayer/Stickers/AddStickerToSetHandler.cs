@@ -41,6 +41,15 @@ internal sealed class AddStickerToSetHandler(
             RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
         }
 
+        // Check if user is the creator of the sticker set
+        var creatorUserId = setDoc.Contains("CreatorUserId") ? GetInt64(setDoc["CreatorUserId"]) : 0;
+        if (creatorUserId != input.UserId)
+        {
+            logger.LogWarning("User {UserId} tried to add sticker to set {SetId} created by {CreatorUserId}",
+                input.UserId, GetInt64(setDoc["StickerSetId"]), creatorUserId);
+            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
+        }
+
         var setId = GetInt64(setDoc["StickerSetId"]);
         var accessHash = GetInt64(setDoc["AccessHash"]);
         var title = setDoc["Title"].AsString;
