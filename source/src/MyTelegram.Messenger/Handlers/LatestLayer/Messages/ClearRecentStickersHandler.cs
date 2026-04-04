@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Clear recent stickers
@@ -6,10 +9,18 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ClearRecentStickersHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestClearRecentStickers, IBool>
+internal sealed class ClearRecentStickersHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestClearRecentStickers, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestClearRecentStickers obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestClearRecentStickers obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        var recentCol = mongoDatabase.GetCollection<BsonDocument>("recent_stickers");
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
+            Builders<BsonDocument>.Filter.Eq("Attached", obj.Attached)
+        );
+
+        await recentCol.DeleteManyAsync(filter);
+
+        return new TBoolTrue();
     }
 }

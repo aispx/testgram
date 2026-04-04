@@ -101,12 +101,23 @@ internal sealed class CreateStickerSetHandler(
             // Preserve existing attributes if any
             if (existingDoc.Contains("Attributes2") && existingDoc["Attributes2"] != BsonNull.Value)
             {
-                // Keep non-sticker attributes
-                var existingAttrs = BsonSerializer.Deserialize<List<IDocumentAttribute>>(existingDoc["Attributes2"].ToJson());
-                attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker));
+                try
+                {
+                    // Keep non-sticker attributes
+                    var existingAttrs = BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(existingDoc["Attributes2"].ToJson());
+                    attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker));
+                }
+                catch
+                {
+                    // Ignore deserialization errors
+                }
             }
 
-            var updateDoc = Builders<BsonDocument>.Update.Set("Attributes2", attributes2List.ToBsonDocument());
+            // Serialize properly using BsonSerializer
+            var attributes2Json = System.Text.Json.JsonSerializer.Serialize(new TVector<IDocumentAttribute>(attributes2List));
+            var attributes2Bson = BsonSerializer.Deserialize<BsonDocument>(attributes2Json);
+
+            var updateDoc = Builders<BsonDocument>.Update.Set("Attributes2", attributes2Bson);
             await docCol.UpdateOneAsync(
                 Builders<BsonDocument>.Filter.Eq("DocumentId", docId),
                 updateDoc
@@ -175,6 +186,7 @@ internal sealed class CreateStickerSetHandler(
             ["Count"] = documentIds.Count,
             ["DocumentIds"] = new BsonArray(documentIds),
             ["Packs"] = packs,
+            ["CreatorUserId"] = input.UserId,
             ["Version"] = 1
         };
 

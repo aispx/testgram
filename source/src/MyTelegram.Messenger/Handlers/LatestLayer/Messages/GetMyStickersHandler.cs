@@ -15,12 +15,12 @@ internal sealed class GetMyStickersHandler(
 {
     protected override async Task<IMyStickers> HandleCoreAsync(IRequestInput input, RequestGetMyStickers obj)
     {
-        var userSetCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-userinstalledstickersetreadmodel");
         var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
         var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        
-        var filter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
-        
+
+        // Filter by CreatorUserId to get sticker packs created by this user
+        var filter = Builders<BsonDocument>.Filter.Eq("CreatorUserId", input.UserId);
+
         if (obj.OffsetId > 0)
         {
             filter = Builders<BsonDocument>.Filter.And(
@@ -28,33 +28,25 @@ internal sealed class GetMyStickersHandler(
                 Builders<BsonDocument>.Filter.Lt("StickerSetId", obj.OffsetId)
             );
         }
-        
-        var userSets = await userSetCol
+
+        var mySets = await setCol
             .Find(filter)
             .SortByDescending(x => x["StickerSetId"])
             .Limit(obj.Limit > 0 ? obj.Limit : 100)
             .ToListAsync();
 
         var stickerSetCovers = new List<IStickerSetCovered>();
-        
-        foreach (var userSet in userSets)
+
+        foreach (var setDoc in mySets)
         {
-            var setId = GetInt64(userSet["StickerSetId"]);
-            var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", setId)).FirstOrDefaultAsync();
-            
-            if (setDoc == null)
-            {
-                logger.LogWarning("StickerSet {SetId} not found in main collection", setId);
-                continue;
-            }
-            
+            var setId = GetInt64(setDoc["StickerSetId"]);
             var accessHash = GetInt64(setDoc["AccessHash"]);
             var title = setDoc["Title"].AsString;
             var shortName = setDoc.Contains("ShortName") ? setDoc["ShortName"].AsString : setDoc["Slug"].AsString;
             var count = GetInt32(setDoc["Count"]);
-            
+
             var coverDoc = await GetCoverDocumentAsync(docCol, setDoc, setId, accessHash);
-            
+
             var set = new MyTelegram.Schema.TStickerSet
             {
                 Id = setId,
@@ -64,18 +56,18 @@ internal sealed class GetMyStickersHandler(
                 Count = count,
                 Hash = 0
             };
-            
+
             stickerSetCovers.Add(new TStickerSetCovered
             {
                 Set = set,
                 Cover = coverDoc
             });
         }
-        
-        var totalCount = await userSetCol.CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("UserId", input.UserId));
-        
-        logger.LogInformation("GetMyStickers for user {UserId}: {Count} sets", input.UserId, stickerSetCovers.Count);
-        
+
+        var totalCount = await setCol.CountDocumentsAsync(Builders<BsonDocument>.Filter.Eq("CreatorUserId", input.UserId));
+
+        logger.LogInformation("GetMyStickers for user {UserId}: {Count} created sets", input.UserId, stickerSetCovers.Count);
+
         return new TMyStickers
         {
             Count = (int)totalCount,
