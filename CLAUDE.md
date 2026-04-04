@@ -109,8 +109,17 @@ protected override async Task<ISavedMusic> HandleCoreAsync(IRequestInput input, 
 # ALWAYS check official Telegram docs
 https://core.telegram.org/method/messages.getStickerSet
 
-# ALWAYS search in official Android client for reference
+# ALWAYS search in TDLib (official C++ library) for reference implementation
+https://github.com/tdlib/td/tree/master
+# TDLib is the official reference implementation - use it for understanding complex features
+
+# ALWAYS search in official Android client for UI/UX reference
 https://github.com/DrKLO/Telegram/search?q=getStickerSet
+
+# For web search: Use Google Custom Search API or Yandex Search API
+# DO NOT use built-in WebSearch tool - it has limitations
+# Google API: https://developers.google.com/custom-search/v1/overview
+# Yandex API: https://yandex.com/dev/xml/
 
 # NEVER skip research - it's mandatory!
 ```

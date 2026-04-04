@@ -176,13 +176,13 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
         foreach (var msg in messagesToCheck)
         {
             // Check if it's a service message with action
-            if (msg.MessageAction != null && msg.MessageActionData != null)
+            if (msg.MessageAction != null)
             {
-                var actionData = msg.MessageActionData;
-                // Restrict forwarding of certain service message types by checking action data
-                if (actionData.Contains("SuggestBirthday") ||
-                    actionData.Contains("StarGift") ||
-                    actionData.Contains("GiftCode"))
+                var actionType = msg.MessageAction.GetType().Name;
+                // Restrict forwarding of certain service message types
+                if (actionType.Contains("SuggestBirthday", StringComparison.OrdinalIgnoreCase) ||
+                    actionType.Contains("StarGift", StringComparison.OrdinalIgnoreCase) ||
+                    actionType.Contains("GiftCode", StringComparison.OrdinalIgnoreCase))
                 {
                     RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
                 }
