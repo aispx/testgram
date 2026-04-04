@@ -32,23 +32,141 @@ source/src/
 
 ---
 
+## What Counts as "Not Implemented"
+
+**CRITICAL: A handler is considered NOT IMPLEMENTED if it:**
+
+1. **Throws NotImplementedException**
+   ```csharp
+   throw new NotImplementedException();
+   ```
+
+2. **Returns empty/default response without logic**
+   ```csharp
+   return new TVector<IUser>();  // Empty list without checking data
+   return new TBoolTrue();       // Just returns success without doing anything
+   return new TSavedMusic { Count = 0, Documents = [] };  // Empty without checking DB
+   ```
+
+3. **Returns null or placeholder data**
+   ```csharp
+   return null!;
+   return new TUpdates { Updates = [], Users = [], Chats = [], Date = CurrentDate };
+   ```
+
+**A handler IS properly implemented if it:**
+- ✅ Validates input parameters
+- ✅ Checks MongoDB/database for actual data
+- ✅ Uses proper services (IMessageAppService, IUserAppService, etc.)
+- ✅ Returns real data or performs actual operations
+- ✅ Handles errors with RpcErrors
+
+**Example of NOT implemented (bad):**
+```csharp
+protected override Task<ISavedMusic> HandleCoreAsync(IRequestInput input, RequestGetSavedMusic obj)
+{
+    return Task.FromResult<ISavedMusic>(new TSavedMusic { Count = 0, Documents = [] });
+}
+```
+
+**Example of properly implemented (good):**
+```csharp
+protected override async Task<ISavedMusic> HandleCoreAsync(IRequestInput input, RequestGetSavedMusic obj)
+{
+    // 1. Validate user
+    var userReadModel = await _userAppService.GetAsync(input.UserId);
+    if (userReadModel == null)
+        RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+    
+    // 2. Query MongoDB for saved music
+    var collection = _database.GetCollection<BsonDocument>("saved_music");
+    var filter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
+    var docs = await collection.Find(filter).ToListAsync();
+    
+    // 3. Build response with real data
+    var documents = new TVector<IDocument>();
+    foreach (var doc in docs)
+    {
+        // Convert BsonDocument to IDocument
+        documents.Add(ConvertToDocument(doc));
+    }
+    
+    return new TSavedMusic { Count = documents.Count, Documents = documents };
+}
+```
+
+---
+
 ## Implementation Workflow
 
 **CRITICAL: Follow this exact order for ANY feature:**
 
 ### 1. Research Phase
 ```bash
-# Use TL schema skill to find constructor
+# ALWAYS use TL schema skill to find constructor
 /schema.jppgr.am search messages.getStickerSet
 
-# Check official Telegram docs
+# ALWAYS check official Telegram docs
 https://core.telegram.org/method/messages.getStickerSet
 
-# Search in official Android client
+# ALWAYS search in official Android client for reference
 https://github.com/DrKLO/Telegram/search?q=getStickerSet
+
+# NEVER skip research - it's mandatory!
 ```
 
 ### 2. Implementation Phase
+
+**CRITICAL: Use the right tools and services!**
+
+**Required Services (inject via constructor):**
+- `IMongoDatabase` - Direct MongoDB access for queries
+- `IUserAppService` - User operations and validation
+- `IMessageAppService` - Send messages (including service messages)
+- `IPeerHelper` - Convert InputUser/InputPeer to Peer objects
+- `IAccessHashHelper` - Validate access hashes
+- `IQueryProcessor` - Execute read model queries
+- `ILogger<T>` - Logging (optional but recommended)
+
+**Common Patterns:**
+
+1. **Validate User ID:**
+```csharp
+var userReadModel = await _userAppService.GetAsync(input.UserId);
+if (userReadModel == null)
+    RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+```
+
+2. **Query MongoDB:**
+```csharp
+var collection = _database.GetCollection<BsonDocument>("collection_name");
+var filter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
+var docs = await collection.Find(filter).ToListAsync();
+```
+
+3. **Send Service Message:**
+```csharp
+var action = new TMessageActionSuggestBirthday { Birthday = obj.Birthday };
+var sendInput = new SendMessageInput(
+    input.ToRequestInfo() with { ReqMsgId = 0 },
+    input.UserId,
+    new Peer(PeerType.User, targetUserId),
+    string.Empty,
+    Random.Shared.NextInt64(),
+    sendMessageType: SendMessageType.MessageService,
+    messageType: MessageType.Text,
+    messageAction: action
+);
+await _messageAppService.SendMessageAsync([sendInput]);
+```
+
+4. **Validate Access Hash:**
+```csharp
+await _accessHashHelper.CheckAccessHashAsync(input, obj.Id);
+var targetPeer = _peerHelper.GetPeer(obj.Id, input.UserId);
+```
+
+**Build and Test:**
 ```bash
 # Create handler in correct category
 source/src/MyTelegram.Messenger/Handlers/LatestLayer/Messages/GetStickerSetHandler.cs
