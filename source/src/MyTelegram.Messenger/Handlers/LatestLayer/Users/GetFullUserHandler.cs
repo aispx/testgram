@@ -446,12 +446,65 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
             );
 
             var themeDoc = await collection.Find(filter).FirstOrDefaultAsync();
-            if (themeDoc != null && themeDoc.Contains("Emoticon"))
+            if (themeDoc != null)
             {
-                userFull.Theme = new MyTelegram.Schema.TChatTheme
+                // Check if it's an emoji theme or gift theme
+                if (themeDoc.Contains("Emoticon") && !string.IsNullOrEmpty(themeDoc["Emoticon"].AsString))
                 {
-                    Emoticon = themeDoc["Emoticon"].AsString
-                };
+                    userFull.Theme = new MyTelegram.Schema.TChatTheme
+                    {
+                        Emoticon = themeDoc["Emoticon"].AsString
+                    };
+                }
+                else if (themeDoc.Contains("GiftSlug") && !string.IsNullOrEmpty(themeDoc["GiftSlug"].AsString))
+                {
+                    // Load unique gift theme
+                    var giftSlug = themeDoc["GiftSlug"].AsString;
+                    var uniqueGiftsCol = mongoDatabase.GetCollection<BsonDocument>("unique-star-gifts");
+                    var giftDoc = await uniqueGiftsCol.Find(
+                        Builders<BsonDocument>.Filter.Eq("Slug", giftSlug)
+                    ).FirstOrDefaultAsync();
+
+                    if (giftDoc != null)
+                    {
+                        var starGift = new MyTelegram.Schema.TStarGiftUnique
+                        {
+                            ThemeAvailable = true,
+                            Id = giftDoc["UniqueGiftId"].ToInt64(),
+                            GiftId = giftDoc["GiftId"].ToInt64(),
+                            Title = giftDoc["Title"].AsString,
+                            Slug = giftDoc["Slug"].AsString,
+                            Num = giftDoc["Number"].AsInt32,
+                            Attributes = new TVector<MyTelegram.Schema.IStarGiftAttribute>(),
+                            AvailabilityIssued = giftDoc["AvailabilityIssued"].AsInt32,
+                            AvailabilityTotal = giftDoc["AvailabilityTotal"].AsInt32
+                        };
+
+                        var themeSettings = new TVector<MyTelegram.Schema.IThemeSettings>();
+                        if (giftDoc.Contains("ThemeSettings") && giftDoc["ThemeSettings"].IsBsonArray)
+                        {
+                            foreach (var settingDoc in giftDoc["ThemeSettings"].AsBsonArray)
+                            {
+                                var setting = settingDoc.AsBsonDocument;
+                                themeSettings.Add(new MyTelegram.Schema.TThemeSettings
+                                {
+                                    BaseTheme = setting["BaseTheme"].AsString == "classic"
+                                        ? new MyTelegram.Schema.TBaseThemeClassic()
+                                        : new MyTelegram.Schema.TBaseThemeNight(),
+                                    AccentColor = setting["AccentColor"].ToInt32(),
+                                    MessageColorsAnimated = true,
+                                    MessageColors = new TVector<int>(setting["MessageColors"].AsBsonArray.Select(c => c.ToInt32()))
+                                });
+                            }
+                        }
+
+                        userFull.Theme = new MyTelegram.Schema.TChatThemeUniqueGift
+                        {
+                            Gift = starGift,
+                            ThemeSettings = themeSettings
+                        };
+                    }
+                }
             }
         }
         catch (Exception ex)
