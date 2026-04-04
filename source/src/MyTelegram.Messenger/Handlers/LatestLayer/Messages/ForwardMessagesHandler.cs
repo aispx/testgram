@@ -151,7 +151,7 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
             }
         }
 
-        // Check if messages can be forwarded (check for restricted service messages)
+        // Check if messages can be forwarded (check for service messages - they cannot be forwarded)
         var messagesToCheck = await queryProcessor.ProcessAsync(new GetMessagesQuery(
             fromPeer.PeerId,
             MessageType.Unknown,
@@ -175,17 +175,10 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
         foreach (var msg in messagesToCheck)
         {
-            // Check if it's a service message with action
-            if (msg.MessageAction != null)
+            // Service messages cannot be forwarded (following TDLib logic)
+            if (msg.SendMessageType == SendMessageType.MessageService)
             {
-                var actionType = msg.MessageAction.GetType().Name;
-                // Restrict forwarding of certain service message types
-                if (actionType.Contains("SuggestBirthday", StringComparison.OrdinalIgnoreCase) ||
-                    actionType.Contains("StarGift", StringComparison.OrdinalIgnoreCase) ||
-                    actionType.Contains("GiftCode", StringComparison.OrdinalIgnoreCase))
-                {
-                    RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
-                }
+                RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
             }
         }
 
