@@ -39,13 +39,25 @@ internal sealed class GetRequirementsToContactHandler(
                     continue;
                 }
 
-                // Check if user requires premium to contact
-                // This would be stored in user settings/privacy settings
-                // For now, return empty (no requirements)
-                // In full implementation, check:
-                // 1. If user has "require premium for new contacts" enabled
-                // 2. If user requires paid messages (stars_amount)
+                // Check GlobalPrivacySettings for paid messages requirement
+                if (userReadModel.GlobalPrivacySettings?.NoncontactPeersPaidStars != null &&
+                    userReadModel.GlobalPrivacySettings.NoncontactPeersPaidStars > 0)
+                {
+                    result.Add(new TRequirementToContactPaidMessages
+                    {
+                        StarsAmount = userReadModel.GlobalPrivacySettings.NoncontactPeersPaidStars.Value
+                    });
+                    continue;
+                }
 
+                // Check GlobalPrivacySettings for premium requirement
+                if (userReadModel.GlobalPrivacySettings?.NewNoncontactPeersRequirePremium == true)
+                {
+                    result.Add(new TRequirementToContactPremium());
+                    continue;
+                }
+
+                // No requirements
                 result.Add(new TRequirementToContactEmpty());
             }
             catch
