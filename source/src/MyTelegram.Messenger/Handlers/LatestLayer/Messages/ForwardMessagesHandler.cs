@@ -150,6 +150,41 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                 await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId);
             }
         }
+
+        // Check if messages can be forwarded (check for restricted service messages)
+        var messageCollection = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-messagereadmodel");
+        foreach (var msgId in obj.Id)
+        {
+            var msgFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("OwnerPeerId", fromPeer.PeerId),
+                MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("MessageId", msgId)
+            );
+            var msgDoc = await messageCollection.Find(msgFilter).FirstOrDefaultAsync();
+
+            if (msgDoc != null)
+            {
+                // Check if message has noforwards flag
+                if (msgDoc.Contains("Noforwards") && msgDoc["Noforwards"].AsBoolean)
+                {
+                    RpcErrors.RpcErrors406.ChatForwardsRestricted.ThrowRpcError();
+                }
+
+                // Check if it's a service message with restricted action types
+                if (msgDoc.Contains("MessageActionType") && !msgDoc["MessageActionType"].IsBsonNull)
+                {
+                    var actionType = msgDoc["MessageActionType"].AsString;
+                    // Restrict forwarding of certain service message types
+                    if (actionType == "TMessageActionSuggestBirthday" ||
+                        actionType == "TMessageActionStarGift" ||
+                        actionType == "TMessageActionStarGiftUnique" ||
+                        actionType == "TMessageActionGiftCode")
+                    {
+                        RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+                    }
+                }
+            }
+        }
+
         Console.WriteLine("[ForwardMessages] SUCCESS");
         var command = new StartForwardMessagesCommand(TempId.New, input.ToRequestInfo(), obj.Silent, obj.Background, obj.WithMyScore, obj.DropAuthor, obj.DropMediaCaptions, obj.Noforwards, fromPeer, toPeer, obj.Id.ToList(), obj.RandomId.ToList(), obj.ScheduleDate, sendAs, false, post);
         await commandBus.PublishAsync(command);
