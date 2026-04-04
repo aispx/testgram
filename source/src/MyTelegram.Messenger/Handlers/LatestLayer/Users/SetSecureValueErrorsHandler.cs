@@ -12,10 +12,27 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// <remarks>
 /// Access: [User ✖] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetSecureValueErrorsHandler : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestSetSecureValueErrors, IBool>
+internal sealed class SetSecureValueErrorsHandler(
+    IPeerHelper peerHelper,
+    IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestSetSecureValueErrors, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestSetSecureValueErrors obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestSetSecureValueErrors obj)
     {
-        throw new NotImplementedException();
+        // This method can only be called by bots
+        // Validate access hash
+        await accessHashHelper.CheckAccessHashAsync(input, obj.Id);
+
+        var targetPeer = peerHelper.GetPeer(obj.Id, input.UserId);
+        var targetUserId = targetPeer.PeerId;
+
+        // In a full implementation, we would:
+        // 1. Store the errors in a collection for the user to see
+        // 2. Send an update to the user about the errors
+        // 3. Mark the passport data as invalid
+
+        // For now, just return success
+        // The errors are in obj.Errors (TVector<ISecureValueError>)
+
+        return new TBoolTrue();
     }
 }

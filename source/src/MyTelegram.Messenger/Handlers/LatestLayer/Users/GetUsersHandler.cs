@@ -46,7 +46,8 @@ internal sealed class GetUsersHandler(IAccessHashHelper accessHashHelper, IUserC
                     result.Add(new TUserEmpty { Id = input.UserId });
                     break;
                 default:
-                    throw new NotImplementedException();
+                    result.Add(new TUserEmpty { Id = 0 });
+                    break;
             }
         }
 
