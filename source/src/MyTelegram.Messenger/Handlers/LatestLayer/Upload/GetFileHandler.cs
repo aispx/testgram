@@ -1,31 +1,103 @@
-namespace MyTelegram.Messenger.Handlers.LatestLayer.Upload;
+using MongoDB.Bson;
+using MongoDB.Driver;
+
+namespace MyTelegram.Messenger.Messenger.Handlers.LatestLayer.Upload;
+
 /// <summary>
 /// Returns content of a whole file or its part.
-/// Possible errors
-/// Code Type Description
-/// 400 CDN_METHOD_INVALID You can't call this method in a CDN DC.
-/// 400 CHANNEL_INVALID The provided channel is invalid.
-/// 400 CHANNEL_PRIVATE You haven't joined this channel/supergroup.
-/// 406 FILEREF_UPGRADE_NEEDED The client has to be updated in order to support <a href="https://corefork.telegram.org/api/file-references">file references</a>.
-/// 400 FILE_ID_INVALID The provided file id is invalid.
-/// 400 FILE_REFERENCE_EMPTY An empty <a href="https://corefork.telegram.org/api/file-references">file reference</a> was specified.
-/// 400 FILE_REFERENCE_EXPIRED File reference expired, it must be refetched as described in <a href="https://corefork.telegram.org/api/file-references">the documentation</a>.
-/// 400 FILE_REFERENCE_INVALID The specified <a href="https://corefork.telegram.org/api/file-references">file reference</a> is invalid.
-/// 420 FLOOD_PREMIUM_WAIT_%d Please wait %d seconds before repeating the action, or purchase a <a href="https://corefork.telegram.org/api/premium">Telegram Premium subscription</a> to remove this rate limit.
-/// 400 LIMIT_INVALID The provided limit is invalid.
-/// 400 LOCATION_INVALID The provided location is invalid.
-/// 400 MSG_ID_INVALID Invalid message ID provided.
-/// 400 OFFSET_INVALID The provided offset is invalid.
-/// 400 PEER_ID_INVALID The provided peer id is invalid.
-/// <para><c>See <a href="https://corefork.telegram.org/method/upload.getFile"/> </c></para>
+/// See https://core.telegram.org/method/upload.getFile
 /// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
-/// </remarks>
 internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.Upload.RequestGetFile, MyTelegram.Schema.Upload.IFile>
 {
-    protected override Task<MyTelegram.Schema.Upload.IFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Upload.RequestGetFile obj)
+    private readonly IMongoDatabase _database;
+    private readonly ILogger<GetFileHandler> _logger;
+
+    public GetFileHandler(IMongoDatabase database, ILogger<GetFileHandler> logger)
     {
-        throw new NotImplementedException();
+        _database = database;
+        _logger = logger;
+    }
+
+    protected override async Task<MyTelegram.Schema.Upload.IFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Upload.RequestGetFile obj)
+    {
+        // Validate input
+        if (obj.Limit <= 0 || obj.Limit > 1024 * 1024) // Max 1MB per request
+        {
+            RpcErrors.RpcErrors400.LimitInvalid.ThrowRpcError();
+        }
+
+        if (obj.Offset < 0)
+        {
+            RpcErrors.RpcErrors400.OffsetInvalid.ThrowRpcError();
+        }
+
+        // Extract file ID from location
+        long fileId = obj.Location switch
+        {
+            TInputDocumentFileLocation doc => doc.Id,
+            TInputPhotoFileLocation photo => photo.Id,
+            TInputFileLocation file => file.VolumeId, // Legacy
+            _ => throw RpcErrors.RpcErrors400.LocationInvalid.ToRpcException()
+        };
+
+        // Try to get file from uploaded parts first (for recently uploaded files)
+        var partsCollection = _database.GetCollection<BsonDocument>("file_parts");
+        var partsFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
+            Builders<BsonDocument>.Filter.Eq("FileId", fileId)
+        );
+        var parts = await partsCollection.Find(partsFilter)
+            .Sort(Builders<BsonDocument>.Sort.Ascending("FilePart"))
+            .ToListAsync();
+
+        if (parts.Count > 0)
+        {
+            // Assemble file from parts
+            var allBytes = new List<byte>();
+            foreach (var part in parts)
+            {
+                var partBytes = part["Bytes"].AsByteArray;
+                allBytes.AddRange(partBytes);
+            }
+
+            var fileBytes = allBytes.ToArray();
+
+            // Apply offset and limit
+            var start = (int)Math.Min(obj.Offset, fileBytes.Length);
+            var length = Math.Min(obj.Limit, fileBytes.Length - start);
+            var resultBytes = new byte[length];
+            Array.Copy(fileBytes, start, resultBytes, 0, length);
+
+            _logger.LogDebug("Retrieved file from parts: FileId={FileId}, Offset={Offset}, Limit={Limit}, Returned={Length}",
+                fileId, obj.Offset, obj.Limit, resultBytes.Length);
+
+            return new MyTelegram.Schema.Upload.TFile
+            {
+                Type = new TStorage.TFilePartial(), // Partial file type
+                Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Bytes = resultBytes
+            };
+        }
+
+        // File not found in parts, check if it's a stored document
+        var documentsCollection = _database.GetCollection<BsonDocument>("eventflow-documentreadmodel");
+        var docFilter = Builders<BsonDocument>.Filter.Eq("DocumentId", fileId);
+        var document = await documentsCollection.Find(docFilter).FirstOrDefaultAsync();
+
+        if (document == null)
+        {
+            RpcErrors.RpcErrors400.FileIdInvalid.ThrowRpcError();
+        }
+
+        // For stored documents, return empty bytes (actual file data should be in FileServer/MinIO)
+        // This is a simplified implementation - full implementation would fetch from FileServer
+        _logger.LogWarning("GetFile called for stored document {FileId} - returning empty (FileServer integration needed)", fileId);
+
+        return new MyTelegram.Schema.Upload.TFile
+        {
+            Type = new TStorage.TFileUnknown(), // Unknown type for stored files
+            Mtime = document.Contains("Date") ? document["Date"].AsInt32 : (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Bytes = Array.Empty<byte>() // Empty - needs FileServer integration
+        };
     }
 }
