@@ -76,7 +76,7 @@ internal sealed class GetPeerSettingsHandler(
         }
 
         // Check for connected business bot
-        await SetBusinessBotFieldsAsync(settings, userId, peer.PeerId);
+        await SetBusinessBotFieldsAsync(settings, userId, peer.PeerId, peer.PeerType);
 
         // DEBUG: Force set for user 2010001
         if (userId == 2010001 && settings is Schema.TPeerSettings debugSettings)
@@ -95,10 +95,17 @@ internal sealed class GetPeerSettingsHandler(
         return peerSettings;
     }
 
-    private async Task SetBusinessBotFieldsAsync(Schema.IPeerSettings settings, long selfUserId, long targetUserId)
+    private async Task SetBusinessBotFieldsAsync(Schema.IPeerSettings settings, long selfUserId, long targetPeerId, PeerType peerType)
     {
         try
         {
+            // ONLY show business bot banner in private chats with users (not in channels/groups/bots)
+            if (peerType != PeerType.User)
+            {
+                // Not a user chat - it's a channel, group, or bot - don't show banner
+                return;
+            }
+
             // Find connected bot for the SELF user (who is opening the chat - bot owner)
             var collection = database.GetCollection<BsonDocument>("connected_business_bots");
             var filter = Builders<BsonDocument>.Filter.Eq("UserId", selfUserId);
@@ -120,7 +127,7 @@ internal sealed class GetPeerSettingsHandler(
                 if (recipientsDoc.Contains("ExcludeUsers") && !recipientsDoc["ExcludeUsers"].IsBsonNull)
                 {
                     var excludeArray = recipientsDoc["ExcludeUsers"].AsBsonArray;
-                    if (excludeArray.Any(u => u.AsInt64 == targetUserId))
+                    if (excludeArray.Any(u => u.AsInt64 == targetPeerId))
                     {
                         shouldManage = false;
                     }
@@ -132,7 +139,7 @@ internal sealed class GetPeerSettingsHandler(
                     !recipientsDoc["Users"].IsBsonNull)
                 {
                     var usersArray = recipientsDoc["Users"].AsBsonArray;
-                    if (usersArray.Count > 0 && !usersArray.Any(u => u.AsInt64 == targetUserId))
+                    if (usersArray.Count > 0 && !usersArray.Any(u => u.AsInt64 == targetPeerId))
                     {
                         shouldManage = false;
                     }
@@ -140,11 +147,11 @@ internal sealed class GetPeerSettingsHandler(
 
                 if (shouldManage)
                 {
-                    // Get bot user for username
+                    // Get bot user for username - show CONNECTED BOT username, not botfather
                     var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
                     var manageUrl = botUser?.UserName != null
                         ? $"https://t.me/{botUser.UserName}?start=bizbot_{connectionId}"
-                        : $"https://t.me/{botId}";
+                        : $"tg://resolve?domain=botfather&start=manage_{botId}";
 
                     // CRITICAL: Both business_bot_id and business_bot_manage_url must be set (flag 13)
                     tSettings.BusinessBotId = botId;

@@ -5,7 +5,9 @@ public class GetUpdatesQueryHandler(IQueryOnlyReadModelStore<UpdatesReadModel> s
     public async Task<IReadOnlyCollection<IUpdatesReadModel>> ExecuteQueryAsync(GetUpdatesQuery query,
         CancellationToken cancellationToken)
     {
-        Expression<Func<UpdatesReadModel, bool>> predicate = p => p.OwnerPeerId == query.PeerId && (p.OnlySendToUserId == null || p.OnlySendToUserId == query.SelfUserId);
+        Expression<Func<UpdatesReadModel, bool>> predicate = p => p.OwnerPeerId == query.PeerId &&
+            (p.OnlySendToUserId == null || p.OnlySendToUserId == query.SelfUserId) &&
+            (p.ExcludeUserId == null || p.ExcludeUserId != query.SelfUserId);
         predicate =
             predicate
             //.WhereIf(query.Date > 0, p => p.Date > query.Date)

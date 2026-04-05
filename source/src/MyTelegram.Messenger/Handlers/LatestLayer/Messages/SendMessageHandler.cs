@@ -210,6 +210,10 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
 
     private async Task NotifyConnectedBusinessBotsAsync(long userId, long peerId, string message, long randomId)
     {
+        // Skip if sending to XieFather bot
+        if (peerId == XieFatherBotService.BotUserId)
+            return;
+
         var collection = mongoDatabase.GetCollection<BsonDocument>("connected_business_bots");
         var filter = Builders<BsonDocument>.Filter.Eq("UserId", userId);
         var connections = await collection.Find(filter).ToListAsync();
@@ -230,13 +234,15 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
 
             // Check if peer is in ExcludeUsers
             var recipientsDoc = conn["Recipients"].AsBsonDocument;
-            if (recipientsDoc.Contains("ExcludeUsers"))
+            if (recipientsDoc.Contains("ExcludeUsers") && !recipientsDoc["ExcludeUsers"].IsBsonNull)
             {
                 var excludeArray = recipientsDoc["ExcludeUsers"].AsBsonArray;
                 if (excludeArray.Any(u => u.AsInt64 == peerId)) continue;
             }
 
             // Check if bot has ReadMessages right
+            if (!conn.Contains("Rights") || conn["Rights"].IsBsonNull)
+                continue;
             var rightsDoc = conn["Rights"].AsBsonDocument;
             if (!rightsDoc.Contains("ReadMessages") || !rightsDoc["ReadMessages"].AsBoolean)
                 continue;

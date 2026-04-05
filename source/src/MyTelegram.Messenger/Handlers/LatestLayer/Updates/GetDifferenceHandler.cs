@@ -46,7 +46,7 @@ internal sealed class GetDifferenceHandler(IMessageAppService messageAppService,
         var updatesReadModels = await queryProcessor.ProcessAsync(new GetUpdatesQuery(input.UserId, input.UserId, obj.Pts, obj.Date, limit));
         var messageIds = updatesReadModels.Where(p => p.UpdatesType == UpdatesType.NewMessages).Select(p => p.MessageId ?? 0).ToList();
         // all channel updates
-        var channelUpdatesReadModels = await queryProcessor.ProcessAsync(new GetChannelUpdatesByGlobalSeqNoQuery(joinedChannelIdList.ToList(), globalSeqNo, limit));
+        var channelUpdatesReadModels = await queryProcessor.ProcessAsync(new GetChannelUpdatesByGlobalSeqNoQuery(joinedChannelIdList.ToList(), globalSeqNo, limit, input.UserId));
         if (channelUpdatesReadModels.Any(p => p.OnlySendToUserId.HasValue))
         {
             var tempChannelReadModels = channelUpdatesReadModels.ToList();

@@ -37,8 +37,13 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
             TInputDocumentFileLocation doc => doc.Id,
             TInputPhotoFileLocation photo => photo.Id,
             TInputFileLocation file => file.VolumeId, // Legacy
-            _ => throw RpcErrors.RpcErrors400.LocationInvalid.ToRpcException()
+            _ => 0
         };
+
+        if (fileId == 0)
+        {
+            RpcErrors.RpcErrors400.LocationInvalid.ThrowRpcError();
+        }
 
         // Try to get file from uploaded parts first (for recently uploaded files)
         var partsCollection = _database.GetCollection<BsonDocument>("file_parts");
@@ -73,7 +78,7 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
 
             return new MyTelegram.Schema.Upload.TFile
             {
-                Type = new TStorage.TFilePartial(), // Partial file type
+                Type = new MyTelegram.Schema.Storage.TFilePartial(), // Partial file type
                 Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 Bytes = resultBytes
             };
@@ -95,7 +100,7 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
 
         return new MyTelegram.Schema.Upload.TFile
         {
-            Type = new TStorage.TFileUnknown(), // Unknown type for stored files
+            Type = new MyTelegram.Schema.Storage.TFileUnknown(), // Unknown type for stored files
             Mtime = document.Contains("Date") ? document["Date"].AsInt32 : (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             Bytes = Array.Empty<byte>() // Empty - needs FileServer integration
         };

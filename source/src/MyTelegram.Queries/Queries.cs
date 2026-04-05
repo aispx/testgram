@@ -400,7 +400,7 @@ public record GetUpdatesQuery(
     int Date,
     int Limit) : IQuery<IReadOnlyCollection<IUpdatesReadModel>>;
 
-public record GetChannelUpdatesByGlobalSeqNoQuery(List<long> ChannelIdList, long MinGlobalSeqNo, int Limit)
+public record GetChannelUpdatesByGlobalSeqNoQuery(List<long> ChannelIdList, long MinGlobalSeqNo, int Limit, long SelfUserId)
     : IQuery<IReadOnlyCollection<IUpdatesReadModel>>;
 
 public record GetUpdatesByGlobalSeqNoQuery(long UserId, long MinGlobalSeqNo)

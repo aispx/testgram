@@ -25,7 +25,7 @@ internal sealed class GetWebFileHandler : RpcResultObjectHandler<MyTelegram.Sche
         {
             Size = 0,
             MimeType = "application/octet-stream",
-            FileType = new TStorage.TFileUnknown(),
+            FileType = new MyTelegram.Schema.Storage.TFileUnknown(),
             Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             Bytes = Array.Empty<byte>()
         };

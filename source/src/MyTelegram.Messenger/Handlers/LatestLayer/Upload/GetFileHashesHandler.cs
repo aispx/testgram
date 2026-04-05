@@ -25,8 +25,13 @@ internal sealed class GetFileHashesHandler : RpcResultObjectHandler<MyTelegram.S
             TInputDocumentFileLocation doc => doc.Id,
             TInputPhotoFileLocation photo => photo.Id,
             TInputFileLocation file => file.VolumeId,
-            _ => throw RpcErrors.RpcErrors400.LocationInvalid.ToRpcException()
+            _ => 0
         };
+
+        if (fileId == 0)
+        {
+            RpcErrors.RpcErrors400.LocationInvalid.ThrowRpcError();
+        }
 
         var hashes = new TVector<MyTelegram.Schema.IFileHash>();
 

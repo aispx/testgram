@@ -265,6 +265,15 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
     {
         try
         {
+            // ONLY show business bot banner in private chats with users (not in channels/groups/bots)
+            // GetFullUser is ONLY called for users, so this check is redundant but kept for clarity
+            var targetUser = await userAppService.GetAsync(targetUserId);
+            if (targetUser == null)
+            {
+                // Not a user - don't show banner
+                return;
+            }
+
             // Find connected bot for the SELF user (who is opening the chat - bot owner)
             var collection = mongoDatabase.GetCollection<BsonDocument>("connected_business_bots");
             var filter = Builders<BsonDocument>.Filter.Eq("UserId", selfUserId);
@@ -306,11 +315,11 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
 
                 if (shouldManage)
                 {
-                    // Get bot user for username
+                    // Get bot user for username - show CONNECTED BOT username, not botfather
                     var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
                     var manageUrl = botUser?.UserName != null
                         ? $"https://t.me/{botUser.UserName}?start=bizbot_{connectionId}"
-                        : $"https://t.me/{botId}";
+                        : $"tg://resolve?domain=botfather&start=manage_{botId}";
 
                     // CRITICAL: Both business_bot_id and business_bot_manage_url must be set (flag 13)
                     tSettings.BusinessBotId = botId;
