@@ -14,18 +14,20 @@ allowed-tools:
 
 ### 1. Google Custom Search API
 
-**Endpoint:** `https://www.googleapis.com/customsearch/v1`
-
-**Parameters:**
-- `key` - API key (нужно получить от пользователя)
-- `cx` - Custom Search Engine ID
-- `q` - Search query
-- `num` - Number of results (1-10)
-- `start` - Start index for pagination
-
-**Example:**
+**Method 1: CSE Element API (WORKING!)**
 ```bash
-curl "https://www.googleapis.com/customsearch/v1?key=YOUR_API_KEY&cx=YOUR_CX&q=telegram+api+messages.getStickerSet&num=10"
+# Read config
+API_KEY=$(cat /root/testgram/.claude/search-api-keys.json | python3 -c "import sys,json; print(json.load(sys.stdin)['search_apis']['google']['api_key'])")
+CX=$(cat /root/testgram/.claude/search-api-keys.json | python3 -c "import sys,json; print(json.load(sys.stdin)['search_apis']['google']['cx'])")
+
+# Search
+curl -s "https://cse.google.com/cse/element/v1?rsz=filtered_cse&num=10&hl=en&source=gcsc&cx=${CX}&q=YOUR_QUERY&safe=off" | \
+  python3 -c "import sys,json,re; data=sys.stdin.read(); match=re.search(r'google\.search\.cse\.api\d+\((.*)\);', data); results=json.loads(match.group(1)) if match else {}; [print(f\"{i+1}. {r['title']}\n   {r['url']}\n   {r.get('content','')[:100]}...\n\") for i,r in enumerate(results.get('results',[]))]"
+```
+
+**Method 2: Official API (Alternative)**
+```bash
+curl "https://www.googleapis.com/customsearch/v1?key=${API_KEY}&cx=${CX}&q=YOUR_QUERY&num=10"
 ```
 
 ### 2. Yandex Search API

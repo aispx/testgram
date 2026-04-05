@@ -377,3 +377,4 @@ scripts/*.session*
 scripts/*_manifest.json
 scripts/reactions_files/
 scripts/stickers/
+.claude/search-api-keys.json
