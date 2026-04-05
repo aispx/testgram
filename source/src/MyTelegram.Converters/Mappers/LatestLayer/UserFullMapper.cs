@@ -85,6 +85,28 @@ internal sealed class UserFullMapper
             destination.Flags2 = destination.Flags2.SetBit(4);
         }
 
+        // Map MainProfileTab (flags2.20)
+        if (!string.IsNullOrEmpty(source.MainProfileTab))
+        {
+            destination.MainTab = source.MainProfileTab switch
+            {
+                "Posts" => new TProfileTabPosts(),
+                "Gifts" => new TProfileTabGifts(),
+                "Media" => new TProfileTabMedia(),
+                "Files" => new TProfileTabFiles(),
+                "Music" => new TProfileTabMusic(),
+                "Voice" => new TProfileTabVoice(),
+                "Links" => new TProfileTabLinks(),
+                "Gifs" => new TProfileTabGifs(),
+                _ => null
+            };
+
+            if (destination.MainTab != null)
+            {
+                destination.Flags2 = destination.Flags2.SetBit(20);
+            }
+        }
+
         return destination;
     }
 }

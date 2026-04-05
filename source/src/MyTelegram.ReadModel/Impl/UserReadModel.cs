@@ -90,6 +90,8 @@ public class UserReadModel : IUserReadModel,
     // Auto-delete default TTL (in seconds)
     public int? DefaultHistoryTTL { get; private set; }
 
+    public string? MainProfileTab { get; private set; }
+
     public Task ApplyAsync(IReadModelContext context,
             IDomainEvent<MessageAggregate, MessageId, InboxMessagePinnedUpdatedEvent> domainEvent,
         CancellationToken cancellationToken)

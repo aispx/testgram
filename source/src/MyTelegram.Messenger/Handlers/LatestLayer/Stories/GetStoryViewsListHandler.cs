@@ -39,22 +39,29 @@ internal sealed class GetStoryViewsListHandler(
         );
         
         var views = await _storyViewsCollection.Find(viewsFilter).ToListAsync();
-        
+
         var viewerUserIds = views
             .Where(v => v.Contains("viewerUserId"))
             .Select(v => v["viewerUserId"].AsInt64)
             .Distinct()
             .ToList();
-        
+
         var userList = await userConverterService.GetUserListAsync(input, viewerUserIds, false, false, input.Layer);
-        
+
+        // Create a map of userId -> date for quick lookup
+        var viewDateMap = views
+            .Where(v => v.Contains("viewerUserId") && v.Contains("date"))
+            .GroupBy(v => v["viewerUserId"].AsInt64)
+            .ToDictionary(g => g.Key, g => g.First()["date"].AsInt32);
+
         var storyViews = new TVector<IStoryView>();
         foreach (var user in userList)
         {
+            var date = viewDateMap.TryGetValue(user.Id, out var viewDate) ? viewDate : 0;
             var storyView = new TStoryView
             {
                 UserId = user.Id,
-                Date = 0
+                Date = date
             };
             storyViews.Add(storyView);
         }

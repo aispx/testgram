@@ -62,4 +62,5 @@ public interface IUserReadModel : IReadModel
     TBusinessIntro? BusinessIntro { get; }
 
     int? DefaultHistoryTTL { get; }
+    string? MainProfileTab { get; }
 }

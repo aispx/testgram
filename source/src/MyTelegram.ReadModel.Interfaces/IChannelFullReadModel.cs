@@ -38,4 +38,5 @@ public interface IChannelFullReadModel : IReadModel
     int? RequestsPending { get; }
     List<long>? RecentRequesters { get; }
     bool ParticipantsHidden { get; }
+    string? MainProfileTab { get; }
 }

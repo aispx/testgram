@@ -27,6 +27,7 @@ internal sealed class GetPeerStoriesHandler(
             Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, peerId),
             Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, peerType),
             Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false),
+            Builders<StoryDocument>.Filter.Eq(s => s.Archived, false),
             Builders<StoryDocument>.Filter.Lte(s => s.Date, currentTime),
             Builders<StoryDocument>.Filter.Gte(s => s.ExpireDate, currentTime)
         );

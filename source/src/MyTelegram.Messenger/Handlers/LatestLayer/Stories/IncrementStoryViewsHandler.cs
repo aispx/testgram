@@ -18,17 +18,15 @@ internal sealed class IncrementStoryViewsHandler(IMongoDatabase mongoDatabase)
     {
         var (peerId, peerType) = StoryHelper.ResolvePeer(obj.Peer, input.UserId);
 
-        var storyIds = obj.Id.Select(id => (int)id).ToList();
-        var filter = Builders<StoryDocument>.Filter.And(
-            Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, peerId),
-            Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, peerType),
-            Builders<StoryDocument>.Filter.In(s => s.StoryId, storyIds),
-            Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false)
-        );
-        var update = Builders<StoryDocument>.Update.Inc(s => s.ViewsCount, 1);
-        await _storyCollection.UpdateManyAsync(filter, update);
+        // Don't count views from the story owner
+        if (peerId == input.UserId && peerType == 0)
+        {
+            return new TBoolTrue();
+        }
 
+        var storyIds = obj.Id.Select(id => (int)id).ToList();
         var currentTime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
         foreach (var storyId in storyIds)
         {
             var viewFilter = Builders<BsonDocument>.Filter.And(
@@ -41,6 +39,16 @@ internal sealed class IncrementStoryViewsHandler(IMongoDatabase mongoDatabase)
             var existingView = await _storyViewsCollection.Find(viewFilter).FirstOrDefaultAsync();
             if (existingView == null)
             {
+                // First view from this user - increment counter and save view record
+                var storyFilter = Builders<StoryDocument>.Filter.And(
+                    Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, peerId),
+                    Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, peerType),
+                    Builders<StoryDocument>.Filter.Eq(s => s.StoryId, storyId),
+                    Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false)
+                );
+                var update = Builders<StoryDocument>.Update.Inc(s => s.ViewsCount, 1);
+                await _storyCollection.UpdateOneAsync(storyFilter, update);
+
                 var viewDoc = new BsonDocument
                 {
                     { "storyId", storyId },

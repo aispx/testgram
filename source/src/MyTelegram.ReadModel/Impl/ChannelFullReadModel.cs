@@ -52,6 +52,7 @@ public class ChannelFullReadModel : IChannelFullReadModel,
     public int? RequestsPending { get; private set; }
     public List<long>? RecentRequesters { get; private set; }
     public bool ParticipantsHidden { get; private set; }
+    public string? MainProfileTab { get; private set; }
 
     public Task ApplyAsync(IReadModelContext context,
         IDomainEvent<ChannelAggregate, ChannelId, ChannelAboutEditedEvent> domainEvent,

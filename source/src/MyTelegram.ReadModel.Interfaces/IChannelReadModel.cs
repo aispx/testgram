@@ -56,4 +56,5 @@ public interface IChannelReadModel : IReadModel
     bool BroadcastMessagesAllowed { get; }
     long? LinkedMonoforumId { get; }
     bool PaidReactionsEnabled { get; }
+    string? MainProfileTab { get; }
 }

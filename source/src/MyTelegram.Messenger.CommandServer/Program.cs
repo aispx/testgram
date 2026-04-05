@@ -115,6 +115,7 @@ builder.ConfigureServices((ctx,
     services.AddHostedService<QueuedCommandExecutorBackgroundService<DeviceAggregate, DeviceId>>();
     services.AddHostedService<QueuedCommandExecutorBackgroundService<PtsAggregate, PtsId>>();
     services.AddHostedService<ChannelViewsBackgroundService>();
+    services.AddHostedService<StoryArchiveBackgroundService>();
 
     services.Configure<HostOptions>(options =>
     {
