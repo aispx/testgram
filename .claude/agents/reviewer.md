@@ -213,3 +213,40 @@ grep -rn "throw new NotImplementedException" source/src/MyTelegram.Messenger/Han
 - После реализации handler
 - Когда пользователь просит "review", "check", "validate"
 - Перед deploy в production
+
+### 7. Заглушки (КРИТИЧНО - NO STUBS RULE)
+
+**Автопроверка тихих заглушек:**
+```bash
+# Поиск подозрительных паттернов
+grep -rn "Array\.Empty\|LogWarning.*not implemented\|// not implemented\|// TODO\|// stub\|// placeholder" source/src --include="*.cs" | grep -v ".git"
+
+# Поиск пустых возвратов
+grep -rn "return new TVector<.*>();.*// empty\|return Array.Empty" source/src --include="*.cs"
+
+# Поиск NotImplementedException
+grep -rn "throw new NotImplementedException" source/src/MyTelegram.Messenger/Handlers --include="*.cs"
+```
+
+**Правила:**
+- ❌ Заглушки БЕЗ явного запроса пользователя ЗАПРЕЩЕНЫ
+- ❌ `Array.Empty<byte>()` без причины
+- ❌ `new TVector<T>()` с комментарием "empty" или "not implemented"
+- ❌ `_logger.LogWarning("not implemented")` + дефолтный возврат
+- ❌ `throw new NotImplementedException()` в handlers
+
+**Если найдено:**
+```
+❌ ПРОБЛЕМА: Заглушка без подтверждения
+Файл: GetWebFileHandler.cs:25
+Код: return Array.Empty<byte>(); // not implemented
+Причина: Нарушает NO STUBS RULE
+Решение: Либо реальная реализация, либо явный вопрос пользователю о заглушке
+```
+
+**Исключения (когда заглушка OK):**
+- Пользователь явно сказал "сделай заглушку"
+- Пользователь сказал "реализуй все" зная что часть требует инфраструктуры
+- Есть комментарий с объяснением почему заглушка (CDN not available, etc)
+
+**Правило:** Лучше честный вопрос чем молчаливая пустышка.

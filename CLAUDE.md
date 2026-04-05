@@ -825,6 +825,33 @@ App__WebRtcConnections__0__Password=testgram123
 
 ## Critical Rules
 
+### NO STUBS RULE
+
+**CRITICAL: НИКОГДА не делай заглушки без явного запроса пользователя.**
+
+Если функция требует инфраструктуры которой нет (CDN, FileServer, WebProxy) — **пропусти её** или **сообщи что нужна инфраструктура**, но НЕ реализуй пустышку.
+
+**Запрещено без явного "сделай заглушку":**
+```csharp
+// ❌ ЗАПРЕЩЕНО
+return Array.Empty<byte>();        // пустые данные
+return new TVector<IFileHash>();   // пустой список без причины
+_logger.LogWarning("not implemented"); // и возврат дефолта
+throw new NotImplementedException();
+```
+
+**Если реализация невозможна — скажи об этом:**
+```
+GetWebFileHandler требует HTTP proxy инфраструктуры.
+GetCdnFileHandler требует CDN DC инфраструктуры.
+Эти handlers не могут быть реализованы без дополнительной инфраструктуры.
+Реализовать их как заглушки?
+```
+
+**Правило:** лучше честный вопрос чем молчаливая пустышка.
+
+---
+
 ### Security
 - ✅ **ALWAYS** use `input.UserId` from token (never from request)
 - ✅ **ALWAYS** validate user input
