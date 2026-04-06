@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace MyTelegram.Converters.Mappers.LatestLayer;
 
 internal sealed class ChannelMapper
@@ -5,6 +7,13 @@ internal sealed class ChannelMapper
         ILayeredMapper,
         ITransientDependency
 {
+    private readonly ILogger<ChannelMapper> _logger;
+
+    public ChannelMapper(ILogger<ChannelMapper> logger)
+    {
+        _logger = logger;
+    }
+
     public int Layer => Layers.LayerLatest;
     
 
@@ -22,7 +31,11 @@ internal sealed class ChannelMapper
         destination.Title = source.Title;
         destination.ParticipantsCount = source.ParticipantsCount;
         destination.Broadcast = source.Broadcast;
-        destination.Megagroup = source.MegaGroup;
+        // Fix for old channels without Megagroup flag: if not broadcast, it's a megagroup
+        destination.Megagroup = source.MegaGroup || (!source.Broadcast && !source.MegaGroup);
+
+        _logger.LogInformation("ChannelMapper: ChannelId={ChannelId}, Title={Title}, source.MegaGroup={SourceMegaGroup}, source.Broadcast={SourceBroadcast}, destination.Megagroup={DestMegagroup}",
+            source.ChannelId, source.Title, source.MegaGroup, source.Broadcast, destination.Megagroup);
         destination.Verified = source.Verified;
         destination.Fake = source.Fake;
         destination.Scam = source.Scam;
