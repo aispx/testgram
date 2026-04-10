@@ -10,6 +10,6 @@ internal sealed class GetPinnedSavedDialogsHandler : RpcResultObjectHandler<MyTe
 {
     protected override Task<MyTelegram.Schema.Messages.ISavedDialogs> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetPinnedSavedDialogs obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Messages.ISavedDialogs>(new TSavedDialogs { Dialogs = [], Chats = [], Messages = [], Users = [] });
+        return Task.FromResult<MyTelegram.Schema.Messages.ISavedDialogs>(new TSavedDialogs { Dialogs = [], Chats = new TVector<IChat>(), Messages = new TVector<IMessage>(), Users = new TVector<IUser>() });
     }
 }

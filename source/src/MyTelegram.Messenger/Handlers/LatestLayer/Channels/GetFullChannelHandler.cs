@@ -83,6 +83,7 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
                 // Set pending requests for channel admin
                 await SetRecentRequestersAsync(input, layeredChannelFull, chatFull);
                 await SetStarGiftsInfoAsync(channelId, layeredChannelFull);
+                await SetBoostsInfoAsync(input.UserId, channelId, layeredChannelFull);
                 await SetBotVerificationAsync(channelId, layeredChannelFull, chatFull);
             }
 
@@ -163,5 +164,34 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
 
         var ch = chatFull.Chats?.OfType<TChannel>().FirstOrDefault(c => c.Id == channelId);
         if (ch != null) ch.BotVerificationIcon = doc.Icon;
+    }
+
+    private async Task SetBoostsInfoAsync(long userId, long channelId, ILayeredChannelFull channelFull)
+    {
+        if (channelFull is not TChannelFull tFull) return;
+
+        var col = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("channel_boosts");
+
+        // Count total boosts for this channel
+        var totalBoosts = await col.CountDocumentsAsync(
+            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("ChannelId", channelId));
+
+        // Count user's boosts for this channel
+        var userBoosts = await col.CountDocumentsAsync(
+            Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("ChannelId", channelId),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", userId)
+            ));
+
+        if (userBoosts > 0)
+        {
+            tFull.BoostsApplied = (int)userBoosts;
+        }
+
+        // Set boosts_unrestrict based on total boosts (example: need 10 boosts to unrestrict)
+        if (totalBoosts < 10)
+        {
+            tFull.BoostsUnrestrict = 10;
+        }
     }
 }

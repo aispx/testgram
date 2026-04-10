@@ -19,7 +19,7 @@ internal sealed class GetStarsTransactionsByIDHandler(IMongoDatabase mongoDataba
         {
             Balance = new TStarsAmount { Amount = balance },
             History = new TVector<IStarsTransaction>(docs.Select(StarsBalanceHelper.ToTl).ToList()),
-            Chats = [], Users = []
+            Chats = new TVector<IChat>(), Users = new TVector<IUser>()
         };
     }
 }

@@ -39,7 +39,7 @@ internal sealed class GetDifferenceHandler(IMessageAppService messageAppService,
         var ptsReadModel = await queryProcessor.ProcessAsync(new GetPtsByPeerIdQuery(userId));
         var ptsForAuthKeyIdReadModel = await queryProcessor.ProcessAsync(new GetPtsByPermAuthKeyIdQuery(userId, input.PermAuthKeyId));
         var globalSeqNo = ptsForAuthKeyIdReadModel?.GlobalSeqNo ?? 0;
-        IReadOnlyCollection<IUpdatesReadModel> userUpdates = [];
+        IReadOnlyCollection<IUpdatesReadModel> userUpdates = new List<IUpdatesReadModel>();
         var joinedChannelIdList = await queryProcessor.ProcessAsync(new GetChannelIdListByMemberUserIdQuery(input.UserId));
         var limit = obj.PtsTotalLimit ?? MyTelegramConsts.DefaultPtsTotalLimit;
         limit = Math.Min(limit, MyTelegramConsts.DefaultPtsTotalLimit);

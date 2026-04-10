@@ -15,6 +15,6 @@ internal sealed class GetBotRecommendationsHandler : RpcResultObjectHandler<MyTe
 {
     protected override Task<MyTelegram.Schema.Users.IUsers> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestGetBotRecommendations obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Users.IUsers>(new TUsers { Users = [] });
+        return Task.FromResult<MyTelegram.Schema.Users.IUsers>(new TUsers { Users = new TVector<IUser>() });
     }
 }

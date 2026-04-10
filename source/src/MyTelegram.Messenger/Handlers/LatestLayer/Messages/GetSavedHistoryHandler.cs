@@ -30,6 +30,6 @@ internal sealed class GetSavedHistoryHandler(
             return getHistoryConverterService.ToMessages(input, r, input.Layer);
         }
 
-        return new TMessages { Chats = [], Messages = [], Users = [], Topics = [] };
+        return new TMessages { Chats = new TVector<IChat>(), Messages = new TVector<IMessage>(), Users = new TVector<IUser>(), Topics = new TVector<IForumTopic>() };
     }
 }

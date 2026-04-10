@@ -50,8 +50,8 @@ internal sealed class GetPollVotesHandler(IQueryProcessor queryProcessor, IChatC
         {
             Count = pollVoterReadModels.Count,
             NextOffset = nextOffset,
-            Chats = [],
-            Users = [],
+            Chats = new TVector<IChat>(),
+            Users = new TVector<IUser>(),
             Votes = []
         };
         var userIds = new List<long>();

@@ -17,6 +17,6 @@ internal sealed class ToggleForumHandler : RpcResultObjectHandler<MyTelegram.Sch
 {
     protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestToggleForum obj)
     {
-        return Task.FromResult<IUpdates>(new TUpdates { Updates = [], Users = [], Chats = [], Date = CurrentDate });
+        return Task.FromResult<IUpdates>(new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = CurrentDate });
     }
 }

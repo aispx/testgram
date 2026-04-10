@@ -29,7 +29,7 @@ internal sealed class GetRecentStickersHandler(IMongoDatabase mongoDatabase) : R
 
         if (recentDocs.Count == 0)
         {
-            return new TRecentStickers { Dates = [], Packs = [], Stickers = [] };
+            return new TRecentStickers { Dates = new TVector<int>(), Packs = new TVector<IStickerPack>(), Stickers = new TVector<IDocument>() };
         }
 
         var docIds = recentDocs.Select(r => GetInt64(r["DocumentId"])).ToList();
@@ -102,8 +102,8 @@ internal sealed class GetRecentStickersHandler(IMongoDatabase mongoDatabase) : R
             Date = GetInt32(docBson["Date"]),
             MimeType = mimeType,
             Size = size,
-            Thumbs = [],
-            VideoThumbs = [],
+            Thumbs = new TVector<IPhotoSize>(),
+            VideoThumbs = new TVector<IVideoSize>(),
             DcId = dcId,
             Attributes = attributes
         };

@@ -15,7 +15,7 @@ internal sealed class GetWebAuthorizationsHandler(IQueryProcessor queryProcessor
         return new TWebAuthorizations
         {
             Authorizations = [..r],
-            Users = []
+            Users = new TVector<IUser>()
         };
     }
 }

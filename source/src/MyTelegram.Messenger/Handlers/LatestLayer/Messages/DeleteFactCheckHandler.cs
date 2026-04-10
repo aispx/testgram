@@ -14,6 +14,6 @@ internal sealed class DeleteFactCheckHandler : RpcResultObjectHandler<MyTelegram
 {
     protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestDeleteFactCheck obj)
     {
-        return Task.FromResult<IUpdates>(new TUpdates { Chats = [], Updates = [], Users = [], Date = CurrentDate });
+        return Task.FromResult<IUpdates>(new TUpdates { Chats = new TVector<IChat>(), Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Date = CurrentDate });
     }
 }

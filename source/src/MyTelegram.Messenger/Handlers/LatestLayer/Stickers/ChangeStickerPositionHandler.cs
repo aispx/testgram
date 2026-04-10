@@ -134,7 +134,7 @@ internal sealed class ChangeStickerPositionHandler(
             },
             Packs = new TVector<IStickerPack>(packs),
             Documents = new TVector<IDocument>(documents),
-            Keywords = []
+            Keywords = new TVector<IStickerKeyword>()
         };
     }
 
@@ -170,8 +170,8 @@ internal sealed class ChangeStickerPositionHandler(
             Date = 0,
             MimeType = mimeType,
             Size = size,
-            Thumbs = [],
-            VideoThumbs = [],
+            Thumbs = new TVector<IPhotoSize>(),
+            VideoThumbs = new TVector<IVideoSize>(),
             DcId = dcId,
             Attributes = new TVector<IDocumentAttribute>(new IDocumentAttribute[]
             {

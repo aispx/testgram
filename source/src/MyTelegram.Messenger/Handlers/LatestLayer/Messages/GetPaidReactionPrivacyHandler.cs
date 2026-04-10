@@ -14,6 +14,6 @@ internal sealed class GetPaidReactionPrivacyHandler : RpcResultObjectHandler<MyT
         {
             Private = new TPaidReactionPrivacyDefault()
         };
-        return Task.FromResult<MyTelegram.Schema.IUpdates>(new TUpdates { Updates = [update], Chats = [], Date = CurrentDate, Users = [] });
+        return Task.FromResult<MyTelegram.Schema.IUpdates>(new TUpdates { Updates = [update], Chats = new TVector<IChat>(), Date = CurrentDate, Users = new TVector<IUser>() });
     }
 }

@@ -34,15 +34,20 @@ internal sealed class UpdateBusinessIntroHandler : RpcResultObjectHandler<Reques
                 {
                     Id = inputDoc.Id,
                     AccessHash = inputDoc.AccessHash,
-                    FileReference = inputDoc.FileReference
+                    FileReference = inputDoc.FileReference,
+                    Date = 0,
+                    MimeType = string.Empty,
+                    Size = 0,
+                    DcId = 0,
+                    Attributes = new TVector<IDocumentAttribute>()
                 };
             }
 
             var businessIntro = new TBusinessIntro
             {
                 Flags = intro.Flags,
-                Title = intro.Title,
-                Description = intro.Description,
+                Title = intro.Title ?? string.Empty,
+                Description = intro.Description ?? string.Empty,
                 Sticker = sticker
             };
 

@@ -15,7 +15,7 @@ internal sealed class GetEmojiKeywordsDifferenceHandler : RpcResultObjectHandler
             LangCode = "en",
             FromVersion = 0,
             Version = 0,
-            Keywords = []
+            Keywords = new TVector<IEmojiKeyword>()
         };
         return Task.FromResult<IEmojiKeywordsDifference>(r);
     }

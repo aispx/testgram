@@ -12,6 +12,6 @@ internal sealed class GetAutoSaveSettingsHandler : RpcResultObjectHandler<MyTele
 {
     protected override Task<MyTelegram.Schema.Account.IAutoSaveSettings> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetAutoSaveSettings obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Account.IAutoSaveSettings>(new TAutoSaveSettings { BroadcastsSettings = new Schema.TAutoSaveSettings(), ChatsSettings = new Schema.TAutoSaveSettings(), UsersSettings = new Schema.TAutoSaveSettings(), Chats = [], Users = [], Exceptions = [] });
+        return Task.FromResult<MyTelegram.Schema.Account.IAutoSaveSettings>(new TAutoSaveSettings { BroadcastsSettings = new Schema.TAutoSaveSettings(), ChatsSettings = new Schema.TAutoSaveSettings(), UsersSettings = new Schema.TAutoSaveSettings(), Chats = new TVector<IChat>(), Users = new TVector<IUser>(), Exceptions = [] });
     }
 }

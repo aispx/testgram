@@ -14,6 +14,11 @@ internal sealed class CanPurchaseStoreHandler : RpcResultObjectHandler<MyTelegra
 {
     protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestCanPurchaseStore obj)
     {
-        throw new NotImplementedException();
+        // Always allow Premium purchase in Testgram
+        // In production, you would check:
+        // - User's current subscription status
+        // - Payment provider availability
+        // - Regional restrictions
+        return Task.FromResult<IBool>(new TBoolTrue());
     }
 }

@@ -16,9 +16,9 @@ internal sealed class CreateForumTopicHandler : RpcResultObjectHandler<MyTelegra
         return Task.FromResult<MyTelegram.Schema.IUpdates>(
             new TUpdates
             {
-                Users = [],
-                Updates = [],
-                Chats = [],
+                Users = new TVector<IUser>(),
+                Updates = new TVector<IUpdate>(),
+                Chats = new TVector<IChat>(),
                 Date = CurrentDate
             });
     }

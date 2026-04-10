@@ -113,7 +113,7 @@ internal sealed class GetPeerDialogsHandler(IDialogAppService dialogAppService, 
             })];
             if (peerDialogs.Users == null)
             {
-                peerDialogs.Users = [];
+                peerDialogs.Users = new TVector<IUser>();
             }
 
             foreach (var user in users)

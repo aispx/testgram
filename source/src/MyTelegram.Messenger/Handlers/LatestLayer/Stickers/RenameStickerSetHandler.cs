@@ -77,9 +77,9 @@ internal sealed class RenameStickerSetHandler(
                 Count = GetInt32(setDoc["Count"]),
                 Hash = 0
             },
-            Packs = [],
-            Documents = [],
-            Keywords = []
+            Packs = new TVector<IStickerPack>(),
+            Documents = new TVector<IDocument>(),
+            Keywords = new TVector<IStickerKeyword>()
         };
     }
 

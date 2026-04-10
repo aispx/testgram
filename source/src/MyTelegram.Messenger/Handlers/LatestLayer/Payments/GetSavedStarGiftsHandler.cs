@@ -205,7 +205,7 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
             Gifts = gifts,
             NextOffset = nextOffset,
             ChatNotificationsEnabled = isOwner ? chatNotificationsEnabled : null,
-            Chats = [],
+            Chats = new TVector<IChat>(),
             Users = users,
         };
     }

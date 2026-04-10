@@ -33,6 +33,9 @@ public class DifferenceConverterService(
 
         var messageList = messageConverterService.ToMessageList(output.SelfUserId, output.MessageList, output.PollList, output.ChosenPollOptions, output.UserReactionList, layer);
 
+        // Filter out null messages and TMessageService with null Action
+        messageList = messageList.Where(m => m != null && !(m is TMessageService ms && ms.Action == null)).ToList();
+
         var channelList = chatConverterService.ToChannelList(request, output.ChannelList, output.PhotoList,
             output.ChannelMemberList, output.JoinedChannelIdList, layer);
         var userList = userConverterService.ToUserList(request, output.UserList, output.PhotoList,
@@ -44,11 +47,11 @@ public class DifferenceConverterService(
         {
             Final = output.Pts == maxPts,
             Pts = maxPts,
-            Users = [.. userList],
-            OtherUpdates = [.. layeredUpdates],
+            Users = new TVector<IUser>(userList ?? []),
+            OtherUpdates = new TVector<IUpdate>(layeredUpdates?.Where(u => u != null) ?? []),
             Timeout = timeout,
-            Chats = [.. channelList],
-            NewMessages = [.. messageList]
+            Chats = new TVector<IChat>(channelList ?? []),
+            NewMessages = new TVector<IMessage>(messageList ?? [])
         };
     }
 
@@ -59,6 +62,9 @@ public class DifferenceConverterService(
     {
         var messageList = messageConverterService.ToMessageList(output.SelfUserId, output.MessageList, output.PollList,
             output.ChosenPollOptions, output.UserReactionList, layer);
+
+        // Filter out null messages and TMessageService with null Action
+        messageList = messageList.Where(m => m != null && !(m is TMessageService ms && ms.Action == null)).ToList();
         var userList = userConverterService.ToUserList(request, output.UserList, output.PhotoList,
             output.ContactList, output.PrivacyList, layer);
         var channelList = chatConverterService.ToChannelList(request, output.ChannelList, output.PhotoList,
@@ -73,15 +79,18 @@ public class DifferenceConverterService(
 
         var layeredUpdates = updateList.Select(p => updatesResponseService.ToLayeredData(output.SelfUserId, request.AccessHashKeyId, p, layer));
 
+        // Filter out updates with null messages or TMessageService with null Action
+        layeredUpdates = layeredUpdates.Where(u => u != null && !IsInvalidUpdate(u));
+
         if (updateList.Count == limit)
         {
             var differenceSlice = new TDifferenceSlice
             {
-                Chats = [.. channelList],
-                NewEncryptedMessages = [],
-                NewMessages = [.. messageList],
-                OtherUpdates = [.. layeredUpdates],
-                Users = [.. userList],
+                Chats = new TVector<IChat>(channelList ?? []),
+                NewEncryptedMessages = new TVector<IEncryptedMessage>(),
+                NewMessages = new TVector<IMessage>(messageList ?? []),
+                OtherUpdates = new TVector<IUpdate>(layeredUpdates?.Where(u => u != null) ?? []),
+                Users = new TVector<IUser>(userList ?? []),
                 IntermediateState = pts == null
                     ? new TState
                     {
@@ -91,7 +100,14 @@ public class DifferenceConverterService(
                         UnreadCount = unreadCount,
                         Seq = 1
                     }
-                    : objectMapper.Map<IPtsReadModel, TState>(pts)
+                    : objectMapper.Map<IPtsReadModel, TState>(pts) ?? new TState
+                    {
+                        Date = DateTime.UtcNow.ToTimestamp(),
+                        Qts = qts,
+                        Pts = pts?.Pts ?? 1,
+                        UnreadCount = unreadCount,
+                        Seq = 1
+                    }
             };
 
             return differenceSlice;
@@ -101,11 +117,11 @@ public class DifferenceConverterService(
 
         var difference = new TDifference
         {
-            Chats = [.. channelList],
-            NewEncryptedMessages = [.. newEncryptedMessages],
-            NewMessages = [.. messageList],
-            OtherUpdates = [.. layeredUpdates],
-            Users = [.. userList],
+            Chats = new TVector<IChat>(channelList ?? []),
+            NewEncryptedMessages = new TVector<IEncryptedMessage>(newEncryptedMessages ?? []),
+            NewMessages = new TVector<IMessage>(messageList ?? []),
+            OtherUpdates = new TVector<IUpdate>(layeredUpdates?.Where(u => u != null) ?? []),
+            Users = new TVector<IUser>(userList ?? []),
             State = pts == null
                 ? new TState
                 {
@@ -115,7 +131,14 @@ public class DifferenceConverterService(
                     UnreadCount = unreadCount,
                     Seq = 1
                 }
-                : objectMapper.Map<IPtsReadModel, TState>(pts)
+                : objectMapper.Map<IPtsReadModel, TState>(pts) ?? new TState
+                {
+                    Date = DateTime.UtcNow.ToTimestamp(),
+                    Qts = qts,
+                    Pts = pts?.Pts ?? 1,
+                    UnreadCount = unreadCount,
+                    Seq = 1
+                }
         };
         if (cachedPts > pts?.Pts)
         {
@@ -123,5 +146,19 @@ public class DifferenceConverterService(
         }
 
         return difference;
+    }
+
+    private static bool IsInvalidUpdate(IUpdate update)
+    {
+        return update switch
+        {
+            TUpdateNewChannelMessage { Message: TMessageService ms } when ms.Action == null => true,
+            TUpdateNewMessage { Message: TMessageService ms } when ms.Action == null => true,
+            TUpdateEditChannelMessage { Message: TMessageService ms } when ms.Action == null => true,
+            TUpdateEditMessage { Message: TMessageService ms } when ms.Action == null => true,
+            TUpdateNewChannelMessage { Message: null } => true,
+            TUpdateNewMessage { Message: null } => true,
+            _ => false
+        };
     }
 }

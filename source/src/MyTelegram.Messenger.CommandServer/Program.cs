@@ -69,6 +69,10 @@ builder.ConfigureServices((ctx,
     services.Configure<EventBusRabbitMqOptions>(ctx.Configuration.GetRequiredSection("RabbitMQ:EventBus"));
     services.Configure<RabbitMqOptions>(ctx.Configuration.GetRequiredSection("RabbitMQ:Connections:Default"));
 
+    // Register Premium options
+    services.Configure<MyTelegram.Messenger.Options.PremiumOptions>(
+        ctx.Configuration.GetSection(MyTelegram.Messenger.Options.PremiumOptions.SectionName));
+
     //services.AddMyTelegramRabbitMqEventBus();
 
     var eventBusOptions = ctx.Configuration.GetRequiredSection("RabbitMQ:EventBus").Get<EventBusRabbitMqOptions>();
@@ -114,6 +118,7 @@ builder.ConfigureServices((ctx,
     services.AddHostedService<MessageQueueDataProcessorBackgroundService<IDomainEvent>>();
     services.AddHostedService<QueuedCommandExecutorBackgroundService<DeviceAggregate, DeviceId>>();
     services.AddHostedService<QueuedCommandExecutorBackgroundService<PtsAggregate, PtsId>>();
+    services.AddHostedService<GiveawayProcessorBackgroundService>();
     services.AddHostedService<ChannelViewsBackgroundService>();
     services.AddHostedService<StoryArchiveBackgroundService>();
 

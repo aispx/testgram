@@ -62,7 +62,7 @@ internal sealed class GetUserPhotosHandler(IQueryProcessor queryProcessor, IUser
                 return new TPhotos
                 {
                     Photos = [..photos],
-                    Users = []
+                    Users = new TVector<IUser>()
                 };
             }
         }
@@ -70,7 +70,7 @@ internal sealed class GetUserPhotosHandler(IQueryProcessor queryProcessor, IUser
         return new TPhotos
         {
             Photos = [],
-            Users = []
+            Users = new TVector<IUser>()
         };
     }
 }

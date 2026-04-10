@@ -161,7 +161,7 @@ internal sealed class ReplaceStickerHandler(
             },
             Packs = new TVector<IStickerPack>(stickerPacks),
             Documents = new TVector<IDocument>(documents),
-            Keywords = []
+            Keywords = new TVector<IStickerKeyword>()
         };
     }
 
@@ -197,8 +197,8 @@ internal sealed class ReplaceStickerHandler(
             Date = 0,
             MimeType = mimeType,
             Size = size,
-            Thumbs = [],
-            VideoThumbs = [],
+            Thumbs = new TVector<IPhotoSize>(),
+            VideoThumbs = new TVector<IVideoSize>(),
             DcId = dcId,
             Attributes = new TVector<IDocumentAttribute>(new IDocumentAttribute[]
             {

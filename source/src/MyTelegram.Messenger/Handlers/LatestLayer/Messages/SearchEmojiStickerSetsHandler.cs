@@ -111,8 +111,8 @@ internal sealed class SearchEmojiStickerSetsHandler(IMongoDatabase mongoDatabase
                 Size = GetInt64(docDoc["Size"]),
                 DcId = GetInt32(docDoc["DcId"]),
                 Attributes = attributes,
-                Thumbs = [],
-                VideoThumbs = [],
+                Thumbs = new TVector<IPhotoSize>(),
+                VideoThumbs = new TVector<IVideoSize>(),
             };
 
             results.Add(new TStickerSetCovered

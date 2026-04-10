@@ -59,11 +59,11 @@ internal sealed class GetSavedDialogsHandler(
             {
                 Dialogs = [.. monoDialogs],
                 Messages = [.. messageList],
-                Chats = [],
+                Chats = new TVector<IChat>(),
                 Users = [.. userList]
             };
         }
 
-        return new TSavedDialogs { Chats = [], Dialogs = [], Messages = [], Users = [] };
+        return new TSavedDialogs { Chats = new TVector<IChat>(), Dialogs = [], Messages = new TVector<IMessage>(), Users = new TVector<IUser>() };
     }
 }

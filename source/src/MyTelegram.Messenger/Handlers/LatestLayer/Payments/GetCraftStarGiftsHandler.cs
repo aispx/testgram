@@ -14,6 +14,6 @@ internal sealed class GetCraftStarGiftsHandler : RpcResultObjectHandler<MyTelegr
 {
     protected override Task<MyTelegram.Schema.Payments.ISavedStarGifts> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetCraftStarGifts obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Payments.ISavedStarGifts>(new TSavedStarGifts { Chats = [], Users = [], Gifts = [] });
+        return Task.FromResult<MyTelegram.Schema.Payments.ISavedStarGifts>(new TSavedStarGifts { Chats = new TVector<IChat>(), Users = new TVector<IUser>(), Gifts = [] });
     }
 }

@@ -17,7 +17,7 @@ internal sealed class SearchStickersHandler(IMongoDatabase mongoDatabase) : RpcR
 
         if (string.IsNullOrEmpty(emoticon))
         {
-            return new TFoundStickers { Stickers = [] };
+            return new TFoundStickers { Stickers = new TVector<IDocument>() };
         }
 
         var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
@@ -49,7 +49,7 @@ internal sealed class SearchStickersHandler(IMongoDatabase mongoDatabase) : RpcR
 
         if (documentIds.Count == 0)
         {
-            return new TFoundStickers { Stickers = [] };
+            return new TFoundStickers { Stickers = new TVector<IDocument>() };
         }
 
         // Get documents
@@ -114,8 +114,8 @@ internal sealed class SearchStickersHandler(IMongoDatabase mongoDatabase) : RpcR
             Date = GetInt32(docBson["Date"]),
             MimeType = mimeType,
             Size = size,
-            Thumbs = [],
-            VideoThumbs = [],
+            Thumbs = new TVector<IPhotoSize>(),
+            VideoThumbs = new TVector<IVideoSize>(),
             DcId = dcId,
             Attributes = attributes
         };

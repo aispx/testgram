@@ -91,6 +91,28 @@ public class MessageConverterService(
                     var m = messageLayeredService.GetConverter(layer).ToMessage(readModel);
                     var media = readModel.Media2 ?? readModel.Media.ToTObject<IMessageMedia>();
 
+                    // Fix null Stickerset in already deserialized documents
+                    if (media is TMessageMediaDocument { Document: TDocument doc })
+                    {
+                        // Ensure Attributes is not null
+                        if (doc.Attributes == null)
+                        {
+                            doc.Attributes = new TVector<IDocumentAttribute>();
+                        }
+
+                        foreach (var attr in doc.Attributes)
+                        {
+                            if (attr is TDocumentAttributeSticker sticker && sticker.Stickerset == null)
+                            {
+                                sticker.Stickerset = new TInputStickerSetEmpty();
+                            }
+                            else if (attr is TDocumentAttributeCustomEmoji emoji && emoji.Stickerset == null)
+                            {
+                                emoji.Stickerset = new TInputStickerSetEmpty();
+                            }
+                        }
+                    }
+
                     // Enrich documents in media with Attributes2 from database
                     media = EnrichMediaDocuments(media);
 
@@ -469,6 +491,22 @@ public class MessageConverterService(
                                     AccessHash = stickersetDoc["AccessHash"].ToInt64()
                                 };
                             }
+                            else if (stickersetType.EndsWith("TInputStickerSetShortName"))
+                            {
+                                stickerAttr.Stickerset = new TInputStickerSetShortName
+                                {
+                                    ShortName = stickersetDoc["ShortName"].AsString
+                                };
+                            }
+                            else
+                            {
+                                stickerAttr.Stickerset = new TInputStickerSetEmpty();
+                            }
+                        }
+                        else
+                        {
+                            // CRITICAL: Always set Stickerset to prevent NullReferenceException
+                            stickerAttr.Stickerset = new TInputStickerSetEmpty();
                         }
 
                         attributes2.Add(stickerAttr);

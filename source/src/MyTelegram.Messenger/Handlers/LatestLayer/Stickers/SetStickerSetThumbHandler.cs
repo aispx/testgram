@@ -80,9 +80,9 @@ internal sealed class SetStickerSetThumbHandler(
                 Count = count,
                 Hash = 0
             },
-            Packs = [],
-            Documents = [],
-            Keywords = []
+            Packs = new TVector<IStickerPack>(),
+            Documents = new TVector<IDocument>(),
+            Keywords = new TVector<IStickerKeyword>()
         };
     }
 

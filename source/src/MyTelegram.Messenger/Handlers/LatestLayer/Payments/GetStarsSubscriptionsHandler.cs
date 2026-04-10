@@ -9,6 +9,6 @@ internal sealed class GetStarsSubscriptionsHandler(IMongoDatabase mongoDatabase)
     protected override async Task<MyTelegram.Schema.Payments.IStarsStatus> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetStarsSubscriptions obj)
     {
         var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
-        return new TStarsStatus { Balance = new TStarsAmount { Amount = balance }, Chats = [], Users = [] };
+        return new TStarsStatus { Balance = new TStarsAmount { Amount = balance }, Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
     }
 }

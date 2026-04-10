@@ -45,4 +45,5 @@ public enum MessageActionType
     ResellGiftPurchase = 40,
     GiftStars = 41,
     PaidMessage = 42,
+    GiftCode = 43,
 }

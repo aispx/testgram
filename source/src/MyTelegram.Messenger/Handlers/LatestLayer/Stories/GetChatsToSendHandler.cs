@@ -23,7 +23,7 @@ internal sealed class GetChatsToSendHandler(IMongoDatabase mongoDatabase)
         
         if (channelIds.Count == 0)
         {
-            return new TChats { Chats = [] };
+            return new TChats { Chats = new TVector<IChat>() };
         }
         
         var chats = new TVector<IChat>();

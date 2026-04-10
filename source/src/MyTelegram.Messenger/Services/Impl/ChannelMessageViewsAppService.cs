@@ -174,9 +174,9 @@ public class ChannelMessageViewsAppService(
     {
         try
         {
-            var viewsFileName1 = Path.Combine(AppContext.BaseDirectory, $"{ViewsFilterFileName}_1");
-            var viewsFileName2 = Path.Combine(AppContext.BaseDirectory, $"{ViewsFilterFileName}_2");
-            var viewsFileName3 = Path.Combine(AppContext.BaseDirectory, $"{ViewsFilterFileName}_3");
+            var viewsFileName1 = Path.Combine("/tmp", $"{ViewsFilterFileName}_1");
+            var viewsFileName2 = Path.Combine("/tmp", $"{ViewsFilterFileName}_2");
+            var viewsFileName3 = Path.Combine("/tmp", $"{ViewsFilterFileName}_3");
 
             File.WriteAllBytes(viewsFileName1, Filter1.GetData());
             File.WriteAllBytes(viewsFileName2, Filter2.GetData());
@@ -203,7 +203,7 @@ public class ChannelMessageViewsAppService(
     {
         try
         {
-            var viewsFileName = Path.Combine(AppContext.BaseDirectory, $"{ViewsFilterFileName}_{index}");
+            var viewsFileName = Path.Combine("/tmp", $"{ViewsFilterFileName}_{index}");
             if (File.Exists(viewsFileName))
             {
                 var filterData = File.ReadAllBytes(viewsFileName);

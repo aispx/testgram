@@ -16,6 +16,6 @@ internal sealed class GetLocatedHandler : RpcResultObjectHandler<MyTelegram.Sche
 {
     protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Contacts.RequestGetLocated obj)
     {
-        return Task.FromResult<IUpdates>(new TUpdates { Chats = [], Users = [], Date = CurrentDate, Updates = [] });
+        return Task.FromResult<IUpdates>(new TUpdates { Chats = new TVector<IChat>(), Users = new TVector<IUser>(), Date = CurrentDate, Updates = new TVector<IUpdate>() });
     }
 }

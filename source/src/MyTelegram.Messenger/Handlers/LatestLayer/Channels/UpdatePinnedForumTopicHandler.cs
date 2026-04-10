@@ -11,9 +11,9 @@ internal sealed class UpdatePinnedForumTopicHandler : RpcResultObjectHandler<MyT
     {
         return Task.FromResult<IUpdates>(new TUpdates
         {
-            Updates = [],
-            Chats = [],
-            Users = [],
+            Updates = new TVector<IUpdate>(),
+            Chats = new TVector<IChat>(),
+            Users = new TVector<IUser>(),
             Date = CurrentDate
         });
     }

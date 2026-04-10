@@ -21,6 +21,17 @@ internal sealed class ApplyBoostHandler(
     IPeerHelper peerHelper,
     ILogger<ApplyBoostHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Premium.RequestApplyBoost, MyTelegram.Schema.Premium.IMyBoosts>
 {
+    private static long GetInt64(BsonValue v)
+    {
+        return v.BsonType switch
+        {
+            BsonType.Int64 => v.AsInt64,
+            BsonType.Int32 => v.AsInt32,
+            BsonType.Double => (long)v.AsDouble,
+            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int64")
+        };
+    }
+
     protected override async Task<IMyBoosts> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Premium.RequestApplyBoost obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
@@ -83,15 +94,22 @@ internal sealed class ApplyBoostHandler(
 
         foreach (var boost in boosts)
         {
-            var boostChannelId = boost["ChannelId"].AsInt64;
-            channelIds.Add(boostChannelId);
+            var boostChannelId = GetInt64(boost["ChannelId"]);
+
+            // Add to channelIds only if boost is active (ChannelId != 0)
+            if (boostChannelId != 0)
+            {
+                channelIds.Add(boostChannelId);
+            }
 
             myBoosts.Add(new TMyBoost
             {
                 Slot = boost["Slot"].AsInt32,
-                Peer = new TPeerChannel { ChannelId = boostChannelId },
+                // Peer is null for free slots (ChannelId == 0) - this is correct!
+                Peer = boostChannelId != 0 ? new TPeerChannel { ChannelId = boostChannelId } : null,
                 Date = boost["Date"].AsInt32,
-                Expires = boost["Expires"].AsInt32
+                Expires = boost["Expires"].AsInt32,
+                CooldownUntilDate = boost.Contains("CooldownUntilDate") ? boost["CooldownUntilDate"].AsInt32 : null
             });
         }
 
@@ -102,6 +120,22 @@ internal sealed class ApplyBoostHandler(
         var chats = new List<IChat>();
         foreach (var channel in channels)
         {
+            var chId = channel["ChannelId"].AsInt64;
+
+            // Get AdminRights from channelmemberreadmodel
+            var memberCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-channelmemberreadmodel");
+            var member = await memberCol.Find(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ChannelId", chId),
+                Builders<BsonDocument>.Filter.Eq("UserId", input.UserId)
+            )).FirstOrDefaultAsync();
+
+            TChatAdminRights? adminRights = null;
+            if (member != null && member.Contains("AdminRights") && member["AdminRights"].AsInt32 != 0)
+            {
+                var rights = new ChatAdminRights(member["AdminRights"].AsInt32);
+                adminRights = rights.ToChatAdminRights() as TChatAdminRights;
+            }
+
             var broadcast = channel.Contains("Broadcast") && channel["Broadcast"].AsBoolean;
             var megagroup = channel.Contains("MegaGroup") && channel["MegaGroup"].AsBoolean;
 
@@ -109,6 +143,37 @@ internal sealed class ApplyBoostHandler(
             if (!broadcast && !megagroup)
             {
                 megagroup = true;
+            }
+
+            // Read DefaultBannedRights from MongoDB
+            TChatBannedRights? defaultBannedRights = null;
+            if (channel.Contains("DefaultBannedRights"))
+            {
+                var rights = channel["DefaultBannedRights"].AsBsonDocument;
+                defaultBannedRights = new TChatBannedRights
+                {
+                    ViewMessages = rights.GetValue("ViewMessages", false).AsBoolean,
+                    SendMessages = rights.GetValue("SendMessages", false).AsBoolean,
+                    SendMedia = rights.GetValue("SendMedia", false).AsBoolean,
+                    SendStickers = rights.GetValue("SendStickers", false).AsBoolean,
+                    SendGifs = rights.GetValue("SendGifs", false).AsBoolean,
+                    SendGames = rights.GetValue("SendGames", false).AsBoolean,
+                    SendInline = rights.GetValue("SendInline", false).AsBoolean,
+                    EmbedLinks = rights.GetValue("EmbedLinks", false).AsBoolean,
+                    SendPolls = rights.GetValue("SendPolls", false).AsBoolean,
+                    ChangeInfo = rights.GetValue("ChangeInfo", false).AsBoolean,
+                    InviteUsers = rights.GetValue("InviteUsers", false).AsBoolean,
+                    PinMessages = rights.GetValue("PinMessages", false).AsBoolean,
+                    ManageTopics = rights.GetValue("ManageTopics", false).AsBoolean,
+                    SendPhotos = rights.GetValue("SendPhotos", false).AsBoolean,
+                    SendVideos = rights.GetValue("SendVideos", false).AsBoolean,
+                    SendRoundvideos = rights.GetValue("SendRoundvideos", false).AsBoolean,
+                    SendAudios = rights.GetValue("SendAudios", false).AsBoolean,
+                    SendVoices = rights.GetValue("SendVoices", false).AsBoolean,
+                    SendDocs = rights.GetValue("SendDocs", false).AsBoolean,
+                    SendPlain = rights.GetValue("SendPlain", false).AsBoolean,
+                    UntilDate = rights.GetValue("UntilDate", 0).AsInt32
+                };
             }
 
             chats.Add(new TChannel
@@ -119,9 +184,15 @@ internal sealed class ApplyBoostHandler(
                 Username = channel.Contains("UserName") ? channel["UserName"].AsString : null,
                 Photo = new TChatPhotoEmpty(),
                 Date = channel.Contains("Date") ? channel["Date"].AsInt32 : 0,
-                RestrictionReason = [],
+                RestrictionReason = new TVector<IRestrictionReason>(),
                 Broadcast = broadcast,
-                Megagroup = megagroup
+                Megagroup = megagroup,
+                AdminRights = adminRights,
+                DefaultBannedRights = defaultBannedRights,
+                ParticipantsCount = channel.Contains("ParticipantsCount") ? channel["ParticipantsCount"].AsInt32 : 0,
+                Verified = channel.Contains("Verified") && channel["Verified"].AsBoolean,
+                Scam = channel.Contains("Scam") && channel["Scam"].AsBoolean,
+                Fake = channel.Contains("Fake") && channel["Fake"].AsBoolean
             });
         }
 
@@ -129,7 +200,7 @@ internal sealed class ApplyBoostHandler(
         {
             MyBoosts = new TVector<IMyBoost>(myBoosts),
             Chats = new TVector<IChat>(chats),
-            Users = []
+            Users = new TVector<IUser>()
         };
     }
 }

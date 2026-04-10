@@ -22,6 +22,7 @@ public partial class AppConfigHelper : IAppConfigHelper, ISingletonDependency
         SetConfig("premium_gift_attach_menu_icon", new TJsonBool { Value = true });
         SetConfig("premium_gift_text_field_icon", new TJsonBool { Value = true });
         SetConfig("premium_purchase_blocked", new TJsonBool { Value = false });
+        SetConfig("giveaway_gifts_purchase_available", new TJsonBool { Value = true });
     }
 
     private void SetConfig(string key, IJSONValue value)

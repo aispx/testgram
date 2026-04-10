@@ -74,6 +74,6 @@ internal sealed class SendStarGiftOfferHandler(
         )]);
 
         Console.WriteLine($"[DEBUG] SendStarGiftOffer: Message sent, RandomId={obj.RandomId}");
-        return new TUpdates { Updates = [], Users = [], Chats = [], Date = now, Seq = 0 };
+        return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = now, Seq = 0 };
     }
 }

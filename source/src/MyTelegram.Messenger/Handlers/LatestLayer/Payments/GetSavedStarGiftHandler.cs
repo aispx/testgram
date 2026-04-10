@@ -84,6 +84,6 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
             });
         }
 
-        return new TSavedStarGifts { Count = gifts.Count, Gifts = gifts, NextOffset = null, Chats = [], Users = [] };
+        return new TSavedStarGifts { Count = gifts.Count, Gifts = gifts, NextOffset = null, Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
     }
 }

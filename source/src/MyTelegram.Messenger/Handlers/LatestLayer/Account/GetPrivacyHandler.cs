@@ -9,7 +9,7 @@ internal sealed class GetPrivacyHandler(IPrivacyService privacyService)
     {
         var type = ToPrivacyType(obj.Key);
         var rules = await privacyService.GetPrivacyRulesAsync(input.UserId, type);
-        return new TPrivacyRules { Rules = new TVector<IPrivacyRule>(rules), Chats = [], Users = [] };
+        return new TPrivacyRules { Rules = new TVector<IPrivacyRule>(rules), Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
     }
 
     private static PrivacyType ToPrivacyType(IInputPrivacyKey key) => key switch

@@ -26,8 +26,8 @@ internal sealed class SetPrivacyHandler(
         var updates = new TUpdates
         {
             Updates = [updatePrivacy],
-            Users = [],
-            Chats = [],
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
             Date = DateTime.UtcNow.ToTimestamp(),
             Seq = 0
         };
@@ -37,7 +37,7 @@ internal sealed class SetPrivacyHandler(
             excludeAuthKeyId: input.AuthKeyId
         );
 
-        return new TPrivacyRules { Rules = new TVector<IPrivacyRule>(tlRules), Chats = [], Users = [] };
+        return new TPrivacyRules { Rules = new TVector<IPrivacyRule>(tlRules), Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
     }
 
     private static PrivacyRuleEntry ToEntry(IInputPrivacyRule rule) => rule switch

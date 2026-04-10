@@ -37,7 +37,7 @@ internal sealed class GetLeftChannelsHandler(IQueryProcessor queryProcessor, ICh
 
         return new TChats
         {
-            Chats = []
+            Chats = new TVector<IChat>()
         };
     }
 }

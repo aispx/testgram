@@ -33,9 +33,9 @@ internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQuery
         {
             return new TDiscussionMessage
             {
-                Chats = [],
-                Messages = [],
-                Users = [],
+                Chats = new TVector<IChat>(),
+                Messages = new TVector<IMessage>(),
+                Users = new TVector<IUser>(),
             };
         }
 
@@ -56,7 +56,7 @@ internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQuery
         {
             Chats = [..chats],
             Messages = new TVector<IMessage>(message),
-            Users = [],
+            Users = new TVector<IUser>(),
             MaxId = readMaxId,
             ReadInboxMaxId = dialogReadModel?.ReadInboxMaxId,
             ReadOutboxMaxId = dialogReadModel?.ReadOutboxMaxId

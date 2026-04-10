@@ -13,6 +13,6 @@ internal sealed class SetBoostsToUnblockRestrictionsHandler : RpcResultObjectHan
 {
     protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestSetBoostsToUnblockRestrictions obj)
     {
-        return Task.FromResult<IUpdates>(new TUpdates { Chats = [], Updates = [], Users = [], Date = CurrentDate });
+        return Task.FromResult<IUpdates>(new TUpdates { Chats = new TVector<IChat>(), Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Date = CurrentDate });
     }
 }

@@ -64,7 +64,7 @@ internal sealed class HideAllChatJoinRequestsHandler(IQueryProcessor queryProces
             Chats = [channel],
             Date = CurrentDate,
             Updates = new TVector<IUpdate>(new TUpdateChannel { ChannelId = channelPeer.PeerId, }),
-            Users = []
+            Users = new TVector<IUser>()
         };
     }
 

@@ -38,7 +38,7 @@ internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokeni
                 Messages = [..messages],
                 Users = [..users],
                 NextRate = nextRate,
-                Topics = []
+                Topics = new TVector<IForumTopic>()
             };
         }
 
@@ -47,7 +47,7 @@ internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokeni
             Chats = [..channels],
             Messages = [..messages],
             Users = [..users],
-            Topics = []
+            Topics = new TVector<IForumTopic>()
         };
     }
 }

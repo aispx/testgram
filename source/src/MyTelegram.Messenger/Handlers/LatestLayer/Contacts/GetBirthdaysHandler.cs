@@ -10,6 +10,6 @@ internal sealed class GetBirthdaysHandler : RpcResultObjectHandler<MyTelegram.Sc
 {
     protected override Task<MyTelegram.Schema.Contacts.IContactBirthdays> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Contacts.RequestGetBirthdays obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Contacts.IContactBirthdays>(new TContactBirthdays { Contacts = [], Users = [] });
+        return Task.FromResult<MyTelegram.Schema.Contacts.IContactBirthdays>(new TContactBirthdays { Contacts = [], Users = new TVector<IUser>() });
     }
 }

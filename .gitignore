@@ -378,3 +378,9 @@ scripts/*_manifest.json
 scripts/reactions_files/
 scripts/stickers/
 .claude/search-api-keys.json
+
+# Claude Code files
+.claude/
+.claude-flow/
+.swarm/
+.mcp.json

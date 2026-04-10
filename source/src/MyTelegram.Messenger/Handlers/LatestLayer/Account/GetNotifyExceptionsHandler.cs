@@ -10,6 +10,6 @@ internal sealed class GetNotifyExceptionsHandler : RpcResultObjectHandler<MyTele
 {
     protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetNotifyExceptions obj)
     {
-        return Task.FromResult<IUpdates>(new TUpdates { Updates = [], Chats = [], Users = [], Date = CurrentDate });
+        return Task.FromResult<IUpdates>(new TUpdates { Updates = new TVector<IUpdate>(), Chats = new TVector<IChat>(), Users = new TVector<IUser>(), Date = CurrentDate });
     }
 }

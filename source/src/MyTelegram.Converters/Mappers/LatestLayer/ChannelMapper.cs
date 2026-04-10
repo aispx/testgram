@@ -124,6 +124,7 @@ internal sealed class ChannelMapper
         destination.Monoforum = source.IsMonoforum;
         destination.BroadcastMessagesAllowed = source.BroadcastMessagesAllowed;
         if (source.LinkedMonoforumId.HasValue) destination.LinkedMonoforumId = source.LinkedMonoforumId;
+        if (source.SendPaidMessagesStars.HasValue) destination.SendPaidMessagesStars = source.SendPaidMessagesStars.Value;
 
         return destination;
     }

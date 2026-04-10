@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Transfer channel ownership
@@ -27,10 +30,146 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditCreatorHandler : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditCreator, MyTelegram.Schema.IUpdates>
+internal sealed class EditCreatorHandler(
+    IMongoDatabase database,
+    IPeerHelper peerHelper,
+    IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditCreator, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestEditCreator obj)
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestEditCreator obj)
     {
-        return Task.FromResult<MyTelegram.Schema.IUpdates>(new TUpdates { Users = [], Updates = [], Chats = [], Date = CurrentDate });
+        // Get channel
+        if (obj.Channel is not TInputChannel inputChannel)
+        {
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var channelId = inputChannel.ChannelId;
+
+        // Get channel from DB
+        var channelCol = database.GetCollection<BsonDocument>("eventflow-channelreadmodel");
+        var channel = await channelCol.Find(Builders<BsonDocument>.Filter.Eq("ChannelId", channelId)).FirstOrDefaultAsync();
+
+        if (channel == null)
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+
+        // Check if current user is creator
+        var creatorId = channel!.Contains("CreatorId") ? channel["CreatorId"].AsInt64 : 0;
+        if (creatorId != input.UserId)
+            RpcErrors.RpcErrors400.ChatAdminRequired.ThrowRpcError();
+
+        // Get new owner user ID
+        var userInput = obj.UserId as TInputUser;
+        if (userInput == null)
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+
+        var newOwnerId = userInput!.UserId;
+        if (newOwnerId == 0)
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+
+        // Check if new owner is same as current
+        if (newOwnerId == input.UserId)
+            RpcErrors.RpcErrors400.ChatNotModified.ThrowRpcError();
+
+        // Verify new owner exists
+        var userCol = database.GetCollection<BsonDocument>("eventflow-userreadmodel");
+        var newOwner = await userCol.Find(Builders<BsonDocument>.Filter.Eq("UserId", newOwnerId)).FirstOrDefaultAsync();
+        if (newOwner == null)
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+
+        // Check if new owner is member of channel
+        var memberCol = database.GetCollection<BsonDocument>("eventflow-channelmemberreadmodel");
+        var newOwnerMember = await memberCol.Find(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ChannelId", channelId),
+                Builders<BsonDocument>.Filter.Eq("UserId", newOwnerId),
+                Builders<BsonDocument>.Filter.Eq("Left", false)
+            )
+        ).FirstOrDefaultAsync();
+
+        if (newOwnerMember == null)
+            RpcErrors.RpcErrors400.UserNotParticipant.ThrowRpcError();
+
+        // Create pending transfer record
+        var transfersCol = database.GetCollection<BsonDocument>("channel_pending_transfers");
+        var now = DateTime.UtcNow;
+        var expiresAt = now.AddHours(48);
+
+        var transferDoc = new BsonDocument
+        {
+            ["_id"] = $"transfer-{channelId}-{now:yyyyMMddHHmmss}",
+            ["ChannelId"] = channelId,
+            ["FromUserId"] = input.UserId,
+            ["ToUserId"] = newOwnerId,
+            ["CreatedAt"] = now,
+            ["ExpiresAt"] = expiresAt
+        };
+
+        await transfersCol.InsertOneAsync(transferDoc);
+
+        // Get channel title and new owner name
+        var channelTitle = channel["Title"].AsString;
+        var newOwnerName = newOwner!.Contains("FirstName") ? newOwner["FirstName"].AsString : "User";
+        if (newOwner.Contains("LastName") && !newOwner["LastName"].IsBsonNull)
+        {
+            newOwnerName += " " + newOwner["LastName"].AsString;
+        }
+
+        // Send notification to new owner from Telegram service bot (777000)
+        var messageText = $"⚠️ Channel Transferred to You: {channelTitle}\n\n" +
+                         $"The previous owner has transferred ownership of this channel to you. You are now the channel owner.\n\n" +
+                         $"If this was a mistake, you can reject the transfer by pressing 'Reject Channel Transfer' below. " +
+                         $"Otherwise, the transfer will be automatically accepted in 48 hours.";
+
+        // Create inline keyboard with reject button
+        var rejectButton = new TKeyboardButtonCallback
+        {
+            Text = "Reject Channel Transfer",
+            Data = $"reject_channel_transfer:{channelId}:{input.UserId}"
+        };
+
+        var keyboard = new TReplyInlineMarkup
+        {
+            Rows = new TVector<IKeyboardButtonRow>
+            {
+                new TKeyboardButtonRow
+                {
+                    Buttons = new TVector<IKeyboardButton> { rejectButton }
+                }
+            }
+        };
+
+        var sendInput = new SendMessageInput(
+            new RequestInfo(
+                ConnectionId: string.Empty,
+                SessionId: 0,
+                ReqMsgId: 0,
+                UserId: 777000, // Telegram service bot
+                AccessHashKeyId: 0,
+                AuthKeyId: 0,
+                PermAuthKeyId: 0,
+                RequestId: Guid.NewGuid(),
+                Layer: 222,
+                Date: DateTime.UtcNow.ToTimestamp(),
+                DeviceType: DeviceType.Android
+            ),
+            777000,
+            new Peer(PeerType.User, newOwnerId),
+            messageText,
+            Random.Shared.NextInt64(),
+            sendMessageType: SendMessageType.Text,
+            messageType: MessageType.Text,
+            replyMarkup: keyboard
+        );
+
+        await messageAppService.SendMessageAsync([sendInput]);
+
+        return new TUpdates
+        {
+            Users = new TVector<IUser>(),
+            Updates = new TVector<IUpdate>(),
+            Chats = new TVector<IChat>(),
+            Date = CurrentDate
+        };
     }
 }

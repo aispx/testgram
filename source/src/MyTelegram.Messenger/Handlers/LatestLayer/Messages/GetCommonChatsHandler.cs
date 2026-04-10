@@ -36,7 +36,7 @@ internal sealed class GetCommonChatsHandler(IQueryProcessor queryProcessor, ICha
 
         return new TChats
         {
-            Chats = []
+            Chats = new TVector<IChat>()
         };
     }
 }

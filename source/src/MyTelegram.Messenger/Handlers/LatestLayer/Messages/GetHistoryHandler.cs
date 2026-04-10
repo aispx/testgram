@@ -33,9 +33,9 @@ internal sealed class GetHistoryHandler(IMessageAppService messageAppService, IQ
             {
                 return new TChannelMessages
                 {
-                    Chats = [],
-                    Messages = [],
-                    Users = []
+                    Chats = new TVector<IChat>(),
+                    Messages = new TVector<IMessage>(),
+                    Users = new TVector<IUser>()
                 };
             }
 

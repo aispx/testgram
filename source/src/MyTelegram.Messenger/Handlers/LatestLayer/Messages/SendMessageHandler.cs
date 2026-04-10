@@ -121,16 +121,42 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             var requiredStars = targetGps?.NoncontactPeersPaidStars ?? 0;
             if (requiredStars > 0)
             {
-                if ((obj.AllowPaidStars ?? 0) < requiredStars)
-                    RpcErrors.RpcErrors403.AllowPaymentRequiredX.ThrowRpcError((int)requiredStars);
-                var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
-                if (balance < requiredStars)
-                    RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
-                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
-                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, toPeer.PeerId, requiredStars);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId);
-                paidMessageStars = requiredStars;
+                // Check if sender has exception (allowed to send without payment)
+                var exceptionsCol = mongoDatabase.GetCollection<BsonDocument>("paid_messages_exceptions");
+                var exceptionId = $"exception-{toPeer.PeerId}-{input.UserId}";
+                var exception = await exceptionsCol.Find(
+                    Builders<BsonDocument>.Filter.Eq("_id", exceptionId)
+                ).FirstOrDefaultAsync();
+
+                if (exception == null)
+                {
+                    // No exception - payment required
+                    if ((obj.AllowPaidStars ?? 0) < requiredStars)
+                        RpcErrors.RpcErrors403.AllowPaymentRequiredX.ThrowRpcError((int)requiredStars);
+                    var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+                    if (balance < requiredStars)
+                        RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
+                    await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
+                    await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, toPeer.PeerId, requiredStars);
+                    await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId);
+                    await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId);
+
+                    // Save to paid_messages_revenue collection
+                    var revenueCol = mongoDatabase.GetCollection<BsonDocument>("paid_messages_revenue");
+                    await revenueCol.InsertOneAsync(new BsonDocument
+                    {
+                        ["ReceiverUserId"] = toPeer.PeerId,
+                        ["SenderUserId"] = input.UserId,
+                        ["StarsAmount"] = requiredStars,
+                        ["MessageId"] = 0, // Will be updated after message is created
+                        ["Date"] = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        ["Refunded"] = false,
+                        ["ParentPeerId"] = BsonNull.Value
+                    });
+
+                    paidMessageStars = requiredStars;
+                }
+                // else: exception exists - allow free message
             }
         }
 

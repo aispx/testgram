@@ -51,6 +51,6 @@ internal sealed class UpdateStarGiftPriceHandler(IMongoDatabase mongoDatabase) :
             Builders<SavedStarGiftDocument>.Update.Set(d => d.CanResellAt, resellStars > 0 ? 0 : (int?)null)
         );
 
-        return new TUpdates { Chats = [], Updates = [], Users = [], Date = CurrentDate };
+        return new TUpdates { Chats = new TVector<IChat>(), Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Date = CurrentDate };
     }
 }

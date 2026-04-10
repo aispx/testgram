@@ -74,7 +74,7 @@ internal sealed class UpdatePaidMessagesPriceHandler(
             // Idempotent retry — already processed
         }
 
-        return new TUpdates { Chats = [], Updates = [], Users = [], Date = DateTime.UtcNow.ToTimestamp() };
+        return new TUpdates { Chats = new TVector<IChat>(), Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Date = DateTime.UtcNow.ToTimestamp() };
     }
 
     private async Task SendPaidMessagesPriceServiceMessageAsync(IRequestInput input, long channelId, bool broadcastMessagesAllowed, long stars)

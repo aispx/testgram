@@ -129,7 +129,7 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
         if (!craftSucceeded)
         {
             // Craft failed - gifts burned, no result
-            return new TUpdates { Updates = [], Users = [], Chats = [], Date = now, Seq = 0 };
+            return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = now, Seq = 0 };
         }
 
         // Craft succeeded - use FIRST SLOT gift as base
@@ -175,6 +175,6 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
             DcId = firstGift.DcId,
         });
 
-        return new TUpdates { Updates = [], Users = [], Chats = [], Date = now, Seq = 0 };
+        return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = now, Seq = 0 };
     }
 }

@@ -92,6 +92,7 @@ public class ChannelReadModel : IChannelReadModel,
     public long? LinkedMonoforumId { get; private set; }
     public bool PaidReactionsEnabled { get; private set; }
     public string? MainProfileTab { get; private set; }
+    public long? SendPaidMessagesStars { get; private set; }
 
     //public ReactionType ReactionType { get; private set; }
     //public bool AllowCustomReaction { get; private set; }

@@ -10,6 +10,6 @@ internal sealed class GetInactiveChannelsHandler : RpcResultObjectHandler<MyTele
 {
     protected override Task<MyTelegram.Schema.Messages.IInactiveChats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetInactiveChannels obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Messages.IInactiveChats>(new TInactiveChats { Chats = [], Dates = [], Users = [] });
+        return Task.FromResult<MyTelegram.Schema.Messages.IInactiveChats>(new TInactiveChats { Chats = new TVector<IChat>(), Dates = new TVector<int>(), Users = new TVector<IUser>() });
     }
 }

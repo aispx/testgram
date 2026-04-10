@@ -30,4 +30,5 @@ public class StarsTransactionDocument
     public bool StargiftAuctionBid { get; set; }
     public bool Offer { get; set; }
     public string? StargiftSlug { get; set; }
+    public int? PremiumGiftMonths { get; set; }
 }

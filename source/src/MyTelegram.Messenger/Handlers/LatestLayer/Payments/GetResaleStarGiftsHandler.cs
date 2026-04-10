@@ -36,8 +36,8 @@ internal sealed class GetResaleStarGiftsHandler(IMongoDatabase mongoDatabase)
             Count = total,
             Gifts = gifts,
             NextOffset = nextOffset,
-            Chats = [],
-            Users = [],
+            Chats = new TVector<IChat>(),
+            Users = new TVector<IUser>(),
         };
     }
 }

@@ -51,9 +51,9 @@ internal sealed class GetSendAsHandler(IQueryProcessor queryProcessor, IChatConv
 
         return new TSendAsPeers
         {
-            Chats = [],
-            Peers = [],
-            Users = []
+            Chats = new TVector<IChat>(),
+            Peers = new TVector<ISendAsPeer>(),
+            Users = new TVector<IUser>()
         };
     }
 }

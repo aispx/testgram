@@ -1,3 +1,7 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Schema.Payments;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// <summary>
 /// Obtain information about a <a href="https://corefork.telegram.org/api/giveaways">Telegram Premium giveaway »</a>.
@@ -10,10 +14,205 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetGiveawayInfoHandler : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetGiveawayInfo, MyTelegram.Schema.Payments.IGiveawayInfo>
+internal sealed class GetGiveawayInfoHandler(
+    IMongoDatabase database,
+    IPeerHelper peerHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetGiveawayInfo, MyTelegram.Schema.Payments.IGiveawayInfo>
 {
-    protected override Task<MyTelegram.Schema.Payments.IGiveawayInfo> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetGiveawayInfo obj)
+    protected override async Task<MyTelegram.Schema.Payments.IGiveawayInfo> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetGiveawayInfo obj)
     {
-        throw new NotImplementedException();
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer == null || peer.PeerType != PeerType.Channel)
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+
+        var collection = database.GetCollection<BsonDocument>("giveaways");
+
+        // First try: find by exact MsgId (original giveaway message)
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
+            Builders<BsonDocument>.Filter.Eq("MsgId", obj.MsgId)
+        );
+        var giveaway = await collection.Find(filter).FirstOrDefaultAsync();
+
+        // Second try: if not found, user might be clicking on results message
+        // Results message has LaunchMsgId pointing to original giveaway
+        // So we search for finished giveaways in this channel and check if MsgId is close to any LaunchMsgId
+        if (giveaway == null)
+        {
+            var finishedFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
+                Builders<BsonDocument>.Filter.Eq("Status", "finished")
+            );
+            var finishedGiveaways = await collection.Find(finishedFilter).ToListAsync();
+
+            // Find giveaway where obj.MsgId is likely the results message
+            // Results message is sent after giveaway finishes, so it should be after LaunchMsgId
+            // Try to find the closest giveaway before this message
+            BsonDocument? closestGiveaway = null;
+            int minDistance = int.MaxValue;
+
+            foreach (var g in finishedGiveaways)
+            {
+                if (g.Contains("MsgId") && !g["MsgId"].IsBsonNull)
+                {
+                    var launchMsgId = g["MsgId"].AsInt32;
+                    // Results message should be after launch message
+                    if (obj.MsgId > launchMsgId)
+                    {
+                        var distance = obj.MsgId - launchMsgId;
+                        if (distance < minDistance)
+                        {
+                            minDistance = distance;
+                            closestGiveaway = g;
+                        }
+                    }
+                }
+            }
+
+            // Accept if within reasonable range (5000 messages)
+            if (closestGiveaway != null && minDistance < 5000)
+            {
+                giveaway = closestGiveaway;
+            }
+        }
+
+        // Third try: fallback for newly created giveaways
+        if (giveaway == null)
+        {
+            var fallbackFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
+                Builders<BsonDocument>.Filter.Eq("Status", "active"),
+                Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Eq("MsgId", 0),
+                    Builders<BsonDocument>.Filter.Exists("MsgId", false)
+                )
+            );
+            giveaway = await collection.Find(fallbackFilter).SortByDescending(x => x["StartDate"]).FirstOrDefaultAsync();
+
+            // Update MsgId if found
+            if (giveaway != null)
+            {
+                await collection.UpdateOneAsync(
+                    Builders<BsonDocument>.Filter.Eq("_id", giveaway["_id"]),
+                    Builders<BsonDocument>.Update.Set("MsgId", obj.MsgId)
+                );
+            }
+        }
+
+        if (giveaway == null)
+            RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+
+        var status = giveaway.Contains("Status") ? giveaway["Status"].AsString : "active";
+        var startDate = giveaway["StartDate"].AsInt32;
+        var userId = input.UserId;
+
+        if (status == "finished")
+        {
+            // Check if user is a winner
+            var winnerIds = giveaway.Contains("WinnerUserIds") && giveaway["WinnerUserIds"].IsBsonArray
+                ? giveaway["WinnerUserIds"].AsBsonArray.Select(x => x.AsInt64).ToList()
+                : new List<long>();
+            var isWinner = winnerIds.Contains(userId);
+
+            string? slug = null;
+            long? starsPrize = null;
+
+            if (isWinner)
+            {
+                var giveawayType = giveaway.Contains("Type") ? giveaway["Type"].AsString : "premium";
+
+                if (giveawayType == "stars")
+                {
+                    // Stars giveaway - get stars amount directly
+                    starsPrize = giveaway.Contains("Stars") && !giveaway["Stars"].IsBsonNull
+                        ? giveaway["Stars"].AsInt64
+                        : null;
+                }
+                else
+                {
+                    // Premium giveaway - find gift code for this user
+                    // Use the actual giveaway MsgId, not the requested MsgId (which might be results message)
+                    var giveawayMsgId = giveaway.Contains("MsgId") && !giveaway["MsgId"].IsBsonNull
+                        ? giveaway["MsgId"].AsInt32
+                        : 0;
+
+                    var codeCol = database.GetCollection<BsonDocument>("premium_gift_codes");
+                    var code = await codeCol.Find(
+                        Builders<BsonDocument>.Filter.And(
+                            Builders<BsonDocument>.Filter.Eq("ToId", userId),
+                            Builders<BsonDocument>.Filter.Eq("GiveawayMsgId", giveawayMsgId)
+                        )
+                    ).FirstOrDefaultAsync();
+
+                    if (code != null)
+                    {
+                        slug = code.Contains("Slug") ? code["Slug"].AsString : null;
+                    }
+                }
+            }
+
+            var winnersCount = winnerIds.Count;
+            var activatedCount = 0;
+
+            // Count activated codes
+            if (winnersCount > 0)
+            {
+                var codeCol = database.GetCollection<BsonDocument>("premium_gift_codes");
+                activatedCount = (int)await codeCol.CountDocumentsAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("GiveawayMsgId", obj.MsgId),
+                        Builders<BsonDocument>.Filter.Eq("Used", true)
+                    )
+                );
+            }
+
+            return new TGiveawayInfoResults
+            {
+                Winner = isWinner,
+                StartDate = startDate,
+                FinishDate = giveaway.Contains("UntilDate") ? giveaway["UntilDate"].AsInt32 : startDate + 86400,
+                WinnersCount = winnersCount,
+                GiftCodeSlug = slug,
+                StarsPrize = starsPrize,
+                ActivatedCount = activatedCount > 0 ? activatedCount : null
+            };
+        }
+
+        // Active giveaway - check if user is participating
+        var memberCol = database.GetCollection<BsonDocument>("eventflow-channelmemberreadmodel");
+        var isMember = await memberCol.Find(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
+                Builders<BsonDocument>.Filter.Eq("UserId", userId)
+            )
+        ).AnyAsync();
+
+        var onlyNewSubscribers = giveaway.Contains("OnlyNewSubscribers") && giveaway["OnlyNewSubscribers"].AsBoolean;
+        int? joinedTooEarlyDate = null;
+
+        if (onlyNewSubscribers && isMember)
+        {
+            // Check if user joined before giveaway started
+            var member = await memberCol.Find(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
+                    Builders<BsonDocument>.Filter.Eq("UserId", userId)
+                )
+            ).FirstOrDefaultAsync();
+
+            if (member != null && member.Contains("JoinDate"))
+            {
+                var joinDate = member["JoinDate"].AsInt32;
+                if (joinDate < startDate)
+                    joinedTooEarlyDate = joinDate;
+            }
+        }
+
+        return new TGiveawayInfo
+        {
+            Participating = isMember && joinedTooEarlyDate == null,
+            StartDate = startDate,
+            JoinedTooEarlyDate = joinedTooEarlyDate
+        };
     }
 }

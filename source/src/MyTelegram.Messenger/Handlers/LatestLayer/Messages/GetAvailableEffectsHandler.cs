@@ -10,6 +10,6 @@ internal sealed class GetAvailableEffectsHandler : RpcResultObjectHandler<MyTele
 {
     protected override Task<MyTelegram.Schema.Messages.IAvailableEffects> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetAvailableEffects obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Messages.IAvailableEffects>(new TAvailableEffects { Documents = [], Effects = [], });
+        return Task.FromResult<MyTelegram.Schema.Messages.IAvailableEffects>(new TAvailableEffects { Documents = new TVector<IDocument>(), Effects = [], });
     }
 }

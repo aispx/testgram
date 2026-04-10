@@ -15,6 +15,6 @@ internal sealed class GetChannelRecommendationsHandler : RpcResultObjectHandler<
 {
     protected override Task<MyTelegram.Schema.Messages.IChats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetChannelRecommendations obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Messages.IChats>(new TChats { Chats = [] });
+        return Task.FromResult<MyTelegram.Schema.Messages.IChats>(new TChats { Chats = new TVector<IChat>() });
     }
 }

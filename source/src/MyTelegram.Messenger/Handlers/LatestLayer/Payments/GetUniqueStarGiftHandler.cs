@@ -14,6 +14,6 @@ internal sealed class GetUniqueStarGiftHandler(IMongoDatabase mongoDatabase)
 
         if (doc == null) RpcErrors.RpcErrors400.StargiftSlugInvalid.ThrowRpcError();
 
-        return new TUniqueStarGift { Gift = UniqueStarGiftHelper.ToTl(doc!), Chats = [], Users = [] };
+        return new TUniqueStarGift { Gift = UniqueStarGiftHelper.ToTl(doc!), Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
     }
 }

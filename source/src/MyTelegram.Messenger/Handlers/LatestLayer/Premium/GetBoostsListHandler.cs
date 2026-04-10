@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Schema;
 using MyTelegram.Schema.Premium;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Premium;
@@ -14,8 +17,95 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Premium;
 /// </remarks>
 internal sealed class GetBoostsListHandler : RpcResultObjectHandler<MyTelegram.Schema.Premium.RequestGetBoostsList, MyTelegram.Schema.Premium.IBoostsList>
 {
-    protected override Task<MyTelegram.Schema.Premium.IBoostsList> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Premium.RequestGetBoostsList obj)
+    private readonly IMongoDatabase _mongoDatabase;
+    private readonly IPeerHelper _peerHelper;
+    private readonly IUserAppService _userAppService;
+
+    public GetBoostsListHandler(
+        IMongoDatabase mongoDatabase,
+        IPeerHelper peerHelper,
+        IUserAppService userAppService)
     {
-        return Task.FromResult<MyTelegram.Schema.Premium.IBoostsList>(new TBoostsList { Boosts = [], Users = [], });
+        _mongoDatabase = mongoDatabase;
+        _peerHelper = peerHelper;
+        _userAppService = userAppService;
+    }
+
+    protected override async Task<IBoostsList> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Premium.RequestGetBoostsList obj)
+    {
+        var peer = _peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer == null || peer.PeerType != PeerType.Channel)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+        }
+
+        var channelId = peer.PeerId;
+        var collection = _mongoDatabase.GetCollection<BsonDocument>("channel_boosts");
+
+        var filter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
+        var boostDocs = await collection.Find(filter)
+            .Sort(Builders<BsonDocument>.Sort.Descending("Date"))
+            .ToListAsync();
+
+        // Group boosts by UserId and sum multipliers
+        var groupedBoosts = boostDocs
+            .GroupBy(doc => doc["UserId"].BsonType == BsonType.Int64 ? doc["UserId"].AsInt64 : doc["UserId"].AsInt32)
+            .Select(g => new
+            {
+                UserId = g.Key,
+                TotalMultiplier = g.Sum(doc => doc.Contains("Multiplier") ? doc["Multiplier"].AsInt32 : 1),
+                LatestDate = g.Max(doc => doc["Date"].AsInt32),
+                LatestExpires = g.Max(doc => doc["Expires"].AsInt32),
+                FirstId = g.First()["_id"].ToString(),
+                Gift = g.Any(doc => doc.Contains("Gift") && doc["Gift"].AsBoolean),
+                Giveaway = g.Any(doc => doc.Contains("Giveaway") && doc["Giveaway"].AsBoolean),
+                Unclaimed = g.Any(doc => doc.Contains("Unclaimed") && doc["Unclaimed"].AsBoolean)
+            })
+            .OrderByDescending(x => x.LatestDate)
+            .Take(obj.Limit)
+            .ToList();
+
+        var boosts = new List<IBoost>();
+        var userIds = new HashSet<long>();
+
+        foreach (var grouped in groupedBoosts)
+        {
+            userIds.Add(grouped.UserId);
+
+            boosts.Add(new TBoost
+            {
+                Id = grouped.FirstId,
+                UserId = grouped.UserId,
+                Date = grouped.LatestDate,
+                Expires = grouped.LatestExpires,
+                Multiplier = grouped.TotalMultiplier,
+                Gift = grouped.Gift,
+                Giveaway = grouped.Giveaway,
+                Unclaimed = grouped.Unclaimed
+            });
+        }
+
+        var userReadModels = await _userAppService.GetListAsync(userIds.ToList());
+        var users = new List<IUser>();
+        foreach (var userReadModel in userReadModels)
+        {
+            users.Add(new TUser
+            {
+                Id = userReadModel.UserId,
+                AccessHash = userReadModel.AccessHash,
+                FirstName = userReadModel.FirstName ?? string.Empty,
+                LastName = userReadModel.LastName,
+                Username = userReadModel.UserName,
+                Phone = userReadModel.PhoneNumber,
+                Photo = new TUserProfilePhotoEmpty()
+            });
+        }
+
+        return new TBoostsList
+        {
+            Count = groupedBoosts.Count,
+            Boosts = new TVector<IBoost>(boosts),
+            Users = new TVector<IUser>(users)
+        };
     }
 }

@@ -25,6 +25,20 @@ public class UpdatesConverterService(
                 mentioned: mentioned,
                 layer: layer
             );
+
+        // Skip if message is null
+        if (message == null)
+        {
+            return new TUpdates
+            {
+                Chats = [],
+                Date = item.Date,
+                Seq = 0,
+                Users = [],
+                Updates = new TVector<IUpdate>()
+            };
+        }
+
         var updateNewChannelMessage =
             new TUpdateNewChannelMessage
             {
@@ -427,6 +441,12 @@ public class UpdatesConverterService(
     private IUpdate ToMessageServiceUpdate(long selfUserId, MessageItem item, int layer)
     {
         var m = messageConverterService.ToMessage(selfUserId, item, layer: layer);
+
+        // Skip if message is null - return empty update
+        if (m == null)
+        {
+            return new TUpdateNewMessage { Pts = item.Pts, PtsCount = 0, Message = new TMessageEmpty { Id = item.MessageId } };
+        }
 
         if (item.ToPeer.PeerType == PeerType.Channel)
         {

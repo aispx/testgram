@@ -42,34 +42,48 @@ internal sealed class GetAlbumsHandler(
         foreach (var album in albumsDict)
         {
             var firstStory = album.Value.OrderBy(s => s.StoryId).FirstOrDefault();
-            
+
+            // Skip albums without valid media
+            if (firstStory == null || firstStory.MediaFileId == 0)
+            {
+                continue;
+            }
+
             IPhoto? iconPhoto = null;
             IDocument? iconVideo = null;
-            
-            if (firstStory != null)
+
+            if (firstStory.MediaType == 1)
             {
-                if (firstStory.MediaType == 1 && firstStory.MediaFileId != 0)
+                iconPhoto = new TPhoto
                 {
-                    iconPhoto = new TPhoto
-                    {
-                        Id = firstStory.MediaFileId,
-                        AccessHash = firstStory.MediaAccessHash,
-                        DcId = firstStory.MediaDcId,
-                        FileReference = firstStory.MediaFileReference ?? []
-                    };
-                }
-                else if (firstStory.MediaType == 2 && firstStory.MediaFileId != 0)
+                    Id = firstStory.MediaFileId,
+                    AccessHash = firstStory.MediaAccessHash,
+                    DcId = firstStory.MediaDcId,
+                    FileReference = firstStory.MediaFileReference ?? [],
+                    Date = (int)firstStory.Date,
+                    Sizes = new TVector<IPhotoSize>()
+                };
+            }
+            else if (firstStory.MediaType == 2)
+            {
+                iconVideo = new TDocument
                 {
-                    iconVideo = new TDocument
-                    {
-                        Id = firstStory.MediaFileId,
-                        AccessHash = firstStory.MediaAccessHash,
-                        DcId = firstStory.MediaDcId,
-                        FileReference = firstStory.MediaFileReference != null ? new ReadOnlyMemory<byte>(firstStory.MediaFileReference) : ReadOnlyMemory<byte>.Empty,
-                        Size = firstStory.MediaSize,
-                        MimeType = firstStory.MediaMimeType ?? "video/mp4"
-                    };
-                }
+                    Id = firstStory.MediaFileId,
+                    AccessHash = firstStory.MediaAccessHash,
+                    DcId = firstStory.MediaDcId,
+                    FileReference = firstStory.MediaFileReference != null ? new ReadOnlyMemory<byte>(firstStory.MediaFileReference) : ReadOnlyMemory<byte>.Empty,
+                    Size = firstStory.MediaSize,
+                    MimeType = firstStory.MediaMimeType ?? "video/mp4",
+                    Date = (int)firstStory.Date,
+                    Thumbs = new TVector<IPhotoSize>(),
+                    VideoThumbs = new TVector<IVideoSize>(),
+                    Attributes = new TVector<IDocumentAttribute>()
+                };
+            }
+            else
+            {
+                // Unknown media type - skip this album
+                continue;
             }
             
             albumsList.Add(new TStoryAlbum

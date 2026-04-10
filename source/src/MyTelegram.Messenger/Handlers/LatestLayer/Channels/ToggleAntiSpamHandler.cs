@@ -17,9 +17,9 @@ internal sealed class ToggleAntiSpamHandler(IChannelAdminRightsChecker channelAd
         await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
         return new TUpdates
         {
-            Chats = [],
-            Updates = [],
-            Users = [],
+            Chats = new TVector<IChat>(),
+            Updates = new TVector<IUpdate>(),
+            Users = new TVector<IUser>(),
             Date = CurrentDate
         };
     }

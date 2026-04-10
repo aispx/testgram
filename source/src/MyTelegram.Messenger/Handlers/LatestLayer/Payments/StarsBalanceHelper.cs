@@ -1,4 +1,5 @@
-﻿using MongoDB.Driver;
+﻿using MongoDB.Bson;
+using MongoDB.Driver;
 using MyTelegram.Messenger.Services.StarGifts;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
@@ -25,7 +26,7 @@ public static class StarsBalanceHelper
 
     public static async Task AddTransactionAsync(IMongoDatabase db, long userId, long amount, bool gift = false,
         long? peerUserId = null, long? peerChannelId = null, string? title = null, bool stargiftUpgrade = false,
-        bool stargiftAuctionBid = false, bool offer = false, string? stargiftSlug = null)
+        bool stargiftAuctionBid = false, bool offer = false, string? stargiftSlug = null, int? premiumGiftMonths = null)
     {
         await db.GetCollection<StarsTransactionDocument>("star-transactions").InsertOneAsync(new StarsTransactionDocument
         {
@@ -41,7 +42,55 @@ public static class StarsBalanceHelper
             StargiftAuctionBid = stargiftAuctionBid,
             Offer = offer,
             StargiftSlug = stargiftSlug,
+            PremiumGiftMonths = premiumGiftMonths,
         });
+    }
+
+    public static TStarsTransaction BsonToTl(BsonDocument doc)
+    {
+        var transactionId = doc.Contains("TransactionId") && !doc["TransactionId"].IsBsonNull
+            ? doc["TransactionId"].AsString
+            : doc["_id"].AsString;
+
+        var amount = doc.Contains("Amount") ? doc["Amount"].AsInt64 : 0L;
+        var date = doc.Contains("Date") ? doc["Date"].AsInt32 : 0;
+        var gift = doc.Contains("Gift") && doc["Gift"].AsBoolean;
+        var refund = doc.Contains("Refund") && doc["Refund"].AsBoolean;
+        var title = doc.Contains("Title") && !doc["Title"].IsBsonNull ? doc["Title"].AsString : null;
+        var stargiftUpgrade = doc.Contains("StargiftUpgrade") && doc["StargiftUpgrade"].AsBoolean;
+        var stargiftAuctionBid = doc.Contains("StargiftAuctionBid") && doc["StargiftAuctionBid"].AsBoolean;
+        var offer = doc.Contains("Offer") && doc["Offer"].AsBoolean;
+        var premiumGiftMonths = doc.Contains("PremiumGiftMonths") && !doc["PremiumGiftMonths"].IsBsonNull
+            ? (int?)doc["PremiumGiftMonths"].AsInt32
+            : null;
+
+        long? peerUserId = doc.Contains("PeerUserId") && !doc["PeerUserId"].IsBsonNull
+            ? doc["PeerUserId"].AsInt64
+            : null;
+        long? peerChannelId = doc.Contains("PeerChannelId") && !doc["PeerChannelId"].IsBsonNull
+            ? doc["PeerChannelId"].AsInt64
+            : null;
+
+        IStarsTransactionPeer peer = peerUserId.HasValue
+            ? new TStarsTransactionPeer { Peer = new TPeerUser { UserId = peerUserId.Value } }
+            : peerChannelId.HasValue
+                ? new TStarsTransactionPeer { Peer = new TPeerChannel { ChannelId = peerChannelId.Value } }
+                : new TStarsTransactionPeerUnsupported();
+
+        return new TStarsTransaction
+        {
+            Id = transactionId,
+            Amount = new TStarsAmount { Amount = amount },
+            Date = date,
+            Peer = peer,
+            Gift = gift,
+            Refund = refund,
+            Title = title,
+            StargiftUpgrade = stargiftUpgrade,
+            StargiftAuctionBid = stargiftAuctionBid,
+            Offer = offer,
+            PremiumGiftMonths = premiumGiftMonths,
+        };
     }
 
     public static TStarsTransaction ToTl(StarsTransactionDocument doc)
@@ -64,6 +113,7 @@ public static class StarsBalanceHelper
             StargiftUpgrade = doc.StargiftUpgrade,
             StargiftAuctionBid = doc.StargiftAuctionBid,
             Offer = doc.Offer,
+            PremiumGiftMonths = doc.PremiumGiftMonths,
         };
     }
 }

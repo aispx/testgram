@@ -15,10 +15,10 @@ internal sealed class GetForumTopicsHandler : RpcResultObjectHandler<MyTelegram.
     {
         return Task.FromResult<IForumTopics>(new TForumTopics
         {
-            Chats = [],
-            Messages = [],
-            Topics = [],
-            Users = []
+            Chats = new TVector<IChat>(),
+            Messages = new TVector<IMessage>(),
+            Topics = new TVector<IForumTopic>(),
+            Users = new TVector<IUser>()
         });
     }
 }

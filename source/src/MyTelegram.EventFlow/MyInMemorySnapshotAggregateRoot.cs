@@ -53,6 +53,29 @@ public abstract class MyInMemorySnapshotAggregateRoot<TAggregate, TIdentity, TSn
             return;
         }
 
+        // Check if snapshot is stale before loading it
+        var allEvents = await eventStore.LoadEventsAsync<TAggregate, TIdentity>(
+                Id,
+                1,
+                cancellationToken)
+            ;
+
+        if (allEvents.Any())
+        {
+            var firstEventSeq = allEvents.First().AggregateSequenceNumber;
+            var snapshotVersion = snapshot.Metadata.AggregateSequenceNumber;
+
+            // If first event sequence is much higher than snapshot version + 1,
+            // it means events between snapshot and first event are lost (in-memory event store cleared)
+            // In this case, ignore the stale snapshot and reload from scratch
+            if (firstEventSeq > snapshotVersion + 1)
+            {
+                await base.LoadAsync(eventStore, snapshotStore, cancellationToken);
+                await SaveInMemorySnapshotContainerAsync(snapshotStore, _emptySourceId, cancellationToken);
+                return;
+            }
+        }
+
         await LoadSnapshotContainerAsync(snapshot, cancellationToken);
 
         Version = snapshot.Metadata.AggregateSequenceNumber;

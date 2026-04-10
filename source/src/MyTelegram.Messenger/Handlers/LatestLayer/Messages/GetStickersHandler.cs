@@ -16,7 +16,7 @@ internal sealed class GetStickersHandler : RpcResultObjectHandler<MyTelegram.Sch
         var r = new TStickers
         {
             Hash = obj.Hash,
-            Stickers = []
+            Stickers = new TVector<IDocument>()
         };
         return Task.FromResult<IStickers>(r);
     }

@@ -16,8 +16,8 @@ internal sealed class GetTopPeersHandler : RpcResultObjectHandler<MyTelegram.Sch
         ITopPeers r = new TTopPeers
         {
             Categories = [],
-            Chats = [],
-            Users = []
+            Chats = new TVector<IChat>(),
+            Users = new TVector<IUser>()
         };
         return Task.FromResult(r);
     }

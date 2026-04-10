@@ -24,6 +24,11 @@ internal sealed class PeerSettingsMapper
         destination.ShareContact = source.ShareContact;
         destination.NeedContactsException = source.NeedContactsException;
         destination.ReportGeo = source.ReportGeo;
+        destination.ChargePaidMessageStars = source.ChargePaidMessageStars;
+        destination.RegistrationMonth = source.RegistrationMonth;
+        destination.PhoneCountry = source.PhoneCountry;
+        destination.NameChangeDate = source.NameChangeDate;
+        destination.PhotoChangeDate = source.PhotoChangeDate;
         //destination.Autoarchived = source.Autoarchived;
         //destination.InviteMembers = source.InviteMembers;
         //destination.RequestChatBroadcast = source.RequestChatBroadcast;

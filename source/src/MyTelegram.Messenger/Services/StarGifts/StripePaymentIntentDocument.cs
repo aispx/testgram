@@ -14,4 +14,5 @@ public class StripePaymentIntentDocument
     public long RecipientUserId { get; set; }  // 0 = topup for self, >0 = gift to another user
     public long Stars { get; set; }
     public DateTime CreatedAt { get; set; }
+    public byte[]? GiveawayPurpose { get; set; }  // Serialized TInputStorePaymentStarsGiveaway or TInputStorePaymentPremiumGiveaway
 }

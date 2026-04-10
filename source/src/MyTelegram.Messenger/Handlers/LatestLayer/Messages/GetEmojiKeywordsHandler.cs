@@ -15,7 +15,7 @@ internal sealed class GetEmojiKeywordsHandler : RpcResultObjectHandler<MyTelegra
             FromVersion = 0,
             Version = 0,
             LangCode = obj.LangCode,
-            Keywords = []
+            Keywords = new TVector<IEmojiKeyword>()
         };
         return Task.FromResult<IEmojiKeywordsDifference>(r);
     }

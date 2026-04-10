@@ -10,6 +10,6 @@ internal sealed class GetSavedDialogsByIDHandler(ILogger<GetSavedDialogsByIDHand
 {
     protected override Task<MyTelegram.Schema.Messages.ISavedDialogs> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSavedDialogsByID obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Messages.ISavedDialogs>(new TSavedDialogs { Chats = [], Dialogs = [], Messages = [], Users = [] });
+        return Task.FromResult<MyTelegram.Schema.Messages.ISavedDialogs>(new TSavedDialogs { Chats = new TVector<IChat>(), Dialogs = [], Messages = new TVector<IMessage>(), Users = new TVector<IUser>() });
     }
 }

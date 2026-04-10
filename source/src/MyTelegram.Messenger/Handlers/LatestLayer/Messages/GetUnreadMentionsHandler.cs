@@ -38,6 +38,6 @@ internal sealed class GetUnreadMentionsHandler(
             Mentioned = true,
         }).ToList();
 
-        return new TMessages { Messages = new TVector<IMessage>(msgList), Topics = [], Chats = [], Users = [] };
+        return new TMessages { Messages = new TVector<IMessage>(msgList), Topics = new TVector<IForumTopic>(), Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
     }
 }

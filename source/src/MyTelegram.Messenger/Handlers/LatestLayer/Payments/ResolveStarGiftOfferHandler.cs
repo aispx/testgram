@@ -191,6 +191,6 @@ internal sealed class ResolveStarGiftOfferHandler(
             Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Sent from_offer message to buyer {offer.SenderUserId}");
         }
 
-        return new TUpdates { Updates = [], Users = [], Chats = [], Date = now, Seq = 0 };
+        return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = now, Seq = 0 };
     }
 }

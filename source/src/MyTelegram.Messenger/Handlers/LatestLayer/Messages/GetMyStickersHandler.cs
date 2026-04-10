@@ -132,8 +132,8 @@ internal sealed class GetMyStickersHandler(
             Date = 0,
             MimeType = mimeType,
             Size = size,
-            Thumbs = [],
-            VideoThumbs = [],
+            Thumbs = new TVector<IPhotoSize>(),
+            VideoThumbs = new TVector<IVideoSize>(),
             DcId = dcId,
             Attributes = new TVector<IDocumentAttribute>(new[]
             {

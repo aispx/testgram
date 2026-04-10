@@ -50,9 +50,9 @@ internal sealed class GetUnreadReactionsHandler(
         return new TMessages
         {
             Messages = new TVector<IMessage>(msgList),
-            Chats = [],
-            Users = [],
-            Topics = []
+            Chats = new TVector<IChat>(),
+            Users = new TVector<IUser>(),
+            Topics = new TVector<IForumTopic>()
         };
     }
 }

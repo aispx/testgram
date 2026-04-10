@@ -14,7 +14,7 @@ internal sealed class GetStarsTransactionsHandler(IMongoDatabase mongoDatabase)
         // If peer is a bot (not self), return empty — bot revenue is not supported
         if (obj.Peer is not TInputPeerSelf)
         {
-            return new TStarsStatus { Balance = new TStarsAmount { Amount = 0 }, History = new TVector<IStarsTransaction>([]), NextOffset = null, Chats = [], Users = [] };
+            return new TStarsStatus { Balance = new TStarsAmount { Amount = 0 }, History = new TVector<IStarsTransaction>([]), NextOffset = null, Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
         }
         var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, userId);
 
@@ -45,7 +45,7 @@ internal sealed class GetStarsTransactionsHandler(IMongoDatabase mongoDatabase)
             Balance = new TStarsAmount { Amount = balance },
             History = new TVector<IStarsTransaction>(docs.Select(StarsBalanceHelper.ToTl).ToList()),
             NextOffset = nextOffset,
-            Chats = [], Users = []
+            Chats = new TVector<IChat>(), Users = new TVector<IUser>()
         };
     }
 }

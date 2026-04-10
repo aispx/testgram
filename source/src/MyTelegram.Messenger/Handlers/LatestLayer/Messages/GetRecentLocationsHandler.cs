@@ -10,6 +10,6 @@ internal sealed class GetRecentLocationsHandler : RpcResultObjectHandler<MyTeleg
 {
     protected override Task<MyTelegram.Schema.Messages.IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetRecentLocations obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Messages.IMessages>(new TMessages { Chats = [], Messages = [], Users = [], Topics = [] });
+        return Task.FromResult<MyTelegram.Schema.Messages.IMessages>(new TMessages { Chats = new TVector<IChat>(), Messages = new TVector<IMessage>(), Users = new TVector<IUser>(), Topics = new TVector<IForumTopic>() });
     }
 }

@@ -24,10 +24,10 @@ internal sealed class GetParticipantsHandler(IQueryProcessor queryProcessor, ICh
             channelReadModel.ThrowExceptionIfChannelDeleted();
             var participants = new TChannelParticipants
             {
-                Chats = [],
+                Chats = new TVector<IChat>(),
                 Count = channelReadModel.ParticipantsCount ?? 0,
-                Participants = [],
-                Users = []
+                Participants = new TVector<MyTelegram.Schema.IChannelParticipant>(),
+                Users = new TVector<IUser>()
             };
             if (channelReadModel.Broadcast)
             {

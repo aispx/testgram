@@ -13,6 +13,6 @@ internal sealed class ToggleAutotranslationHandler : RpcResultObjectHandler<MyTe
 {
     protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestToggleAutotranslation obj)
     {
-        return Task.FromResult<MyTelegram.Schema.IUpdates>(new TUpdates { Chats = [], Updates = [], Users = [], Date = CurrentDate });
+        return Task.FromResult<MyTelegram.Schema.IUpdates>(new TUpdates { Chats = new TVector<IChat>(), Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Date = CurrentDate });
     }
 }

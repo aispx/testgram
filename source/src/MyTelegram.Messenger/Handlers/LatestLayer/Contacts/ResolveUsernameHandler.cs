@@ -32,7 +32,7 @@ IChatConverterService chatConverterService, IUserConverterService userConverterS
                         var user = await userConverterService.GetUserAsync(input, userNameReadModel.PeerId, false, false, input.Layer);
                         return new TResolvedPeer
                         {
-                            Chats = [],
+                            Chats = new TVector<IChat>(),
                             Peer = new TPeerUser
                             {
                                 UserId = userNameReadModel.PeerId
@@ -54,7 +54,7 @@ IChatConverterService chatConverterService, IUserConverterService userConverterS
                                     {
                                         ChannelId = userNameReadModel.PeerId
                                     },
-                                    Users = []
+                                    Users = new TVector<IUser>()
                                 };
                             }
                         }

@@ -204,7 +204,7 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
         return new TUpdates
         {
             Updates = [new TUpdateNewMessage { Message = serviceMsg, Pts = pts, PtsCount = 1 }],
-            Users = [], Chats = [], Date = uniqueDoc.Date, Seq = 0
+            Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = uniqueDoc.Date, Seq = 0
         };
     }
 }

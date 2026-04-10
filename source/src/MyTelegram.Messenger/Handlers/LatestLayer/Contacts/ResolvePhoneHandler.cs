@@ -35,7 +35,7 @@ internal sealed class ResolvePhoneHandler(IQueryProcessor queryProcessor, IPriva
         var user = userConverterService.ToUser(input, userReadModel, photos, contactReadModel, null, privacyList, input.Layer);
         var r = new TResolvedPeer
         {
-            Chats = [],
+            Chats = new TVector<IChat>(),
             Peer = new TPeerUser
             {
                 UserId = userReadModel.UserId

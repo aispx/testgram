@@ -11,6 +11,6 @@ internal sealed class GetRecentMeUrlsHandler : RpcResultObjectHandler<MyTelegram
 {
     protected override Task<MyTelegram.Schema.Help.IRecentMeUrls> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Help.RequestGetRecentMeUrls obj)
     {
-        return Task.FromResult<IRecentMeUrls>(new TRecentMeUrls { Chats = [], Users = [], Urls = [] });
+        return Task.FromResult<IRecentMeUrls>(new TRecentMeUrls { Chats = new TVector<IChat>(), Users = new TVector<IUser>(), Urls = [] });
     }
 }

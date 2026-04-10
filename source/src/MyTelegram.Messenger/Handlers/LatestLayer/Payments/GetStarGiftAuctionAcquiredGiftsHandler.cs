@@ -26,8 +26,8 @@ internal sealed class GetStarGiftAuctionAcquiredGiftsHandler(IMongoDatabase mong
         return new MyTelegram.Schema.Payments.TStarGiftAuctionAcquiredGifts
         {
             Gifts = new TVector<IStarGiftAuctionAcquiredGift>(gifts),
-            Users = [],
-            Chats = [],
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
         };
     }
 }

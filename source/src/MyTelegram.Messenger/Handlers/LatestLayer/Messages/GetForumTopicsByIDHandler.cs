@@ -13,6 +13,6 @@ internal sealed class GetForumTopicsByIDHandler : RpcResultObjectHandler<MyTeleg
 {
     protected override Task<MyTelegram.Schema.Messages.IForumTopics> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetForumTopicsByID obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Messages.IForumTopics>(new TForumTopics { Chats = [], Messages = [], Topics = [], Users = [] });
+        return Task.FromResult<MyTelegram.Schema.Messages.IForumTopics>(new TForumTopics { Chats = new TVector<IChat>(), Messages = new TVector<IMessage>(), Topics = new TVector<IForumTopic>(), Users = new TVector<IUser>() });
     }
 }

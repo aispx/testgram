@@ -17,6 +17,6 @@ internal sealed class GetAdminLogHandler : RpcResultObjectHandler<MyTelegram.Sch
 {
     protected override Task<MyTelegram.Schema.Channels.IAdminLogResults> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetAdminLog obj)
     {
-        return Task.FromResult<MyTelegram.Schema.Channels.IAdminLogResults>(new TAdminLogResults { Events = [], Chats = [], Users = [] });
+        return Task.FromResult<MyTelegram.Schema.Channels.IAdminLogResults>(new TAdminLogResults { Events = new TVector<IChannelAdminLogEvent>(), Chats = new TVector<IChat>(), Users = new TVector<IUser>() });
     }
 }

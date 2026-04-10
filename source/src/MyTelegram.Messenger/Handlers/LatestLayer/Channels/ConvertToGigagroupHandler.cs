@@ -18,6 +18,6 @@ internal sealed class ConvertToGigagroupHandler : RpcResultObjectHandler<Request
 {
     protected override Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestConvertToGigagroup obj)
     {
-        return Task.FromResult<IUpdates>(new TUpdates { Updates = [], Chats = [], Users = [], Date = CurrentDate });
+        return Task.FromResult<IUpdates>(new TUpdates { Updates = new TVector<IUpdate>(), Chats = new TVector<IChat>(), Users = new TVector<IUser>(), Date = CurrentDate });
     }
 }

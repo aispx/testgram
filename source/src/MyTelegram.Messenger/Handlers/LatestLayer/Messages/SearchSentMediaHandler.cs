@@ -14,6 +14,6 @@ internal sealed class SearchSentMediaHandler : RpcResultObjectHandler<MyTelegram
 {
     protected override Task<MyTelegram.Schema.Messages.IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSearchSentMedia obj)
     {
-        return Task.FromResult<IMessages>(new TMessages { Chats = [], Messages = [], Users = [], Topics = [] });
+        return Task.FromResult<IMessages>(new TMessages { Chats = new TVector<IChat>(), Messages = new TVector<IMessage>(), Users = new TVector<IUser>(), Topics = new TVector<IForumTopic>() });
     }
 }

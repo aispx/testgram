@@ -81,9 +81,9 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
         {
             return new TStickerSet
             {
-                Packs = [],
-                Documents = [],
-                Keywords = [],
+                Packs = new TVector<IStickerPack>(),
+                Documents = new TVector<IDocument>(),
+                Keywords = new TVector<IStickerKeyword>(),
                 Set = new Schema.TStickerSet { Id = setId, AccessHash = 0, Title = "", ShortName = "", Count = 0, Hash = 0 }
             };
         }
@@ -97,9 +97,9 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
         {
             return new TStickerSet
             {
-                Packs = [],
-                Documents = [],
-                Keywords = [],
+                Packs = new TVector<IStickerPack>(),
+                Documents = new TVector<IDocument>(),
+                Keywords = new TVector<IStickerKeyword>(),
                 Set = new Schema.TStickerSet { Id = 0, AccessHash = 0, Title = "", ShortName = "", Count = 0, Hash = 0 }
             };
         }
@@ -118,9 +118,9 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
             Console.WriteLine($"[WARN] StickerSet not found in DB: {slug}");
             return new TStickerSet
             {
-                Packs = [],
-                Documents = [],
-                Keywords = [],
+                Packs = new TVector<IStickerPack>(),
+                Documents = new TVector<IDocument>(),
+                Keywords = new TVector<IStickerKeyword>(),
                 Set = new Schema.TStickerSet { Id = 0, AccessHash = 0, Title = "", ShortName = slug, Count = 0, Hash = 0 }
             };
         }
@@ -209,8 +209,8 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
                     Size = GetInt64(d["Size"]),
                     DcId = GetInt32(d["DcId"]),
                     Attributes = attributes,
-                    Thumbs = [],
-                    VideoThumbs = [],
+                    Thumbs = new TVector<IPhotoSize>(),
+                    VideoThumbs = new TVector<IVideoSize>(),
                 };
             }).ToList();
 
@@ -235,7 +235,7 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
         {
             Packs = new TVector<IStickerPack>(packs),
             Documents = new TVector<IDocument>(documents),
-            Keywords = [],
+            Keywords = new TVector<IStickerKeyword>(),
             Set = new Schema.TStickerSet
             {
                 Id = setId,

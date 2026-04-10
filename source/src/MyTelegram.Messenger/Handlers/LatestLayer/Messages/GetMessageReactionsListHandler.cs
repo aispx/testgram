@@ -35,8 +35,8 @@ internal sealed class GetMessageReactionsListHandler(
             {
                 Count = reactions.Count,
                 Reactions = [],
-                Users = [],
-                Chats = [],
+                Users = new TVector<IUser>(),
+                Chats = new TVector<IChat>(),
             };
         }
 

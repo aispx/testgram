@@ -15,6 +15,6 @@ internal sealed class SearchPostsHandler : RpcResultObjectHandler<MyTelegram.Sch
 {
     protected override Task<MyTelegram.Schema.Stories.IFoundStories> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stories.RequestSearchPosts obj)
     {
-        return Task.FromResult<IFoundStories>(new TFoundStories { Chats = [], Stories = [], Users = [] });
+        return Task.FromResult<IFoundStories>(new TFoundStories { Chats = new TVector<IChat>(), Stories = [], Users = new TVector<IUser>() });
     }
 }

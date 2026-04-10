@@ -25,7 +25,7 @@ internal sealed class GetFavedStickersHandler(IMongoDatabase mongoDatabase) : Rp
 
         if (favedDocs.Count == 0)
         {
-            return new TFavedStickers { Packs = [], Stickers = [] };
+            return new TFavedStickers { Packs = new TVector<IStickerPack>(), Stickers = new TVector<IDocument>() };
         }
 
         var docIds = favedDocs.Select(r => GetInt64(r["DocumentId"])).ToList();
@@ -96,8 +96,8 @@ internal sealed class GetFavedStickersHandler(IMongoDatabase mongoDatabase) : Rp
             Date = GetInt32(docBson["Date"]),
             MimeType = mimeType,
             Size = size,
-            Thumbs = [],
-            VideoThumbs = [],
+            Thumbs = new TVector<IPhotoSize>(),
+            VideoThumbs = new TVector<IVideoSize>(),
             DcId = dcId,
             Attributes = attributes
         };

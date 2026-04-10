@@ -14,6 +14,6 @@ internal sealed class GetScheduledHistoryHandler : RpcResultObjectHandler<MyTele
 {
     protected override Task<MyTelegram.Schema.Messages.IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetScheduledHistory obj)
     {
-        return Task.FromResult<IMessages>(new TMessages { Chats = new TVector<IChat>(), Messages = new TVector<IMessage>(), Users = new TVector<IUser>(), Topics = [] });
+        return Task.FromResult<IMessages>(new TMessages { Chats = new TVector<IChat>(), Messages = new TVector<IMessage>(), Users = new TVector<IUser>(), Topics = new TVector<IForumTopic>() });
     }
 }

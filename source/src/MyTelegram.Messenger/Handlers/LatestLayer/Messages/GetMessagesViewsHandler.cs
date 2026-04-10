@@ -27,16 +27,16 @@ internal sealed class GetMessagesViewsHandler(IPeerHelper peerHelper, IQueryProc
                 return new MyTelegram.Schema.Messages.TMessageViews
                 {
                     Views = [..obj.Id.Select(p => new Schema.TMessageViews { Views = 1 }).ToList()],
-                    Chats = [],
-                    Users = []
+                    Chats = new TVector<IChat>(),
+                    Users = new TVector<IUser>()
                 };
             }
 
             var views = await channelMessageViewsAppService.GetMessageViewsAsync(input.UserId, input.PermAuthKeyId, peer.PeerId, obj.Id.ToList());
             return new MyTelegram.Schema.Messages.TMessageViews
             {
-                Chats = [],
-                Users = [],
+                Chats = new TVector<IChat>(),
+                Users = new TVector<IUser>(),
                 Views = [..views]
             };
         }
@@ -46,8 +46,8 @@ internal sealed class GetMessagesViewsHandler(IPeerHelper peerHelper, IQueryProc
         var dict = messages.ToDictionary(k => k.MessageId, v => v);
         return new MyTelegram.Schema.Messages.TMessageViews
         {
-            Chats = [],
-            Users = [],
+            Chats = new TVector<IChat>(),
+            Users = new TVector<IUser>(),
             Views = [..obj.Id.Select(p =>
             {
                 dict.TryGetValue(p, out var box);

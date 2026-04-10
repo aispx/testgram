@@ -87,6 +87,26 @@ internal sealed class DocumentMapper
             Console.WriteLine($"[DEBUG] DocumentMapper: Using Attributes (fallback) for DocumentId={source.DocumentId}");
         }
 
+        // Fix null Stickerset in attributes
+        foreach (var documentAttribute in destination.Attributes)
+        {
+            switch (documentAttribute)
+            {
+                case TDocumentAttributeCustomEmoji documentAttributeCustomEmoji:
+                    if (documentAttributeCustomEmoji.Stickerset == null)
+                    {
+                        documentAttributeCustomEmoji.Stickerset = new TInputStickerSetEmpty();
+                    }
+                    break;
+                case TDocumentAttributeSticker documentAttributeSticker:
+                    if (documentAttributeSticker.Stickerset == null)
+                    {
+                        documentAttributeSticker.Stickerset = new TInputStickerSetEmpty();
+                    }
+                    break;
+            }
+        }
+
         return destination;
     }
 
@@ -115,27 +135,67 @@ internal sealed class DocumentMapper
             switch (documentAttribute)
             {
                 case TDocumentAttributeCustomEmoji documentAttributeCustomEmoji:
-                    switch (documentAttributeCustomEmoji.Stickerset)
+                    if (documentAttributeCustomEmoji.Stickerset == null)
                     {
-                        case TInputStickerSetID inputStickerSetId:
-                            documentAttributeCustomEmoji.Stickerset = new TInputStickerSetID
-                            {
-                                Id = inputStickerSetId.Id,
-                                AccessHash = inputStickerSetId.AccessHash
-                            };
-                            break;
+                        documentAttributeCustomEmoji.Stickerset = new TInputStickerSetEmpty();
+                    }
+                    else
+                    {
+                        switch (documentAttributeCustomEmoji.Stickerset)
+                        {
+                            case TInputStickerSetID inputStickerSetId:
+                                documentAttributeCustomEmoji.Stickerset = new TInputStickerSetID
+                                {
+                                    Id = inputStickerSetId.Id,
+                                    AccessHash = inputStickerSetId.AccessHash
+                                };
+                                break;
+                            case TInputStickerSetShortName shortName:
+                                documentAttributeCustomEmoji.Stickerset = new TInputStickerSetShortName
+                                {
+                                    ShortName = shortName.ShortName
+                                };
+                                break;
+                            case TInputStickerSetEmpty:
+                                // Already correct type
+                                break;
+                            default:
+                                // Unknown type - use empty as fallback
+                                documentAttributeCustomEmoji.Stickerset = new TInputStickerSetEmpty();
+                                break;
+                        }
                     }
                     break;
                 case TDocumentAttributeSticker documentAttributeSticker:
-                    switch (documentAttributeSticker.Stickerset)
+                    if (documentAttributeSticker.Stickerset == null)
                     {
-                        case TInputStickerSetID inputStickerSetId:
-                            documentAttributeSticker.Stickerset = new TInputStickerSetID
-                            {
-                                Id = inputStickerSetId.Id,
-                                AccessHash = inputStickerSetId.AccessHash
-                            };
-                            break;
+                        documentAttributeSticker.Stickerset = new TInputStickerSetEmpty();
+                    }
+                    else
+                    {
+                        switch (documentAttributeSticker.Stickerset)
+                        {
+                            case TInputStickerSetID inputStickerSetId:
+                                documentAttributeSticker.Stickerset = new TInputStickerSetID
+                                {
+                                    Id = inputStickerSetId.Id,
+                                    AccessHash = inputStickerSetId.AccessHash
+                                };
+                                break;
+                            case TInputStickerSetShortName shortName:
+                                documentAttributeSticker.Stickerset = new TInputStickerSetShortName
+                                {
+                                    ShortName = shortName.ShortName
+                                };
+                                break;
+                            case TInputStickerSetEmpty:
+                                // Already correct type
+                                break;
+                            default:
+                                // Unknown type - use empty as fallback
+                                documentAttributeSticker.Stickerset = new TInputStickerSetEmpty();
+                                break;
+                        }
                     }
                     break;
             }

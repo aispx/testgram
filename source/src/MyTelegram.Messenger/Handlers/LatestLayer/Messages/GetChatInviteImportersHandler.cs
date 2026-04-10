@@ -69,7 +69,7 @@ internal sealed class GetChatInviteImportersHandler(IQueryProcessor queryProcess
         return new TChatInviteImporters
         {
             Importers = [],
-            Users = [],
+            Users = new TVector<IUser>(),
         };
     }
 }
