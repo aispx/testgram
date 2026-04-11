@@ -229,6 +229,10 @@ internal sealed class GetGiveawayInfoHandler(
         int? joinedTooEarlyDate = null;
         long? adminDisallowedChatId = null;
 
+        // Check if giveaway is preparing results (finished but winners not yet selected)
+        var preparingResults = status == "active" && giveaway.Contains("UntilDate") &&
+                               giveaway["UntilDate"].AsInt32 < (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
         if (onlyNewSubscribers && isMember)
         {
             // Check if user joined before giveaway started
@@ -263,8 +267,55 @@ internal sealed class GetGiveawayInfoHandler(
 
                 if (!isAdditionalMember)
                 {
-                    adminDisallowedChatId = channelId;
+                    // User not subscribed to required channel - can't participate
+                    isMember = false;
                     break;
+                }
+            }
+        }
+
+        // Check if user is admin in any of the giveaway channels
+        if (isMember && joinedTooEarlyDate == null)
+        {
+            // Check main channel
+            var adminMember = await memberCol.Find(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
+                    Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                    Builders<BsonDocument>.Filter.Or(
+                        Builders<BsonDocument>.Filter.Exists("AdminRights"),
+                        Builders<BsonDocument>.Filter.Eq("IsCreator", true)
+                    )
+                )
+            ).FirstOrDefaultAsync();
+
+            if (adminMember != null)
+            {
+                adminDisallowedChatId = peer.PeerId;
+            }
+            else if (giveaway.Contains("AdditionalChannels") && giveaway["AdditionalChannels"].IsBsonArray)
+            {
+                // Check additional channels
+                var additionalChannels = giveaway["AdditionalChannels"].AsBsonArray;
+                foreach (var channelIdValue in additionalChannels)
+                {
+                    var channelId = channelIdValue.AsInt64;
+                    var adminCheck = await memberCol.Find(
+                        Builders<BsonDocument>.Filter.And(
+                            Builders<BsonDocument>.Filter.Eq("ChannelId", channelId),
+                            Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                            Builders<BsonDocument>.Filter.Or(
+                                Builders<BsonDocument>.Filter.Exists("AdminRights"),
+                                Builders<BsonDocument>.Filter.Eq("IsCreator", true)
+                            )
+                        )
+                    ).FirstOrDefaultAsync();
+
+                    if (adminCheck != null)
+                    {
+                        adminDisallowedChatId = channelId;
+                        break;
+                    }
                 }
             }
         }
@@ -272,9 +323,11 @@ internal sealed class GetGiveawayInfoHandler(
         return new TGiveawayInfo
         {
             Participating = isMember && joinedTooEarlyDate == null && adminDisallowedChatId == null,
+            PreparingResults = preparingResults,
             StartDate = startDate,
             JoinedTooEarlyDate = joinedTooEarlyDate,
-            AdminDisallowedChatId = adminDisallowedChatId
+            AdminDisallowedChatId = adminDisallowedChatId,
+            DisallowedCountry = null
         };
     }
 }
