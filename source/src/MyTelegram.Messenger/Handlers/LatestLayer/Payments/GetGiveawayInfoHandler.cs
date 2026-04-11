@@ -149,9 +149,9 @@ internal sealed class GetGiveawayInfoHandler(
 
             if (isWinner)
             {
-                var giveawayType = giveaway.Contains("Type") ? giveaway["Type"].AsString : "premium";
+                var winnerGiveawayType = giveaway.Contains("Type") ? giveaway["Type"].AsString : "premium";
 
-                if (giveawayType == "stars")
+                if (winnerGiveawayType == "stars")
                 {
                     // Stars giveaway - get stars amount directly
                     starsPrize = giveaway.Contains("Stars") && !giveaway["Stars"].IsBsonNull

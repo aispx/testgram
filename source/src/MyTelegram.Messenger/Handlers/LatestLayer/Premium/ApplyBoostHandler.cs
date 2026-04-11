@@ -19,6 +19,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Premium;
 internal sealed class ApplyBoostHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IMessageAppService messageAppService,
     ILogger<ApplyBoostHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Premium.RequestApplyBoost, MyTelegram.Schema.Premium.IMyBoosts>
 {
     private static long GetInt64(BsonValue v)
@@ -86,6 +87,22 @@ internal sealed class ApplyBoostHandler(
 
         logger.LogInformation("User {UserId} applied {Count} boosts to channel {ChannelId}",
             input.UserId, slots.Count, channelId);
+
+        // Send messageActionBoostApply service message
+        var action = new TMessageActionBoostApply { Boosts = slots.Count };
+        var toPeer = new Peer(PeerType.Channel, channelId);
+
+        var sendInput = new SendMessageInput(
+            input.ToRequestInfo() with { ReqMsgId = 0 },
+            input.UserId,
+            toPeer,
+            string.Empty,
+            Random.Shared.NextInt64(),
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            messageAction: action
+        );
+        await messageAppService.SendMessageAsync([sendInput]);
 
         var boosts = await collection.Find(Builders<BsonDocument>.Filter.Eq("UserId", input.UserId)).ToListAsync();
 

@@ -188,10 +188,54 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
             tFull.BoostsApplied = (int)userBoosts;
         }
 
-        // Set boosts_unrestrict based on total boosts (example: need 10 boosts to unrestrict)
-        if (totalBoosts < 10)
+        // Read boost-level features from channel read model
+        var channelCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-channelreadmodel");
+        var channelDoc = await channelCol.Find(
+            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("ChannelId", channelId)
+        ).FirstOrDefaultAsync();
+
+        if (channelDoc != null)
         {
-            tFull.BoostsUnrestrict = 10;
+            // RestrictedSponsored (flags2.11)
+            if (channelDoc.Contains("RestrictedSponsored") && channelDoc["RestrictedSponsored"].AsBoolean)
+            {
+                tFull.RestrictedSponsored = true;
+            }
+
+            // BoostsUnrestrict (flags2.9)
+            if (channelDoc.Contains("BoostsToUnblockRestrictions") && !channelDoc["BoostsToUnblockRestrictions"].IsBsonNull)
+            {
+                tFull.BoostsUnrestrict = channelDoc["BoostsToUnblockRestrictions"].AsInt32;
+            }
+
+            // EmojiSet (flags.15) - load stickerset
+            if (channelDoc.Contains("EmojiSet") && !channelDoc["EmojiSet"].IsBsonNull)
+            {
+                var emojiSetId = channelDoc["EmojiSet"].AsInt64;
+                var stickerSetCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-stickersetreadmodel");
+                var stickerSetDoc = await stickerSetCol.Find(
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("StickerSetId", emojiSetId)
+                ).FirstOrDefaultAsync();
+
+                if (stickerSetDoc != null)
+                {
+                    tFull.Emojiset = new MyTelegram.Schema.TStickerSet
+                    {
+                        Id = stickerSetDoc["StickerSetId"].AsInt64,
+                        AccessHash = stickerSetDoc["AccessHash"].AsInt64,
+                        Title = stickerSetDoc["Title"].AsString,
+                        ShortName = stickerSetDoc.Contains("ShortName") ? stickerSetDoc["ShortName"].AsString : string.Empty,
+                        Count = stickerSetDoc.Contains("Count") ? stickerSetDoc["Count"].AsInt32 : 0,
+                        Hash = 0
+                    };
+                }
+            }
+
+            // SendPaidMessagesStars (paid messages price)
+            if (channelDoc.Contains("SendPaidMessagesStars") && !channelDoc["SendPaidMessagesStars"].IsBsonNull)
+            {
+                tFull.SendPaidMessagesStars = channelDoc["SendPaidMessagesStars"].AsInt64;
+            }
         }
     }
 }

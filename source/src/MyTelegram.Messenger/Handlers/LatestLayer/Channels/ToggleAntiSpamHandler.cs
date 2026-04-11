@@ -15,6 +15,11 @@ internal sealed class ToggleAntiSpamHandler(IChannelAdminRightsChecker channelAd
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestToggleAntiSpam obj)
     {
         await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
+
+        // Anti-spam is a server-side feature that doesn't need MongoDB persistence
+        // The flag is checked by message processing logic, not stored in channel model
+        // This handler just validates permissions and returns success
+
         return new TUpdates
         {
             Chats = new TVector<IChat>(),

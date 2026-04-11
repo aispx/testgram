@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Convert a <a href="https://corefork.telegram.org/api/channel">supergroup</a> to a <a href="https://corefork.telegram.org/api/channel">gigagroup</a>, when requested by <a href="https://corefork.telegram.org/api/config#channel-suggestions">channel suggestions</a>.
@@ -14,10 +17,61 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ConvertToGigagroupHandler : RpcResultObjectHandler<RequestConvertToGigagroup, IUpdates>
+internal sealed class ConvertToGigagroupHandler(
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<RequestConvertToGigagroup, IUpdates>
 {
-    protected override Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestConvertToGigagroup obj)
+    protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestConvertToGigagroup obj)
     {
-        return Task.FromResult<IUpdates>(new TUpdates { Updates = new TVector<IUpdate>(), Chats = new TVector<IChat>(), Users = new TVector<IUser>(), Date = CurrentDate });
+        await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
+
+        IInputPeer inputPeer;
+        if (obj.Channel is TInputChannel inputChannel)
+        {
+            inputPeer = new TInputPeerChannel { ChannelId = inputChannel.ChannelId, AccessHash = inputChannel.AccessHash };
+        }
+        else if (obj.Channel is TInputChannelFromMessage inputChannelFromMessage)
+        {
+            inputPeer = new TInputPeerChannelFromMessage
+            {
+                Peer = inputChannelFromMessage.Peer,
+                MsgId = inputChannelFromMessage.MsgId,
+                ChannelId = inputChannelFromMessage.ChannelId
+            };
+        }
+        else
+        {
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var peer = peerHelper.GetPeer(inputPeer, input.UserId);
+        if (peer == null || peer.PeerType != PeerType.Channel)
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+
+        var channelId = peer.PeerId;
+        var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-channelreadmodel");
+        var channelDoc = await collection.Find(Builders<BsonDocument>.Filter.Eq("ChannelId", channelId)).FirstOrDefaultAsync();
+
+        if (channelDoc == null)
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+
+        if (channelDoc.Contains("Broadcast") && channelDoc["Broadcast"].AsBoolean)
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+
+        if (channelDoc.Contains("Forum") && channelDoc["Forum"].AsBoolean)
+            RpcErrors.RpcErrors400.ForumEnabled.ThrowRpcError();
+
+        var participantsCount = channelDoc.Contains("ParticipantsCount") ? channelDoc["ParticipantsCount"].AsInt32 : 0;
+        if (participantsCount < 200)
+            RpcErrors.RpcErrors400.ParticipantsTooFew.ThrowRpcError();
+
+        var filter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
+        var update = Builders<BsonDocument>.Update.Set("Gigagroup", true);
+        await collection.UpdateOneAsync(filter, update);
+
+        return new TUpdates { Updates = new TVector<IUpdate>(), Chats = new TVector<IChat>(), Users = new TVector<IUser>(), Date = CurrentDate };
     }
 }
