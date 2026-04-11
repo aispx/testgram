@@ -20,7 +20,6 @@ internal sealed class InvokeWebViewCustomMethodHandler(
             RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
 
         var inputUser = (TInputUser)obj.Bot;
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
 
         var botReadModel = await queryProcessor.ProcessAsync(new GetUserByIdQuery(inputUser.UserId));
         if (botReadModel == null || !botReadModel.Bot)
