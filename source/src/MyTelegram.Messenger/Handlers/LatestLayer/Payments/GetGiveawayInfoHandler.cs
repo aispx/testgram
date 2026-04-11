@@ -76,12 +76,11 @@ internal sealed class GetGiveawayInfoHandler(
             }
         }
 
-        // Third try: fallback for newly created giveaways
+        // Third try: fallback for giveaways with MsgId=0 (both active and finished)
         if (giveaway == null)
         {
             var fallbackFilter = Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
-                Builders<BsonDocument>.Filter.Eq("Status", "active"),
                 Builders<BsonDocument>.Filter.Or(
                     Builders<BsonDocument>.Filter.Eq("MsgId", 0),
                     Builders<BsonDocument>.Filter.Exists("MsgId", false)
