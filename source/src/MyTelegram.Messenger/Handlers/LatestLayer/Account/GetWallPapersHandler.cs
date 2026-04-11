@@ -75,34 +75,28 @@ internal sealed class GetWallPapersHandler(IMongoDatabase database) : RpcResultO
             return null;
 
         var settings = doc["Settings"].AsBsonDocument;
-        var result = new MyTelegram.Schema.TWallPaperSettings();
 
-        if (settings.Contains("Blur"))
-            result.Blur = settings["Blur"].AsBoolean;
-        
-        if (settings.Contains("Motion"))
-            result.Motion = settings["Motion"].AsBoolean;
-        
-        if (settings.Contains("BackgroundColor"))
-            result.BackgroundColor = settings["BackgroundColor"].AsInt32;
-        
-        if (settings.Contains("SecondBackgroundColor"))
-            result.SecondBackgroundColor = settings["SecondBackgroundColor"].AsInt32;
-        
-        if (settings.Contains("ThirdBackgroundColor"))
-            result.ThirdBackgroundColor = settings["ThirdBackgroundColor"].AsInt32;
-        
-        if (settings.Contains("FourthBackgroundColor"))
-            result.FourthBackgroundColor = settings["FourthBackgroundColor"].AsInt32;
-        
-        if (settings.Contains("Intensity"))
-            result.Intensity = settings["Intensity"].AsInt32;
-        
-        if (settings.Contains("Rotation"))
-            result.Rotation = settings["Rotation"].AsInt32;
-        
-        if (settings.Contains("Emoticon"))
-            result.Emoticon = settings["Emoticon"].AsString;
+        // Check if settings has any actual values
+        bool hasAnyValue = settings.Contains("Blur") || settings.Contains("Motion") ||
+                          settings.Contains("BackgroundColor") || settings.Contains("SecondBackgroundColor") ||
+                          settings.Contains("ThirdBackgroundColor") || settings.Contains("FourthBackgroundColor") ||
+                          settings.Contains("Intensity") || settings.Contains("Rotation") || settings.Contains("Emoticon");
+
+        if (!hasAnyValue)
+            return null;
+
+        var result = new MyTelegram.Schema.TWallPaperSettings
+        {
+            Blur = settings.Contains("Blur") && settings["Blur"].AsBoolean,
+            Motion = settings.Contains("Motion") && settings["Motion"].AsBoolean,
+            BackgroundColor = settings.Contains("BackgroundColor") ? settings["BackgroundColor"].AsInt32 : null,
+            SecondBackgroundColor = settings.Contains("SecondBackgroundColor") ? settings["SecondBackgroundColor"].AsInt32 : null,
+            ThirdBackgroundColor = settings.Contains("ThirdBackgroundColor") ? settings["ThirdBackgroundColor"].AsInt32 : null,
+            FourthBackgroundColor = settings.Contains("FourthBackgroundColor") ? settings["FourthBackgroundColor"].AsInt32 : null,
+            Intensity = settings.Contains("Intensity") ? settings["Intensity"].AsInt32 : null,
+            Rotation = settings.Contains("Rotation") ? settings["Rotation"].AsInt32 : null,
+            Emoticon = settings.Contains("Emoticon") ? settings["Emoticon"].AsString : null
+        };
 
         return result;
     }

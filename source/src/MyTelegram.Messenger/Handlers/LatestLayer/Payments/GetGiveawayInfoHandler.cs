@@ -154,13 +154,17 @@ internal sealed class GetGiveawayInfoHandler(
             var winnersCount = winnerIds.Count;
             var activatedCount = 0;
 
-            // Count activated codes
+            // Count activated codes - use actual giveaway MsgId, not requested MsgId
             if (winnersCount > 0)
             {
+                var giveawayMsgId = giveaway.Contains("MsgId") && !giveaway["MsgId"].IsBsonNull
+                    ? giveaway["MsgId"].AsInt32
+                    : 0;
+
                 var codeCol = database.GetCollection<BsonDocument>("premium_gift_codes");
                 activatedCount = (int)await codeCol.CountDocumentsAsync(
                     Builders<BsonDocument>.Filter.And(
-                        Builders<BsonDocument>.Filter.Eq("GiveawayMsgId", obj.MsgId),
+                        Builders<BsonDocument>.Filter.Eq("GiveawayMsgId", giveawayMsgId),
                         Builders<BsonDocument>.Filter.Eq("Used", true)
                     )
                 );

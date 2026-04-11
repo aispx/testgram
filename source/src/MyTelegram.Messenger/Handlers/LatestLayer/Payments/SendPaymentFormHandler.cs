@@ -157,7 +157,8 @@ internal sealed class SendPaymentFormHandler(
         }
         else
         {
-            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, intent.Stars,
+            // Create transaction for recipient (creditUserId) who received the stars
+            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, creditUserId, intent.Stars,
                 title: $"Stripe top-up: {intent.Stars} stars");
         }
 
@@ -471,6 +472,30 @@ internal sealed class SendPaymentFormHandler(
         );
 
         await messageAppService.SendMessageAsync([sendInput]);
+
+        // Create giveaway document in MongoDB
+        var giveawayCol = mongoDatabase.GetCollection<BsonDocument>("giveaways");
+        var giveawayId = $"giveaway-{targetPeer.PeerId}-{giveaway.RandomId}";
+
+        await giveawayCol.InsertOneAsync(new BsonDocument
+        {
+            ["_id"] = giveawayId,
+            ["ChannelId"] = targetPeer.PeerId,
+            ["RandomId"] = giveaway.RandomId,
+            ["MsgId"] = 0, // Will be updated when message is created
+            ["Type"] = "stars",
+            ["Winners"] = winners,
+            ["Stars"] = stars,
+            ["UntilDate"] = untilDate,
+            ["OnlyNewSubscribers"] = onlyNewSubscribers,
+            ["WinnersAreVisible"] = winnersAreVisible,
+            ["PrizeDescription"] = prizeDescription ?? "",
+            ["Countries"] = new BsonArray(countries),
+            ["AdditionalChannels"] = new BsonArray(additionalChannels),
+            ["Status"] = "active",
+            ["StartDate"] = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["CreatedBy"] = input.UserId
+        });
 
         logger.LogInformation("Stars giveaway launched: stars={Stars} winners={Winners} channel={Channel}",
             stars, winners, targetPeer.PeerId);

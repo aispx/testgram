@@ -54,8 +54,8 @@ internal sealed class GetBoostsListHandler : RpcResultObjectHandler<MyTelegram.S
             {
                 UserId = g.Key,
                 TotalMultiplier = g.Sum(doc => doc.Contains("Multiplier") ? doc["Multiplier"].AsInt32 : 1),
-                LatestDate = g.Max(doc => doc["Date"].AsInt32),
-                LatestExpires = g.Max(doc => doc["Expires"].AsInt32),
+                LatestDate = g.Max(doc => GetDateAsInt32(doc["Date"])),
+                LatestExpires = g.Max(doc => GetDateAsInt32(doc["Expires"])),
                 FirstId = g.First()["_id"].ToString(),
                 Gift = g.Any(doc => doc.Contains("Gift") && doc["Gift"].AsBoolean),
                 Giveaway = g.Any(doc => doc.Contains("Giveaway") && doc["Giveaway"].AsBoolean),
@@ -106,6 +106,17 @@ internal sealed class GetBoostsListHandler : RpcResultObjectHandler<MyTelegram.S
             Count = groupedBoosts.Count,
             Boosts = new TVector<IBoost>(boosts),
             Users = new TVector<IUser>(users)
+        };
+    }
+
+    private static int GetDateAsInt32(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Int32 => value.AsInt32,
+            BsonType.Int64 => (int)value.AsInt64,
+            BsonType.DateTime => (int)new DateTimeOffset(value.ToUniversalTime()).ToUnixTimeSeconds(),
+            _ => 0
         };
     }
 }

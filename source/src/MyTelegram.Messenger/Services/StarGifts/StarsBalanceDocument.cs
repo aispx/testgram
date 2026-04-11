@@ -14,7 +14,8 @@ public class StarsBalanceDocument
 public class StarsTransactionDocument
 {
     [BsonId]
-    public ObjectId Id { get; set; }
+    [BsonRepresentation(BsonType.String)]
+    public string Id { get; set; } = string.Empty;
     public string TransactionId { get; set; } = string.Empty;
     public long UserId { get; set; }
     public long Amount { get; set; }   // positive = incoming, negative = outgoing

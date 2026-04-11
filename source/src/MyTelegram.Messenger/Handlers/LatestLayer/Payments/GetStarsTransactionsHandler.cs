@@ -24,9 +24,9 @@ internal sealed class GetStarsTransactionsHandler(IMongoDatabase mongoDatabase)
         else if (obj.Outbound)
             filter &= Builders<StarsTransactionDocument>.Filter.Lt(x => x.Amount, 0);
 
-        // Pagination via offset (ObjectId string)
-        if (!string.IsNullOrEmpty(obj.Offset) && MongoDB.Bson.ObjectId.TryParse(obj.Offset, out var offsetId))
-            filter &= Builders<StarsTransactionDocument>.Filter.Lt(x => x.Id, offsetId);
+        // Pagination via offset (string _id)
+        if (!string.IsNullOrEmpty(obj.Offset))
+            filter &= Builders<StarsTransactionDocument>.Filter.Lt(x => x.Id, obj.Offset);
 
         var sort = obj.Ascending
             ? Builders<StarsTransactionDocument>.Sort.Ascending(x => x.Date)

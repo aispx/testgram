@@ -28,9 +28,11 @@ public static class StarsBalanceHelper
         long? peerUserId = null, long? peerChannelId = null, string? title = null, bool stargiftUpgrade = false,
         bool stargiftAuctionBid = false, bool offer = false, string? stargiftSlug = null, int? premiumGiftMonths = null)
     {
+        var transactionId = Guid.NewGuid().ToString("N");
         await db.GetCollection<StarsTransactionDocument>("star-transactions").InsertOneAsync(new StarsTransactionDocument
         {
-            TransactionId = Guid.NewGuid().ToString("N"),
+            Id = transactionId,
+            TransactionId = transactionId,
             UserId = userId,
             Amount = amount,
             Date = DateTime.UtcNow.ToTimestamp(),

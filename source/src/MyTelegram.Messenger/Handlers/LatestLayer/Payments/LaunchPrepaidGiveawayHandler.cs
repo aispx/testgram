@@ -147,30 +147,10 @@ internal sealed class LaunchPrepaidGiveawayHandler(
 
         await giveawayCol.UpdateOneAsync(filter, update);
 
-        // Return Updates with channel update
-        var giveawayLaunchAction = new TMessageActionGiveawayLaunch();
-        if (stars.HasValue)
-        {
-            giveawayLaunchAction.Stars = stars.Value;
-        }
-
-        var updateNewChannelMessage = new TUpdateNewChannelMessage
-        {
-            Message = new TMessageService
-            {
-                Id = 1, // Temporary ID, real message will come via push
-                PeerId = new TPeerChannel { ChannelId = targetPeer.PeerId },
-                FromId = new TPeerUser { UserId = input.UserId },
-                Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                Action = giveawayLaunchAction
-            },
-            Pts = 0,
-            PtsCount = 1
-        };
-
+        // Return empty Updates - message will arrive via event sourcing
         return new TUpdates
         {
-            Updates = new TVector<IUpdate> { updateNewChannelMessage },
+            Updates = new TVector<IUpdate>(),
             Users = new TVector<IUser>(),
             Chats = new TVector<IChat>(),
             Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),

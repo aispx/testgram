@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Schema;
 using MyTelegram.Services.Services;
@@ -29,6 +30,19 @@ public class GiveawayProcessorBackgroundService : BackgroundService
         _serviceScopeFactory = serviceScopeFactory;
         _logger = logger;
         _logger.LogInformation("GiveawayProcessorBackgroundService constructor called");
+    }
+
+    /// <summary>
+    /// Safely converts BsonValue to long, handling both BsonInt32 and BsonInt64
+    /// </summary>
+    private static long GetInt64(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Int64 => value.AsInt64,
+            BsonType.Int32 => value.AsInt32,
+            _ => 0L
+        };
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -81,7 +95,23 @@ public class GiveawayProcessorBackgroundService : BackgroundService
         foreach (var giveaway in activeGiveaways)
         {
             var giveawayId = giveaway["_id"].AsString;
-            var untilDate = giveaway["UntilDate"].AsInt32;
+
+            // Get completion time - support both UntilDate (int) and CompleteAt (Date)
+            int untilDate;
+            if (giveaway.Contains("UntilDate"))
+            {
+                untilDate = giveaway["UntilDate"].AsInt32;
+            }
+            else if (giveaway.Contains("CompleteAt"))
+            {
+                var completeAt = giveaway["CompleteAt"].ToUniversalTime();
+                untilDate = (int)new DateTimeOffset(completeAt).ToUnixTimeSeconds();
+            }
+            else
+            {
+                _logger.LogWarning("Giveaway {GiveawayId} has no UntilDate or CompleteAt field", giveawayId);
+                continue;
+            }
 
             // Skip if already scheduled
             lock (_timersLock)
@@ -97,13 +127,20 @@ public class GiveawayProcessorBackgroundService : BackgroundService
             {
                 // Already expired, complete immediately
                 _logger.LogInformation("Giveaway {GiveawayId} already expired, completing now", giveawayId);
-                _ = Task.Run(() => CompleteGiveawayAsync(giveaway, CancellationToken.None), cancellationToken);
+                _ = Task.Run(() => CompleteGiveawayAsync(giveawayId, CancellationToken.None), cancellationToken);
             }
-            else if (delay.TotalDays < 7) // Only schedule timers for giveaways within 7 days
+            else if (delay.TotalMilliseconds > uint.MaxValue)
             {
-                // Schedule timer
+                // Too far in the future (>49 days) - will be rescheduled in next periodic check
+                _logger.LogInformation("Giveaway {GiveawayId} is too far in the future ({Days} days), will reschedule later",
+                    giveawayId, delay.TotalDays);
+                continue;
+            }
+            else
+            {
+                // Schedule timer - wrap async call in Task.Run to avoid fire-and-forget issues
                 var timer = new Timer(
-                    async _ => await CompleteGiveawayAsync(giveaway, CancellationToken.None),
+                    _ => Task.Run(() => CompleteGiveawayAsync(giveawayId, CancellationToken.None)),
                     null,
                     delay,
                     Timeout.InfiniteTimeSpan
@@ -120,13 +157,36 @@ public class GiveawayProcessorBackgroundService : BackgroundService
         }
     }
 
-    private async Task CompleteGiveawayAsync(BsonDocument giveaway, CancellationToken cancellationToken)
+    private async Task CompleteGiveawayAsync(string giveawayId, CancellationToken cancellationToken)
     {
-        var giveawayId = giveaway["_id"].AsString;
-        var channelId = giveaway["ChannelId"].AsInt64;
+        // Re-read giveaway from database to ensure fresh data
+        var giveawayCol = _mongoDatabase.GetCollection<BsonDocument>("giveaways");
+        var giveaway = await giveawayCol.Find(
+            Builders<BsonDocument>.Filter.Eq("_id", giveawayId)
+        ).FirstOrDefaultAsync(cancellationToken);
+
+        if (giveaway == null)
+        {
+            _logger.LogWarning("Giveaway {GiveawayId} not found, skipping completion", giveawayId);
+            return;
+        }
+
+        var status = giveaway["Status"].AsString;
+        if (status != "active")
+        {
+            _logger.LogWarning("Giveaway {GiveawayId} skipped: status is {Status}, not active", giveawayId, status);
+            return;
+        }
+
+        var channelId = GetInt64(giveaway["ChannelId"]);
         var msgId = giveaway.Contains("MsgId") ? giveaway["MsgId"].AsInt32 : 0;
         var type = giveaway["Type"].AsString;
-        var winnersCount = giveaway["Winners"].AsInt32;
+
+        // Support both Winners and WinnersCount field names
+        var winnersCount = giveaway.Contains("Winners")
+            ? giveaway["Winners"].AsInt32
+            : giveaway["WinnersCount"].AsInt32;
+
         var onlyNewSubscribers = giveaway.Contains("OnlyNewSubscribers") && giveaway["OnlyNewSubscribers"].AsBoolean;
 
         _logger.LogInformation("Completing giveaway {GiveawayId}: channel={ChannelId} msgId={MsgId} type={Type} winners={Winners}",
@@ -161,7 +221,7 @@ public class GiveawayProcessorBackgroundService : BackgroundService
         if (giveaway.Contains("AdditionalChannels") && giveaway["AdditionalChannels"].IsBsonArray)
         {
             var additionalChannels = giveaway["AdditionalChannels"].AsBsonArray
-                .Select(x => x.AsInt64)
+                .Select(x => GetInt64(x))
                 .ToList();
             channelIds.AddRange(additionalChannels);
         }
@@ -188,7 +248,7 @@ public class GiveawayProcessorBackgroundService : BackgroundService
             }
 
             var members = await memberCol.Find(memberFilter).ToListAsync(cancellationToken);
-            var channelUserIds = members.Select(m => m["UserId"].AsInt64).ToHashSet();
+            var channelUserIds = members.Select(m => GetInt64(m["UserId"])).ToHashSet();
 
             if (firstChannel)
             {
@@ -220,7 +280,7 @@ public class GiveawayProcessorBackgroundService : BackgroundService
                     Builders<BsonDocument>.Filter.In("CountryCode", countries)
                 );
                 var usersInCountries = await userCol.Find(countryFilter).ToListAsync(cancellationToken);
-                var countryUserIds = usersInCountries.Select(u => u["UserId"].AsInt64).ToHashSet();
+                var countryUserIds = usersInCountries.Select(u => GetInt64(u["UserId"])).ToHashSet();
 
                 eligibleUserIds.IntersectWith(countryUserIds);
 
@@ -267,11 +327,11 @@ public class GiveawayProcessorBackgroundService : BackgroundService
         var messageAppService = scope.ServiceProvider.GetRequiredService<IMessageAppService>();
 
         var months = type == "premium" && giveaway.Contains("Months") ? giveaway["Months"].AsInt32 : 12;
-        var starsAmount = type == "stars" && giveaway.Contains("Stars") ? giveaway["Stars"].AsInt64 : 0;
+        var starsAmount = type == "stars" && giveaway.Contains("Stars") ? GetInt64(giveaway["Stars"]) : 0;
 
         // Get giveaway creator
         var createdBy = giveaway.Contains("CreatedBy") && !giveaway["CreatedBy"].IsBsonNull
-            ? giveaway["CreatedBy"].AsInt64
+            ? GetInt64(giveaway["CreatedBy"])
             : 0L;
 
         var now = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -281,34 +341,40 @@ public class GiveawayProcessorBackgroundService : BackgroundService
         {
             // Stars giveaway - send messageActionPrizeStars directly, no gift codes
             var starsCol = _mongoDatabase.GetCollection<BsonDocument>("star-balances");
-            var transCol = _mongoDatabase.GetCollection<BsonDocument>("star-transactions");
 
             foreach (var winnerId in winners)
             {
-                // Add stars to winner's balance
-                await starsCol.UpdateOneAsync(
-                    Builders<BsonDocument>.Filter.Eq("_id", $"balance-{winnerId}"),
-                    Builders<BsonDocument>.Update.Inc("Balance", starsAmount),
+                // Add stars to winner's balance - use BsonDocument directly with explicit BsonInt64
+                var filter = Builders<BsonDocument>.Filter.Eq("UserId", new BsonInt64(winnerId));
+                var update = Builders<BsonDocument>.Update
+                    .Inc("Balance", new BsonInt64(starsAmount))
+                    .SetOnInsert("UserId", new BsonInt64(winnerId));
+
+                var result = await starsCol.UpdateOneAsync(
+                    filter,
+                    update,
                     new UpdateOptions { IsUpsert = true },
                     cancellationToken: cancellationToken
                 );
 
-                // Create transaction
-                await transCol.InsertOneAsync(new BsonDocument
-                {
-                    ["_id"] = $"trans-{Guid.NewGuid()}",
-                    ["UserId"] = winnerId,
-                    ["Amount"] = starsAmount,
-                    ["Date"] = now,
-                    ["Gift"] = true,
-                    ["Title"] = "Giveaway Prize"
-                }, cancellationToken: cancellationToken);
+                _logger.LogInformation("Updated balance for user {UserId}: matched={Matched}, modified={Modified}",
+                    winnerId, result.MatchedCount, result.ModifiedCount);
+
+                // Create transaction using StarsBalanceHelper
+                await StarsBalanceHelper.AddTransactionAsync(
+                    _mongoDatabase,
+                    winnerId,
+                    starsAmount,
+                    gift: true,
+                    peerChannelId: channelId,
+                    title: "Giveaway Prize"
+                );
 
                 // Send messageActionPrizeStars to winner
                 var prizeAction = new TMessageActionPrizeStars
                 {
                     Stars = starsAmount,
-                    TransactionId = $"giveaway-{channelId}-{msgId}-{winnerId}",
+                    TransactionId = string.Empty, // Transaction ID is generated by StarsBalanceHelper
                     BoostPeer = new TPeerChannel { ChannelId = channelId },
                     GiveawayMsgId = msgId
                 };
@@ -423,7 +489,6 @@ public class GiveawayProcessorBackgroundService : BackgroundService
         }
 
         // Update giveaway status to finished
-        var giveawayCol = _mongoDatabase.GetCollection<BsonDocument>("giveaways");
         await giveawayCol.UpdateOneAsync(
             Builders<BsonDocument>.Filter.Eq("_id", giveaway["_id"]),
             Builders<BsonDocument>.Update

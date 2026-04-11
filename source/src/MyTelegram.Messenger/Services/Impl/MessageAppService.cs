@@ -373,6 +373,7 @@ public class MessageAppService(
             TMessageActionGiftStars => MessageActionType.GiftStars,
             TMessageActionPaidMessage => MessageActionType.PaidMessage,
             TMessageActionGiftCode => MessageActionType.GiftCode,
+            TMessageActionPrizeStars => MessageActionType.PrizeStars,
             _ => MessageActionType.None
         };
         var post = channelReadModel?.Broadcast ?? false;
