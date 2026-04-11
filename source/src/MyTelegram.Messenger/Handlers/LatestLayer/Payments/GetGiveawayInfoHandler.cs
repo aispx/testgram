@@ -193,6 +193,7 @@ internal sealed class GetGiveawayInfoHandler(
 
         var onlyNewSubscribers = giveaway.Contains("OnlyNewSubscribers") && giveaway["OnlyNewSubscribers"].AsBoolean;
         int? joinedTooEarlyDate = null;
+        long? adminDisallowedChatId = null;
 
         if (onlyNewSubscribers && isMember)
         {
@@ -212,11 +213,34 @@ internal sealed class GetGiveawayInfoHandler(
             }
         }
 
+        // Check if user is subscribed to all additional channels
+        if (isMember && joinedTooEarlyDate == null && giveaway.Contains("AdditionalChannels") && giveaway["AdditionalChannels"].IsBsonArray)
+        {
+            var additionalChannels = giveaway["AdditionalChannels"].AsBsonArray;
+            foreach (var channelIdValue in additionalChannels)
+            {
+                var channelId = channelIdValue.AsInt64;
+                var isAdditionalMember = await memberCol.Find(
+                    Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("ChannelId", channelId),
+                        Builders<BsonDocument>.Filter.Eq("UserId", userId)
+                    )
+                ).AnyAsync();
+
+                if (!isAdditionalMember)
+                {
+                    adminDisallowedChatId = channelId;
+                    break;
+                }
+            }
+        }
+
         return new TGiveawayInfo
         {
-            Participating = isMember && joinedTooEarlyDate == null,
+            Participating = isMember && joinedTooEarlyDate == null && adminDisallowedChatId == null,
             StartDate = startDate,
-            JoinedTooEarlyDate = joinedTooEarlyDate
+            JoinedTooEarlyDate = joinedTooEarlyDate,
+            AdminDisallowedChatId = adminDisallowedChatId
         };
     }
 }
