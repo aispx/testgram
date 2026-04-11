@@ -138,8 +138,12 @@ internal sealed class LaunchPrepaidGiveawayHandler(
         await messageAppService.SendMessageAsync([sendInput]);
 
         // Update giveaway status in MongoDB
+        var now = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var update = Builders<BsonDocument>.Update
             .Set("Status", "active")
+            .Set("ChannelId", targetPeer.PeerId)
+            .Set("StartDate", now)
+            .Set("CreatedBy", input.UserId)
             .Set("AdditionalChannels", new BsonArray(additionalChannels))
             .Set("Countries", new BsonArray(countries))
             .Set("PrizeDescription", prizeDescription ?? string.Empty)
@@ -147,14 +151,7 @@ internal sealed class LaunchPrepaidGiveawayHandler(
 
         await giveawayCol.UpdateOneAsync(filter, update);
 
-        // Return empty Updates - message will arrive via event sourcing
-        return new TUpdates
-        {
-            Updates = new TVector<IUpdate>(),
-            Users = new TVector<IUser>(),
-            Chats = new TVector<IChat>(),
-            Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            Seq = 0
-        };
+        // Return null - message will arrive via event sourcing
+        return null!;
     }
 }
