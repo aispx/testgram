@@ -51,6 +51,7 @@ internal sealed class LaunchPrepaidGiveawayHandler(
         // Update purpose with actual data from request
         long? stars = null;
         int? months = null;
+        int untilDateFromPurpose = untilDate; // Default from prepaid giveaway
         string? prizeDescription = null;
         var additionalChannels = new List<long>();
         var countries = new List<string>();
@@ -59,6 +60,7 @@ internal sealed class LaunchPrepaidGiveawayHandler(
         {
             months = giveaway.Contains("Months") ? giveaway["Months"].AsInt32 : 12;
             prizeDescription = premiumPurpose.PrizeDescription;
+            untilDateFromPurpose = premiumPurpose.UntilDate; // Use date from purpose
 
             if (premiumPurpose.AdditionalPeers != null)
             {
@@ -77,6 +79,7 @@ internal sealed class LaunchPrepaidGiveawayHandler(
         {
             stars = giveaway.Contains("Stars") ? giveaway["Stars"].AsInt64 : starsPurpose.Stars;
             prizeDescription = starsPurpose.PrizeDescription;
+            untilDateFromPurpose = starsPurpose.UntilDate; // Use date from purpose
 
             if (starsPurpose.AdditionalPeers != null)
             {
@@ -103,7 +106,7 @@ internal sealed class LaunchPrepaidGiveawayHandler(
                 Channels = new TVector<long> { targetPeer.PeerId },
                 CountriesIso2 = countries.Count > 0 ? new TVector<string>(countries) : null,
                 PrizeDescription = prizeDescription,
-                UntilDate = untilDate,
+                UntilDate = untilDateFromPurpose,
                 Quantity = winners,
                 Stars = stars ?? 0
             };
@@ -117,7 +120,7 @@ internal sealed class LaunchPrepaidGiveawayHandler(
                 Channels = new TVector<long> { targetPeer.PeerId },
                 CountriesIso2 = countries.Count > 0 ? new TVector<string>(countries) : null,
                 PrizeDescription = prizeDescription,
-                UntilDate = untilDate,
+                UntilDate = untilDateFromPurpose,
                 Quantity = winners,
                 Months = months ?? 12
             };
@@ -142,6 +145,7 @@ internal sealed class LaunchPrepaidGiveawayHandler(
         var update = Builders<BsonDocument>.Update
             .Set("Status", "active")
             .Set("ChannelId", targetPeer.PeerId)
+            .Set("UntilDate", untilDateFromPurpose)
             .Set("StartDate", now)
             .Set("CreatedBy", input.UserId)
             .Set("AdditionalChannels", new BsonArray(additionalChannels))
