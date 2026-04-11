@@ -206,6 +206,7 @@ internal sealed class GetGiveawayInfoHandler(
             return new TGiveawayInfoResults
             {
                 Winner = isWinner,
+                Refunded = giveaway.Contains("Refunded") && giveaway["Refunded"].AsBoolean,
                 StartDate = startDate,
                 FinishDate = giveaway.Contains("UntilDate") ? giveaway["UntilDate"].AsInt32 : startDate + 86400,
                 WinnersCount = winnersCount,
