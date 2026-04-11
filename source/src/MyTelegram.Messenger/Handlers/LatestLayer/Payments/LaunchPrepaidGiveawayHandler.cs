@@ -127,12 +127,13 @@ internal sealed class LaunchPrepaidGiveawayHandler(
         }
 
         // Send giveaway message to channel
+        var messageRandomId = Random.Shared.NextInt64();
         var sendInput = new SendMessageInput(
             input.ToRequestInfo() with { ReqMsgId = 0 },
             input.UserId,
             targetPeer,
             string.Empty,
-            Random.Shared.NextInt64(),
+            messageRandomId,
             sendMessageType: SendMessageType.Media,
             messageType: MessageType.Text,
             media: media
@@ -148,6 +149,7 @@ internal sealed class LaunchPrepaidGiveawayHandler(
             .Set("UntilDate", untilDateFromPurpose)
             .Set("StartDate", now)
             .Set("CreatedBy", input.UserId)
+            .Set("MessageRandomId", messageRandomId)
             .Set("AdditionalChannels", new BsonArray(additionalChannels))
             .Set("Countries", new BsonArray(countries))
             .Set("PrizeDescription", prizeDescription ?? string.Empty)

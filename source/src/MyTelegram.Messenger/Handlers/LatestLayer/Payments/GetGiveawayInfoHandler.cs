@@ -34,7 +34,38 @@ internal sealed class GetGiveawayInfoHandler(
         );
         var giveaway = await collection.Find(filter).FirstOrDefaultAsync();
 
-        // Second try: if not found, user might be clicking on results message
+        // Second try: find by MessageRandomId (for messages with MsgId=0)
+        if (giveaway == null)
+        {
+            // Get message RandomId from messages collection
+            var msgCol = database.GetCollection<BsonDocument>("eventflow-messagereadmodel");
+            var msgFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("OwnerPeerId", peer.PeerId),
+                Builders<BsonDocument>.Filter.Eq("MessageId", obj.MsgId)
+            );
+            var message = await msgCol.Find(msgFilter).FirstOrDefaultAsync();
+
+            if (message != null && message.Contains("RandomId"))
+            {
+                var randomId = message["RandomId"].AsInt64;
+                var randomIdFilter = Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
+                    Builders<BsonDocument>.Filter.Eq("MessageRandomId", randomId)
+                );
+                giveaway = await collection.Find(randomIdFilter).FirstOrDefaultAsync();
+
+                // Update MsgId if found
+                if (giveaway != null)
+                {
+                    await collection.UpdateOneAsync(
+                        Builders<BsonDocument>.Filter.Eq("_id", giveaway["_id"]),
+                        Builders<BsonDocument>.Update.Set("MsgId", obj.MsgId)
+                    );
+                }
+            }
+        }
+
+        // Third try: if not found, user might be clicking on results message
         // Results message has LaunchMsgId pointing to original giveaway
         // So we search for finished giveaways in this channel and check if MsgId is close to any LaunchMsgId
         if (giveaway == null)
@@ -76,7 +107,7 @@ internal sealed class GetGiveawayInfoHandler(
             }
         }
 
-        // Third try: fallback for giveaways with MsgId=0 (both active and finished)
+        // Fourth try: fallback for giveaways with MsgId=0 (last resort)
         if (giveaway == null)
         {
             var fallbackFilter = Builders<BsonDocument>.Filter.And(
@@ -151,22 +182,25 @@ internal sealed class GetGiveawayInfoHandler(
             }
 
             var winnersCount = winnerIds.Count;
-            var activatedCount = 0;
+            int? activatedCount = null;
 
-            // Count activated codes - use actual giveaway MsgId, not requested MsgId
-            if (winnersCount > 0)
+            // Count activated codes only for Premium giveaways
+            var type = giveaway.Contains("Type") ? giveaway["Type"].AsString : "premium";
+            if (type == "premium" && winnersCount > 0)
             {
                 var giveawayMsgId = giveaway.Contains("MsgId") && !giveaway["MsgId"].IsBsonNull
                     ? giveaway["MsgId"].AsInt32
                     : 0;
 
                 var codeCol = database.GetCollection<BsonDocument>("premium_gift_codes");
-                activatedCount = (int)await codeCol.CountDocumentsAsync(
+                var count = (int)await codeCol.CountDocumentsAsync(
                     Builders<BsonDocument>.Filter.And(
                         Builders<BsonDocument>.Filter.Eq("GiveawayMsgId", giveawayMsgId),
                         Builders<BsonDocument>.Filter.Eq("Used", true)
                     )
                 );
+                if (count > 0)
+                    activatedCount = count;
             }
 
             return new TGiveawayInfoResults
@@ -177,7 +211,7 @@ internal sealed class GetGiveawayInfoHandler(
                 WinnersCount = winnersCount,
                 GiftCodeSlug = slug,
                 StarsPrize = starsPrize,
-                ActivatedCount = activatedCount > 0 ? activatedCount : null
+                ActivatedCount = activatedCount
             };
         }
 
