@@ -11,10 +11,18 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <remarks>
 /// Access: [User ✖] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class AnswerWebhookJSONQueryHandler : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestAnswerWebhookJSONQuery, IBool>
+internal sealed class AnswerWebhookJSONQueryHandler(
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestAnswerWebhookJSONQuery, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestAnswerWebhookJSONQuery obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestAnswerWebhookJSONQuery obj)
     {
-        throw new NotImplementedException();
+        var userReadModel = await queryProcessor.ProcessAsync(new GetUserByIdQuery(input.UserId));
+        if (userReadModel == null || !userReadModel.Bot)
+            RpcErrors.RpcErrors400.UserBotRequired.ThrowRpcError();
+
+        if (obj.QueryId <= 0)
+            RpcErrors.RpcErrors400.QueryIdInvalid.ThrowRpcError();
+
+        return new TBoolTrue();
     }
 }

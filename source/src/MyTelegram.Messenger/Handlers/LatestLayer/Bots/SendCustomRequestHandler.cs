@@ -11,10 +11,18 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <remarks>
 /// Access: [User ✖] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendCustomRequestHandler : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSendCustomRequest, MyTelegram.Schema.IDataJSON>
+internal sealed class SendCustomRequestHandler(
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSendCustomRequest, MyTelegram.Schema.IDataJSON>
 {
-    protected override Task<MyTelegram.Schema.IDataJSON> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSendCustomRequest obj)
+    protected override async Task<MyTelegram.Schema.IDataJSON> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSendCustomRequest obj)
     {
-        throw new NotImplementedException();
+        var userReadModel = await queryProcessor.ProcessAsync(new GetUserByIdQuery(input.UserId));
+        if (userReadModel == null || !userReadModel.Bot)
+            RpcErrors.RpcErrors400.UserBotRequired.ThrowRpcError();
+
+        if (string.IsNullOrWhiteSpace(obj.CustomMethod))
+            RpcErrors.RpcErrors400.MethodInvalid.ThrowRpcError();
+
+        return new TDataJSON { Data = "{}" };
     }
 }

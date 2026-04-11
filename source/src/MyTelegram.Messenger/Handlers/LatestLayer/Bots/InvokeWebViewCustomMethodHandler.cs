@@ -11,10 +11,24 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class InvokeWebViewCustomMethodHandler : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestInvokeWebViewCustomMethod, MyTelegram.Schema.IDataJSON>
+internal sealed class InvokeWebViewCustomMethodHandler(
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestInvokeWebViewCustomMethod, MyTelegram.Schema.IDataJSON>
 {
-    protected override Task<MyTelegram.Schema.IDataJSON> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestInvokeWebViewCustomMethod obj)
+    protected override async Task<MyTelegram.Schema.IDataJSON> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestInvokeWebViewCustomMethod obj)
     {
-        throw new NotImplementedException();
+        if (obj.Bot is not TInputUser)
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        var inputUser = (TInputUser)obj.Bot;
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        var botReadModel = await queryProcessor.ProcessAsync(new GetUserByIdQuery(inputUser.UserId));
+        if (botReadModel == null || !botReadModel.Bot)
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        if (string.IsNullOrWhiteSpace(obj.CustomMethod))
+            RpcErrors.RpcErrors400.MethodInvalid.ThrowRpcError();
+
+        return new TDataJSON { Data = "{}" };
     }
 }

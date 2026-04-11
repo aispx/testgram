@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <summary>
 /// Set the default <a href="https://corefork.telegram.org/api/rights#suggested-bot-rights">suggested admin rights</a> for bots being added as admins to channels, see <a href="https://corefork.telegram.org/api/rights#suggested-bot-rights">here for more info on how to handle them »</a>.
@@ -10,10 +13,58 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <remarks>
 /// Access: [User ✖] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetBotBroadcastDefaultAdminRightsHandler : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetBotBroadcastDefaultAdminRights, IBool>
+internal sealed class SetBotBroadcastDefaultAdminRightsHandler(
+    IMongoDatabase mongoDatabase,
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetBotBroadcastDefaultAdminRights, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSetBotBroadcastDefaultAdminRights obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSetBotBroadcastDefaultAdminRights obj)
     {
-        throw new NotImplementedException();
+        var userReadModel = await queryProcessor.ProcessAsync(new GetUserByIdQuery(input.UserId));
+        if (userReadModel == null || !userReadModel.Bot)
+            RpcErrors.RpcErrors400.UserBotRequired.ThrowRpcError();
+
+        var collection = mongoDatabase.GetCollection<BsonDocument>("bot_default_admin_rights");
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("BotId", input.UserId),
+            Builders<BsonDocument>.Filter.Eq("Type", "broadcast")
+        );
+
+        var existingDoc = await collection.Find(filter).FirstOrDefaultAsync();
+
+        var newRightsDoc = new BsonDocument
+        {
+            ["ChangeInfo"] = obj.AdminRights.ChangeInfo,
+            ["PostMessages"] = obj.AdminRights.PostMessages,
+            ["EditMessages"] = obj.AdminRights.EditMessages,
+            ["DeleteMessages"] = obj.AdminRights.DeleteMessages,
+            ["BanUsers"] = obj.AdminRights.BanUsers,
+            ["InviteUsers"] = obj.AdminRights.InviteUsers,
+            ["PinMessages"] = obj.AdminRights.PinMessages,
+            ["AddAdmins"] = obj.AdminRights.AddAdmins,
+            ["Anonymous"] = obj.AdminRights.Anonymous,
+            ["ManageCall"] = obj.AdminRights.ManageCall,
+            ["Other"] = obj.AdminRights.Other,
+            ["ManageTopics"] = obj.AdminRights.ManageTopics,
+            ["PostStories"] = obj.AdminRights.PostStories,
+            ["EditStories"] = obj.AdminRights.EditStories,
+            ["DeleteStories"] = obj.AdminRights.DeleteStories
+        };
+
+        if (existingDoc != null && existingDoc.Contains("AdminRights"))
+        {
+            var oldRights = existingDoc["AdminRights"].AsBsonDocument;
+            if (oldRights.Equals(newRightsDoc))
+                RpcErrors.RpcErrors400.RightsNotModified.ThrowRpcError();
+        }
+
+        var update = Builders<BsonDocument>.Update
+            .Set("BotId", input.UserId)
+            .Set("Type", "broadcast")
+            .Set("AdminRights", newRightsDoc)
+            .Set("UpdatedAt", DateTime.UtcNow);
+
+        await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
+
+        return new TBoolTrue();
     }
 }

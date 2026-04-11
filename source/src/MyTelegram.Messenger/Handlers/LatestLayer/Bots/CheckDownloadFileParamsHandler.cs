@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <summary>
 /// Check if a <a href="https://corefork.telegram.org/api/bots/webapps">mini app</a> can request the download of a specific file: called when handling <a href="https://corefork.telegram.org/api/web-events#web-app-request-file-download">web_app_request_file_download events »</a>
@@ -9,10 +12,22 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckDownloadFileParamsHandler : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestCheckDownloadFileParams, IBool>
+internal sealed class CheckDownloadFileParamsHandler(
+    IMongoDatabase mongoDatabase,
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestCheckDownloadFileParams, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestCheckDownloadFileParams obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestCheckDownloadFileParams obj)
     {
-        throw new NotImplementedException();
+        if (obj.Bot is not TInputUser)
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        var inputUser = (TInputUser)obj.Bot;
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        var botReadModel = await queryProcessor.ProcessAsync(new GetUserByIdQuery(inputUser.UserId));
+        if (botReadModel == null || !botReadModel.Bot)
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        return new TBoolTrue();
     }
 }

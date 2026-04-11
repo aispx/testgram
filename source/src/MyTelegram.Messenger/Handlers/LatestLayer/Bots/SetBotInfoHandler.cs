@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <summary>
 /// Set localized name, about text and description of a bot (or of the current account, if called by a bot).
@@ -10,10 +13,62 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetBotInfoHandler : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetBotInfo, IBool>
+internal sealed class SetBotInfoHandler(
+    IMongoDatabase mongoDatabase,
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetBotInfo, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSetBotInfo obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSetBotInfo obj)
     {
-        throw new NotImplementedException();
+        long targetBotId;
+
+        if (obj.Bot != null)
+        {
+            if (obj.Bot is TInputUser inputUser)
+            {
+                targetBotId = inputUser.UserId;
+                var targetBot = await queryProcessor.ProcessAsync(new GetUserByIdQuery(targetBotId));
+                if (targetBot == null || !targetBot.Bot)
+                    RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+            }
+            else
+            {
+                RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+                return null!;
+            }
+        }
+        else
+        {
+            var currentUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(input.UserId));
+            if (currentUser == null || !currentUser.Bot)
+                RpcErrors.RpcErrors400.UserBotInvalid.ThrowRpcError();
+            targetBotId = input.UserId;
+        }
+
+        if (!string.IsNullOrEmpty(obj.LangCode) && obj.LangCode.Length > 10)
+            RpcErrors.RpcErrors400.LangCodeInvalid.ThrowRpcError();
+
+        var collection = mongoDatabase.GetCollection<BsonDocument>("bot_info");
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("BotId", targetBotId),
+            Builders<BsonDocument>.Filter.Eq("LangCode", obj.LangCode ?? "")
+        );
+
+        var update = Builders<BsonDocument>.Update
+            .Set("BotId", targetBotId)
+            .Set("LangCode", obj.LangCode ?? "")
+            .Set("UpdatedAt", DateTime.UtcNow);
+
+        if (obj.Name != null)
+            update = update.Set("Name", obj.Name);
+
+        if (obj.About != null)
+            update = update.Set("About", obj.About);
+
+        if (obj.Description != null)
+            update = update.Set("Description", obj.Description);
+
+        await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
+
+        return new TBoolTrue();
     }
 }
