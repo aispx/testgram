@@ -306,8 +306,16 @@ public class UserConverterService(
         user.AccessHash = 0;
         if (request.AccessHashKeyId != 0)
         {
-            user.AccessHash = accessHashHelper2.GenerateAccessHash(request.UserId, request.AccessHashKeyId,
-                userReadModel.UserId, AccessHashType.User);
+            // For bots, use permanent AccessHash from database instead of session-specific
+            if (userReadModel.Bot)
+            {
+                user.AccessHash = userReadModel.AccessHash;
+            }
+            else
+            {
+                user.AccessHash = accessHashHelper2.GenerateAccessHash(request.UserId, request.AccessHashKeyId,
+                    userReadModel.UserId, AccessHashType.User);
+            }
         }
 
         // Set BotBusiness flag from MongoDB if user is a bot
