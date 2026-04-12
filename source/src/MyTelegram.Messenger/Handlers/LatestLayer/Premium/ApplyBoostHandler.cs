@@ -163,8 +163,8 @@ internal sealed class ApplyBoostHandler(
             }
 
             // Read DefaultBannedRights from MongoDB
-            TChatBannedRights? defaultBannedRights = null;
-            if (channel.Contains("DefaultBannedRights"))
+            TChatBannedRights? defaultBannedRights;
+            if (channel.Contains("DefaultBannedRights") && !channel["DefaultBannedRights"].IsBsonNull)
             {
                 var rights = channel["DefaultBannedRights"].AsBsonDocument;
                 defaultBannedRights = new TChatBannedRights
@@ -191,6 +191,11 @@ internal sealed class ApplyBoostHandler(
                     SendPlain = rights.GetValue("SendPlain", false).AsBoolean,
                     UntilDate = rights.GetValue("UntilDate", 0).AsInt32
                 };
+            }
+            else
+            {
+                // DefaultBannedRights отсутствует или null — нет ограничений
+                defaultBannedRights = new TChatBannedRights { UntilDate = 0 };
             }
 
             chats.Add(new TChannel

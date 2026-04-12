@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Contacts;
 /// <summary>
 /// Resolve a @username to get peer info
@@ -12,12 +15,22 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Contacts;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class ResolveUsernameHandler(IQueryProcessor queryProcessor, //ILayeredService<IChatConverter> layeredChatService,
- //ILayeredService<IUserConverter> layeredUserService,
-IChatConverterService chatConverterService, IUserConverterService userConverterService, IChannelAppService channelAppService, IPhotoAppService photoAppService) : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestResolveUsername, MyTelegram.Schema.Contacts.IResolvedPeer>
+internal sealed class ResolveUsernameHandler(
+    IQueryProcessor queryProcessor,
+    IChatConverterService chatConverterService,
+    IUserConverterService userConverterService,
+    IChannelAppService channelAppService,
+    IPhotoAppService photoAppService,
+    IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestResolveUsername, MyTelegram.Schema.Contacts.IResolvedPeer>
 {
     protected override async Task<IResolvedPeer> HandleCoreAsync(IRequestInput input, RequestResolveUsername obj)
     {
+        // Handle affiliate link referer parameter
+        if (!string.IsNullOrEmpty(obj.Referer))
+        {
+            await ProcessAffiliateReferralAsync(input.UserId, obj.Username, obj.Referer);
+        }
+
         if (!string.IsNullOrEmpty(obj.Username))
         {
             var userNameReadModel = await queryProcessor.ProcessAsync(new GetUserNameByNameQuery(obj.Username), default);
@@ -69,5 +82,89 @@ IChatConverterService chatConverterService, IUserConverterService userConverterS
 
         RpcErrors.RpcErrors400.UsernameNotOccupied.ThrowRpcError();
         return null !;
+    }
+
+    private async Task ProcessAffiliateReferralAsync(long userId, string? botUsername, string referer)
+    {
+        try
+        {
+            // Extract link_id from referer (format: "linkId" or full URL)
+            var linkId = referer.Contains("?") ? referer.Split('?').Last().Split('=').Last() : referer;
+
+            // Find the affiliate connection by link_id
+            var connectionsCol = mongoDatabase.GetCollection<BsonDocument>("connected_star_ref_bots");
+            var filter = Builders<BsonDocument>.Filter.Eq("link_id", linkId);
+            var connection = await connectionsCol.Find(filter).FirstOrDefaultAsync();
+
+            if (connection == null)
+            {
+                // Link not found or expired
+                RpcErrors.RpcErrors400.StarrefExpired.ThrowRpcError();
+                return;
+            }
+
+            // Check if link is revoked
+            if (connection["revoked"].AsBoolean)
+            {
+                RpcErrors.RpcErrors400.StarrefExpired.ThrowRpcError();
+                return;
+            }
+
+            // Check if user already used this bot (first-time referral only)
+            var userBotsCol = mongoDatabase.GetCollection<BsonDocument>("user_bot_starts");
+            var userBotFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("user_id", userId),
+                Builders<BsonDocument>.Filter.Eq("bot_id", connection["bot_id"].AsInt64)
+            );
+            var existingStart = await userBotsCol.Find(userBotFilter).FirstOrDefaultAsync();
+
+            if (existingStart != null)
+            {
+                // User already started this bot before - not a valid referral
+                return;
+            }
+
+            // Record the referral
+            var now = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var referralDoc = new BsonDocument
+            {
+                ["_id"] = $"referral-{userId}-{connection["bot_id"].AsInt64}",
+                ["user_id"] = userId,
+                ["bot_id"] = connection["bot_id"].AsInt64,
+                ["affiliate_peer_id"] = connection["peer_id"].AsInt64,
+                ["affiliate_peer_type"] = connection["peer_type"].AsInt32,
+                ["link_id"] = linkId,
+                ["date"] = now,
+                ["commission_permille"] = connection["commission_permille"].AsInt32,
+                ["duration_months"] = connection["duration_months"].AsInt32,
+                ["expires_at"] = connection["duration_months"].AsInt32 > 0
+                    ? now + (connection["duration_months"].AsInt32 * 30 * 24 * 60 * 60)
+                    : 0 // 0 = no expiration
+            };
+
+            var referralsCol = mongoDatabase.GetCollection<BsonDocument>("star_referrals");
+            await referralsCol.InsertOneAsync(referralDoc);
+
+            // Update connection statistics
+            var update = Builders<BsonDocument>.Update.Inc("participants", 1);
+            await connectionsCol.UpdateOneAsync(filter, update);
+
+            // Mark that user started this bot
+            await userBotsCol.InsertOneAsync(new BsonDocument
+            {
+                ["_id"] = $"userbot-{userId}-{connection["bot_id"].AsInt64}",
+                ["user_id"] = userId,
+                ["bot_id"] = connection["bot_id"].AsInt64,
+                ["date"] = now
+            });
+        }
+        catch (RpcException)
+        {
+            throw; // Re-throw RPC errors
+        }
+        catch (Exception)
+        {
+            // Silently ignore other errors - don't break username resolution
+        }
     }
 }

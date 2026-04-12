@@ -10,6 +10,7 @@ using System.Text.Json.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MyTelegram.EventFlow.MongoDB.Extensions;
 using MyTelegram.ReadModel.Extensions;
+using MyTelegram.ReadModel.Interfaces;
 
 namespace MyTelegram.ReadModel.MongoDB;
 
@@ -22,6 +23,16 @@ public static class MyTelegramServerReadModelMongoDbExtensions
             new IgnoreExtraElementsConvention(true)
         };
         ConventionRegistry.Register("IgnoreExtraElements", pack, _ => true);
+
+        // Register UsernameInfo class map
+        if (!BsonClassMap.IsClassMapRegistered(typeof(UsernameInfo)))
+        {
+            BsonClassMap.RegisterClassMap<UsernameInfo>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
 
         var baseType = typeof(IObject);
 

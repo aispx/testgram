@@ -56,6 +56,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetUserStoriesAsync(targetUserId, userFull, input.UserId);
         await SetSavedMusicAsync(targetUserId, userFull);
         await SetChatThemeAsync(input.UserId, targetUserId, userFull);
+        await SetStarRefProgramAsync(targetUserId, userFull);
 
         // CRITICAL: Cast to concrete TUser for proper serialization
         // ILayeredUser interface doesn't serialize correctly in TVector
@@ -519,6 +520,50 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to load chat theme for user {SelfUserId} -> {TargetUserId}", selfUserId, targetUserId);
+        }
+    }
+
+    private async Task SetStarRefProgramAsync(long targetUserId, IUserFull userFull)
+    {
+        try
+        {
+            // Check if target user is a bot with active affiliate program
+            var programsCol = mongoDatabase.GetCollection<BsonDocument>("star_ref_programs");
+            var now = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("bot_id", targetUserId),
+                Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Not(Builders<BsonDocument>.Filter.Exists("end_date")),
+                    Builders<BsonDocument>.Filter.Eq("end_date", BsonNull.Value),
+                    Builders<BsonDocument>.Filter.Gt("end_date", now)
+                )
+            );
+
+            var program = await programsCol.Find(filter).FirstOrDefaultAsync();
+            if (program != null)
+            {
+                var dailyRevenue = program.Contains("daily_revenue_per_user")
+                    ? program["daily_revenue_per_user"].AsInt64
+                    : 100; // Default estimate
+
+                userFull.StarrefProgram = new TStarRefProgram
+                {
+                    BotId = targetUserId,
+                    CommissionPermille = program["commission_permille"].AsInt32,
+                    DurationMonths = program.Contains("duration_months") && program["duration_months"].AsInt32 > 0
+                        ? program["duration_months"].AsInt32
+                        : null,
+                    DailyRevenuePerUser = new TStarsAmount
+                    {
+                        Amount = dailyRevenue,
+                        Nanos = 0
+                    }
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load star ref program for bot {BotId}", targetUserId);
         }
     }
 }
