@@ -18,10 +18,63 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class StartBotHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestStartBot, MyTelegram.Schema.IUpdates>
+internal sealed class StartBotHandler(
+    IQueryProcessor queryProcessor,
+    IMessageAppService messageAppService,
+    IPeerHelper peerHelper,
+    IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestStartBot, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestStartBot obj)
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestStartBot obj)
     {
-        throw new NotImplementedException();
+        // Validate start_param
+        if (string.IsNullOrEmpty(obj.StartParam))
+            RpcErrors.RpcErrors400.StartParamEmpty.ThrowRpcError();
+
+        if (obj.StartParam.Length > 64)
+            RpcErrors.RpcErrors400.StartParamTooLong.ThrowRpcError();
+
+        // Validate start_param format (a-z, A-Z, 0-9, _, -)
+        if (!System.Text.RegularExpressions.Regex.IsMatch(obj.StartParam, @"^[a-zA-Z0-9_-]+$"))
+            RpcErrors.RpcErrors400.StartParamInvalid.ThrowRpcError();
+
+        // Validate bot
+        await accessHashHelper.CheckAccessHashAsync(input, obj.Bot);
+        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(obj.Bot.UserId));
+        if (botUser == null)
+            RpcErrors.RpcErrors400.InputUserDeactivated.ThrowRpcError();
+
+        if (!botUser.Bot)
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        // Validate peer
+        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+
+        // Build /start command message
+        var messageText = $"/start {obj.StartParam}";
+
+        // Send message to bot
+        var sendInput = new SendMessageInput(
+            input.ToRequestInfo(),
+            input.UserId,
+            peer,
+            messageText,
+            obj.RandomId,
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            clearDraft: true
+        );
+
+        await messageAppService.SendMessageAsync([sendInput]);
+
+        // Return empty Updates (message will arrive via push)
+        return new TUpdates
+        {
+            Updates = new TVector<IUpdate>(),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = DateTime.UtcNow.ToTimestamp(),
+            Seq = 0
+        };
     }
 }
