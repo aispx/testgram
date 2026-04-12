@@ -32,7 +32,7 @@ public class MediaHelper(
             TMessageMediaGame => MessageType.Game,
             TMessageMediaGeo => MessageType.Geo,
             TMessageMediaGeoLive => MessageType.Geo,
-            TMessageMediaInvoice => MessageType.Voice,
+            TMessageMediaInvoice => MessageType.Text,
             TMessageMediaPhoto => MessageType.Photo,
             TMessageMediaPoll => MessageType.Poll,
             TMessageMediaToDo => MessageType.Text,
@@ -453,8 +453,9 @@ public class MediaHelper(
                 return await CreateMediaOnFileServerAsync(media);
             case TInputMediaPaidMedia:
             case TInputMediaGame:
-            case TInputMediaInvoice:
                 throw new NotImplementedException();
+            case TInputMediaInvoice inputMediaInvoice:
+                return CreateMediaInvoice(inputMediaInvoice);
             case TInputMediaEmpty:
                 return new TMessageMediaEmpty();
             case TInputMediaGeoLive inputMediaGeoLive:
@@ -482,6 +483,31 @@ public class MediaHelper(
         {
             Todo = inputMediaTodo.Todo,
             Completions = new TVector<ITodoCompletion>()
+        };
+    }
+
+    private IMessageMedia CreateMediaInvoice(TInputMediaInvoice inputMediaInvoice)
+    {
+        // Calculate total amount from prices
+        long totalAmount = 0;
+        if (inputMediaInvoice.Invoice?.Prices != null)
+        {
+            foreach (var price in inputMediaInvoice.Invoice.Prices)
+            {
+                totalAmount += price.Amount;
+            }
+        }
+
+        return new TMessageMediaInvoice
+        {
+            Title = inputMediaInvoice.Title,
+            Description = inputMediaInvoice.Description,
+            Photo = inputMediaInvoice.Photo as IWebDocument,
+            Currency = inputMediaInvoice.Invoice?.Currency ?? "XTR",
+            TotalAmount = totalAmount,
+            StartParam = inputMediaInvoice.StartParam ?? string.Empty,
+            ShippingAddressRequested = inputMediaInvoice.Invoice?.ShippingAddressRequested ?? false,
+            Test = inputMediaInvoice.Invoice?.Test ?? false
         };
     }
 }

@@ -10,6 +10,7 @@ internal sealed class GetPaymentFormHandler(
     IMongoDatabase mongoDatabase,
     IOptions<MyTelegramMessengerServerOptions> options,
     IPeerHelper peerHelper,
+    IQueryProcessor queryProcessor,
     ILogger<GetPaymentFormHandler> logger)
     : RpcResultObjectHandler<RequestGetPaymentForm, IPaymentForm>
 {
@@ -167,6 +168,18 @@ internal sealed class GetPaymentFormHandler(
                 },
                 Users = new TVector<IUser>(),
             };
+        }
+
+        // Bot invoice from message (inputInvoiceMessage)
+        if (obj.Invoice is TInputInvoiceMessage invoiceMessage)
+        {
+            return await HandleBotInvoiceMessageAsync(input, invoiceMessage);
+        }
+
+        // Bot invoice from slug (inputInvoiceSlug)
+        if (obj.Invoice is TInputInvoiceSlug invoiceSlug)
+        {
+            return await HandleBotInvoiceSlugAsync(input, invoiceSlug);
         }
 
         RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
@@ -436,6 +449,87 @@ internal sealed class GetPaymentFormHandler(
                 Prices = [new TLabeledPrice { Label = $"{stars} Telegram Stars", Amount = amountCents }],
             },
             SavedCredentials = await GetSavedCredentialsAsync(input.UserId),
+            Users = new TVector<IUser>(),
+        };
+    }
+
+    private async Task<IPaymentForm> HandleBotInvoiceMessageAsync(IRequestInput input, TInputInvoiceMessage invoiceMessage)
+    {
+        // Get invoice from message
+        var peer = peerHelper.GetPeer(invoiceMessage.Peer, input.UserId);
+        var messagesCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-messagereadmodel");
+        var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+            MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("MessageId", invoiceMessage.MsgId),
+            peer.PeerType == PeerType.User
+                ? MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("OwnerPeerId", peer.PeerId)
+                : MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("ToPeerId", peer.PeerId)
+        );
+        var messageDoc = await messagesCol.Find(filter).FirstOrDefaultAsync();
+        if (messageDoc == null)
+            RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+
+        // Extract invoice data from message media
+        if (!messageDoc.Contains("Media") || messageDoc["Media"].IsBsonNull)
+            RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
+
+        var mediaBytes = messageDoc["Media"].AsByteArray;
+        var mediaBuffer = new ReadOnlyMemory<byte>(mediaBytes);
+        var media = mediaBuffer.Read<IMessageMedia>();
+
+        if (media is not TMessageMediaInvoice)
+            RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
+
+        var invoiceMedia = (TMessageMediaInvoice)media;
+
+        // Get bot user
+        long botId = messageDoc["SenderPeerId"].AsInt64;
+        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
+        if (botUser == null || !botUser.Bot)
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        // Calculate total amount
+        long totalAmount = invoiceMedia.TotalAmount;
+
+        // Return payment form for Stars
+        return new TPaymentFormStars
+        {
+            FormId = Random.Shared.NextInt64(),
+            BotId = botId,
+            Title = invoiceMedia.Title,
+            Description = invoiceMedia.Description,
+            Invoice = new TInvoice
+            {
+                Currency = invoiceMedia.Currency,
+                Prices = [new TLabeledPrice { Label = invoiceMedia.Title, Amount = totalAmount }],
+            },
+            Users = new TVector<IUser>(),
+        };
+    }
+
+    private async Task<IPaymentForm> HandleBotInvoiceSlugAsync(IRequestInput input, TInputInvoiceSlug invoiceSlug)
+    {
+        // Get invoice by slug from MongoDB
+        var invoicesCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("bot-invoices");
+        var invoice = await invoicesCol.Find(MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("Slug", invoiceSlug.Slug)).FirstOrDefaultAsync();
+        if (invoice == null)
+            RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
+
+        long botId = invoice!["BotId"].AsInt64;
+        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
+        if (botUser == null || !botUser.Bot)
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        return new TPaymentFormStars
+        {
+            FormId = Random.Shared.NextInt64(),
+            BotId = botId,
+            Title = invoice["Title"].AsString,
+            Description = invoice["Description"].AsString,
+            Invoice = new TInvoice
+            {
+                Currency = invoice["Currency"].AsString,
+                Prices = [new TLabeledPrice { Label = invoice["Title"].AsString, Amount = invoice["TotalAmount"].AsInt64 }],
+            },
             Users = new TVector<IUser>(),
         };
     }

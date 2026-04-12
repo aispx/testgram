@@ -39,7 +39,18 @@ internal sealed class StartBotHandler(
 
         // Validate bot
         await accessHashHelper.CheckAccessHashAsync(input, obj.Bot);
-        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(obj.Bot.UserId));
+
+        long botUserId = obj.Bot switch
+        {
+            TInputUser inputUser => inputUser.UserId,
+            TInputUserSelf => input.UserId,
+            _ => 0
+        };
+
+        if (botUserId == 0)
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botUserId));
         if (botUser == null)
             RpcErrors.RpcErrors400.InputUserDeactivated.ThrowRpcError();
 
