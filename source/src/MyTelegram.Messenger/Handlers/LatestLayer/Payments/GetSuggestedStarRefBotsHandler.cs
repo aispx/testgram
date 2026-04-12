@@ -74,9 +74,14 @@ internal sealed class GetSuggestedStarRefBotsHandler(
         var suggestedBots = new TVector<IStarRefProgram>();
         foreach (var program in programs)
         {
-            var dailyRevenue = program.Contains("daily_revenue_per_user")
-                ? program["daily_revenue_per_user"].AsInt64
-                : 100; // Default estimate
+            long dailyRevenue = 100; // Default estimate
+            if (program.Contains("daily_revenue_per_user") && !program["daily_revenue_per_user"].IsBsonNull)
+            {
+                var revenueValue = program["daily_revenue_per_user"];
+                dailyRevenue = revenueValue.BsonType == BsonType.Int64
+                    ? revenueValue.AsInt64
+                    : revenueValue.AsInt32;
+            }
 
             suggestedBots.Add(new TStarRefProgram
             {
