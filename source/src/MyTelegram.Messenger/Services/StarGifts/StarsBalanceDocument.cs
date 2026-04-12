@@ -32,4 +32,9 @@ public class StarsTransactionDocument
     public bool Offer { get; set; }
     public string? StargiftSlug { get; set; }
     public int? PremiumGiftMonths { get; set; }
+    // affiliate info
+    public int? StarrefCommissionPermille { get; set; }
+    public long? StarrefPeerUserId { get; set; }
+    public long? StarrefPeerChannelId { get; set; }
+    public long? StarrefAmount { get; set; }
 }

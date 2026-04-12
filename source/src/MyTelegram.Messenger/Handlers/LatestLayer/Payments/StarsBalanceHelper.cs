@@ -26,7 +26,8 @@ public static class StarsBalanceHelper
 
     public static async Task AddTransactionAsync(IMongoDatabase db, long userId, long amount, bool gift = false,
         long? peerUserId = null, long? peerChannelId = null, string? title = null, bool stargiftUpgrade = false,
-        bool stargiftAuctionBid = false, bool offer = false, string? stargiftSlug = null, int? premiumGiftMonths = null)
+        bool stargiftAuctionBid = false, bool offer = false, string? stargiftSlug = null, int? premiumGiftMonths = null,
+        int? starrefCommissionPermille = null, long? starrefPeerUserId = null, long? starrefPeerChannelId = null, long? starrefAmount = null)
     {
         var transactionId = Guid.NewGuid().ToString("N");
         await db.GetCollection<StarsTransactionDocument>("star-transactions").InsertOneAsync(new StarsTransactionDocument
@@ -45,6 +46,10 @@ public static class StarsBalanceHelper
             Offer = offer,
             StargiftSlug = stargiftSlug,
             PremiumGiftMonths = premiumGiftMonths,
+            StarrefCommissionPermille = starrefCommissionPermille,
+            StarrefPeerUserId = starrefPeerUserId,
+            StarrefPeerChannelId = starrefPeerChannelId,
+            StarrefAmount = starrefAmount,
         });
     }
 
@@ -79,6 +84,26 @@ public static class StarsBalanceHelper
                 ? new TStarsTransactionPeer { Peer = new TPeerChannel { ChannelId = peerChannelId.Value } }
                 : new TStarsTransactionPeerUnsupported();
 
+        // Affiliate info
+        int? starrefCommissionPermille = doc.Contains("StarrefCommissionPermille") && !doc["StarrefCommissionPermille"].IsBsonNull
+            ? (int?)doc["StarrefCommissionPermille"].AsInt32
+            : null;
+        long? starrefPeerUserId = doc.Contains("StarrefPeerUserId") && !doc["StarrefPeerUserId"].IsBsonNull
+            ? doc["StarrefPeerUserId"].AsInt64
+            : null;
+        long? starrefPeerChannelId = doc.Contains("StarrefPeerChannelId") && !doc["StarrefPeerChannelId"].IsBsonNull
+            ? doc["StarrefPeerChannelId"].AsInt64
+            : null;
+        long? starrefAmount = doc.Contains("StarrefAmount") && !doc["StarrefAmount"].IsBsonNull
+            ? doc["StarrefAmount"].AsInt64
+            : null;
+
+        IPeer? starrefPeer = starrefPeerUserId.HasValue
+            ? new TPeerUser { UserId = starrefPeerUserId.Value }
+            : starrefPeerChannelId.HasValue
+                ? new TPeerChannel { ChannelId = starrefPeerChannelId.Value }
+                : null;
+
         return new TStarsTransaction
         {
             Id = transactionId,
@@ -92,6 +117,9 @@ public static class StarsBalanceHelper
             StargiftAuctionBid = stargiftAuctionBid,
             Offer = offer,
             PremiumGiftMonths = premiumGiftMonths,
+            StarrefCommissionPermille = starrefCommissionPermille,
+            StarrefPeer = starrefPeer,
+            StarrefAmount = starrefAmount.HasValue ? new TStarsAmount { Amount = starrefAmount.Value } : null,
         };
     }
 
@@ -102,6 +130,12 @@ public static class StarsBalanceHelper
             : doc.PeerChannelId.HasValue
                 ? new TStarsTransactionPeer { Peer = new TPeerChannel { ChannelId = doc.PeerChannelId.Value } }
                 : new TStarsTransactionPeerUnsupported();
+
+        IPeer? starrefPeer = doc.StarrefPeerUserId.HasValue
+            ? new TPeerUser { UserId = doc.StarrefPeerUserId.Value }
+            : doc.StarrefPeerChannelId.HasValue
+                ? new TPeerChannel { ChannelId = doc.StarrefPeerChannelId.Value }
+                : null;
 
         return new TStarsTransaction
         {
@@ -116,6 +150,9 @@ public static class StarsBalanceHelper
             StargiftAuctionBid = doc.StargiftAuctionBid,
             Offer = doc.Offer,
             PremiumGiftMonths = doc.PremiumGiftMonths,
+            StarrefCommissionPermille = doc.StarrefCommissionPermille,
+            StarrefPeer = starrefPeer,
+            StarrefAmount = doc.StarrefAmount.HasValue ? new TStarsAmount { Amount = doc.StarrefAmount.Value } : null,
         };
     }
 }
