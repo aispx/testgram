@@ -59,19 +59,7 @@ internal sealed class GetConnectedStarRefBotHandler(
                     Revoked = connection.Contains("revoked") && connection["revoked"].AsBoolean
                 }
             },
-            Users = new TVector<IUser>(users.Select(u => (IUser)new TUser
-            {
-                Id = u.UserId,
-                AccessHash = u.AccessHash,
-                FirstName = u.FirstName,
-                LastName = u.LastName,
-                Username = u.UserName,
-                Phone = u.PhoneNumber,
-                Photo = new TUserProfilePhotoEmpty(),
-                Status = new TUserStatusEmpty(),
-                Bot = true,
-                RestrictionReason = new TVector<IRestrictionReason>()
-            }))
+            Users = new TVector<IUser>(users.Select(u => StarRefBotUserHelper.BuildBotUser(u)))
         };
     }
 }

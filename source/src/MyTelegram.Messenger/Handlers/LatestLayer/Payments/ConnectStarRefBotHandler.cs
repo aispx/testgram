@@ -54,6 +54,7 @@ internal sealed class ConnectStarRefBotHandler(
             {
                 ["_id"] = $"starref-{peer.PeerId}-{botInput.UserId}",
                 ["peer_id"] = peer.PeerId,
+                ["peer_type"] = (int)peer.PeerType,
                 ["bot_id"] = botInput.UserId,
                 ["url"] = url,
                 ["link_id"] = linkId,
@@ -85,19 +86,7 @@ internal sealed class ConnectStarRefBotHandler(
                     Revenue = 0
                 }
             },
-            Users = new TVector<IUser>(users.Select(u => (IUser)new TUser
-            {
-                Id = u.UserId,
-                AccessHash = u.AccessHash,
-                FirstName = u.FirstName,
-                LastName = u.LastName,
-                Username = u.UserName,
-                Phone = u.PhoneNumber,
-                Photo = new TUserProfilePhotoEmpty(),
-                Status = new TUserStatusEmpty(),
-                Bot = true,
-                RestrictionReason = new TVector<IRestrictionReason>()
-            }))
+            Users = new TVector<IUser>(users.Select(u => StarRefBotUserHelper.BuildBotUser(u)))
         };
     }
 }

@@ -22,7 +22,7 @@ internal sealed class GetSuggestedStarRefBotsHandler(
         // Validate peer
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer == null)
-            RpcErrors.RpcErrors403.PeerIdInvalid.ThrowRpcError();
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
 
         // Get active affiliate programs (no end_date or end_date in future)
         var programsCol = mongoDatabase.GetCollection<BsonDocument>("star_ref_programs");
@@ -52,7 +52,7 @@ internal sealed class GetSuggestedStarRefBotsHandler(
 
         var programs = await programsCol.Find(filter)
             .Sort(sort)
-            .Skip(string.IsNullOrEmpty(obj.Offset) ? 0 : int.Parse(obj.Offset))
+            .Skip(int.TryParse(obj.Offset, out var skip) ? skip : 0)
             .Limit(obj.Limit)
             .ToListAsync();
 
@@ -94,19 +94,7 @@ internal sealed class GetSuggestedStarRefBotsHandler(
         var userList = new TVector<IUser>();
         foreach (var user in users)
         {
-            userList.Add(new TUser
-            {
-                Id = user.UserId,
-                AccessHash = user.AccessHash,
-                FirstName = user.FirstName,
-                LastName = user.LastName,
-                Username = user.UserName,
-                Phone = user.PhoneNumber,
-                Photo = new TUserProfilePhotoEmpty(),
-                Status = new TUserStatusEmpty(),
-                Bot = true,
-                RestrictionReason = new TVector<IRestrictionReason>()
-            });
+            userList.Add(StarRefBotUserHelper.BuildBotUser(user));
         }
 
         var nextOffset = programs.Count >= obj.Limit

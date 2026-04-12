@@ -23,13 +23,16 @@ internal sealed class GetConnectedStarRefBotsHandler(
         var connectionsCol = mongoDatabase.GetCollection<BsonDocument>("connected_star_ref_bots");
         var filter = Builders<BsonDocument>.Filter.Eq("peer_id", peer.PeerId);
 
-        // Apply pagination
-        var query = connectionsCol.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("date"));
-
+        // Apply cursor-based pagination
         if (obj.OffsetDate.HasValue && !string.IsNullOrEmpty(obj.OffsetLink))
         {
-            query = query.Skip(1); // Skip the offset item
+            filter = Builders<BsonDocument>.Filter.And(
+                filter,
+                Builders<BsonDocument>.Filter.Lt("date", obj.OffsetDate.Value)
+            );
         }
+
+        var query = connectionsCol.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("date"));
 
         var connections = await query.Limit(obj.Limit).ToListAsync();
 
@@ -65,19 +68,7 @@ internal sealed class GetConnectedStarRefBotsHandler(
         var userList = new TVector<IUser>();
         foreach (var user in users)
         {
-            userList.Add(new TUser
-            {
-                Id = user.UserId,
-                AccessHash = user.AccessHash,
-                FirstName = user.FirstName,
-                LastName = user.LastName,
-                Username = user.UserName,
-                Phone = user.PhoneNumber,
-                Photo = new TUserProfilePhotoEmpty(),
-                Status = new TUserStatusEmpty(),
-                Bot = true,
-                RestrictionReason = new TVector<IRestrictionReason>()
-            });
+            userList.Add(StarRefBotUserHelper.BuildBotUser(user));
         }
 
         return new MyTelegram.Schema.Payments.TConnectedStarRefBots

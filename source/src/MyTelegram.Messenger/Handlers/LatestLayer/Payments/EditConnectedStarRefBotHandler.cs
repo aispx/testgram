@@ -63,19 +63,7 @@ internal sealed class EditConnectedStarRefBotHandler(
         var userList = new TVector<IUser>();
         foreach (var user in users)
         {
-            userList.Add(new TUser
-            {
-                Id = user.UserId,
-                AccessHash = user.AccessHash,
-                FirstName = user.FirstName,
-                LastName = user.LastName,
-                Username = user.UserName,
-                Phone = user.PhoneNumber,
-                Photo = new TUserProfilePhotoEmpty(),
-                Status = new TUserStatusEmpty(),
-                Bot = true,
-                RestrictionReason = new TVector<IRestrictionReason>()
-            });
+            userList.Add(StarRefBotUserHelper.BuildBotUser(user));
         }
 
         return new MyTelegram.Schema.Payments.TConnectedStarRefBots

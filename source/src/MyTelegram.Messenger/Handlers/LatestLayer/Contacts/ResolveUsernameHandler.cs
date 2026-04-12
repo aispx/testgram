@@ -104,7 +104,7 @@ internal sealed class ResolveUsernameHandler(
             }
 
             // Check if link is revoked
-            if (connection["revoked"].AsBoolean)
+            if (connection.Contains("revoked") && connection["revoked"].AsBoolean)
             {
                 RpcErrors.RpcErrors400.StarrefExpired.ThrowRpcError();
                 return;
