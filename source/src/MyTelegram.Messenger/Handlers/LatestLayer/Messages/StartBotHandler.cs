@@ -64,14 +64,14 @@ internal sealed class StartBotHandler(
         // Build /start command message
         var messageText = $"/start {obj.StartParam}";
 
-        // Send message to bot
+        // Send message to bot (regular text message, not service message)
         var sendInput = new SendMessageInput(
             input.ToRequestInfo(),
             input.UserId,
             peer,
             messageText,
             obj.RandomId,
-            sendMessageType: SendMessageType.MessageService,
+            sendMessageType: SendMessageType.Text,
             messageType: MessageType.Text,
             clearDraft: true
         );
