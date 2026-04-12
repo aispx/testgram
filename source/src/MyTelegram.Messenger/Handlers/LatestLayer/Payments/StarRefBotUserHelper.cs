@@ -18,6 +18,7 @@ internal static class StarRefBotUserHelper
             Photo = new TUserProfilePhotoEmpty(),
             Status = new TUserStatusEmpty(),
             Bot = true,
+            BotInfoVersion = user.BotInfoVersion,
             RestrictionReason = new TVector<IRestrictionReason>()
         };
     }
