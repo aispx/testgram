@@ -450,6 +450,7 @@ public class XieFatherBotService(
             { "LastName", "" },
             { "UserName", username },
             { "Bot", true },
+            { "CreatorUserId", fromUserId },
             { "About", "" },
             { "AccountTtl", 365 },
             { "Birthday", BsonNull.Value },
