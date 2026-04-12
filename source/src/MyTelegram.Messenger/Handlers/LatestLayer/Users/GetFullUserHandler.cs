@@ -542,9 +542,14 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
             var program = await programsCol.Find(filter).FirstOrDefaultAsync();
             if (program != null)
             {
-                var dailyRevenue = program.Contains("daily_revenue_per_user")
-                    ? program["daily_revenue_per_user"].AsInt64
-                    : 100; // Default estimate
+                long dailyRevenue = 100; // Default estimate
+                if (program.Contains("daily_revenue_per_user"))
+                {
+                    var revenueValue = program["daily_revenue_per_user"];
+                    dailyRevenue = revenueValue.BsonType == BsonType.Int64
+                        ? revenueValue.AsInt64
+                        : revenueValue.AsInt32;
+                }
 
                 userFull.StarrefProgram = new TStarRefProgram
                 {
