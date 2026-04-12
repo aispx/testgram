@@ -23,6 +23,12 @@ public partial class AppConfigHelper : IAppConfigHelper, ISingletonDependency
         SetConfig("premium_gift_text_field_icon", new TJsonBool { Value = true });
         SetConfig("premium_purchase_blocked", new TJsonBool { Value = false });
         SetConfig("giveaway_gifts_purchase_available", new TJsonBool { Value = true });
+
+        // Affiliate Programs configuration
+        SetConfig("starref_program_allowed", new TJsonBool { Value = true });
+        SetConfig("starref_connect_allowed", new TJsonBool { Value = true });
+        SetConfig("starref_min_commission_permille", new TJsonNumber { Value = 10 });
+        SetConfig("starref_max_commission_permille", new TJsonNumber { Value = 500 });
     }
 
     private void SetConfig(string key, IJSONValue value)
