@@ -17,13 +17,16 @@ internal sealed class CheckChatlistInviteHandler : RpcResultObjectHandler<MyTele
 {
     private readonly IMongoDatabase _database;
     private readonly IQueryProcessor _queryProcessor;
+    private readonly IObjectMapper _objectMapper;
 
     public CheckChatlistInviteHandler(
         IMongoDatabase database,
-        IQueryProcessor queryProcessor)
+        IQueryProcessor queryProcessor,
+        IObjectMapper objectMapper)
     {
         _database = database;
         _queryProcessor = queryProcessor;
+        _objectMapper = objectMapper;
     }
 
     protected override async Task<MyTelegram.Schema.Chatlists.IChatlistInvite> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestCheckChatlistInvite obj)
@@ -49,7 +52,34 @@ internal sealed class CheckChatlistInviteHandler : RpcResultObjectHandler<MyTele
         var peerIds = inviteDoc["PeerIds"].AsBsonArray.Select(p => p.AsInt64).ToList();
         var peerTypes = inviteDoc["PeerTypes"].AsBsonArray.Select(p => p.AsString).ToList();
 
-        // 3. Check if user already has this folder
+        // 3. Load chats and users
+        var chats = new TVector<IChat>();
+        var users = new TVector<IUser>();
+        var channelIds = new List<long>();
+
+        for (int i = 0; i < peerIds.Count; i++)
+        {
+            var peerType = Enum.Parse<PeerType>(peerTypes[i]);
+            if (peerType == PeerType.Channel)
+            {
+                channelIds.Add(peerIds[i]);
+            }
+        }
+
+        // Load channels
+        if (channelIds.Count > 0)
+        {
+            var channelReadModels = await _queryProcessor.ProcessAsync(
+                new GetChannelsByIdListQuery(channelIds),
+                CancellationToken.None);
+
+            foreach (var channelReadModel in channelReadModels)
+            {
+                chats.Add(_objectMapper.Map<IChannelReadModel, IChat>(channelReadModel));
+            }
+        }
+
+        // 4. Check if user already has this folder
         var userFilters = await _queryProcessor.ProcessAsync(
             new GetDialogFiltersQuery(input.UserId),
             CancellationToken.None);
@@ -62,11 +92,24 @@ internal sealed class CheckChatlistInviteHandler : RpcResultObjectHandler<MyTele
             var alreadyPeers = new TVector<IPeer>();
             var missingPeers = new TVector<IPeer>();
 
+            // Determine which peers are already in folder and which are missing
+            var existingPeerIds = existingFilter.Filter.IncludePeers
+                .Select(p => p.Peer.PeerId)
+                .ToHashSet();
+
             for (int i = 0; i < peerIds.Count; i++)
             {
                 var peerType = Enum.Parse<PeerType>(peerTypes[i]);
                 var peer = new Peer(peerType, peerIds[i]).ToPeer();
-                alreadyPeers.Add(peer);
+
+                if (existingPeerIds.Contains(peerIds[i]))
+                {
+                    alreadyPeers.Add(peer);
+                }
+                else
+                {
+                    missingPeers.Add(peer);
+                }
             }
 
             return new MyTelegram.Schema.Chatlists.TChatlistInviteAlready
@@ -74,12 +117,12 @@ internal sealed class CheckChatlistInviteHandler : RpcResultObjectHandler<MyTele
                 FilterId = filterId,
                 MissingPeers = missingPeers,
                 AlreadyPeers = alreadyPeers,
-                Chats = new TVector<IChat>(),
-                Users = new TVector<IUser>()
+                Chats = chats,
+                Users = users
             };
         }
 
-        // 4. User doesn't have folder - return chatlistInvite
+        // 5. User doesn't have folder - return chatlistInvite
         var peers = new TVector<IPeer>();
         for (int i = 0; i < peerIds.Count; i++)
         {
@@ -95,8 +138,8 @@ internal sealed class CheckChatlistInviteHandler : RpcResultObjectHandler<MyTele
                 Entities = new TVector<IMessageEntity>()
             },
             Peers = peers,
-            Chats = new TVector<IChat>(),
-            Users = new TVector<IUser>()
+            Chats = chats,
+            Users = users
         };
     }
 }
