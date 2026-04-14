@@ -73,6 +73,39 @@ internal sealed class ToggleForumHandler(
         var update = Builders<BsonDocument>.Update.Set("Forum", obj.Enabled);
         await collection.UpdateOneAsync(filter, update);
 
+        // Create General topic when enabling forum
+        if (obj.Enabled)
+        {
+            var topicsCol = mongoDatabase.GetCollection<BsonDocument>("forum_topics");
+            var generalTopicFilter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ChannelId", channelId),
+                Builders<BsonDocument>.Filter.Eq("TopicId", 1)
+            );
+            var existingGeneral = await topicsCol.Find(generalTopicFilter).FirstOrDefaultAsync();
+
+            if (existingGeneral == null)
+            {
+                var generalTopic = new BsonDocument
+                {
+                    ["_id"] = $"topic-{channelId}-1",
+                    ["ChannelId"] = channelId,
+                    ["TopicId"] = 1,
+                    ["Title"] = "General",
+                    ["IconColor"] = 0x6FB9F0,
+                    ["IconEmojiId"] = 0L,
+                    ["CreatorId"] = input.UserId,
+                    ["Date"] = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    ["Closed"] = false,
+                    ["Hidden"] = false,
+                    ["Pinned"] = false,
+                    ["Short"] = false,
+                    ["TopMessageId"] = 1
+                };
+
+                await topicsCol.InsertOneAsync(generalTopic);
+            }
+        }
+
         // Log to admin log
         await AdminLogHelper.LogToggleForum(mongoDatabase, channelId, input.UserId, obj.Enabled);
 
