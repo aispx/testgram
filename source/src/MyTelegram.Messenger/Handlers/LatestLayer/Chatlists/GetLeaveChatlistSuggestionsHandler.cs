@@ -47,7 +47,7 @@ internal sealed class GetLeaveChatlistSuggestionsHandler : RpcResultObjectHandle
 
         foreach (var inputPeer in filter.Filter.IncludePeers)
         {
-            suggestions.Add(new Peer(inputPeer.PeerType, inputPeer.PeerId).ToPeer());
+            suggestions.Add(new Peer(inputPeer.Peer.PeerType, inputPeer.Peer.PeerId).ToPeer());
         }
 
         return suggestions;
