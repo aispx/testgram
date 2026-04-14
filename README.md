@@ -28,10 +28,11 @@
 - Scheduled Messages
 - Forum Topics
 - Themes & Wallpapers
+- Folders (Dialog Filters)
 
 ### Soon...
 - End-to-End Encrypted Chat
-- Chatlist
+- Shared Folders (Chatlist)
 - Email Login
 - Email Sender
 - Push Notifications (Firebase)
