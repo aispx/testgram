@@ -36,6 +36,7 @@ internal sealed class EditExportedInviteHandler : RpcResultObjectHandler<MyTeleg
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return null!;
         }
 
         // 2. Find invite

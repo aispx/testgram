@@ -24,6 +24,7 @@ internal sealed class LeaveChatlistHandler : RpcResultObjectHandler<MyTelegram.S
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return null!;
         }
 
         var filterId = chatlistFilter.FilterId;

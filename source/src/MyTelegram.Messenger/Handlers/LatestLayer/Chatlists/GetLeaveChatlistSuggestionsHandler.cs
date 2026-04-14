@@ -25,6 +25,7 @@ internal sealed class GetLeaveChatlistSuggestionsHandler : RpcResultObjectHandle
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return null!;
         }
 
         var filterId = chatlistFilter.FilterId;
@@ -38,14 +39,15 @@ internal sealed class GetLeaveChatlistSuggestionsHandler : RpcResultObjectHandle
         if (filter == null)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return null!;
         }
 
         // 3. Return all included peers as suggestions to leave
         var suggestions = new TVector<IPeer>();
 
-        foreach (var peer in filter.Filter.IncludePeers)
+        foreach (var inputPeer in filter.Filter.IncludePeers)
         {
-            suggestions.Add(new Peer(peer.PeerType, peer.PeerId).ToPeer());
+            suggestions.Add(new Peer(inputPeer.PeerType, inputPeer.PeerId).ToPeer());
         }
 
         return suggestions;

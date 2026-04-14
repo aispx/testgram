@@ -37,6 +37,7 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return null!;
         }
 
         var filterId = chatlistFilter.FilterId;
@@ -50,6 +51,7 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
         if (filter == null)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return null!;
         }
 
         // 3. Validate peers (must be channels/groups)

@@ -30,6 +30,7 @@ internal sealed class DeleteExportedInviteHandler : RpcResultObjectHandler<MyTel
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return null!;
         }
 
         // 2. Find and revoke invite
