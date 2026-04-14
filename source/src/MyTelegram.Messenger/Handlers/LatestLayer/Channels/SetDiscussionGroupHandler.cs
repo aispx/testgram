@@ -1,4 +1,8 @@
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
+
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 /// <summary>
 /// Associate a group to a channel as <a href="https://corefork.telegram.org/api/discussion">discussion group</a> for that channel
 /// Possible errors
@@ -15,7 +19,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetDiscussionGroupHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetDiscussionGroup, IBool>
+internal sealed class SetDiscussionGroupHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetDiscussionGroup, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestSetDiscussionGroup obj)
     {
@@ -48,6 +52,13 @@ internal sealed class SetDiscussionGroupHandler(ICommandBus commandBus, IChannel
             default:
                 throw new ArgumentOutOfRangeException();
         }
+
+        // Get previous linked chat IDs for admin log
+        var broadcastReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(broadcastChannel.ChannelId));
+        var prevGroupId = broadcastReadModel?.LinkedChatId;
+
+        // Log discussion group change in admin log for broadcast channel
+        await AdminLogHelper.LogChangeLinkedChat(mongoDatabase, broadcastChannel.ChannelId, input.UserId, prevGroupId ?? 0, groupId ?? 0);
 
         var command = new StartSetChannelDiscussionGroupCommand(TempId.New, input.ToRequestInfo(), broadcastChannel.ChannelId, groupId);
         await commandBus.PublishAsync(command);

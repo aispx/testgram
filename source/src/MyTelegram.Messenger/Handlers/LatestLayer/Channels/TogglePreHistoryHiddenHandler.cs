@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Hide/unhide message history for new channel/supergroup users
@@ -15,7 +18,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class TogglePreHistoryHiddenHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestTogglePreHistoryHidden, MyTelegram.Schema.IUpdates>
+internal sealed class TogglePreHistoryHiddenHandler(
+    ICommandBus commandBus,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IAccessHashHelper accessHashHelper,
+    IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestTogglePreHistoryHidden, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestTogglePreHistoryHidden obj)
     {
@@ -25,6 +32,10 @@ internal sealed class TogglePreHistoryHiddenHandler(ICommandBus commandBus, ICha
             await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
             var command = new TogglePreHistoryHiddenCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), obj.Enabled, input.UserId);
             await commandBus.PublishAsync(command);
+
+            // Log to admin log
+            await AdminLogHelper.LogTogglePreHistoryHidden(mongoDatabase, inputChannel.ChannelId, input.UserId, obj.Enabled);
+
             return null !;
         }
 

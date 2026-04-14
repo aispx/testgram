@@ -57,6 +57,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetSavedMusicAsync(targetUserId, userFull);
         await SetChatThemeAsync(input.UserId, targetUserId, userFull);
         await SetStarRefProgramAsync(targetUserId, userFull);
+        await SetPinnedMsgIdAsync(input.UserId, targetUserId, userFull);
 
         // CRITICAL: Cast to concrete TUser for proper serialization
         // ILayeredUser interface doesn't serialize correctly in TVector
@@ -569,6 +570,35 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to load star ref program for bot {BotId}", targetUserId);
+        }
+    }
+
+    private async Task SetPinnedMsgIdAsync(long selfUserId, long targetUserId, IUserFull userFull)
+    {
+        try
+        {
+            // Query latest pinned message in private chat
+            var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("OwnerPeerId", selfUserId),
+                Builders<BsonDocument>.Filter.Eq("ToPeerType", 0), // PeerType.User
+                Builders<BsonDocument>.Filter.Eq("ToPeerId", targetUserId),
+                Builders<BsonDocument>.Filter.Eq("Pinned", true)
+            );
+
+            var pinnedMessage = await collection.Find(filter)
+                .SortByDescending(m => m["MessageId"])
+                .Limit(1)
+                .FirstOrDefaultAsync();
+
+            if (pinnedMessage != null)
+            {
+                userFull.PinnedMsgId = pinnedMessage["MessageId"].AsInt32;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load pinned message for user {SelfUserId} -> {TargetUserId}", selfUserId, targetUserId);
         }
     }
 }

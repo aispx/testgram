@@ -60,7 +60,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IMessageAppService messageAppService, IDataEncryptionHelper dataEncryptionHelper, IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
+internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IMessageAppService messageAppService, IDataEncryptionHelper dataEncryptionHelper, IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender, IMessageConverterService messageConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
 {
     private static byte[]? _encryptionKey;
     private static KeyConfig? _keyConfig;
@@ -136,6 +136,12 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         var hashtags = messageAppService.GetHashtags(obj.Message);
         var command = new EditOutboxMessageCommand(MessageId.Create(ownerPeerId, obj.Id, obj.QuickReplyShortcutId.HasValue), input.ToRequestInfo(), obj.Id, message, CurrentDate, entities, media, obj.ReplyMarkup, obj.InvertMedia, hashtags, encryptedData, inboxMessageEncryptedData);
         await commandBus.PublishAsync(command);
+
+        // Create admin log for channel message edit
+        if (peer.PeerType == PeerType.Channel)
+        {
+            await CreateEditMessageAdminLogAsync(input, peer, messageReadModel, obj.Message ?? message, encryptedData);
+        }
 
         // Notify connected business bots about edited message
         await NotifyBusinessBotsEditAsync(input.UserId, peer.PeerId, obj.Id, obj.Message ?? message);
@@ -219,5 +225,98 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
                 pts: 0
             );
         }
+    }
+
+    private async Task CreateEditMessageAdminLogAsync(IRequestInput input, Peer peer, IMessageReadModel oldMessage, string newMessageText, byte[]? newEncryptedData)
+    {
+        var adminLogCol = mongoDatabase.GetCollection<BsonDocument>("channel_admin_log");
+
+        // Decrypt old message text if needed
+        var oldMessageText = oldMessage.Message ?? string.Empty;
+        if (string.IsNullOrEmpty(oldMessageText) && oldMessage.EncryptedData.HasValue && oldMessage.EncryptedData.Value.Length > 0)
+        {
+            oldMessageText = messageConverterService.DecryptMessage(peer.PeerId, oldMessage.MessageId, oldMessage.EncryptedData.Value);
+        }
+
+        // Decrypt new message text if needed
+        if (string.IsNullOrEmpty(newMessageText) && newEncryptedData != null && newEncryptedData.Length > 0)
+        {
+            newMessageText = messageConverterService.DecryptMessage(peer.PeerId, oldMessage.MessageId, newEncryptedData);
+        }
+
+        // Build old message
+        var prevMessage = new TMessage
+        {
+            Id = oldMessage.MessageId,
+            PeerId = new TPeerChannel { ChannelId = peer.PeerId },
+            Message = oldMessageText,
+            Date = oldMessage.Date,
+            Out = oldMessage.Out,
+            Post = oldMessage.Post,
+            Media = new TMessageMediaEmpty(),
+            ReplyTo = null,
+            Entities = new TVector<IMessageEntity>()
+        };
+
+        if (oldMessage.SenderUserId > 0)
+            prevMessage.FromId = new TPeerUser { UserId = oldMessage.SenderUserId };
+        if (oldMessage.Views.HasValue && oldMessage.Views.Value > 0)
+            prevMessage.Views = oldMessage.Views.Value;
+        if (oldMessage.EditDate.HasValue && oldMessage.EditDate.Value > 0)
+            prevMessage.EditDate = oldMessage.EditDate.Value;
+        if (!string.IsNullOrEmpty(oldMessage.PostAuthor))
+            prevMessage.PostAuthor = oldMessage.PostAuthor;
+
+        // Build new message (copy from old, update text and edit date)
+        var newMessage = new TMessage
+        {
+            Id = oldMessage.MessageId,
+            PeerId = new TPeerChannel { ChannelId = peer.PeerId },
+            Message = newMessageText,
+            Date = oldMessage.Date,
+            Out = oldMessage.Out,
+            Post = oldMessage.Post,
+            Media = new TMessageMediaEmpty(),
+            ReplyTo = null,
+            Entities = new TVector<IMessageEntity>(),
+            EditDate = CurrentDate
+        };
+
+        if (oldMessage.SenderUserId > 0)
+            newMessage.FromId = new TPeerUser { UserId = oldMessage.SenderUserId };
+        if (oldMessage.Views.HasValue && oldMessage.Views.Value > 0)
+            newMessage.Views = oldMessage.Views.Value;
+        if (!string.IsNullOrEmpty(oldMessage.PostAuthor))
+            newMessage.PostAuthor = oldMessage.PostAuthor;
+
+        // Create admin log action
+        var action = new TChannelAdminLogEventActionEditMessage
+        {
+            PrevMessage = prevMessage,
+            NewMessage = newMessage
+        };
+
+        // Serialize action
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        action.Serialize(buffer);
+        var actionData = buffer.WrittenSpan.ToArray();
+
+        var eventId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var logEntry = new BsonDocument
+        {
+            ["_id"] = $"adminlog-{peer.PeerId}-{eventId}",
+            ["channel_id"] = peer.PeerId,
+            ["event_id"] = eventId,
+            ["user_id"] = input.UserId,
+            ["date"] = CurrentDate,
+            ["action"] = new BsonDocument
+            {
+                ["type"] = "TChannelAdminLogEventActionEditMessage",
+                ["data"] = actionData
+            }
+        };
+
+        await adminLogCol.InsertOneAsync(logEntry);
+        Console.WriteLine($"[AdminLog] Created edit message log for message {oldMessage.MessageId} in channel {peer.PeerId}");
     }
 }

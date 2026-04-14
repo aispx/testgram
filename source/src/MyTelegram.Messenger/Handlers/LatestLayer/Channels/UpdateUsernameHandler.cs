@@ -1,4 +1,6 @@
 using EventFlow.Queries;
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
@@ -20,7 +22,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class UpdateUsernameHandler(ICommandBus commandBus, IQueryProcessor queryProcessor, IChannelAppService channelAppService, IUsernameHelper usernameHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestUpdateUsername, IBool>
+internal sealed class UpdateUsernameHandler(ICommandBus commandBus, IQueryProcessor queryProcessor, IChannelAppService channelAppService, IUsernameHelper usernameHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestUpdateUsername, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestUpdateUsername obj)
     {
@@ -44,6 +46,10 @@ internal sealed class UpdateUsernameHandler(ICommandBus commandBus, IQueryProces
             }
 
             var userNameForId = string.IsNullOrEmpty(obj.Username) ? oldUserName : obj.Username;
+
+            // Log username change in admin log
+            await AdminLogHelper.LogChangeUsername(mongoDatabase, inputChannel.ChannelId, input.UserId, oldUserName ?? string.Empty, obj.Username ?? string.Empty);
+
             var command = new UpdateUserNameCommand(UserNameId.Create(userNameForId?.ToLower() ?? string.Empty), input.ToRequestInfo(), inputChannel.ChannelId.ToChannelPeer(), obj.Username, oldUserName);
             await commandBus.PublishAsync(command);
             return new TBoolTrue();

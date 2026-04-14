@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Edit the name of a <a href="https://corefork.telegram.org/api/channel">channel/supergroup</a>
@@ -15,7 +18,13 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditTitleHandler(ICommandBus commandBus, IRandomHelper randomHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditTitle, MyTelegram.Schema.IUpdates>
+internal sealed class EditTitleHandler(
+    ICommandBus commandBus,
+    IRandomHelper randomHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IAccessHashHelper accessHashHelper,
+    IMongoDatabase mongoDatabase,
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditTitle, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestEditTitle obj)
     {
@@ -23,8 +32,17 @@ internal sealed class EditTitleHandler(ICommandBus commandBus, IRandomHelper ran
         {
             await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, adminRights => adminRights.ChangeInfo);
             await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
+
+            // Get current title for admin log
+            var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(inputChannel.ChannelId));
+            var prevTitle = channelReadModel?.Title ?? "";
+
+            // Log to admin log
+            await AdminLogHelper.LogChangeTitle(mongoDatabase, inputChannel.ChannelId, input.UserId, prevTitle, obj.Title);
+
             var command = new EditChannelTitleCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), obj.Title, new TMessageActionChatEditTitle { Title = obj.Title }, randomHelper.NextInt64());
             await commandBus.PublishAsync(command, CancellationToken.None);
+
             return null !;
         }
 

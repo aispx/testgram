@@ -1,4 +1,8 @@
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
+
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 /// <summary>
 /// Modify the admin rights of a user in a <a href="https://corefork.telegram.org/api/channel">supergroup/channel</a>.
 /// Possible errors
@@ -34,7 +38,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppService channelAppService, IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditAdmin, MyTelegram.Schema.IUpdates>
+internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppService channelAppService, IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditAdmin, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestEditAdmin obj)
     {
@@ -136,6 +140,37 @@ internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppServic
             var isBot = peerHelper.IsBotUser(peer.PeerId);
             var shouldCreatePermanentChatInvite = chatInviteReadModel == null;
             var channelMember = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(inputChannel.ChannelId, peer.PeerId));
+
+            // Create admin log entry
+            var prevParticipant = channelMember != null && channelMember.AdminRights != 0
+                ? new MyTelegram.Schema.TChannelParticipantAdmin
+                {
+                    UserId = peer.PeerId,
+                    AdminRights = new TChatAdminRights
+                    {
+                        Flags = channelMember.AdminRights
+                    },
+                    Rank = channelMember.Rank,
+                    PromotedBy = channelMember.PromotedBy ?? 0,
+                    Date = channelMember.Date
+                }
+                : (MyTelegram.Schema.IChannelParticipant)new MyTelegram.Schema.TChannelParticipant
+                {
+                    UserId = peer.PeerId,
+                    Date = channelMember?.Date ?? CurrentDate
+                };
+
+            var newParticipant = new MyTelegram.Schema.TChannelParticipantAdmin
+            {
+                UserId = peer.PeerId,
+                AdminRights = obj.AdminRights,
+                Rank = obj.Rank,
+                PromotedBy = input.UserId,
+                Date = CurrentDate
+            };
+
+            await Helpers.AdminLogHelper.LogEditAdmin(mongoDatabase, inputChannel.ChannelId, input.UserId, prevParticipant, newParticipant);
+
             var command = new EditChannelAdminCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), input.UserId, false, peer.PeerId, isBot, channelMember != null, new ChatAdminRights(obj.AdminRights.Flags), obj.Rank, CurrentDate, shouldCreatePermanentChatInvite);
             await commandBus.PublishAsync(command);
             return null !;

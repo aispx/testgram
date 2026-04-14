@@ -1,4 +1,8 @@
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
+
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 /// <summary>
 /// Ban/unban/kick a user in a <a href="https://corefork.telegram.org/api/channel">supergroup/channel</a>.
 /// Possible errors
@@ -19,7 +23,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditBannedHandler(IPeerHelper peerHelper, ICommandBus commandBus, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditBanned, MyTelegram.Schema.IUpdates>
+internal sealed class EditBannedHandler(IPeerHelper peerHelper, ICommandBus commandBus, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditBanned, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestEditBanned obj)
     {
@@ -36,6 +40,37 @@ internal sealed class EditBannedHandler(IPeerHelper peerHelper, ICommandBus comm
             }
 
             var bannedRights = ChatBannedRights.FromValue(obj.BannedRights.Flags, obj.BannedRights.UntilDate);
+
+            // Get previous state for admin log
+            var channelMember = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channel.PeerId, peer.PeerId));
+            var prevParticipant = channelMember != null && channelMember.BannedRights != 0
+                ? new MyTelegram.Schema.TChannelParticipantBanned
+                {
+                    Peer = new TPeerUser { UserId = peer.PeerId },
+                    BannedRights = new TChatBannedRights
+                    {
+                        Flags = channelMember.BannedRights,
+                        UntilDate = channelMember.UntilDate
+                    },
+                    KickedBy = channelMember.KickedBy,
+                    Date = channelMember.Date
+                }
+                : (MyTelegram.Schema.IChannelParticipant)new MyTelegram.Schema.TChannelParticipant
+                {
+                    UserId = peer.PeerId,
+                    Date = channelMember?.Date ?? CurrentDate
+                };
+
+            var newParticipant = new MyTelegram.Schema.TChannelParticipantBanned
+            {
+                Peer = new TPeerUser { UserId = peer.PeerId },
+                BannedRights = obj.BannedRights,
+                KickedBy = input.UserId,
+                Date = CurrentDate
+            };
+
+            await Helpers.AdminLogHelper.LogEditBanned(mongoDatabase, channel.PeerId, input.UserId, prevParticipant, newParticipant);
+
             var command = new EditBannedCommand(ChannelMemberId.Create(channel.PeerId, peer.PeerId), input.ToRequestInfo(), input.UserId, channel.PeerId, peer.PeerId, bannedRights);
             await commandBus.PublishAsync(command);
             return null !;

@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Join a channel/supergroup
@@ -23,7 +26,13 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class JoinChannelHandler(ICommandBus commandBus, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<RequestJoinChannel, IUpdates>
+internal sealed class JoinChannelHandler(
+    ICommandBus commandBus,
+    IChannelAppService channelAppService,
+    IQueryProcessor queryProcessor,
+    IAccessHashHelper accessHashHelper,
+    IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<RequestJoinChannel, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestJoinChannel obj)
     {
@@ -63,6 +72,9 @@ internal sealed class JoinChannelHandler(ICommandBus commandBus, IChannelAppServ
             {
                 var command = new StartJoinChannelCommand(TempId.New, input.ToRequestInfo(), channelReadModel.ChannelId, channelReadModel.Broadcast, channelReadModel.TopMessageId, channelHistoryMinId);
                 await commandBus.PublishAsync(command);
+
+                // Log to admin log
+                await AdminLogHelper.LogParticipantJoin(mongoDatabase, channelReadModel.ChannelId, input.UserId);
             }
 
             return null !;

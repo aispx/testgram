@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Leave a <a href="https://corefork.telegram.org/api/channel">channel/supergroup</a>
@@ -16,7 +19,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class LeaveChannelHandler(IPeerHelper peerHelper, ICommandBus commandBus, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestLeaveChannel, MyTelegram.Schema.IUpdates>
+internal sealed class LeaveChannelHandler(
+    IPeerHelper peerHelper,
+    ICommandBus commandBus,
+    IAccessHashHelper accessHashHelper,
+    IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestLeaveChannel, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestLeaveChannel obj)
     {
@@ -26,6 +34,10 @@ internal sealed class LeaveChannelHandler(IPeerHelper peerHelper, ICommandBus co
             var channel = peerHelper.GetChannel(obj.Channel);
             var command = new LeaveChannelCommand(ChannelMemberId.Create(channel.PeerId, input.UserId), input.ToRequestInfo(), channel.PeerId, input.UserId, false);
             await commandBus.PublishAsync(command);
+
+            // Log to admin log
+            await AdminLogHelper.LogParticipantLeave(mongoDatabase, channel.PeerId, input.UserId);
+
             return null !;
         }
 

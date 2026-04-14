@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
@@ -69,6 +70,9 @@ internal sealed class ToggleForumHandler(
         var filter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
         var update = Builders<BsonDocument>.Update.Set("Forum", obj.Enabled);
         await collection.UpdateOneAsync(filter, update);
+
+        // Log to admin log
+        await AdminLogHelper.LogToggleForum(mongoDatabase, channelId, input.UserId, obj.Enabled);
 
         return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = CurrentDate };
     }

@@ -1,4 +1,8 @@
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
+
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 /// <summary>
 /// Change the photo of a <a href="https://corefork.telegram.org/api/channel">channel/supergroup</a>
 /// Possible errors
@@ -22,7 +26,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IRandomHelper randomHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditPhoto, MyTelegram.Schema.IUpdates>
+internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IRandomHelper randomHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditPhoto, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestEditPhoto obj)
     {
@@ -98,6 +102,13 @@ internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus com
         var r = await mediaHelper.SavePhotoAsync(input.ReqMsgId, input.UserId, fileId, hasVideo, videoStartTs, parts, name, md5, videoSize);
         photoId = r.PhotoId;
         photo = r.Photo;
+
+        // Get previous photo for admin log
+        var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channelId));
+        IPhoto prevPhoto = channelReadModel?.PhotoId != null ? new TPhoto { Id = channelReadModel.PhotoId.Value } : (IPhoto)new TPhotoEmpty();
+
+        await Helpers.AdminLogHelper.LogChangePhoto(mongoDatabase, channelId, input.UserId, prevPhoto, photo);
+
         var command = new EditChannelPhotoCommand(ChannelId.Create(channelId), input.ToRequestInfo(), photoId, new TMessageActionChatEditPhoto { Photo = photo }, randomHelper.NextInt64());
         await commandBus.PublishAsync(command);
         return null !;

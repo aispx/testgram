@@ -1,3 +1,7 @@
+using MyTelegram.Messenger.Helpers;
+using System.Linq;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Delete messages in a <a href="https://corefork.telegram.org/api/channel">channel/supergroup</a>
@@ -13,7 +17,16 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper ptsHelper, IAccessHashHelper accessHashHelper, IQueryProcessor queryProcessor, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestDeleteMessages, MyTelegram.Schema.Messages.IAffectedMessages>
+internal sealed class DeleteMessagesHandler(
+    ICommandBus commandBus,
+    IPtsHelper ptsHelper,
+    IAccessHashHelper accessHashHelper,
+    IQueryProcessor queryProcessor,
+    IChannelAppService channelAppService,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IMongoDatabase mongoDatabase,
+    IMessageConverterService messageConverterService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestDeleteMessages, MyTelegram.Schema.Messages.IAffectedMessages>
 {
     protected override async Task<IAffectedMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestDeleteMessages obj)
     {
@@ -23,6 +36,67 @@ internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper p
             if (obj.Id.Count > 0)
             {
                 var ids = obj.Id.ToList();
+
+                // Read messages from read model BEFORE deletion for admin log
+                var messagesQuery = new GetMessagesQuery(
+                    OwnerPeerId: inputChannel.ChannelId,
+                    MessageType: MessageType.Unknown,
+                    Q: null,
+                    MessageIdList: ids,
+                    ChannelHistoryMinId: 0,
+                    Limit: ids.Count,
+                    Offset: null,
+                    Peer: new Peer(PeerType.Channel, inputChannel.ChannelId),
+                    SelfUserId: input.UserId,
+                    Pts: 0
+                );
+                var messages = await queryProcessor.ProcessAsync(messagesQuery);
+
+                // Create admin log entries immediately
+                if (messages.Count > 0)
+                {
+                    var peer = new Peer(PeerType.Channel, inputChannel.ChannelId);
+
+                    foreach (var msg in messages)
+                    {
+                        // Decrypt message text if EncryptedData exists
+                        var messageText = msg.Message ?? string.Empty;
+                        if (string.IsNullOrEmpty(messageText) && msg.EncryptedData.HasValue && msg.EncryptedData.Value.Length > 0)
+                        {
+                            messageText = messageConverterService.DecryptMessage(peer.PeerId, msg.MessageId, msg.EncryptedData.Value);
+                        }
+
+                        // Build TMessage with only fields that exist in original message
+                        var message = new TMessage
+                        {
+                            Id = msg.MessageId,
+                            PeerId = new TPeerChannel { ChannelId = peer.PeerId },
+                            Message = messageText,
+                            Date = msg.Date,
+                            Out = msg.Out,
+                            Post = msg.Post,
+                            Media = new TMessageMediaEmpty(),
+                            ReplyTo = null,
+                            Entities = new TVector<IMessageEntity>()
+                        };
+
+                        // Add optional fields only if they exist
+                        if (msg.SenderUserId > 0)
+                            message.FromId = new TPeerUser { UserId = msg.SenderUserId };
+
+                        if (msg.Views.HasValue && msg.Views.Value > 0)
+                            message.Views = msg.Views.Value;
+
+                        if (msg.EditDate.HasValue && msg.EditDate.Value > 0)
+                            message.EditDate = msg.EditDate.Value;
+
+                        if (!string.IsNullOrEmpty(msg.PostAuthor))
+                            message.PostAuthor = msg.PostAuthor;
+
+                        await AdminLogHelper.LogDeleteMessage(mongoDatabase, inputChannel.ChannelId, input.UserId, message);
+                    }
+                }
+
                 if (!await channelAdminRightsChecker.HasChatAdminRightAsync(inputChannel.ChannelId, input.UserId, p => p.DeleteMessages))
                 {
                     var firstInboxMessageId = await queryProcessor.ProcessAsync(new GetFirstInboxMessageIdByMessageIdListQuery(input.UserId, inputChannel.ChannelId, ids));
@@ -50,8 +124,19 @@ internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper p
                     }
                 }
 
-                var command = new StartDeleteChannelMessagesCommand(TempId.New, input.ToRequestInfo(), inputChannel.ChannelId, ids, newTopMessageId, newTopMessageIdForDiscussionGroup, discussionGroupChannelId, repliesMessageIds);
+                // Pass null for messagesToLog - will read from deleted_messages_temp instead
+                var command = new StartDeleteChannelMessagesCommand(
+                    TempId.New,
+                    input.ToRequestInfo(),
+                    inputChannel.ChannelId,
+                    ids,
+                    newTopMessageId,
+                    newTopMessageIdForDiscussionGroup,
+                    discussionGroupChannelId,
+                    repliesMessageIds,
+                    null);
                 await commandBus.PublishAsync(command);
+
                 return null !;
             }
 

@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Hide or display the participants list in a <a href="https://corefork.telegram.org/api/channel">supergroup</a>.The supergroup must have at least <code>hidden_members_group_size_min</code> participants in order to use this method, as specified by the <a href="https://corefork.telegram.org/api/config#client-configuration">client configuration parameters »</a>.
@@ -13,7 +16,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ToggleParticipantsHiddenHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<RequestToggleParticipantsHidden, IUpdates>
+internal sealed class ToggleParticipantsHiddenHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestToggleParticipantsHidden, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestToggleParticipantsHidden obj)
     {
@@ -21,6 +24,7 @@ internal sealed class ToggleParticipantsHiddenHandler(ICommandBus commandBus, IC
         {
             await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             await channelAdminRightsChecker.CheckAdminRightAsync(inputChannel.ChannelId, input.UserId, p => p.ChangeInfo, RpcErrors.RpcErrors403.ChatAdminRequired);
+
             var command = new ToggleParticipantsHiddenCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), obj.Enabled);
             await commandBus.PublishAsync(command);
             return null !;

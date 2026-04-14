@@ -1,4 +1,6 @@
 using MyTelegram.Messenger.Services.Impl;
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
@@ -14,7 +16,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ToggleSignaturesHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleSignatures, MyTelegram.Schema.IUpdates>
+internal sealed class ToggleSignaturesHandler(
+    ICommandBus commandBus,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IAccessHashHelper accessHashHelper,
+    IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleSignatures, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestToggleSignatures obj)
     {
@@ -23,6 +29,10 @@ internal sealed class ToggleSignaturesHandler(ICommandBus commandBus, IChannelAd
             await accessHashHelper.CheckAccessHashAsync(input, inputChannel);
             await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
             await commandBus.PublishAsync(new ToggleSignatureCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), obj.SignaturesEnabled, obj.ProfilesEnabled));
+
+            // Log to admin log
+            await AdminLogHelper.LogToggleSignatures(mongoDatabase, inputChannel.ChannelId, input.UserId, obj.SignaturesEnabled);
+
             return null !;
         }
 

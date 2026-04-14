@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Toggle supergroup slow mode: if enabled, users will only be able to send one message every <code>seconds</code> seconds
@@ -13,7 +16,13 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ToggleSlowModeHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleSlowMode, MyTelegram.Schema.IUpdates>
+internal sealed class ToggleSlowModeHandler(
+    ICommandBus commandBus,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IAccessHashHelper accessHashHelper,
+    IMongoDatabase mongoDatabase,
+    IQueryProcessor queryProcessor)
+    : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleSlowMode, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestToggleSlowMode obj)
     {
@@ -21,8 +30,18 @@ internal sealed class ToggleSlowModeHandler(ICommandBus commandBus, IChannelAdmi
         {
             await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, p => p.ChangeInfo);
+
+            // Get previous value for admin log
+            var collection = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-channelreadmodel");
+            var channelDoc = await collection.Find(MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("ChannelId", inputChannel.ChannelId)).FirstOrDefaultAsync();
+            var prevValue = channelDoc?.Contains("SlowModeDelay") == true ? channelDoc["SlowModeDelay"].AsInt32 : 0;
+
             var command = new ToggleSlowModeCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), obj.Seconds, input.UserId);
             await commandBus.PublishAsync(command, CancellationToken.None);
+
+            // Log to admin log
+            await AdminLogHelper.LogToggleSlowMode(mongoDatabase, inputChannel.ChannelId, input.UserId, prevValue, obj.Seconds);
+
             return null !;
         }
 

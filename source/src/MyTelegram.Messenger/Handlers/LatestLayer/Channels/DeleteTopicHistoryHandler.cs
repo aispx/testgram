@@ -83,6 +83,7 @@ internal sealed class DeleteTopicHistoryHandler(
                 newTopMessageId,
                 null,
                 null,
+                null,
                 null
             );
             await commandBus.PublishAsync(command);

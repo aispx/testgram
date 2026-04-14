@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
@@ -106,6 +107,23 @@ internal sealed class EditCreatorHandler(
         };
 
         await transfersCol.InsertOneAsync(transferDoc);
+
+        // Log ownership transfer in admin log
+        var prevParticipant = new MyTelegram.Schema.TChannelParticipantCreator
+        {
+            UserId = input.UserId,
+            AdminRights = new TChatAdminRights { Flags = int.MaxValue },
+            Rank = "Owner"
+        };
+
+        var newParticipant = new MyTelegram.Schema.TChannelParticipantCreator
+        {
+            UserId = newOwnerId,
+            AdminRights = new TChatAdminRights { Flags = int.MaxValue },
+            Rank = "Owner"
+        };
+
+        await AdminLogHelper.LogEditAdmin(database, channelId, input.UserId, prevParticipant, newParticipant);
 
         // Get channel title and new owner name
         var channelTitle = channel["Title"].AsString;

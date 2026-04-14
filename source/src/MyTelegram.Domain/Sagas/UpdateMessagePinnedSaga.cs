@@ -189,7 +189,7 @@ public class UpdateMessagePinnedSaga : MyInMemoryAggregateSaga<UpdateMessagePinn
 
             if (_state is { Pinned: true, PmOneSide: false })
             {
-                // if pinned=true messageIds.Count==1
+                // Send service message only for pin (not unpin)
                 ReplyToMsgItem? replyToMsgItem = null;
                 var userIdOrChannelId = _state.RequestInfo.UserId;
 

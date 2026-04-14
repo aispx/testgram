@@ -165,6 +165,8 @@ public class DeleteChannelMessagesSagaState : AggregateState<DeleteChannelMessag
     public int NewTopMessageId { get; private set; }
     public int? NewTopMessageIdForDiscussionGroup { get; private set; }
 
+    public IReadOnlyList<MyTelegram.Schema.IMessage>? MessagesToLog { get; private set; }
+
     public void Apply(DeleteChannelMessagesSagaStartedSagaEvent aggregateEvent)
     {
         RequestInfo = aggregateEvent.RequestInfo;
@@ -176,6 +178,7 @@ public class DeleteChannelMessagesSagaState : AggregateState<DeleteChannelMessag
         RepliesMessageIds = aggregateEvent.RepliesMessageIds?.ToList() ?? null;
         NewTopMessageId = aggregateEvent.NewTopMessageId;
         NewTopMessageIdForDiscussionGroup = aggregateEvent.NewTopMessageIdForDiscussionGroup;
+        MessagesToLog = aggregateEvent.MessagesToLog;
     }
 
     public void Apply(DeleteChannelMessagePtsIncrementedSagaEvent aggregateEvent)
@@ -222,7 +225,8 @@ public class DeleteChannelMessagesSaga : MyInMemoryAggregateSaga<DeleteChannelMe
             domainEvent.AggregateEvent.NewTopMessageIdForDiscussionGroup,
             false,
             domainEvent.AggregateEvent.DiscussionGroupChannelId,
-            domainEvent.AggregateEvent.RepliesMessageIds
+            domainEvent.AggregateEvent.RepliesMessageIds,
+            domainEvent.AggregateEvent.MessagesToLog
             ));
         foreach (var messageId in domainEvent.AggregateEvent.MessageIds)
         {
@@ -300,7 +304,7 @@ public class DeleteChannelMessagesSaga : MyInMemoryAggregateSaga<DeleteChannelMe
             domainEvent.AggregateEvent.MessageIds,
             domainEvent.AggregateEvent.NewTopMessageId,
             null,
-            true, null, null));
+            true, null, null, null));
         foreach (var messageId in domainEvent.AggregateEvent.MessageIds)
         {
             var command = new DeleteChannelMessageCommand(MessageId.Create(domainEvent.AggregateEvent.ChannelId, messageId),
@@ -344,7 +348,8 @@ public class
     DeleteChannelMessagesSagaStartedSagaEvent(RequestInfo requestInfo, long channelId, List<int> messageIds,
         int newTopMessageId,
         int? newTopMessageIdForDiscussionGroup,
-        bool isDeleteHistory, long? discussionGroupChannelId, IReadOnlyCollection<int>? repliesMessageIds)
+        bool isDeleteHistory, long? discussionGroupChannelId, IReadOnlyCollection<int>? repliesMessageIds,
+        IReadOnlyList<MyTelegram.Schema.IMessage>? messagesToLog)
     : AggregateEvent<DeleteChannelMessagesSaga, DeleteChannelMessagesSagaId>
 {
     public RequestInfo RequestInfo { get; } = requestInfo;
@@ -355,4 +360,5 @@ public class
     public bool IsDeleteHistory { get; } = isDeleteHistory;
     public long? DiscussionGroupChannelId { get; } = discussionGroupChannelId;
     public IReadOnlyCollection<int>? RepliesMessageIds { get; } = repliesMessageIds;
+    public IReadOnlyList<MyTelegram.Schema.IMessage>? MessagesToLog { get; } = messagesToLog;
 }

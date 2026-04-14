@@ -85,6 +85,7 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
                 await SetStarGiftsInfoAsync(channelId, layeredChannelFull);
                 await SetBoostsInfoAsync(input.UserId, channelId, layeredChannelFull);
                 await SetBotVerificationAsync(channelId, layeredChannelFull, chatFull);
+                await SetPinnedMsgIdAsync(channelId, layeredChannelFull);
             }
 
             IChat? linkedChannel = null;
@@ -236,6 +237,33 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
             {
                 tFull.SendPaidMessagesStars = channelDoc["SendPaidMessagesStars"].AsInt64;
             }
+        }
+    }
+
+    private async Task SetPinnedMsgIdAsync(long channelId, ILayeredChannelFull channelFull)
+    {
+        try
+        {
+            // Query latest pinned message in channel
+            var collection = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-messagereadmodel");
+            var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("OwnerPeerId", channelId),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("Pinned", true)
+            );
+
+            var pinnedMessage = await collection.Find(filter)
+                .SortByDescending(m => m["MessageId"])
+                .Limit(1)
+                .FirstOrDefaultAsync();
+
+            if (pinnedMessage != null && channelFull is TChannelFull tChannelFull)
+            {
+                tChannelFull.PinnedMsgId = pinnedMessage["MessageId"].AsInt32;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load pinned message for channel {ChannelId}", channelId);
         }
     }
 }
