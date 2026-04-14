@@ -261,6 +261,11 @@ public class ChatConverterService(
         channel.Left = false;
         channel.AccessHash = accessHash;
 
+        if (channel is TChannel tChannel)
+        {
+            tChannel.Forum = channelReadModel.Forum;
+        }
+
         if (channelMemberIsLeft.HasValue)
         {
             channel.Left = channelMemberIsLeft.Value;
