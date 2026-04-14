@@ -35,7 +35,7 @@ internal sealed class EditExportedInviteHandler : RpcResultObjectHandler<MyTeleg
         // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
-            return RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError<MyTelegram.Schema.IExportedChatlistInvite>();
+            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
         }
 
         // 2. Find invite

@@ -15,15 +15,18 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
     private readonly IMongoDatabase _database;
     private readonly IQueryProcessor _queryProcessor;
     private readonly IPeerHelper _peerHelper;
+    private readonly ILayeredService<IDialogFilterConverter> _dialogFilterLayeredService;
 
     public ExportChatlistInviteHandler(
         IMongoDatabase database,
         IQueryProcessor queryProcessor,
-        IPeerHelper peerHelper)
+        IPeerHelper peerHelper,
+        ILayeredService<IDialogFilterConverter> dialogFilterLayeredService)
     {
         _database = database;
         _queryProcessor = queryProcessor;
         _peerHelper = peerHelper;
+        _dialogFilterLayeredService = dialogFilterLayeredService;
     }
 
     protected override async Task<MyTelegram.Schema.Chatlists.IExportedChatlistInvite> HandleCoreAsync(
@@ -33,7 +36,7 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
         // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
-            return RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError<MyTelegram.Schema.Chatlists.IExportedChatlistInvite>();
+            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
         }
 
         var filterId = chatlistFilter.FilterId;
@@ -111,7 +114,7 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
 
         return new MyTelegram.Schema.Chatlists.TExportedChatlistInvite
         {
-            Filter = filter.Filter.ToDialogFilter(),
+            Filter = _dialogFilterLayeredService.GetConverter(input.Layer).ToDialogFilter(filter.Filter),
             Invite = invite
         };
     }
