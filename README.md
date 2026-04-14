@@ -25,12 +25,12 @@
 - Telegram Business
 - Auto-Delete Messages
 - Stickers
+- Scheduled Messages
+- Forum Topics
+- Themes & Wallpapers
 
 ### Soon...
 - End-to-End Encrypted Chat
-- Forum Topics
-- Themes & Wallpapers
-- Scheduled Messages
 - Chatlist
 - Email Login
 - Email Sender
