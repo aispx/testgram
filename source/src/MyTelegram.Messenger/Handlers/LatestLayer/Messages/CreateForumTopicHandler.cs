@@ -113,7 +113,7 @@ internal sealed class CreateForumTopicHandler(
             sendMessageType: SendMessageType.MessageService,
             messageType: MessageType.Text,
             messageAction: action,
-            replyToMsgId: topicId
+            topMsgId: topicId
         );
 
         await messageAppService.SendMessageAsync([sendInput]);

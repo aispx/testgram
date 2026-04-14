@@ -105,7 +105,7 @@ internal sealed class EditForumTopicHandler(
             sendMessageType: SendMessageType.MessageService,
             messageType: MessageType.Text,
             messageAction: action,
-            replyToMsgId: obj.TopicId
+            topMsgId: obj.TopicId
         );
 
         await messageAppService.SendMessageAsync([sendInput]);
