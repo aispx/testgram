@@ -929,7 +929,7 @@ public partial class AppConfigHelper
                     }
                 },
 
-                new TJsonObjectValue { Key = "forum_upgrade_participants_min", Value = new TJsonNumber { Value = 10000 } },
+                new TJsonObjectValue { Key = "forum_upgrade_participants_min", Value = new TJsonNumber { Value = 0 } },
 
             ]
         };
