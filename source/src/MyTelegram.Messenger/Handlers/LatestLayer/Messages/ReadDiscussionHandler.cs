@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Mark a <a href="https://corefork.telegram.org/api/threads">thread</a> as read
@@ -11,7 +14,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ReadDiscussionHandler(ICommandBus commandBus, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadDiscussion, IBool>
+internal sealed class ReadDiscussionHandler(
+    ICommandBus commandBus,
+    IPeerHelper peerHelper,
+    IAccessHashHelper accessHashHelper,
+    IQueryProcessor queryProcessor,
+    IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadDiscussion, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestReadDiscussion obj)
     {
@@ -19,8 +27,26 @@ internal sealed class ReadDiscussionHandler(ICommandBus commandBus, IPeerHelper 
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         var selfDialogId = DialogId.Create(input.UserId, peer);
         var messageReadModel = await queryProcessor.ProcessAsync(new GetMessageByIdQuery(MessageId.Create(peer.PeerId, obj.MsgId).Value));
+
         if (messageReadModel == null)
         {
+            // Check if this is a forum topic ID
+            if (peer.PeerType == PeerType.Channel)
+            {
+                var topicsCol = mongoDatabase.GetCollection<BsonDocument>("forum_topics");
+                var topicFilter = Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("ChannelId", peer.PeerId),
+                    Builders<BsonDocument>.Filter.Eq("TopicId", obj.MsgId)
+                );
+                var topic = await topicsCol.Find(topicFilter).FirstOrDefaultAsync();
+
+                // If it's a forum topic, return success (topics don't use readDiscussion)
+                if (topic != null)
+                {
+                    return new TBoolTrue();
+                }
+            }
+
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
         }
 

@@ -76,7 +76,7 @@ internal sealed class DeleteTopicHistoryHandler(
         // Delete topic itself
         await topicsCol.DeleteOneAsync(topicFilter);
 
-        return new TMessagesAffectedHistory
+        return new TAffectedHistory
         {
             Pts = 0,
             PtsCount = (int)deleteResult.DeletedCount,

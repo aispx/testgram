@@ -129,15 +129,24 @@ internal sealed class CreateForumTopicHandler(
             Random.Shared.NextInt64(),
             sendMessageType: SendMessageType.MessageService,
             messageType: MessageType.Text,
-            messageAction: action
+            messageAction: action,
+            topMsgId: topicId
         );
 
         await messageAppService.SendMessageAsync([sendInput]);
 
+        // Return updateMessageID so client knows the topic ID
         return new TUpdates
         {
             Users = new TVector<IUser>(),
-            Updates = new TVector<IUpdate>(),
+            Updates = new TVector<IUpdate>
+            {
+                new TUpdateMessageID
+                {
+                    Id = topicId,
+                    RandomId = obj.RandomId
+                }
+            },
             Chats = new TVector<IChat>(),
             Date = CurrentDate
         };
