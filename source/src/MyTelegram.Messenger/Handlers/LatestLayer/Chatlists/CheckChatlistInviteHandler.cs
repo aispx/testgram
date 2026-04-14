@@ -17,16 +17,16 @@ internal sealed class CheckChatlistInviteHandler : RpcResultObjectHandler<MyTele
 {
     private readonly IMongoDatabase _database;
     private readonly IQueryProcessor _queryProcessor;
-    private readonly IObjectMapper _objectMapper;
+    private readonly IChatConverterService _chatConverterService;
 
     public CheckChatlistInviteHandler(
         IMongoDatabase database,
         IQueryProcessor queryProcessor,
-        IObjectMapper objectMapper)
+        IChatConverterService chatConverterService)
     {
         _database = database;
         _queryProcessor = queryProcessor;
-        _objectMapper = objectMapper;
+        _chatConverterService = chatConverterService;
     }
 
     protected override async Task<MyTelegram.Schema.Chatlists.IChatlistInvite> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestCheckChatlistInvite obj)
@@ -69,14 +69,17 @@ internal sealed class CheckChatlistInviteHandler : RpcResultObjectHandler<MyTele
         // Load channels
         if (channelIds.Count > 0)
         {
-            var channelReadModels = await _queryProcessor.ProcessAsync(
-                new GetChannelsByIdListQuery(channelIds),
+            var channelMemberReadModels = await _queryProcessor.ProcessAsync(
+                new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIds),
                 CancellationToken.None);
 
-            foreach (var channelReadModel in channelReadModels)
-            {
-                chats.Add(_objectMapper.Map<IChannelReadModel, IChat>(channelReadModel));
-            }
+            var channels = await _chatConverterService.GetChannelListAsync(
+                input,
+                channelIds,
+                channelMemberReadModels,
+                layer: input.Layer);
+
+            chats.AddRange(channels);
         }
 
         // 4. Check if user already has this folder
