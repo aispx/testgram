@@ -20,7 +20,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class ToggleForumHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleForum, MyTelegram.Schema.IUpdates>
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IQueryProcessor queryProcessor,
+    IObjectMapper objectMapper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleForum, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestToggleForum obj)
     {
@@ -74,6 +76,16 @@ internal sealed class ToggleForumHandler(
         // Log to admin log
         await AdminLogHelper.LogToggleForum(mongoDatabase, channelId, input.UserId, obj.Enabled);
 
-        return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = CurrentDate };
+        // Get updated channel
+        var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channelId), default);
+        var channel = objectMapper.Map<IChannelReadModel, IChat>(channelReadModel!);
+
+        return new TUpdates
+        {
+            Updates = new TVector<IUpdate>(),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat> { channel },
+            Date = CurrentDate
+        };
     }
 }

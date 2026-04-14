@@ -58,9 +58,16 @@ internal sealed class UpdatePinnedForumTopicHandler(
         var update = Builders<BsonDocument>.Update.Set("Pinned", obj.Pinned);
         await topicsCol.UpdateOneAsync(filter, update);
 
+        var updatePinnedTopic = new TUpdatePinnedForumTopic
+        {
+            Pinned = obj.Pinned,
+            Peer = new TPeerChannel { ChannelId = channelId },
+            TopicId = obj.TopicId
+        };
+
         return new TUpdates
         {
-            Updates = new TVector<IUpdate>(),
+            Updates = new TVector<IUpdate> { updatePinnedTopic },
             Chats = new TVector<IChat>(),
             Users = new TVector<IUser>(),
             Date = CurrentDate
