@@ -1,5 +1,0 @@
-        if (obj.Bot is not TInputUser inputUser)
-        {
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
-            return null!;
-        }
