@@ -66,7 +66,8 @@ internal sealed class GetForumTopicsHandler(
         }
 
         // Query topics
-        var query = topicsCol.Find(filter).SortByDescending(t => t["Pinned"]).ThenByDescending(t => t["Date"]);
+        var sort = Builders<BsonDocument>.Sort.Descending("Pinned").Descending("Date");
+        var query = topicsCol.Find(filter).Sort(sort);
 
         if (obj.OffsetDate > 0)
         {

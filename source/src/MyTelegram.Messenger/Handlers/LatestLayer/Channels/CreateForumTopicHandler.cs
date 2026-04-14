@@ -109,8 +109,7 @@ internal sealed class CreateForumTopicHandler(
             Random.Shared.NextInt64(),
             sendMessageType: SendMessageType.MessageService,
             messageType: MessageType.Text,
-            messageAction: action,
-            replyToMsgId: topicId // Set as reply to topic root message
+            messageAction: action
         );
 
         await messageAppService.SendMessageAsync([sendInput]);
