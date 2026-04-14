@@ -32,7 +32,6 @@
 
 ### Soon...
 - End-to-End Encrypted Chat
-- Shared Folders (Chatlist)
 - Email Login
 - Email Sender
 - Push Notifications (Firebase)
