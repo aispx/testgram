@@ -50,6 +50,7 @@ internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase,
 
         var doc = new BotVerificationDocument
         {
+            Id = targetUserId != 0 ? $"verification-user-{targetUserId}" : $"verification-channel-{targetChannelId}",
             BotId = botId,
             Icon = icon,
             Company = company,

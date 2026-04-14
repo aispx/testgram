@@ -1,4 +1,6 @@
 ﻿using System.Text;
+using MongoDB.Bson;
+using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Services.Impl;
 
@@ -15,7 +17,9 @@ public class MessageAppService(
     IOffsetHelper offsetHelper,
 	IDataEncryptionHelper dataEncryptionHelper,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options,
-    IIdGenerator idGenerator)
+    IIdGenerator idGenerator,
+    IMongoDatabase mongoDatabase,
+    IObjectMessageSender objectMessageSender)
     : BaseAppService, IMessageAppService, ITransientDependency
 {
     private const string HashtagPattern = "#(\\w+)";
@@ -175,6 +179,7 @@ public class MessageAppService(
         }
 
         List<SendMessageItem> sendMessageItems = [];
+        List<SendMessageItem> scheduledItems = [];
         var firstInput = inputs.First();
         var requestInfo = firstInput.RequestInfo;
 
@@ -182,16 +187,35 @@ public class MessageAppService(
         {
             CheckBotPermission(input.RequestInfo.UserId, input.ToPeer);
             var item = await CreateSendMessageItemAsync(input);
-            sendMessageItems.Add(item);
+
+            // Separate scheduled messages from immediate messages
+            if (item.MessageItem.ScheduleDate.HasValue)
+            {
+                scheduledItems.Add(item);
+            }
+            else
+            {
+                sendMessageItems.Add(item);
+            }
         }
 
-        var command = new StartSendMessageCommand(TempId.New, requestInfo,
-            sendMessageItems,
-            firstInput.ClearDraft,
-            firstInput.IsSendGroupedMessage,
-            firstInput.IsSendQuickReplyMessage);
+        // Save scheduled messages to MongoDB
+        if (scheduledItems.Count > 0)
+        {
+            await SaveScheduledMessagesAsync(scheduledItems, requestInfo);
+        }
 
-        await commandBus.PublishAsync(command);
+        // Send immediate messages through command bus
+        if (sendMessageItems.Count > 0)
+        {
+            var command = new StartSendMessageCommand(TempId.New, requestInfo,
+                sendMessageItems,
+                firstInput.ClearDraft,
+                firstInput.IsSendGroupedMessage,
+                firstInput.IsSendQuickReplyMessage);
+
+            await commandBus.PublishAsync(command);
+        }
     }
 
     public async Task<SearchPostsResult> SearchPostsAsync(long selfUserId, SearchPostsQuery searchPostsQuery)
@@ -529,6 +553,116 @@ public class MessageAppService(
         }
 
         return hashtags;
+    }
+
+    private async Task SaveScheduledMessagesAsync(List<SendMessageItem> scheduledItems, RequestInfo requestInfo)
+    {
+        var collection = mongoDatabase.GetCollection<BsonDocument>("scheduled_messages");
+
+        foreach (var item in scheduledItems)
+        {
+            var messageItem = item.MessageItem;
+
+            var doc = new BsonDocument
+            {
+                ["_id"] = $"scheduled-{messageItem.OwnerPeer.PeerId}-{messageItem.ScheduleMessageId ?? messageItem.MessageId}",
+                ["ScheduledMessageId"] = messageItem.ScheduleMessageId ?? messageItem.MessageId,
+                ["SenderUserId"] = messageItem.SenderPeer.PeerId,
+                ["PeerId"] = messageItem.ToPeer.PeerId,
+                ["PeerType"] = messageItem.ToPeer.PeerType.ToString(),
+                ["Message"] = messageItem.Message,
+                ["ScheduleDate"] = messageItem.ScheduleDate!.Value,
+                ["RandomId"] = messageItem.RandomId,
+                ["CreatedAt"] = DateTime.UtcNow
+            };
+
+            if (messageItem.InputReplyTo != null)
+            {
+                var replyToMsgId = messageItem.InputReplyTo.ToReplyToMsgId();
+                if (replyToMsgId.HasValue)
+                {
+                    doc["ReplyToMsgId"] = replyToMsgId.Value;
+                }
+            }
+
+            if (messageItem.Entities != null && messageItem.Entities.Count > 0)
+            {
+                doc["Entities"] = System.Text.Json.JsonSerializer.Serialize(messageItem.Entities);
+            }
+
+            if (messageItem.Media != null)
+            {
+                doc["MediaType"] = messageItem.Media.GetType().Name;
+                doc["MediaData"] = System.Text.Json.JsonSerializer.Serialize(messageItem.Media);
+            }
+
+            if (messageItem.ReplyMarkup != null)
+            {
+                doc["ReplyMarkup"] = System.Text.Json.JsonSerializer.Serialize(messageItem.ReplyMarkup);
+            }
+
+            doc["Silent"] = messageItem.Silent;
+            doc["NoForwards"] = false;
+
+            await collection.InsertOneAsync(doc);
+        }
+
+        // Send updateNewScheduledMessage to client
+        foreach (var item in scheduledItems)
+        {
+            var messageItem = item.MessageItem;
+
+            var message = new TMessage
+            {
+                Id = messageItem.ScheduleMessageId ?? messageItem.MessageId,
+                Out = true,
+                FromId = new TPeerUser { UserId = messageItem.SenderPeer.PeerId },
+                PeerId = ConvertToPeer(messageItem.ToPeer),
+                Date = messageItem.ScheduleDate!.Value,
+                Message = messageItem.Message,
+                Entities = messageItem.Entities ?? new TVector<IMessageEntity>(),
+                Silent = messageItem.Silent
+            };
+
+            if (messageItem.InputReplyTo != null)
+            {
+                var replyToMsgId = messageItem.InputReplyTo.ToReplyToMsgId();
+                if (replyToMsgId.HasValue)
+                {
+                    message.ReplyTo = new TMessageReplyHeader { ReplyToMsgId = replyToMsgId.Value };
+                }
+            }
+
+            var update = new TUpdateNewScheduledMessage
+            {
+                Message = message
+            };
+
+            var updates = new TUpdates
+            {
+                Updates = new TVector<IUpdate> { update },
+                Users = new TVector<IUser>(),
+                Chats = new TVector<IChat>(),
+                Date = CurrentDate
+            };
+
+            await objectMessageSender.PushMessageToPeerAsync(
+                new Peer(PeerType.User, messageItem.SenderPeer.PeerId),
+                updates,
+                pts: 0
+            );
+        }
+    }
+
+    private static IPeer ConvertToPeer(Peer peer)
+    {
+        return peer.PeerType switch
+        {
+            PeerType.User => new TPeerUser { UserId = peer.PeerId },
+            PeerType.Chat => new TPeerChat { ChatId = peer.PeerId },
+            PeerType.Channel => new TPeerChannel { ChannelId = peer.PeerId },
+            _ => new TPeerUser { UserId = peer.PeerId }
+        };
     }
 
     private async Task CheckGlobalPrivacySettingsAsync(SendMessageInput input)

@@ -77,7 +77,9 @@ internal sealed class DeleteMessagesHandler(
                             Post = msg.Post,
                             Media = new TMessageMediaEmpty(),
                             ReplyTo = null,
-                            Entities = new TVector<IMessageEntity>()
+                            Entities = new TVector<IMessageEntity>(),
+                            Views = msg.Views ?? 0,
+                            Forwards = 0
                         };
 
                         // Add optional fields only if they exist
