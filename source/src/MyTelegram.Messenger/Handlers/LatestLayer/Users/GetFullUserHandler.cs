@@ -53,6 +53,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetStarsRatingAsync(targetUserId, userFull, isSelf: input.UserId == targetUserId);
         await SetDisallowedGiftsAsync(targetUserId, userFull);
         await SetBotVerificationAsync(targetUserId, 0, userFull, user);
+        await SetBotInfoAsync(targetUserId, userFull);
         await SetUserStoriesAsync(targetUserId, userFull, input.UserId);
         await SetSavedMusicAsync(targetUserId, userFull);
         await SetChatThemeAsync(input.UserId, targetUserId, userFull);
@@ -261,6 +262,35 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         var bv = new TBotVerification { BotId = doc.BotId, Icon = doc.Icon, Description = doc.Description };
         if (userFull != null) userFull.BotVerification = bv;
         if (user is TUser tUser) tUser.BotVerificationIcon = doc.Icon;
+    }
+
+    private async Task SetBotInfoAsync(long botUserId, IUserFull userFull)
+    {
+        // Only set BotInfo for bots
+        var botUser = await userAppService.GetAsync(botUserId);
+        if (botUser == null || !botUser.Bot)
+            return;
+
+        // Check if bot has verifier settings
+        var settingsCol = mongoDatabase.GetCollection<BsonDocument>("bot-verifier-settings");
+        var settingsDoc = await settingsCol.Find(new BsonDocument("BotId", botUserId)).FirstOrDefaultAsync();
+
+        if (settingsDoc != null)
+        {
+            var verifierSettings = new TBotVerifierSettings
+            {
+                Icon = settingsDoc["Icon"].AsInt64,
+                Company = settingsDoc["Company"].AsString,
+                CanModifyCustomDescription = settingsDoc.Contains("CanModifyCustomDescription") && settingsDoc["CanModifyCustomDescription"].AsBoolean,
+                CustomDescription = settingsDoc.Contains("CustomDescription") ? settingsDoc["CustomDescription"].AsString : null
+            };
+
+            userFull.BotInfo = new TBotInfo
+            {
+                UserId = botUserId,
+                VerifierSettings = verifierSettings
+            };
+        }
     }
 
     private async Task SetBusinessBotFieldsAsync(Schema.IPeerSettings settings, long selfUserId, long targetUserId)
