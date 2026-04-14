@@ -14,6 +14,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class EditForumTopicHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IMessageAppService messageAppService,
     IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditForumTopic, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input,
@@ -79,6 +80,35 @@ internal sealed class EditForumTopicHandler(
             .Set("Hidden", newHidden);
 
         await topicsCol.UpdateOneAsync(filter, update);
+
+        // Send service message for topic edit
+        var action = new TMessageActionTopicEdit();
+
+        if (newTitle != currentTitle)
+            action.Title = newTitle;
+
+        if (newIconEmojiId != currentIconEmojiId)
+            action.IconEmojiId = newIconEmojiId;
+
+        if (newClosed != currentClosed)
+            action.Closed = newClosed;
+
+        if (newHidden != currentHidden)
+            action.Hidden = newHidden;
+
+        var sendInput = new SendMessageInput(
+            input.ToRequestInfo() with { ReqMsgId = 0 },
+            input.UserId,
+            new Peer(PeerType.Channel, channelId),
+            string.Empty,
+            Random.Shared.NextInt64(),
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            messageAction: action,
+            replyToMsgId: obj.TopicId
+        );
+
+        await messageAppService.SendMessageAsync([sendInput]);
 
         return new TUpdates
         {

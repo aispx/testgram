@@ -326,6 +326,62 @@ public static class AdminLogHelper
         await LogEventAsync(database, channelId, userId, action);
     }
 
+    public static async Task LogCreateTopic(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IForumTopic topic)
+    {
+        var action = new TChannelAdminLogEventActionCreateTopic
+        {
+            Topic = topic
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogEditTopic(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IForumTopic prevTopic,
+        IForumTopic newTopic)
+    {
+        var action = new TChannelAdminLogEventActionEditTopic
+        {
+            PrevTopic = prevTopic,
+            NewTopic = newTopic
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogDeleteTopic(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IForumTopic topic)
+    {
+        var action = new TChannelAdminLogEventActionDeleteTopic
+        {
+            Topic = topic
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogPinTopic(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IForumTopic prevTopic,
+        IForumTopic newTopic)
+    {
+        var action = new TChannelAdminLogEventActionPinTopic
+        {
+            PrevTopic = prevTopic,
+            NewTopic = newTopic
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
     private static async Task LogEventAsync(
         IMongoDatabase database,
         long channelId,

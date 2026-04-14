@@ -93,6 +93,26 @@ internal sealed class CreateForumTopicHandler(
 
         await topicsCol.InsertOneAsync(topicDoc);
 
+        // Log to admin log
+        var forumTopic = new TForumTopic
+        {
+            Id = topicId,
+            Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Title = obj.Title,
+            IconColor = obj.IconColor ?? 0x6FB9F0,
+            IconEmojiId = obj.IconEmojiId ?? 0L,
+            TopMessage = topicId,
+            ReadInboxMaxId = 0,
+            ReadOutboxMaxId = 0,
+            UnreadCount = 0,
+            UnreadMentionsCount = 0,
+            UnreadReactionsCount = 0,
+            FromId = new TPeerUser { UserId = input.UserId },
+            NotifySettings = new TPeerNotifySettings(),
+            Peer = new TPeerChannel { ChannelId = channelId }
+        };
+        await Helpers.AdminLogHelper.LogCreateTopic(mongoDatabase, channelId, input.UserId, forumTopic);
+
         // Send service message for topic creation
         var action = new TMessageActionTopicCreate
         {

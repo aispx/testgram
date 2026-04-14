@@ -58,6 +58,47 @@ internal sealed class UpdatePinnedForumTopicHandler(
         var update = Builders<BsonDocument>.Update.Set("Pinned", obj.Pinned);
         await topicsCol.UpdateOneAsync(filter, update);
 
+        // Log to admin log
+        var prevTopic = new TForumTopic
+        {
+            Id = obj.TopicId,
+            Title = topic["Title"].AsString,
+            IconColor = topic.Contains("IconColor") ? topic["IconColor"].AsInt32 : 0x6FB9F0,
+            IconEmojiId = topic.Contains("IconEmojiId") ? topic["IconEmojiId"].AsInt64 : 0L,
+            Date = topic["Date"].AsInt32,
+            TopMessage = topic.Contains("TopMessageId") ? topic["TopMessageId"].AsInt32 : obj.TopicId,
+            ReadInboxMaxId = 0,
+            ReadOutboxMaxId = 0,
+            UnreadCount = 0,
+            UnreadMentionsCount = 0,
+            UnreadReactionsCount = 0,
+            FromId = new TPeerUser { UserId = topic["CreatorId"].AsInt64 },
+            NotifySettings = new TPeerNotifySettings(),
+            Peer = new TPeerChannel { ChannelId = channelId },
+            Pinned = topic.Contains("Pinned") && topic["Pinned"].AsBoolean
+        };
+
+        var newTopic = new TForumTopic
+        {
+            Id = obj.TopicId,
+            Title = topic["Title"].AsString,
+            IconColor = topic.Contains("IconColor") ? topic["IconColor"].AsInt32 : 0x6FB9F0,
+            IconEmojiId = topic.Contains("IconEmojiId") ? topic["IconEmojiId"].AsInt64 : 0L,
+            Date = topic["Date"].AsInt32,
+            TopMessage = topic.Contains("TopMessageId") ? topic["TopMessageId"].AsInt32 : obj.TopicId,
+            ReadInboxMaxId = 0,
+            ReadOutboxMaxId = 0,
+            UnreadCount = 0,
+            UnreadMentionsCount = 0,
+            UnreadReactionsCount = 0,
+            FromId = new TPeerUser { UserId = topic["CreatorId"].AsInt64 },
+            NotifySettings = new TPeerNotifySettings(),
+            Peer = new TPeerChannel { ChannelId = channelId },
+            Pinned = obj.Pinned
+        };
+
+        await Helpers.AdminLogHelper.LogPinTopic(mongoDatabase, channelId, input.UserId, prevTopic, newTopic);
+
         var updatePinnedTopic = new TUpdatePinnedForumTopic
         {
             Pinned = obj.Pinned,
