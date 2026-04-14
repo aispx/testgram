@@ -11,8 +11,39 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// </remarks>
 internal sealed class LeaveChatlistHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestLeaveChatlist, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestLeaveChatlist obj)
+    private readonly ICommandBus _commandBus;
+
+    public LeaveChatlistHandler(ICommandBus commandBus)
     {
-        throw new NotImplementedException();
+        _commandBus = commandBus;
+    }
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestLeaveChatlist obj)
+    {
+        // 1. Validate chatlist
+        if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
+        {
+            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+        }
+
+        var filterId = chatlistFilter.FilterId;
+
+        // 2. Delete the folder
+        var command = new DeleteDialogFilterCommand(
+            DialogFilterId.Create(input.UserId, filterId),
+            input.ToRequestInfo()
+        );
+
+        await _commandBus.PublishAsync(command, default);
+
+        // 3. Return empty Updates (folder deletion will sync via updateDialogFilter)
+        return new TUpdates
+        {
+            Updates = new TVector<IUpdate>(),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Seq = 0
+        };
     }
 }

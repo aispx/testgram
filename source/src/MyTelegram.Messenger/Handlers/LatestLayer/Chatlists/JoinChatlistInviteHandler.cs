@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// <summary>
 /// Import a <a href="https://corefork.telegram.org/api/links#chat-folder-links">chat folder deep link »</a>, joining some or all the chats in the folder.
@@ -15,8 +18,94 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// </remarks>
 internal sealed class JoinChatlistInviteHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestJoinChatlistInvite, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestJoinChatlistInvite obj)
+    private readonly IMongoDatabase _database;
+    private readonly ICommandBus _commandBus;
+    private readonly IPeerHelper _peerHelper;
+
+    public JoinChatlistInviteHandler(
+        IMongoDatabase database,
+        ICommandBus commandBus,
+        IPeerHelper peerHelper)
     {
-        throw new NotImplementedException();
+        _database = database;
+        _commandBus = commandBus;
+        _peerHelper = peerHelper;
+    }
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestJoinChatlistInvite obj)
+    {
+        // 1. Find invite
+        var collection = _database.GetCollection<BsonDocument>("chatlist_invites");
+        var filter = Builders<BsonDocument>.Filter.Eq("Slug", obj.Slug);
+        var inviteDoc = await collection.Find(filter).FirstOrDefaultAsync();
+
+        if (inviteDoc == null || inviteDoc["Revoked"].AsBoolean)
+        {
+            RpcErrors.RpcErrors400.InviteSlugExpired.ThrowRpcError();
+        }
+
+        var filterId = inviteDoc["FilterId"].AsInt32;
+        var title = inviteDoc["Title"].AsString;
+
+        // 2. Convert selected peers to InputPeer
+        var includePeers = new List<InputPeer>();
+        foreach (var inputPeer in obj.Peers)
+        {
+            var peer = _peerHelper.GetPeer(inputPeer, input.UserId);
+            long accessHash = 0;
+
+            switch (inputPeer)
+            {
+                case TInputPeerChannel inputPeerChannel:
+                    accessHash = inputPeerChannel.AccessHash;
+                    break;
+                case TInputPeerUser inputPeerUser:
+                    accessHash = inputPeerUser.AccessHash;
+                    break;
+            }
+
+            includePeers.Add(new InputPeer(peer, accessHash));
+        }
+
+        // 3. Create dialogFilterChatlist
+        var dialogFilter = new DialogFilter(
+            filterId,
+            contacts: false,
+            nonContacts: false,
+            groups: false,
+            broadcasts: false,
+            bots: false,
+            excludeMuted: false,
+            excludeRead: false,
+            excludeArchived: false,
+            titleNoAnimate: false,
+            title: new TTextWithEntities { Text = title, Entities = new TVector<IMessageEntity>() },
+            emoticon: null,
+            color: null,
+            pinnedPeers: new List<InputPeer>(),
+            includePeers: includePeers,
+            excludePeers: new List<InputPeer>(),
+            isChatlist: true
+        );
+
+        // 4. Create folder via command
+        var command = new UpdateDialogFilterCommand(
+            DialogFilterId.Create(input.UserId, filterId),
+            input.ToRequestInfo(),
+            input.UserId,
+            dialogFilter
+        );
+
+        await _commandBus.PublishAsync(command, default);
+
+        // 5. Return empty Updates (folder will sync via updateDialogFilter)
+        return new TUpdates
+        {
+            Updates = new TVector<IUpdate>(),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Seq = 0
+        };
     }
 }

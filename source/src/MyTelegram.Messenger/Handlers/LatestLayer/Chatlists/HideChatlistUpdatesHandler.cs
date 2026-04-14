@@ -14,6 +14,7 @@ internal sealed class HideChatlistUpdatesHandler : RpcResultObjectHandler<MyTele
 {
     protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestHideChatlistUpdates obj)
     {
-        throw new NotImplementedException();
+        // Just return success (no updates to hide)
+        return Task.FromResult<IBool>(new TBoolTrue());
     }
 }

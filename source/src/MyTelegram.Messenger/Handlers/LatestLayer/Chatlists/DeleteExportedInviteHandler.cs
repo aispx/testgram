@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// <summary>
 /// Delete a previously created <a href="https://corefork.telegram.org/api/links#chat-folder-links">chat folder deep link »</a>.
@@ -14,8 +17,37 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// </remarks>
 internal sealed class DeleteExportedInviteHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestDeleteExportedInvite, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestDeleteExportedInvite obj)
+    private readonly IMongoDatabase _database;
+
+    public DeleteExportedInviteHandler(IMongoDatabase database)
     {
-        throw new NotImplementedException();
+        _database = database;
+    }
+
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestDeleteExportedInvite obj)
+    {
+        // 1. Validate chatlist
+        if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
+        {
+            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+        }
+
+        // 2. Find and revoke invite
+        var collection = _database.GetCollection<BsonDocument>("chatlist_invites");
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("Slug", obj.Slug),
+            Builders<BsonDocument>.Filter.Eq("CreatorUserId", input.UserId),
+            Builders<BsonDocument>.Filter.Eq("FilterId", chatlistFilter.FilterId)
+        );
+
+        var update = Builders<BsonDocument>.Update.Set("Revoked", true);
+        var result = await collection.UpdateOneAsync(filter, update);
+
+        if (result.MatchedCount == 0)
+        {
+            RpcErrors.RpcErrors400.InviteSlugInvalid.ThrowRpcError();
+        }
+
+        return new TBoolTrue();
     }
 }

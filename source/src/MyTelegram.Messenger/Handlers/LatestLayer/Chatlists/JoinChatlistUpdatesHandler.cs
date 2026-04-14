@@ -14,6 +14,14 @@ internal sealed class JoinChatlistUpdatesHandler : RpcResultObjectHandler<MyTele
 {
     protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestJoinChatlistUpdates obj)
     {
-        throw new NotImplementedException();
+        // Return empty Updates (no new peers to join)
+        return Task.FromResult<MyTelegram.Schema.IUpdates>(new TUpdates
+        {
+            Updates = new TVector<IUpdate>(),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Seq = 0
+        });
     }
 }

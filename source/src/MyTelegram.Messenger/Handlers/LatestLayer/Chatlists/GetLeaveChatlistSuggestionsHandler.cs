@@ -12,8 +12,42 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// </remarks>
 internal sealed class GetLeaveChatlistSuggestionsHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestGetLeaveChatlistSuggestions, TVector<MyTelegram.Schema.IPeer>>
 {
-    protected override Task<TVector<MyTelegram.Schema.IPeer>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestGetLeaveChatlistSuggestions obj)
+    private readonly IQueryProcessor _queryProcessor;
+
+    public GetLeaveChatlistSuggestionsHandler(IQueryProcessor queryProcessor)
     {
-        throw new NotImplementedException();
+        _queryProcessor = queryProcessor;
+    }
+
+    protected override async Task<TVector<MyTelegram.Schema.IPeer>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestGetLeaveChatlistSuggestions obj)
+    {
+        // 1. Validate chatlist
+        if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
+        {
+            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+        }
+
+        var filterId = chatlistFilter.FilterId;
+
+        // 2. Get user's filters
+        var userFilters = await _queryProcessor.ProcessAsync(
+            new GetDialogFiltersQuery(input.UserId),
+            CancellationToken.None);
+
+        var filter = userFilters.FirstOrDefault(f => f.FolderId == filterId);
+        if (filter == null)
+        {
+            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+        }
+
+        // 3. Return all included peers as suggestions to leave
+        var suggestions = new TVector<IPeer>();
+
+        foreach (var peer in filter.Filter.IncludePeers)
+        {
+            suggestions.Add(new Peer(peer.PeerType, peer.PeerId).ToPeer());
+        }
+
+        return suggestions;
     }
 }
