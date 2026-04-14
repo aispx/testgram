@@ -23,7 +23,7 @@ internal sealed class LeaveChatlistHandler : RpcResultObjectHandler<MyTelegram.S
         // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
-            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError<MyTelegram.Schema.IUpdates>();
         }
 
         var filterId = chatlistFilter.FilterId;

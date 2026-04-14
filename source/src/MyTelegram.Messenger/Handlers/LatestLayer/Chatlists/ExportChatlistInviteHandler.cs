@@ -33,7 +33,7 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
         // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
-            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError<MyTelegram.Schema.Chatlists.IExportedChatlistInvite>();
         }
 
         var filterId = chatlistFilter.FilterId;
@@ -43,7 +43,7 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
             new GetDialogFiltersQuery(input.UserId),
             CancellationToken.None);
 
-        var filter = filterReadModels.FirstOrDefault(f => f.FolderId == filterId);
+        var filter = filterReadModels.FirstOrDefault(f => f.Filter.Id == filterId);
         if (filter == null)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
@@ -102,7 +102,7 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
             peers.Add(new Peer(peerType, peerIds[i]).ToPeer());
         }
 
-        var invite = new TExportedChatlistInvite
+        var invite = new MyTelegram.Schema.TExportedChatlistInvite
         {
             Title = obj.Title,
             Url = url,

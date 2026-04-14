@@ -70,22 +70,22 @@ internal sealed class JoinChatlistInviteHandler : RpcResultObjectHandler<MyTeleg
         // 3. Create dialogFilterChatlist
         var dialogFilter = new DialogFilter(
             filterId,
-            contacts: false,
-            nonContacts: false,
-            groups: false,
-            broadcasts: false,
-            bots: false,
-            excludeMuted: false,
-            excludeRead: false,
-            excludeArchived: false,
-            titleNoAnimate: false,
-            title: new TTextWithEntities { Text = title, Entities = new TVector<IMessageEntity>() },
-            emoticon: null,
-            color: null,
-            pinnedPeers: new List<InputPeer>(),
-            includePeers: includePeers,
-            excludePeers: new List<InputPeer>(),
-            isChatlist: true
+            false, // Contacts
+            false, // NonContacts
+            false, // Groups
+            false, // Broadcasts
+            false, // Bots
+            false, // ExcludeMuted
+            false, // ExcludeRead
+            false, // ExcludeArchived
+            false, // TitleNoAnimate
+            new TTextWithEntities { Text = title, Entities = new TVector<IMessageEntity>() },
+            null, // Emoticon
+            null, // Color
+            new List<InputPeer>(), // PinnedPeers
+            includePeers,
+            new List<InputPeer>(), // ExcludePeers
+            true // IsChatlist
         );
 
         // 4. Create folder via command

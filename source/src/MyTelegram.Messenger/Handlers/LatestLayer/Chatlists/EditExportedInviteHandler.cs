@@ -35,7 +35,7 @@ internal sealed class EditExportedInviteHandler : RpcResultObjectHandler<MyTeleg
         // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
-            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError<MyTelegram.Schema.IExportedChatlistInvite>();
         }
 
         // 2. Find invite
@@ -97,7 +97,7 @@ internal sealed class EditExportedInviteHandler : RpcResultObjectHandler<MyTeleg
             peers.Add(new Peer(peerType, peerIdsList[i]).ToPeer());
         }
 
-        return new TExportedChatlistInvite
+        return new MyTelegram.Schema.TExportedChatlistInvite
         {
             Title = title,
             Url = $"https://t.me/addlist/{obj.Slug}",

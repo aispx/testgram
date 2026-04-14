@@ -54,7 +54,7 @@ internal sealed class CheckChatlistInviteHandler : RpcResultObjectHandler<MyTele
             new GetDialogFiltersQuery(input.UserId),
             CancellationToken.None);
 
-        var existingFilter = userFilters.FirstOrDefault(f => f.FolderId == filterId);
+        var existingFilter = userFilters.FirstOrDefault(f => f.Filter.Id == filterId);
 
         if (existingFilter != null)
         {

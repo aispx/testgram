@@ -24,7 +24,7 @@ internal sealed class GetLeaveChatlistSuggestionsHandler : RpcResultObjectHandle
         // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
-            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+            return RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError<TVector<MyTelegram.Schema.IPeer>>();
         }
 
         var filterId = chatlistFilter.FilterId;
@@ -34,7 +34,7 @@ internal sealed class GetLeaveChatlistSuggestionsHandler : RpcResultObjectHandle
             new GetDialogFiltersQuery(input.UserId),
             CancellationToken.None);
 
-        var filter = userFilters.FirstOrDefault(f => f.FolderId == filterId);
+        var filter = userFilters.FirstOrDefault(f => f.Filter.Id == filterId);
         if (filter == null)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
