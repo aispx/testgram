@@ -12,11 +12,10 @@ Steps:
        MINIO_ENDPOINT=localhost:9000 \
        MINIO_ACCESS_KEY=... \
        MINIO_SECRET_KEY=... \
-       GRPC_ENDPOINT=localhost:8080 \
        python3 seed_reactions.py --import
 
   After import, rebuild messenger-command-server and messenger-query-server
-  docker images (the handler is auto-generated from reactions_manifest.json).
+  docker images. Reactions are now loaded from MongoDB 'reactions' collection.
 """
 import asyncio, json, os, io, struct, time
 from pathlib import Path
@@ -113,25 +112,37 @@ def cmd_import():
         minio.make_bucket(MINIO_BUCKET)
 
     mongo = pymongo.MongoClient(MONGO_URL)
-    col = mongo["tg"]["eventflow-documentreadmodel"]
+    doc_col = mongo["tg"]["eventflow-documentreadmodel"]
+    reactions_col = mongo["tg"]["reactions"]
 
     # Build name -> doc_id mapping from existing MongoDB records
     existing = {d["Name"]: to_int64(d["DocumentId"])
-                for d in col.find({}, {"Name": 1, "DocumentId": 1, "AccessHash": 1,
+                for d in doc_col.find({}, {"Name": 1, "DocumentId": 1, "AccessHash": 1,
                                        "FileReference": 1, "MimeType": 1, "Size": 1})}
 
     attrs_bytes = list(struct.pack("<II", 0x15c4b51c, 0))
     imported = 0
+    reaction_docs = []
 
-    for reaction in manifest:
+    for order, reaction in enumerate(manifest):
         emoji = reaction["emoji"]
+        reaction_doc = {
+            "Reaction": emoji,
+            "Title": reaction["title"],
+            "Inactive": reaction.get("inactive", False),
+            "Premium": reaction.get("premium", False),
+            "Order": order
+        }
+
         for field in FIELDS:
             file_path = reaction.get(field)
             if not file_path:
+                reaction_doc[field.title().replace("_", "")] = None
                 continue
             p = Path(file_path)
             if not p.exists():
                 print(f"  [{emoji}] {field}: file missing {p}")
+                reaction_doc[field.title().replace("_", "")] = None
                 continue
 
             # Extract original Telegram doc ID from filename
@@ -144,142 +155,69 @@ def cmd_import():
                 # Check if file is in Minio
                 try:
                     minio.stat_object(MINIO_BUCKET, str(doc_id))
-                    continue  # already uploaded
                 except Exception:
-                    pass
-                # Upload missing file
+                    # Upload missing file
+                    data = p.read_bytes()
+                    minio.put_object(MINIO_BUCKET, str(doc_id),
+                                     io.BytesIO(data), length=len(data))
+                    print(f"  [{emoji}] {field}: uploaded to minio doc_id={doc_id}")
+            else:
+                # New document — insert into MongoDB and upload to Minio
                 data = p.read_bytes()
+                mime = ("application/x-tgsticker" if p.suffix == ".tgs"
+                        else "image/webp" if p.suffix == ".webp"
+                        else "application/octet-stream")
+                file_ref = list(os.urandom(16))
+                access_hash = int.from_bytes(os.urandom(8), "little", signed=True)
+
+                # Use original Telegram ID as document ID (fits int64)
+                doc_id = int(orig_tg_id) & 0x7FFFFFFFFFFFFFFF
+
                 minio.put_object(MINIO_BUCKET, str(doc_id),
-                                 io.BytesIO(data), length=len(data))
-                print(f"  [{emoji}] {field}: uploaded to minio doc_id={doc_id}")
-                continue
+                                 io.BytesIO(data), length=len(data), content_type=mime)
+                doc_col.insert_one({
+                    "_id": f"documentreadmodel-{doc_id}",
+                    "Id": f"documentreadmodel-{doc_id}",
+                    "DocumentId": doc_id,
+                    "LocalFile": f"reactions_files/{name}",
+                    "AccessHash": access_hash,
+                    "FileReference": file_ref,
+                    "Date": int(time.time()),
+                    "DcId": DC_ID, "MimeType": mime, "Size": len(data),
+                    "Name": name, "Thumbs": None, "VideoThumbs": None,
+                    "Attributes": attrs_bytes, "Attributes2": None,
+                    "CreatorId": None, "Fingerprint": None,
+                    "Md5CheckSum": None, "ThumbId": None, "VideoThumbId": None,
+                    "Version": 1,
+                })
+                print(f"  [{emoji}] {field}: imported doc_id={doc_id}")
+                imported += 1
+                existing[name] = doc_id
 
-            # New document — insert into MongoDB and upload to Minio
-            data = p.read_bytes()
-            mime = ("application/x-tgsticker" if p.suffix == ".tgs"
-                    else "image/webp" if p.suffix == ".webp"
-                    else "application/octet-stream")
-            file_ref = list(os.urandom(16))
-            access_hash = int.from_bytes(os.urandom(8), "little", signed=True)
+            # Get document metadata from MongoDB
+            doc_meta = doc_col.find_one({"DocumentId": existing[name]})
+            if doc_meta:
+                field_name = field.title().replace("_", "")
+                reaction_doc[field_name] = {
+                    "Id": to_int64(doc_meta["DocumentId"]),
+                    "AccessHash": to_int64(doc_meta["AccessHash"]),
+                    "FileReference": doc_meta["FileReference"],
+                    "Date": doc_meta["Date"],
+                    "MimeType": doc_meta["MimeType"],
+                    "Size": doc_meta["Size"],
+                    "DcId": doc_meta["DcId"]
+                }
 
-            # Use original Telegram ID as document ID (fits int64)
-            doc_id = int(orig_tg_id) & 0x7FFFFFFFFFFFFFFF
+        reaction_docs.append(reaction_doc)
 
-            minio.put_object(MINIO_BUCKET, str(doc_id),
-                             io.BytesIO(data), length=len(data), content_type=mime)
-            col.insert_one({
-                "_id": f"documentreadmodel-{doc_id}",
-                "Id": f"documentreadmodel-{doc_id}",
-                "DocumentId": doc_id,
-                "LocalFile": f"reactions_files/{name}",
-                "AccessHash": access_hash,
-                "FileReference": file_ref,
-                "Date": int(time.time()),
-                "DcId": DC_ID, "MimeType": mime, "Size": len(data),
-                "Name": name, "Thumbs": None, "VideoThumbs": None,
-                "Attributes": attrs_bytes, "Attributes2": None,
-                "CreatorId": None, "Fingerprint": None,
-                "Md5CheckSum": None, "ThumbId": None, "VideoThumbId": None,
-                "Version": 1,
-            })
-            print(f"  [{emoji}] {field}: imported doc_id={doc_id}")
-            imported += 1
+    # Clear existing reactions and insert new ones
+    reactions_col.delete_many({})
+    if reaction_docs:
+        reactions_col.insert_many(reaction_docs)
+        print(f"\nInserted {len(reaction_docs)} reactions into MongoDB")
 
-    print(f"\nDone. Imported {imported} new documents.")
-    print("Now run: python3 seed_reactions.py --generate-handler")
-    print("Then rebuild messenger-command-server and messenger-query-server images.")
-
-
-# ── Generate handler ──────────────────────────────────────────────────────────
-
-HANDLER_PATH = Path(os.environ.get(
-    "HANDLER_PATH",
-    "../source/src/MyTelegram.Messenger/Handlers/LatestLayer/Messages/GetAvailableReactionsHandler.cs"
-))
-
-CS_FIELDS = ["StaticIcon", "AppearAnimation", "SelectAnimation",
-             "ActivateAnimation", "EffectAnimation", "AroundAnimation", "CenterIcon"]
-
-
-def cmd_generate_handler():
-    import pymongo
-
-    manifest = json.loads(MANIFEST_FILE.read_text())
-    col = pymongo.MongoClient(MONGO_URL)["tg"]["eventflow-documentreadmodel"]
-
-    def to_int64(v):
-        if isinstance(v, dict):
-            val = (v["high"] << 32) | (v["low"] & 0xFFFFFFFF)
-            return val - (1 << 64) if val >= (1 << 63) else val
-        return int(v)
-
-    # Build doc_id -> metadata mapping (by filename stem)
-    name_to_meta = {}
-    import re
-    pattern = "^[0-9]+_(static_icon|appear_animation|select_animation|activate_animation|effect_animation|around_animation|center_icon)"
-    for d in col.find({"Name": {"$regex": pattern}}):
-        did = to_int64(d["DocumentId"])
-        ah  = to_int64(d["AccessHash"])
-        stem = d["Name"].rsplit(".", 1)[0]  # e.g. "4988077362902991651_static_icon"
-        name_to_meta[stem] = {"id": did, "ah": ah, "fr": d["FileReference"],
-                              "mime": d["MimeType"], "size": d["Size"], "dc": d["DcId"]}
-
-    def tdoc(file_path):
-        if not file_path:
-            return "new TDocumentEmpty()"
-        stem = Path(file_path).stem  # e.g. "4988077362902991651_static_icon"
-        d = name_to_meta.get(stem)
-        if not d:
-            return "new TDocumentEmpty()"
-        fr = ", ".join(str(b) for b in d["fr"])
-        return (f'new TDocument {{ Id = {d["id"]}L, AccessHash = {d["ah"]}L, '
-                f'FileReference = new byte[]{{ {fr} }}, Date = 0, '
-                f'MimeType = "{d["mime"]}", Size = {d["size"]}, '
-                f'Thumbs = [], VideoThumbs = [], DcId = {d["dc"]}, '
-                f'Attributes = new TVector<IDocumentAttribute>() }}')
-
-    reactions_code = []
-    for r in manifest:
-        lines = [
-            "        new TAvailableReaction",
-            "        {",
-            f'            Reaction = "{r["emoji"]}",',
-            f'            Title = "{r["title"]}",',
-            f'            Inactive = {"true" if r["inactive"] else "false"},',
-            f'            Premium = {"true" if r["premium"] else "false"},',
-        ]
-        for f, cf in zip(FIELDS, CS_FIELDS):
-            lines.append(f"            {cf} = {tdoc(r.get(f))},")
-        lines.append("        },")
-        reactions_code.append("\n".join(lines))
-
-    content = (
-        "namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;\n"
-        "internal sealed class GetAvailableReactionsHandler : RpcResultObjectHandler"
-        "<MyTelegram.Schema.Messages.RequestGetAvailableReactions, MyTelegram.Schema.Messages.IAvailableReactions>\n"
-        "{\n"
-        "    private static readonly IReadOnlyList<IAvailableReaction> DefaultReactions =\n"
-        "    [\n"
-        + "\n".join(reactions_code) + "\n"
-        "    ];\n\n"
-        "    private static readonly int _hash = DefaultReactions.Aggregate(0, "
-        "(h, r) => h * 31 + ((TAvailableReaction)r).Reaction.GetHashCode()) & int.MaxValue;\n\n"
-        "    protected override Task<MyTelegram.Schema.Messages.IAvailableReactions> HandleCoreAsync"
-        "(IRequestInput input, MyTelegram.Schema.Messages.RequestGetAvailableReactions obj)\n"
-        "    {\n"
-        "        if (obj.Hash != 0 && obj.Hash == _hash)\n"
-        "            return Task.FromResult<IAvailableReactions>(new TAvailableReactionsNotModified());\n"
-        "        return Task.FromResult<IAvailableReactions>(new TAvailableReactions\n"
-        "        {\n"
-        "            Reactions = new TVector<IAvailableReaction>(DefaultReactions),\n"
-        "            Hash = _hash\n"
-        "        });\n"
-        "    }\n"
-        "}\n"
-    )
-
-    HANDLER_PATH.write_text(content)
-    print(f"Handler written to {HANDLER_PATH} ({len(manifest)} reactions)")
+    print(f"Done. Imported {imported} new documents.")
+    print("Reactions are now loaded from MongoDB. Rebuild messenger servers to apply changes.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -290,7 +228,5 @@ if __name__ == "__main__":
         cmd_import()
     elif "--download" in sys.argv:
         asyncio.run(cmd_download())
-    elif "--generate-handler" in sys.argv:
-        cmd_generate_handler()
     else:
         print(__doc__)
