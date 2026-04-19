@@ -308,7 +308,7 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
             ["channel_id"] = peer.PeerId,
             ["event_id"] = eventId,
             ["user_id"] = input.UserId,
-            ["date"] = CurrentDate,
+            ["date"] = DateTime.UtcNow,
             ["action"] = new BsonDocument
             {
                 ["type"] = "TChannelAdminLogEventActionEditMessage",

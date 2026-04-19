@@ -400,7 +400,7 @@ public static class AdminLogHelper
             ["event_id"] = eventId,
             ["channel_id"] = channelId,
             ["user_id"] = adminUserId,
-            ["date"] = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["date"] = DateTime.UtcNow,
             ["action"] = new BsonDocument
             {
                 ["type"] = action.GetType().Name,

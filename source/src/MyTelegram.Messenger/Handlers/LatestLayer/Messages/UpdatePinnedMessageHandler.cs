@@ -169,7 +169,7 @@ internal sealed class UpdatePinnedMessageHandler(ICommandBus commandBus, IPeerHe
             ["channel_id"] = peer.PeerId,
             ["event_id"] = eventId,
             ["user_id"] = input.UserId,
-            ["date"] = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["date"] = DateTime.UtcNow,
             ["action"] = new MongoDB.Bson.BsonDocument
             {
                 ["type"] = "TChannelAdminLogEventActionUpdatePinned",

@@ -143,7 +143,9 @@ internal sealed class GetAdminLogHandler(
             tlEvents.Add(new TChannelAdminLogEvent
             {
                 Id = evt["event_id"].AsInt64,
-                Date = evt["date"].AsInt32,
+                Date = evt["date"].BsonType == BsonType.DateTime
+                    ? (int)new DateTimeOffset(evt["date"].ToUniversalTime()).ToUnixTimeSeconds()
+                    : evt["date"].AsInt32,
                 UserId = userId,
                 Action = action
             });

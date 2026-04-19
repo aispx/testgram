@@ -59,42 +59,7 @@ internal sealed class DeleteMessagesHandler(
 
                     foreach (var msg in messages)
                     {
-                        // Decrypt message text if EncryptedData exists
-                        var messageText = msg.Message ?? string.Empty;
-                        if (string.IsNullOrEmpty(messageText) && msg.EncryptedData.HasValue && msg.EncryptedData.Value.Length > 0)
-                        {
-                            messageText = messageConverterService.DecryptMessage(peer.PeerId, msg.MessageId, msg.EncryptedData.Value);
-                        }
-
-                        // Build TMessage with only fields that exist in original message
-                        var message = new TMessage
-                        {
-                            Id = msg.MessageId,
-                            PeerId = new TPeerChannel { ChannelId = peer.PeerId },
-                            Message = messageText,
-                            Date = msg.Date,
-                            Out = msg.Out,
-                            Post = msg.Post,
-                            Media = new TMessageMediaEmpty(),
-                            ReplyTo = null,
-                            Entities = new TVector<IMessageEntity>(),
-                            Views = msg.Views ?? 0,
-                            Forwards = 0
-                        };
-
-                        // Add optional fields only if they exist
-                        if (msg.SenderUserId > 0)
-                            message.FromId = new TPeerUser { UserId = msg.SenderUserId };
-
-                        if (msg.Views.HasValue && msg.Views.Value > 0)
-                            message.Views = msg.Views.Value;
-
-                        if (msg.EditDate.HasValue && msg.EditDate.Value > 0)
-                            message.EditDate = msg.EditDate.Value;
-
-                        if (!string.IsNullOrEmpty(msg.PostAuthor))
-                            message.PostAuthor = msg.PostAuthor;
-
+                        var message = messageConverterService.ToMessage(input.UserId, msg, layer: input.Layer);
                         await AdminLogHelper.LogDeleteMessage(mongoDatabase, inputChannel.ChannelId, input.UserId, message);
                     }
                 }
