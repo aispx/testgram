@@ -10,18 +10,18 @@ internal sealed class GetEmojiKeywordsLanguagesHandler : RpcResultObjectHandler<
 {
     protected override Task<TVector<MyTelegram.Schema.IEmojiLanguage>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetEmojiKeywordsLanguages obj)
     {
-        var languages = new[]
+        var codes = new List<string>();
+        if (obj.LangCodes != null)
         {
-            new TEmojiLanguage
-            {
-                LangCode = "en"
-            },
-            new TEmojiLanguage
-            {
-                LangCode = "zh-hans"
-            }
-        };
-        var r = new TVector<IEmojiLanguage>(languages);
-        return Task.FromResult(r);
+            codes.AddRange(obj.LangCodes.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()));
+        }
+
+        if (!codes.Contains("en"))
+        {
+            codes.Add("en");
+        }
+
+        var result = new TVector<IEmojiLanguage>(codes.Distinct().Select(x => (IEmojiLanguage)new TEmojiLanguage { LangCode = x }).ToList());
+        return Task.FromResult(result);
     }
 }

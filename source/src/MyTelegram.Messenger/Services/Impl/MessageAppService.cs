@@ -686,16 +686,87 @@ public class MessageAppService(
         }
     }
 
-    public Task<List<long>> ProcessMessageEntitiesAsync(string? message, IList<IMessageEntity>? entities, Peer toPeer)
+    public async Task<List<long>> ProcessMessageEntitiesAsync(string? message, IList<IMessageEntity>? entities, Peer toPeer)
     {
         if (string.IsNullOrEmpty(message))
         {
-            return Task.FromResult<List<long>>([]);
+            return [];
         }
 
+        await ProcessMessageEntityCustomEmojiAsync(message, entities);
         ProcessMessageEntityHashtag(message, entities);
         ProcessMessageEntityUrlList(message, entities);
-        return ProcessMessageEntityMentionAsync(message, entities, toPeer);
+        return await ProcessMessageEntityMentionAsync(message, entities, toPeer);
+    }
+
+    private async Task ProcessMessageEntityCustomEmojiAsync(string message, IList<IMessageEntity>? entities)
+    {
+        if (entities == null || entities.Count == 0)
+        {
+            return;
+        }
+
+        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
+        var customEmojiEntities = entities.OfType<TMessageEntityCustomEmoji>().ToList();
+        if (customEmojiEntities.Count == 0)
+        {
+            return;
+        }
+
+        var documentIds = customEmojiEntities.Select(x => x.DocumentId).Distinct().ToList();
+        var filter = Builders<BsonDocument>.Filter.In("DocumentId", documentIds.Select(x => (BsonValue)new BsonInt64(x)));
+        var documents = await docCol.Find(filter).ToListAsync();
+        var documentMap = documents.ToDictionary(x => x["DocumentId"].ToInt64());
+
+        foreach (var entity in customEmojiEntities)
+        {
+            if (entity.Offset < 0 || entity.Length <= 0 || entity.Offset + entity.Length > message.Length)
+            {
+                RpcErrors.RpcErrors400.EntityBoundsInvalid.ThrowRpcError();
+            }
+
+            if (!documentMap.TryGetValue(entity.DocumentId, out var document))
+            {
+                RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
+            }
+
+            if (!TryGetCustomEmojiAttribute(document, out var attribute))
+            {
+                RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
+            }
+
+            var text = message.Substring(entity.Offset, entity.Length);
+            if (string.IsNullOrEmpty(attribute.Alt) || !string.Equals(text, attribute.Alt, StringComparison.Ordinal))
+            {
+                RpcErrors.RpcErrors400.EmoticonInvalid.ThrowRpcError();
+            }
+        }
+    }
+
+    private static bool TryGetCustomEmojiAttribute(BsonDocument document, out TDocumentAttributeCustomEmoji attribute)
+    {
+        attribute = null!;
+        if (!document.Contains("Attributes2") || document["Attributes2"].IsBsonNull)
+        {
+            return false;
+        }
+
+        try
+        {
+            var attributes = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(document["Attributes2"].ToJson());
+            var customEmojiAttribute = attributes.OfType<TDocumentAttributeCustomEmoji>().FirstOrDefault();
+            if (customEmojiAttribute == null)
+            {
+                return false;
+            }
+
+            attribute = customEmojiAttribute;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task<List<long>> ProcessMessageEntityMentionAsync(string message, IList<IMessageEntity>? entities, Peer toPeer)

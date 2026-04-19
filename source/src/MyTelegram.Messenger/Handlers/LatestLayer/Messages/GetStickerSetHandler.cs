@@ -231,11 +231,24 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
             packs.Add(new TStickerPack { Emoticon = emoticon, Documents = new TVector<long>(docIds) });
         }
 
+        var keywords = new List<IStickerKeyword>();
+        if (setDoc.Contains("Keywords") && !setDoc["Keywords"].IsBsonNull && setDoc["Keywords"].IsBsonArray)
+        {
+            foreach (var keyword in setDoc["Keywords"].AsBsonArray)
+            {
+                keywords.Add(new TStickerKeyword
+                {
+                    DocumentId = GetInt64(keyword["DocumentId"]),
+                    Keyword = new TVector<string>(keyword["Keyword"].AsBsonArray.Select(x => x.AsString).ToList())
+                });
+            }
+        }
+
         return new TStickerSet
         {
             Packs = new TVector<IStickerPack>(packs),
             Documents = new TVector<IDocument>(documents),
-            Keywords = new TVector<IStickerKeyword>(),
+            Keywords = new TVector<IStickerKeyword>(keywords),
             Set = new Schema.TStickerSet
             {
                 Id = setId,

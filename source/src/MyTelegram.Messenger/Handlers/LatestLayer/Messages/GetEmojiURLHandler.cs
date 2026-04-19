@@ -10,6 +10,6 @@ internal sealed class GetEmojiURLHandler : RpcResultObjectHandler<MyTelegram.Sch
 {
     protected override Task<MyTelegram.Schema.IEmojiURL> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetEmojiURL obj)
     {
-        throw new NotImplementedException();
+        return Task.FromResult<IEmojiURL>(new TEmojiURL { Url = "https://translations.telegram.org/" });
     }
 }
