@@ -1,18 +1,14 @@
 using MyTelegram.Schema.Messages;
+using MongoDB.Bson;
+using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
-internal sealed class GetRecentReactionsHandler(IQueryProcessor queryProcessor)
+internal sealed class GetRecentReactionsHandler(
+    IQueryProcessor queryProcessor,
+    IMongoDatabase database)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetRecentReactions, MyTelegram.Schema.Messages.IReactions>
 {
     private const string RecentKey = "recent_reactions";
-
-    private static readonly IReadOnlyList<IReaction> DefaultRecent =
-        GetAvailableReactionsHandler.DefaultReactions
-            .Cast<TAvailableReaction>()
-            .Where(r => !r.Inactive && !r.Premium)
-            .Take(8)
-            .Select(r => (IReaction)new TReactionEmoji { Emoticon = r.Reaction })
-            .ToList();
 
     protected override async Task<MyTelegram.Schema.Messages.IReactions> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetRecentReactions obj)
     {
@@ -29,7 +25,18 @@ internal sealed class GetRecentReactionsHandler(IQueryProcessor queryProcessor)
         }
         else
         {
-            reactions = DefaultRecent.Take(limit).ToList();
+            // Load default reactions from MongoDB
+            var collection = database.GetCollection<BsonDocument>("reactions");
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("Inactive", false),
+                Builders<BsonDocument>.Filter.Eq("Premium", false)
+            );
+            var sort = Builders<BsonDocument>.Sort.Ascending("Order");
+            var reactionDocs = await collection.Find(filter).Sort(sort).Limit(limit).ToListAsync();
+
+            reactions = reactionDocs
+                .Select(doc => (IReaction)new TReactionEmoji { Emoticon = doc["Reaction"].AsString })
+                .ToList();
         }
 
         return new TReactions { Hash = 0, Reactions = new TVector<IReaction>(reactions.ToList()) };
