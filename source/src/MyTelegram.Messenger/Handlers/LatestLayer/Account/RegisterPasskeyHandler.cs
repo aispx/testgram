@@ -6,18 +6,31 @@ internal sealed class RegisterPasskeyHandler(IPasskeyService passkeyService) : R
 {
     protected override async Task<MyTelegram.Schema.IPasskey> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestRegisterPasskey obj)
     {
-        if (obj.Credential is not TInputPasskeyCredentialPublicKey cred)
+        if (obj.Credential is not TInputPasskeyCredentialPublicKey cred || cred.Response is not TInputPasskeyResponseRegister response)
         {
             RpcErrors.RpcErrors400.CredentialInvalid.ThrowRpcError();
             return null!;
         }
 
-        var response = (TInputPasskeyResponseRegister)cred.Response;
-        var clientDataJson = PasskeyService.DecodeClientDataJson(response.ClientData.Data);
+        try
+        {
+            var clientDataJson = PasskeyService.DecodeClientDataJson(response.ClientData.Data);
+            var doc = await passkeyService.VerifyRegistrationAsync(input.UserId, cred.Id, cred.RawId, clientDataJson, response.AttestationData.ToArray());
+            await passkeyService.SaveAsync(doc);
 
-        var doc = await passkeyService.VerifyRegistrationAsync(input.UserId, cred.Id, clientDataJson, response.AttestationData.ToArray());
-        await passkeyService.SaveAsync(doc);
-
-        return new TPasskey { Id = doc.Id, Name = doc.Name, Date = doc.CreatedAt };
+            return new TPasskey
+            {
+                Id = doc.Id,
+                Name = doc.Name,
+                Date = doc.CreatedAt,
+                SoftwareEmojiId = doc.SoftwareEmojiId,
+                LastUsageDate = doc.LastUsageDate
+            };
+        }
+        catch
+        {
+            RpcErrors.RpcErrors400.CredentialInvalid.ThrowRpcError();
+            return null!;
+        }
     }
 }

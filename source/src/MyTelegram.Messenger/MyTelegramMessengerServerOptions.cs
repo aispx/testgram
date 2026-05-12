@@ -36,6 +36,7 @@ public class MyTelegramMessengerServerOptions
 
     public string? PasskeyRpId { get; set; }
     public string? PasskeyRpName { get; set; }
+    public int PasskeysAccountPasskeysMax { get; set; } = 20;
 
     //public long? SupportUserId { get; set; }
     // https://github.com/dotnet/runtime/issues/36510

@@ -3,6 +3,7 @@ namespace MyTelegram.Messenger.Services.Passkey;
 public class PasskeyDocument
 {
     public string Id { get; set; } = null!; // credential id (base64url)
+    public string RawId { get; set; } = null!; // raw credential id (base64url)
     public long UserId { get; set; }
     public string Name { get; set; } = null!;
     public byte[] PublicKey { get; set; } = null!; // COSE key bytes

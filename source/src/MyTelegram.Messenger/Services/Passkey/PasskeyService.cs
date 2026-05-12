@@ -2,6 +2,7 @@ using System.Formats.Cbor;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using JsonSerializer = System.Text.Json.JsonSerializer;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
@@ -9,15 +10,18 @@ namespace MyTelegram.Messenger.Services.Passkey;
 
 public interface IPasskeyService
 {
+    int MaxPasskeysPerAccount { get; }
     Task<string> CreateRegistrationOptionsAsync(long userId, string userName, int ttlSeconds = 300);
-    Task<PasskeyDocument> VerifyRegistrationAsync(long userId, string credentialId, string clientDataJson, byte[] attestationData);
+    Task<PasskeyDocument> VerifyRegistrationAsync(long userId, string credentialId, string rawCredentialId, string clientDataJson, byte[] attestationData);
     Task SaveAsync(PasskeyDocument doc);
     Task<string> CreateLoginOptionsAsync(int ttlSeconds = 300);
-    Task<PasskeyDocument> VerifyLoginAsync(string credentialId, string clientDataJson, byte[] clientDataRaw, byte[] authenticatorData, byte[] signature, string userHandle);
+    Task<PasskeyLoginResult> VerifyLoginAsync(string credentialId, string rawCredentialId, string clientDataJson, byte[] clientDataRaw, byte[] authenticatorData, byte[] signature, string userHandle);
     Task<List<PasskeyDocument>> GetPasskeysAsync(long userId);
     Task DeletePasskeyAsync(long userId, string id);
     Task UpdateSignCountAsync(string credentialId, uint signCount, int lastUsageDate);
 }
+
+public sealed record PasskeyLoginResult(PasskeyDocument Passkey, uint SignCount, int UserDcId, long UserId);
 
 public class PasskeyService(
     IMongoDatabase mongoDatabase,
@@ -25,55 +29,76 @@ public class PasskeyService(
     IOptionsMonitor<MyTelegramMessengerServerOptions> options) : IPasskeyService, ISingletonDependency
 {
     private const string CollectionName = "passkey-readmodel";
+    private const string WebAuthnCreateType = "webauthn.create";
+    private const string WebAuthnGetType = "webauthn.get";
+    private const byte UserPresentFlag = 0x01;
+    private const byte AttestedCredentialDataFlag = 0x40;
+
     private IMongoCollection<PasskeyDocument> Collection => mongoDatabase.GetCollection<PasskeyDocument>(CollectionName);
 
-    private string RpId => options.CurrentValue.PasskeyRpId ?? "localhost";
-    private string RpName => options.CurrentValue.PasskeyRpName ?? "Testgram";
+    // Official Telegram passkeys are scoped to telegram.org as RP ID. Deployments may override it for local/test environments.
+    private string RpId => string.IsNullOrWhiteSpace(options.CurrentValue.PasskeyRpId) ? "telegram.org" : options.CurrentValue.PasskeyRpId!;
+    private string RpName => string.IsNullOrWhiteSpace(options.CurrentValue.PasskeyRpName) ? "Telegram" : options.CurrentValue.PasskeyRpName!;
+    public int MaxPasskeysPerAccount => options.CurrentValue.PasskeysAccountPasskeysMax <= 0 ? 20 : options.CurrentValue.PasskeysAccountPasskeysMax;
 
     public async Task<string> CreateRegistrationOptionsAsync(long userId, string userName, int ttlSeconds = 300)
     {
+        var existingPasskeys = await GetPasskeysAsync(userId);
+        if (existingPasskeys.Count >= MaxPasskeysPerAccount)
+            throw new InvalidOperationException("Passkey limit reached");
+
         var challenge = GenerateChallenge();
         var challengeB64 = Base64UrlEncode(challenge);
-        await cacheManager.SetAsync($"passkey:reg:{userId}", challengeB64, ttlSeconds);
+        await cacheManager.SetAsync(RegistrationChallengeKey(userId), challengeB64, ttlSeconds);
 
         var opts = new
         {
             challenge = challengeB64,
             rp = new { id = RpId, name = RpName },
-            user = new { id = Base64UrlEncode(Encoding.UTF8.GetBytes($"{options.CurrentValue.ThisDcId}:{userId}")), name = userName, displayName = userName },
+            user = new
+            {
+                id = Base64UrlEncode(Encoding.UTF8.GetBytes($"{options.CurrentValue.ThisDcId}:{userId}")),
+                name = userName,
+                displayName = userName
+            },
             pubKeyCredParams = new[] { new { type = "public-key", alg = -7 }, new { type = "public-key", alg = -257 } },
             timeout = ttlSeconds * 1000,
             attestation = "none",
+            excludeCredentials = existingPasskeys.Select(p => new { type = "public-key", id = p.Id }).ToArray(),
             authenticatorSelection = new { residentKey = "required", requireResidentKey = true, userVerification = "preferred" }
         };
-        var result = System.Text.Json.JsonSerializer.Serialize(new { publicKey = opts });
-        return result;
+
+        return JsonSerializer.Serialize(new { publicKey = opts });
     }
 
-    public async Task<PasskeyDocument> VerifyRegistrationAsync(long userId, string credentialId, string clientDataJson, byte[] attestationData)
+    public async Task<PasskeyDocument> VerifyRegistrationAsync(long userId, string credentialId, string rawCredentialId, string clientDataJson, byte[] attestationData)
     {
-        var expectedChallenge = await cacheManager.GetAsync($"passkey:reg:{userId}");
+        var expectedChallenge = await cacheManager.GetAsync(RegistrationChallengeKey(userId));
         if (expectedChallenge == null)
             throw new InvalidOperationException("Registration challenge expired or not found");
 
-        var clientData = System.Text.Json.JsonSerializer.Deserialize<JsonElement>(clientDataJson);
-        if (clientData.GetProperty("challenge").GetString() != expectedChallenge)
-            throw new InvalidOperationException("Challenge mismatch");
-        if (clientData.GetProperty("type").GetString() != "webauthn.create")
-            throw new InvalidOperationException("Invalid type");
+        var clientData = ParseClientData(clientDataJson, WebAuthnCreateType, expectedChallenge);
+        ValidateOrigin(clientData);
 
-        var authData = ParseAttestationAuthData(attestationData);
-        var publicKey = ExtractPublicKeyFromAuthData(authData);
+        var authDataBytes = ParseAttestationAuthData(attestationData);
+        var authData = ParseAuthenticatorData(authDataBytes, requireAttestedCredentialData: true);
+        ValidateRpIdHash(authData.RpIdHash);
+        ValidateUserPresent(authData.Flags);
 
-        await cacheManager.RemoveAsync($"passkey:reg:{userId}");
+        var attestedCredentialId = Base64UrlEncode(authData.CredentialId!);
+        if (!CredentialIdsMatch(credentialId, rawCredentialId, attestedCredentialId))
+            throw new InvalidOperationException("Credential ID mismatch");
+
+        await cacheManager.RemoveAsync(RegistrationChallengeKey(userId));
 
         return new PasskeyDocument
         {
             Id = credentialId,
+            RawId = rawCredentialId,
             UserId = userId,
             Name = "Passkey",
-            PublicKey = publicKey,
-            SignCount = ReadSignCount(authData),
+            PublicKey = authData.CosePublicKey!,
+            SignCount = authData.SignCount,
             CreatedAt = DateTime.UtcNow.ToTimestamp()
         };
     }
@@ -90,7 +115,7 @@ public class PasskeyService(
     {
         var challenge = GenerateChallenge();
         var challengeB64 = Base64UrlEncode(challenge);
-        await cacheManager.SetAsync($"passkey:login:{challengeB64}", challengeB64, ttlSeconds);
+        await cacheManager.SetAsync(LoginChallengeKey(challengeB64), challengeB64, ttlSeconds);
 
         var opts = new
         {
@@ -100,31 +125,47 @@ public class PasskeyService(
             userVerification = "preferred",
             allowCredentials = Array.Empty<object>()
         };
-        return System.Text.Json.JsonSerializer.Serialize(new { publicKey = opts });
+
+        return JsonSerializer.Serialize(new { publicKey = opts });
     }
 
-    public async Task<PasskeyDocument> VerifyLoginAsync(string credentialId, string clientDataJson, byte[] clientDataRaw, byte[] authenticatorData, byte[] signature, string userHandle)
+    public async Task<PasskeyLoginResult> VerifyLoginAsync(string credentialId, string rawCredentialId, string clientDataJson, byte[] clientDataRaw, byte[] authenticatorData, byte[] signature, string userHandle)
     {
-        var clientData = System.Text.Json.JsonSerializer.Deserialize<JsonElement>(clientDataJson);
-        var challenge = clientData.GetProperty("challenge").GetString()!;
-        if (clientData.GetProperty("type").GetString() != "webauthn.get")
-            throw new InvalidOperationException("Invalid type");
+        var clientData = JsonSerializer.Deserialize<JsonElement>(clientDataJson);
+        if (!clientData.TryGetProperty("challenge", out var challengeProperty))
+            throw new InvalidOperationException("Challenge is missing");
 
-        var cachedChallenge = await cacheManager.GetAsync($"passkey:login:{challenge}");
-        if (cachedChallenge == null)
+        var challenge = challengeProperty.GetString() ?? throw new InvalidOperationException("Challenge is empty");
+        ParseClientData(clientDataJson, WebAuthnGetType, challenge);
+        ValidateOrigin(clientData);
+
+        var cachedChallenge = await cacheManager.GetAsync(LoginChallengeKey(challenge));
+        if (cachedChallenge == null || cachedChallenge != challenge)
             throw new InvalidOperationException("Login challenge expired or not found");
 
-        var passkey = await Collection.Find(p => p.Id == credentialId).FirstOrDefaultAsync();
+        var passkey = await Collection.Find(p => p.Id == credentialId || p.RawId == rawCredentialId).FirstOrDefaultAsync();
         if (passkey == null)
             throw new InvalidOperationException("Passkey not found");
 
+        var (userDcId, userId) = DecodeUserHandle(userHandle);
+        if (userId != passkey.UserId)
+            throw new InvalidOperationException("User handle does not match credential owner");
+
+        var parsedAuthData = ParseAuthenticatorData(authenticatorData, requireAttestedCredentialData: false);
+        ValidateRpIdHash(parsedAuthData.RpIdHash);
+        ValidateUserPresent(parsedAuthData.Flags);
+
+        if (passkey.SignCount > 0 && parsedAuthData.SignCount > 0 && parsedAuthData.SignCount <= passkey.SignCount)
+            throw new InvalidOperationException("Authenticator sign counter rollback detected");
+
         var clientDataHash = SHA256.HashData(clientDataRaw);
-        // clientDataJson may have been decoded from base64url; hash the raw bytes as received
-        var signedData = authenticatorData.Concat(clientDataHash).ToArray();
+        var signedData = new byte[authenticatorData.Length + clientDataHash.Length];
+        Buffer.BlockCopy(authenticatorData, 0, signedData, 0, authenticatorData.Length);
+        Buffer.BlockCopy(clientDataHash, 0, signedData, authenticatorData.Length, clientDataHash.Length);
         VerifySignature(passkey.PublicKey, signedData, signature);
 
-        await cacheManager.RemoveAsync($"passkey:login:{challenge}");
-        return passkey;
+        await cacheManager.RemoveAsync(LoginChallengeKey(challenge));
+        return new PasskeyLoginResult(passkey, parsedAuthData.SignCount, userDcId, userId);
     }
 
     public async Task<List<PasskeyDocument>> GetPasskeysAsync(long userId) =>
@@ -142,6 +183,9 @@ public class PasskeyService(
 
     // --- helpers ---
 
+    private static string RegistrationChallengeKey(long userId) => $"passkey:reg:{userId}";
+    private static string LoginChallengeKey(string challenge) => $"passkey:login:{challenge}";
+
     private static byte[] GenerateChallenge()
     {
         var b = new byte[32];
@@ -154,8 +198,18 @@ public class PasskeyService(
     {
         if (data.TrimStart().StartsWith('{'))
             return data;
+
         try { return Encoding.UTF8.GetString(Base64UrlDecode(data)); }
         catch { return data; }
+    }
+
+    public static byte[] DecodeClientDataBytes(string data)
+    {
+        if (data.TrimStart().StartsWith('{'))
+            return Encoding.UTF8.GetBytes(data);
+
+        try { return Base64UrlDecode(data); }
+        catch { return Encoding.UTF8.GetBytes(data); }
     }
 
     public static string Base64UrlEncode(byte[] data) =>
@@ -164,8 +218,113 @@ public class PasskeyService(
     public static byte[] Base64UrlDecode(string s)
     {
         s = s.Replace('-', '+').Replace('_', '/');
-        switch (s.Length % 4) { case 2: s += "=="; break; case 3: s += "="; break; }
+        switch (s.Length % 4)
+        {
+            case 0: break;
+            case 2: s += "=="; break;
+            case 3: s += "="; break;
+            default: throw new FormatException("Invalid base64url length");
+        }
+
         return Convert.FromBase64String(s);
+    }
+
+    private JsonElement ParseClientData(string clientDataJson, string expectedType, string expectedChallenge)
+    {
+        var clientData = JsonSerializer.Deserialize<JsonElement>(clientDataJson);
+        if (!clientData.TryGetProperty("type", out var typeProperty) || typeProperty.GetString() != expectedType)
+            throw new InvalidOperationException("Invalid clientData type");
+
+        if (!clientData.TryGetProperty("challenge", out var challengeProperty) || challengeProperty.GetString() != expectedChallenge)
+            throw new InvalidOperationException("Challenge mismatch");
+
+        return clientData;
+    }
+
+    private void ValidateOrigin(JsonElement clientData)
+    {
+        if (!clientData.TryGetProperty("origin", out var originProperty))
+            return;
+
+        var origin = originProperty.GetString();
+        if (string.IsNullOrWhiteSpace(origin))
+            return;
+
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException("Invalid WebAuthn origin");
+
+        // Native platform passkeys may use non-HTTP origins; RP-ID hash validation above is the binding check.
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var rpId = RpId;
+        if (string.Equals(rpId, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Origin host mismatch");
+            return;
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("WebAuthn origin must be https");
+
+        if (!string.Equals(uri.Host, rpId, StringComparison.OrdinalIgnoreCase) && !uri.Host.EndsWith($".{rpId}", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Origin host mismatch");
+    }
+
+    private void ValidateRpIdHash(byte[] rpIdHash)
+    {
+        var expected = SHA256.HashData(Encoding.UTF8.GetBytes(RpId));
+        if (!CryptographicOperations.FixedTimeEquals(expected, rpIdHash))
+            throw new InvalidOperationException("RP ID hash mismatch");
+    }
+
+    private static void ValidateUserPresent(byte flags)
+    {
+        if ((flags & UserPresentFlag) == 0)
+            throw new InvalidOperationException("User presence flag is missing");
+    }
+
+    private static bool CredentialIdsMatch(string credentialId, string rawCredentialId, string attestedCredentialId)
+    {
+        if (credentialId == attestedCredentialId || rawCredentialId == attestedCredentialId)
+            return true;
+
+        return TryNormalizeCredentialId(credentialId, out var normalizedCredentialId) && normalizedCredentialId == attestedCredentialId ||
+               TryNormalizeCredentialId(rawCredentialId, out var normalizedRawId) && normalizedRawId == attestedCredentialId;
+    }
+
+    private static bool TryNormalizeCredentialId(string value, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        try
+        {
+            normalized = Base64UrlEncode(Base64UrlDecode(value));
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static (int DcId, long UserId) DecodeUserHandle(string userHandle)
+    {
+        var decoded = userHandle;
+        if (!decoded.Contains(':'))
+        {
+            decoded = Encoding.UTF8.GetString(Base64UrlDecode(userHandle));
+        }
+
+        var parts = decoded.Split(':', 2);
+        if (parts.Length != 2 || !int.TryParse(parts[0], out var dcId) || !long.TryParse(parts[1], out var userId))
+            throw new InvalidOperationException("Invalid passkey user handle");
+
+        return (dcId, userId);
     }
 
     private static byte[] ParseAttestationAuthData(byte[] attestationData)
@@ -175,96 +334,145 @@ public class PasskeyService(
         while (reader.PeekState() != CborReaderState.EndMap)
         {
             var key = reader.ReadTextString();
-            if (key == "authData") return reader.ReadByteString();
+            if (key == "authData")
+                return reader.ReadByteString();
+
             reader.SkipValue();
         }
+
         throw new InvalidOperationException("authData not found in attestation");
     }
 
-    private static byte[] ExtractPublicKeyFromAuthData(byte[] authData)
+    private static AuthenticatorData ParseAuthenticatorData(byte[] authData, bool requireAttestedCredentialData)
     {
-        if (authData.Length < 37) throw new InvalidOperationException("authData too short");
+        if (authData.Length < 37)
+            throw new InvalidOperationException("authData too short");
+
+        var rpIdHash = authData[..32];
         var flags = authData[32];
-        if ((flags & 0x40) == 0) throw new InvalidOperationException("No attested credential data");
-        var offset = 37 + 16; // skip rpIdHash(32)+flags(1)+signCount(4)+aaguid(16)
+        var signCount = ReadSignCount(authData);
+
+        if (!requireAttestedCredentialData)
+            return new AuthenticatorData(rpIdHash, flags, signCount, null, null);
+
+        if ((flags & AttestedCredentialDataFlag) == 0)
+            throw new InvalidOperationException("No attested credential data");
+
+        var offset = 37 + 16; // rpIdHash(32)+flags(1)+signCount(4)+aaguid(16)
+        if (authData.Length < offset + 2)
+            throw new InvalidOperationException("credential id length is missing");
+
         var credIdLen = (authData[offset] << 8) | authData[offset + 1];
-        offset += 2 + credIdLen;
-        return authData[offset..];
+        offset += 2;
+        if (authData.Length < offset + credIdLen)
+            throw new InvalidOperationException("credential id is truncated");
+
+        var credentialId = authData[offset..(offset + credIdLen)];
+        offset += credIdLen;
+        if (authData.Length <= offset)
+            throw new InvalidOperationException("COSE public key is missing");
+
+        return new AuthenticatorData(rpIdHash, flags, signCount, credentialId, authData[offset..]);
     }
 
-    private static uint ReadSignCount(byte[] authData)
-    {
-        if (authData.Length < 37) return 0;
-        return (uint)((authData[33] << 24) | (authData[34] << 16) | (authData[35] << 8) | authData[36]);
-    }
+    private static uint ReadSignCount(byte[] authData) =>
+        (uint)((authData[33] << 24) | (authData[34] << 16) | (authData[35] << 8) | authData[36]);
 
     private static long ReadCborInt(CborReader reader)
     {
         if (reader.PeekState() == CborReaderState.UnsignedInteger)
             return (long)reader.ReadUInt64();
+
         return reader.ReadInt64();
     }
 
     private static void VerifySignature(byte[] cosePublicKey, byte[] data, byte[] signature)
     {
-        // First pass: collect all key-value pairs
-        var reader = new CborReader(cosePublicKey);
-        reader.ReadStartMap();
-        int alg = -7; // default EC
-        byte[]? x = null, y = null, n = null, e = null;
-        var entries = new List<(long key, CborReaderState valueType, byte[]? bytes, long intVal)>();
-        while (reader.PeekState() != CborReaderState.EndMap)
+        var key = ReadCoseKey(cosePublicKey);
+
+        if (key.Alg == -7 && key.X != null && key.Y != null)
         {
-            var key = ReadCborInt(reader);
-            var state = reader.PeekState();
-            if (state == CborReaderState.ByteString)
-                entries.Add((key, state, reader.ReadByteString(), 0));
-            else if (state == CborReaderState.UnsignedInteger || state == CborReaderState.NegativeInteger)
-                entries.Add((key, state, null, ReadCborInt(reader)));
-            else
-            { reader.SkipValue(); entries.Add((key, state, null, 0)); }
+            using var ecdsa = ECDsa.Create(new ECParameters
+            {
+                Curve = ECCurve.NamedCurves.nistP256,
+                Q = new ECPoint { X = key.X, Y = key.Y }
+            });
+
+            if (ecdsa.VerifyData(data, signature, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence) ||
+                ecdsa.VerifyData(data, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
+                return;
+
+            throw new InvalidOperationException("Signature verification failed");
         }
 
-        // Find alg first
-        foreach (var (key, _, _, intVal) in entries)
-            if (key == 3) { alg = (int)intVal; break; }
-
-        foreach (var (key, _, bytes, _) in entries)
+        if (key.Alg == -257 && key.N != null && key.E != null)
         {
-            switch (key)
+            using var rsa = RSA.Create();
+            rsa.ImportParameters(new RSAParameters { Modulus = key.N, Exponent = key.E });
+            if (!rsa.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1))
+                throw new InvalidOperationException("Signature verification failed");
+            return;
+        }
+
+        throw new InvalidOperationException($"Unsupported algorithm: {key.Alg}");
+    }
+
+    private static CoseKey ReadCoseKey(byte[] cosePublicKey)
+    {
+        var reader = new CborReader(cosePublicKey);
+        reader.ReadStartMap();
+
+        var entries = new List<(long Key, CborReaderState State, byte[]? Bytes, long IntValue)>();
+        while (reader.PeekState() != CborReaderState.EndMap)
+        {
+            var mapKey = ReadCborInt(reader);
+            var state = reader.PeekState();
+            if (state == CborReaderState.ByteString)
             {
-                case -1: if (alg == -257) n = bytes; break; // crv for EC (skip), n for RSA
-                case -2: if (alg == -257) e = bytes; else x = bytes; break;
-                case -3: y = bytes; break;
+                entries.Add((mapKey, state, reader.ReadByteString(), 0));
+            }
+            else if (state is CborReaderState.UnsignedInteger or CborReaderState.NegativeInteger)
+            {
+                entries.Add((mapKey, state, null, ReadCborInt(reader)));
+            }
+            else
+            {
+                reader.SkipValue();
+                entries.Add((mapKey, state, null, 0));
             }
         }
 
-        var hash = SHA256.HashData(data);
+        var alg = entries.FirstOrDefault(p => p.Key == 3).IntValue;
+        if (alg == 0)
+            alg = -7;
 
-        if (alg == -7 && x != null && y != null)
+        byte[]? x = null;
+        byte[]? y = null;
+        byte[]? n = null;
+        byte[]? e = null;
+
+        foreach (var (mapKey, _, bytes, _) in entries)
         {
-            using var ecdsa = ECDsa.Create(new ECParameters { Curve = ECCurve.NamedCurves.nistP256, Q = new ECPoint { X = x, Y = y } });
-            if (!ecdsa.VerifyData(data, ConvertDerToRaw(signature, 32), HashAlgorithmName.SHA256))
-                throw new InvalidOperationException("Signature verification failed");
+            switch (mapKey)
+            {
+                case -1 when alg == -257:
+                    n = bytes;
+                    break;
+                case -2 when alg == -257:
+                    e = bytes;
+                    break;
+                case -2:
+                    x = bytes;
+                    break;
+                case -3:
+                    y = bytes;
+                    break;
+            }
         }
-        else if (alg == -257 && n != null && e != null)
-        {
-            using var rsa = RSA.Create();
-            rsa.ImportParameters(new RSAParameters { Modulus = n, Exponent = e });
-            if (!rsa.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1))
-                throw new InvalidOperationException("Signature verification failed");
-        }
-        else throw new InvalidOperationException($"Unsupported algorithm: {alg}");
+
+        return new CoseKey((int)alg, x, y, n, e);
     }
 
-    private static byte[] ConvertDerToRaw(byte[] der, int coordSize)
-    {
-        var offset = 2;
-        var rLen = der[offset + 1]; var r = der.Skip(offset + 2).Take(rLen).ToArray(); offset += 2 + rLen;
-        var sLen = der[offset + 1]; var s = der.Skip(offset + 2).Take(sLen).ToArray();
-        var raw = new byte[coordSize * 2];
-        r.CopyTo(raw, coordSize - r.Length);
-        s.CopyTo(raw, coordSize * 2 - s.Length);
-        return raw;
-    }
+    private sealed record AuthenticatorData(byte[] RpIdHash, byte Flags, uint SignCount, byte[]? CredentialId, byte[]? CosePublicKey);
+    private sealed record CoseKey(int Alg, byte[]? X, byte[]? Y, byte[]? N, byte[]? E);
 }
