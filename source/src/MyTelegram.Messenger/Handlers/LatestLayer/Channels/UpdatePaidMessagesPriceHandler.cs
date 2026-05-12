@@ -47,7 +47,8 @@ internal sealed class UpdatePaidMessagesPriceHandler(
                     ChannelId.Create(channelPeer.PeerId),
                     req with { ReqMsgId = req.ReqMsgId + 2, RequestId = Guid.NewGuid() },
                     channelPeer.PeerId, isMonoforum: false, broadcastMessagesAllowed: true,
-                    linkedMonoforumId: monoforumId));
+                    linkedMonoforumId: monoforumId,
+                    sendPaidMessagesStars: obj.SendPaidMessagesStars));
 
                 // Send service message to channel
                 await SendPaidMessagesPriceServiceMessageAsync(input, channelPeer.PeerId, broadcastMessagesAllowed: true, stars: obj.SendPaidMessagesStars);
@@ -58,7 +59,8 @@ internal sealed class UpdatePaidMessagesPriceHandler(
                     ChannelId.Create(channelPeer.PeerId),
                     input.ToRequestInfo(),
                     channelPeer.PeerId, isMonoforum: false, broadcastMessagesAllowed: false,
-                    linkedMonoforumId: null));
+                    linkedMonoforumId: null,
+                    sendPaidMessagesStars: 0));
 
                 // Send service message to channel
                 await SendPaidMessagesPriceServiceMessageAsync(input, channelPeer.PeerId, broadcastMessagesAllowed: false, stars: 0);
@@ -66,6 +68,12 @@ internal sealed class UpdatePaidMessagesPriceHandler(
             else if (obj.BroadcastMessagesAllowed && channelReadModel.BroadcastMessagesAllowed)
             {
                 // Price changed
+                await commandBus.PublishAsync(new EnableMonoforumCommand(
+                    ChannelId.Create(channelPeer.PeerId),
+                    input.ToRequestInfo(),
+                    channelPeer.PeerId, isMonoforum: false, broadcastMessagesAllowed: true,
+                    linkedMonoforumId: channelReadModel.LinkedMonoforumId,
+                    sendPaidMessagesStars: obj.SendPaidMessagesStars));
                 await SendPaidMessagesPriceServiceMessageAsync(input, channelPeer.PeerId, broadcastMessagesAllowed: true, stars: obj.SendPaidMessagesStars);
             }
         }

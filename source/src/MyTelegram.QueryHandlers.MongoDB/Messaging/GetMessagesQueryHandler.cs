@@ -55,6 +55,10 @@ public class
                 .WhereIf(query.GroupsOnly, p => p.ToPeerType == PeerType.Channel && !p.Post)
                 .WhereIf(query.UsersOnly, p => p.ToPeerType == PeerType.User)
                 .WhereIf(query.FilterSenderUserId > 0, p => p.SenderUserId == query.FilterSenderUserId)
+                .WhereIf(query.SavedPeerId != null,
+                    p => p.SavedPeerId != null &&
+                         p.SavedPeerId.PeerType == query.SavedPeerId!.PeerType &&
+                         p.SavedPeerId.PeerId == query.SavedPeerId.PeerId)
             ;
 
         // Since the message IDs are not continuous, for example (1,2,3,100,101,102,1001,1002), it is unable to get the correct min/max message ID here.
@@ -138,8 +142,11 @@ public class
                 .WhereIf(query.BroadcastsOnly, p => p.ToPeerType == PeerType.Channel && p.Post)
                 .WhereIf(query.GroupsOnly, p => p.ToPeerType == PeerType.Channel && !p.Post)
                 .WhereIf(query.UsersOnly, p => p.ToPeerType == PeerType.User)
-                
-                
+                .WhereIf(query.FilterSenderUserId > 0, p => p.SenderUserId == query.FilterSenderUserId)
+                .WhereIf(query.SavedPeerId != null,
+                    p => p.SavedPeerId != null &&
+                         p.SavedPeerId.PeerType == query.SavedPeerId!.PeerType &&
+                         p.SavedPeerId.PeerId == query.SavedPeerId.PeerId)
             ;
 
         // Since the message IDs are not continuous, for example (1,2,3,100,101,102,1001,1002), it is unable to get the correct min/max message ID here.

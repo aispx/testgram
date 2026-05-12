@@ -82,6 +82,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
     public bool IsMonoforum { get; private set; }
     public bool BroadcastMessagesAllowed { get; private set; }
     public long? LinkedMonoforumId { get; private set; }
+    public long? SendPaidMessagesStars { get; private set; }
     public int Date { get; private set; }
 
     public void Apply(ChannelAboutEditedEvent aggregateEvent)
@@ -352,5 +353,6 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
         IsMonoforum = aggregateEvent.IsMonoforum;
         BroadcastMessagesAllowed = aggregateEvent.BroadcastMessagesAllowed;
         LinkedMonoforumId = aggregateEvent.LinkedMonoforumId;
+        SendPaidMessagesStars = aggregateEvent.SendPaidMessagesStars;
     }
 }

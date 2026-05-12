@@ -7,4 +7,5 @@ public class GetHistoryInput : GetPagedListInput
     public Peer Peer { get; set; } = default!;
     public long SelfUserId { get; set; }
     public long FilterSenderUserId { get; set; }
+    public Peer? SavedPeerId { get; set; }
 }

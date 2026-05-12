@@ -15,6 +15,10 @@ internal sealed class GetSavedHistoryHandler(
             await accessHashHelper.CheckAccessHashAsync(input, obj.ParentPeer);
             var monoforumPeer = peerHelper.GetPeer(obj.ParentPeer);
             var topicPeer = peerHelper.GetPeer(obj.Peer);
+            var monoforumReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(monoforumPeer.PeerId));
+            if (monoforumReadModel == null || !monoforumReadModel.IsMonoforum || topicPeer == null)
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+
             var r = await messageAppService.GetHistoryAsync(new GetHistoryInput
             {
                 OwnerPeerId = monoforumPeer.PeerId,
@@ -25,7 +29,7 @@ internal sealed class GetSavedHistoryHandler(
                 MinId = obj.MinId,
                 OffsetId = obj.OffsetId,
                 Peer = monoforumPeer,
-                FilterSenderUserId = topicPeer?.PeerId ?? 0
+                SavedPeerId = topicPeer
             });
             return getHistoryConverterService.ToMessages(input, r, input.Layer);
         }

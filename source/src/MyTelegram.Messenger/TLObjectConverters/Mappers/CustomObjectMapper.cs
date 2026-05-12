@@ -29,7 +29,8 @@ public class CustomObjectMapper : ILayeredMapper,
             source.Peer,
             source.SelfUserId,
             0,
-            FilterSenderUserId: source.FilterSenderUserId);
+            FilterSenderUserId: source.FilterSenderUserId,
+            SavedPeerId: source.SavedPeerId);
     }
 
     public GetMessagesQuery Map(GetMessagesInput source)
@@ -136,7 +137,10 @@ public class CustomObjectMapper : ILayeredMapper,
             source.Peer,
             source.SelfUserId,
             0,
-            Tokens: source.Tokens
+            ReplyToMsgId: source.TopMsgId,
+            Tokens: source.Tokens,
+            FilterSenderUserId: source.FilterSenderUserId,
+            SavedPeerId: source.SavedPeerId
             );
     }
 }

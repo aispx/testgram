@@ -6,20 +6,22 @@ public partial class EnableMonoforumCommand(
     long channelId,
     bool isMonoforum,
     bool broadcastMessagesAllowed,
-    long? linkedMonoforumId
+    long? linkedMonoforumId,
+    long? sendPaidMessagesStars = null
 ) : RequestCommand2<ChannelAggregate, ChannelId, IExecutionResult>(aggregateId, requestInfo)
 {
     public long ChannelId { get; } = channelId;
     public bool IsMonoforum { get; } = isMonoforum;
     public bool BroadcastMessagesAllowed { get; } = broadcastMessagesAllowed;
     public long? LinkedMonoforumId { get; } = linkedMonoforumId;
+    public long? SendPaidMessagesStars { get; } = sendPaidMessagesStars;
 }
 
 public class EnableMonoforumCommandHandler : CommandHandler<ChannelAggregate, ChannelId, EnableMonoforumCommand>
 {
     public override Task ExecuteAsync(ChannelAggregate aggregate, EnableMonoforumCommand command, CancellationToken cancellationToken)
     {
-        aggregate.EnableMonoforum(command.RequestInfo, command.ChannelId, command.IsMonoforum, command.BroadcastMessagesAllowed, command.LinkedMonoforumId);
+        aggregate.EnableMonoforum(command.RequestInfo, command.ChannelId, command.IsMonoforum, command.BroadcastMessagesAllowed, command.LinkedMonoforumId, command.SendPaidMessagesStars);
         return Task.CompletedTask;
     }
 }

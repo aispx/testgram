@@ -3,7 +3,6 @@ internal sealed class GetSavedDialogsHandler(
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
     IAccessHashHelper accessHashHelper,
-    IUserConverterService userConverterService,
     IMessageAppService messageAppService,
     IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSavedDialogs, MyTelegram.Schema.Messages.ISavedDialogs>
 {
@@ -18,52 +17,69 @@ internal sealed class GetSavedDialogsHandler(
                 RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
 
             var limit = obj.Limit > 0 ? obj.Limit : 20;
-            var dialogs = await queryProcessor.ProcessAsync(new GetMonoforumDialogsQuery(monoforumPeer.PeerId, limit, obj.OffsetId));
-
-            var userIds = dialogs.Select(d => d.OwnerId).Distinct().ToList();
-            var users = await queryProcessor.ProcessAsync(new GetUsersByUserIdListQuery(userIds));
-            var contacts = await queryProcessor.ProcessAsync(new GetContactListQuery(input.UserId, userIds));
-            var photoIds = users.Where(u => u.ProfilePhotoId.HasValue).Select(u => u.ProfilePhotoId!.Value).ToList();
-            var photos = photoIds.Count > 0
-                ? await queryProcessor.ProcessAsync(new GetPhotoListQuery(input.UserId, photoIds))
-                : Array.Empty<IPhotoReadModel>();
-            var userList = userConverterService.ToUserList(input, users, photos, contacts, [], input.Layer);
-
-            // Load top messages
-            var topMessageIds = dialogs.Where(d => d.TopMessage > 0).Select(d => d.TopMessage).Distinct().ToList();
-            List<IMessage> messageList = [];
-            if (topMessageIds.Count > 0)
+            var historyLimit = Math.Clamp(limit * 20, limit, 500);
+            var history = await messageAppService.GetHistoryAsync(new GetHistoryInput
             {
-                var msgOutput = await messageAppService.GetChannelDifferenceAsync(new GetDifferenceInput(
-                    input.UserId,
-                    monoforumPeer.PeerId,
-                    0,
-                    topMessageIds.Count,
-                    topMessageIds));
-                var converted = getHistoryConverterService.ToMessages(input, msgOutput, input.Layer);
-                if (converted is TMessages tm) messageList = tm.Messages.ToList();
-                else if (converted is TChannelMessages tcm) messageList = tcm.Messages.ToList();
-            }
+                OwnerPeerId = monoforumPeer.PeerId,
+                SelfUserId = input.UserId,
+                AddOffset = 0,
+                Limit = historyLimit,
+                MaxId = obj.OffsetId,
+                OffsetId = obj.OffsetId,
+                Peer = monoforumPeer
+            });
 
-            var monoDialogs = dialogs.Select(d => new TMonoForumDialog
+            var topMessages = history.MessageList
+                .Where(m => m.SavedPeerId != null)
+                .GroupBy(m => $"{m.SavedPeerId!.PeerType}:{m.SavedPeerId.PeerId}")
+                .Select(g => g.OrderByDescending(m => m.MessageId).First())
+                .OrderByDescending(m => m.MessageId)
+                .Take(limit)
+                .ToList();
+
+            history.MessageList = topMessages;
+            var converted = getHistoryConverterService.ToMessages(input, history, input.Layer);
+            var (messageList, chatList, userList) = ExtractMessages(converted);
+
+            var monoDialogs = topMessages.Select(m => new TMonoForumDialog
             {
-                Peer = new TPeerUser { UserId = d.OwnerId },
-                TopMessage = d.TopMessage,
-                ReadInboxMaxId = d.ReadInboxMaxId,
-                ReadOutboxMaxId = d.ReadOutboxMaxId,
-                UnreadCount = d.UnreadCount,
-                UnreadReactionsCount = d.UnreadReactionsCount
+                Peer = ToSchemaPeer(m.SavedPeerId!),
+                TopMessage = m.MessageId,
+                ReadInboxMaxId = 0,
+                ReadOutboxMaxId = 0,
+                UnreadCount = 0,
+                UnreadReactionsCount = 0
             }).ToList<ISavedDialog>();
 
             return new TSavedDialogs
             {
                 Dialogs = [.. monoDialogs],
                 Messages = [.. messageList],
-                Chats = new TVector<IChat>(),
+                Chats = [.. chatList],
                 Users = [.. userList]
             };
         }
 
         return new TSavedDialogs { Chats = new TVector<IChat>(), Dialogs = [], Messages = new TVector<IMessage>(), Users = new TVector<IUser>() };
+    }
+
+    internal static (List<IMessage> Messages, List<IChat> Chats, List<IUser> Users) ExtractMessages(MyTelegram.Schema.Messages.IMessages converted)
+    {
+        return converted switch
+        {
+            TMessages tm => (tm.Messages.ToList(), tm.Chats.ToList(), tm.Users.ToList()),
+            TChannelMessages tcm => (tcm.Messages.ToList(), tcm.Chats.ToList(), tcm.Users.ToList()),
+            _ => ([], [], [])
+        };
+    }
+
+    internal static IPeer ToSchemaPeer(Peer peer)
+    {
+        return peer.PeerType switch
+        {
+            PeerType.Channel => new TPeerChannel { ChannelId = peer.PeerId },
+            PeerType.Chat => new TPeerChat { ChatId = peer.PeerId },
+            _ => new TPeerUser { UserId = peer.PeerId }
+        };
     }
 }

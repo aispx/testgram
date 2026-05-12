@@ -8,4 +8,7 @@ public class SearchInput : GetPagedListInput
     public string Q { get; set; } = default!;
     public long SelfUserId { get; set; }
     public List<long>? Tokens { get; set; }
+    public long FilterSenderUserId { get; set; }
+    public Peer? SavedPeerId { get; set; }
+    public int TopMsgId { get; set; }
 }

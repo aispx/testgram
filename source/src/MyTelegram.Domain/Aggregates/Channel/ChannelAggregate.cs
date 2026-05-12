@@ -388,9 +388,9 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
 
 
     [DisableAutoGeneration]
-    public void EnableMonoforum(RequestInfo requestInfo, long channelId, bool isMonoforum, bool broadcastMessagesAllowed, long? linkedMonoforumId)
+    public void EnableMonoforum(RequestInfo requestInfo, long channelId, bool isMonoforum, bool broadcastMessagesAllowed, long? linkedMonoforumId, long? sendPaidMessagesStars = null)
     {
-        Emit(new MonoforumEnabledEvent(requestInfo, channelId, isMonoforum, broadcastMessagesAllowed, linkedMonoforumId));
+        Emit(new MonoforumEnabledEvent(requestInfo, channelId, isMonoforum, broadcastMessagesAllowed, linkedMonoforumId, sendPaidMessagesStars));
     }
 
         protected override Task<ChannelSnapshot> CreateSnapshotAsync(CancellationToken cancellationToken)

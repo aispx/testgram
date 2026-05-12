@@ -27,11 +27,32 @@ internal sealed class SearchHandler(IMessageAppService messageAppService, IToken
     {
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         await accessHashHelper.CheckAccessHashAsync(input, obj.FromId);
+        await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
         var userId = input.UserId;
         var peer = peerHelper.GetPeer(obj.Peer, userId);
+        var fromPeer = obj.FromId == null ? null : peerHelper.GetPeer(obj.FromId, userId);
+        var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, userId);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : userId;
         var tokens = tokenizer.BuildSearchTokens(obj.Q);
-        var getMessageOutput = await messageAppService.SearchAsync(new SearchInput { OwnerPeerId = ownerPeerId, SelfUserId = userId, Limit = obj.Limit, Q = obj.Q, OffsetId = obj.OffsetId, AddOffset = obj.AddOffset, Peer = peer, MaxDate = obj.MaxDate, MaxId = obj.MaxId, MinDate = obj.MinDate, MinId = obj.MinId, MessageType = GetMessageType(obj.Filter), Tokens = tokens });
+        var getMessageOutput = await messageAppService.SearchAsync(new SearchInput
+        {
+            OwnerPeerId = ownerPeerId,
+            SelfUserId = userId,
+            Limit = obj.Limit,
+            Q = obj.Q,
+            OffsetId = obj.OffsetId,
+            AddOffset = obj.AddOffset,
+            Peer = peer,
+            MaxDate = obj.MaxDate,
+            MaxId = obj.MaxId,
+            MinDate = obj.MinDate,
+            MinId = obj.MinId,
+            MessageType = GetMessageType(obj.Filter),
+            Tokens = tokens,
+            FilterSenderUserId = fromPeer?.PeerType == PeerType.User ? fromPeer.PeerId : 0,
+            SavedPeerId = savedPeer,
+            TopMsgId = obj.TopMsgId ?? 0
+        });
         return getHistoryConverterService.ToMessages(input, getMessageOutput, input.Layer);
     }
 

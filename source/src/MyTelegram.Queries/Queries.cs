@@ -212,7 +212,8 @@ public record GetMessagesQuery(
     bool GroupsOnly = false,
     bool UsersOnly = false,
     List<long>? Tokens = null,
-    long FilterSenderUserId = 0
+    long FilterSenderUserId = 0,
+    Peer? SavedPeerId = null
 )
     : IQuery<IReadOnlyCollection<IMessageReadModel>>
 {

@@ -126,6 +126,10 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
     {
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
+        if (obj.ReplyTo is TInputReplyToMonoForum monoForumReplyTo)
+            await accessHashHelper.CheckAccessHashAsync(input, monoForumReplyTo.MonoforumPeerId);
+        if (obj.ReplyTo is TInputReplyToMessage { MonoforumPeerId: not null } monoForumMessageReply)
+            await accessHashHelper.CheckAccessHashAsync(input, monoForumMessageReply.MonoforumPeerId);
         var needCheckAudioMessagePrivacy = false;
         switch (obj.Media)
         {
@@ -187,18 +191,42 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         }
 
         var media = await mediaHelper.SaveMediaAsync(obj.Media);
-        int? replyToMsgId = null;
         int? topMsgId = null;
+        Peer? savedPeerId = null;
         if (obj.ReplyTo is TInputReplyToMessage replyToMessage)
         {
-            replyToMsgId = replyToMessage.ReplyToMsgId;
             topMsgId = replyToMessage.TopMsgId;
+            if (replyToMessage.MonoforumPeerId != null)
+            {
+                savedPeerId = await ResolveMonoforumSavedPeerAsync(toPeer, replyToMessage.MonoforumPeerId);
+                topMsgId = null;
+            }
+        }
+        else if (obj.ReplyTo is TInputReplyToMonoForum monoForumReply)
+        {
+            savedPeerId = await ResolveMonoforumSavedPeerAsync(toPeer, monoForumReply.MonoforumPeerId);
         }
 
         var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), obj.Message, obj.RandomId, clearDraft: obj.ClearDraft, entities: obj.Entities, media: media, //replyToMsgId: replyToMsgId,
- inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars);
+ inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId);
         await messageAppService.SendMessageAsync([sendMessageInput]);
         return null!;
+    }
+
+    private async Task<Peer> ResolveMonoforumSavedPeerAsync(Peer toPeer, IInputPeer monoforumPeerId)
+    {
+        if (toPeer.PeerType != PeerType.Channel)
+            RpcErrors.RpcErrors400.ReplyToMonoforumPeerInvalid.ThrowRpcError();
+
+        var monoforum = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeer.PeerId));
+        if (monoforum == null || !monoforum.IsMonoforum)
+            RpcErrors.RpcErrors400.ReplyToMonoforumPeerInvalid.ThrowRpcError();
+
+        var savedPeer = peerHelper.GetPeer(monoforumPeerId);
+        if (savedPeer is not { PeerType: PeerType.User })
+            RpcErrors.RpcErrors400.ReplyToMonoforumPeerInvalid.ThrowRpcError();
+
+        return savedPeer;
     }
 
     private async Task CreatePollAsync(long creatorUserId, Peer toPeer, TInputMediaPoll inputMediaPoll)

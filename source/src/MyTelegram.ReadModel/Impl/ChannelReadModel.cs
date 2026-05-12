@@ -462,6 +462,7 @@ public class ChannelReadModel : IChannelReadModel,
         IsMonoforum = domainEvent.AggregateEvent.IsMonoforum;
         BroadcastMessagesAllowed = domainEvent.AggregateEvent.BroadcastMessagesAllowed;
         LinkedMonoforumId = domainEvent.AggregateEvent.LinkedMonoforumId;
+        SendPaidMessagesStars = domainEvent.AggregateEvent.SendPaidMessagesStars;
         return Task.CompletedTask;
     }
 }

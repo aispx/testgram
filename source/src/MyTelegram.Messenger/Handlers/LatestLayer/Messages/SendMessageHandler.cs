@@ -103,6 +103,10 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
 
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
+        if (obj.ReplyTo is TInputReplyToMonoForum monoForumReplyTo)
+            await accessHashHelper.CheckAccessHashAsync(input, monoForumReplyTo.MonoforumPeerId);
+        if (obj.ReplyTo is TInputReplyToMessage { MonoforumPeerId: not null } monoForumMessageReply)
+            await accessHashHelper.CheckAccessHashAsync(input, monoForumMessageReply.MonoforumPeerId);
         var media = await ProcessJoinChatUrlAsync(obj);
         if (obj.Message.StartsWith("/"))
         {

@@ -282,6 +282,21 @@ public class MessageAppService(
             }
         }
 
+        if (channelReadModel.IsMonoforum &&
+            input.SavedPeerId != null &&
+            input.SavedPeerId.PeerType == PeerType.User &&
+            input.SavedPeerId.PeerId != input.SenderUserId)
+        {
+            var linkedChannelReadModel = channelReadModel.LinkedMonoforumId.HasValue
+                ? await channelAppService.GetAsync(channelReadModel.LinkedMonoforumId.Value)
+                : null;
+            var admin = linkedChannelReadModel?.AdminList.FirstOrDefault(p => p.UserId == input.SenderUserId);
+            if (admin == null || !admin.AdminRights.ManageDirectMessages)
+            {
+                RpcErrors.RpcErrors403.ChatAdminRequired.ThrowRpcError();
+            }
+        }
+
         if (channelMemberReadModel != null && channelMemberReadModel.BannedRights != 0)
         {
             var memberBannedRights =
@@ -317,6 +332,18 @@ public class MessageAppService(
         // 1.If the client passes sendAs, verify the client's sendAs, if valid, use the value passed by the client
         // 2.If the client does not pass sendAs, query whether the user has set the default sendAsPeer, if set, use the set value
         // 3.If the client does not pass a value, the default SendAsPeer is not set, and in the discussion group, use discussion group as SendAsPeer
+        if (input.ToPeer.PeerType == PeerType.Channel)
+        {
+            var monoforumReadModel = await channelAppService.GetAsync(input.ToPeer.PeerId);
+            if (monoforumReadModel?.IsMonoforum == true &&
+                input.SavedPeerId != null &&
+                input.SavedPeerId.PeerId != input.SenderUserId &&
+                monoforumReadModel.LinkedMonoforumId.HasValue)
+            {
+                return monoforumReadModel.LinkedMonoforumId.Value.ToChannelPeer();
+            }
+        }
+
         if (input.SendAs != null)
         {
             if (await IsValidSendAsPeerAsync(input.RequestInfo.UserId, input.ToPeer, input.SendAs))
@@ -1008,6 +1035,7 @@ public class MessageAppService(
         foreach (var messageReadModel in messageReadModels)
         {
             AddPeerIdIfNeeded(messageReadModel.SendAs);
+            AddPeerIdIfNeeded(messageReadModel.SavedPeerId);
             AddPeerIdIfNeeded(messageReadModel.FwdHeader?.SavedFromPeer);
 
             var fwd = messageReadModel.FwdHeader;
