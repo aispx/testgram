@@ -177,6 +177,7 @@ services:
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
     volumes:
       - ./data/mytelegram/data-seeder/logs:/app/Logs
+      - ./data/mytelegram/data-seeder/downloads:/app/downloads
     depends_on:
       mongodb:
         condition: service_healthy
