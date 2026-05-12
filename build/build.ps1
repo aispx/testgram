@@ -30,15 +30,59 @@ function Build-Server([System.String]$srcFolder,[System.String] $outputFolder) {
     dotnet publish $sourceFolder -c Release -o $outputFolder
 }
 
+function Build-Target([System.String]$target) {
+    switch ($target) {
+        { $_ -in @("auth","auth-server") } {
+            Build-Server "./MyTelegram.AuthServer" $authServerOutputFolder
+            break
+        }
+        { $_ -in @("gateway","gateway-server") } {
+            Build-Server "./MyTelegram.GatewayServer" $gatewayOutputFolder
+            break
+        }
+        { $_ -in @("command","command-server","messenger-command","message","messages") } {
+            Build-Server "./MyTelegram.Messenger.CommandServer" $messengerProCommandOutputFolder
+            break
+        }
+        { $_ -in @("query","query-server","messenger-query") } {
+            Build-Server "./MyTelegram.Messenger.QueryServer" $messengerProQueryOutputFolder
+            break
+        }
+        { $_ -in @("sms","sms-sender") } {
+            Build-Server "./MyTelegram.SmsSender" $smsOutputFolder
+            break
+        }
+        { $_ -in @("data-seeder","seeder") } {
+            Build-Server "./MyTelegram.DataSeeder" $dataSeederOutputFolder
+            break
+        }
+        "all" {
+            Build-Target "auth"
+            Build-Target "gateway"
+            Build-Target "command"
+            Build-Target "query"
+            #Build-Server "./MyTelegram.MessengerServer.GrpcService" $messengerGrpcOutputFolder
+            Build-Target "sms"
+            Build-Target "data-seeder"
+            break
+        }
+        default {
+            Write-Error "Unknown target: $target"
+            Write-Output "Usage: ./build.ps1 [all|auth|gateway|command|query|sms|data-seeder]..."
+            exit 1
+        }
+    }
+}
+
 # Set-Location ../source/
 #dotnet restore ./MyTelegram.sln
-Build-Server "./MyTelegram.AuthServer" $authServerOutputFolder
-Build-Server "./MyTelegram.GatewayServer" $gatewayOutputFolder
-Build-Server "./MyTelegram.Messenger.CommandServer" $messengerProCommandOutputFolder
-Build-Server "./MyTelegram.Messenger.QueryServer" $messengerProQueryOutputFolder
-#Build-Server "./MyTelegram.MessengerServer.GrpcService" $messengerGrpcOutputFolder
-Build-Server "./MyTelegram.SmsSender" $smsOutputFolder
-Build-Server "./MyTelegram.DataSeeder" $dataSeederOutputFolder
+if ($args.Count -eq 0) {
+    Build-Target "all"
+} else {
+    foreach ($target in $args) {
+        Build-Target $target
+    }
+}
 
 Set-Location $currentDir
 

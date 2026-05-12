@@ -1,5 +1,5 @@
 using MyTelegram.Messenger.Services.Bots;
-﻿using StackExchange.Redis;
+using StackExchange.Redis;
 using MongoDB.Driver;
 using MongoDB.Bson;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
@@ -86,25 +86,23 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IXieFatherBotService xieFatherBotService, IObjectMessageSender objectMessageSender, IUserConverterService userConverterService) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
+internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IXieFatherBotService xieFatherBotService, IObjectMessageSender objectMessageSender, IPrivacyAppService privacyAppService, ILogger<SendMessageHandler> logger) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMessage obj)
     {
         if (string.IsNullOrWhiteSpace(obj.Message))
             RpcErrors.RpcErrors400.MessageEmpty.ThrowRpcError();
 
-        var db = redis.GetDatabase();
-        var dedupKey = $"sendmsg:{input.UserId}:{obj.RandomId}";
-        var peerId = obj.Peer is TInputPeerUser u ? u.UserId : obj.Peer is TInputPeerChannel c ? c.ChannelId : 0L;
-        var dedupKey2 = $"sendmsg2:{input.UserId}:{peerId}:{obj.Message}";
-        // Lua: atomically SET NX dedupKey2, then check dedupKey
-        const string lua = "if redis.call('SET',KEYS[1],1,'NX','EX',10) then return redis.call('SET',KEYS[2],1,'NX','EX',900) else return 0 end";
-        var result = await db.ScriptEvaluateAsync(lua, [(RedisKey)dedupKey2, (RedisKey)dedupKey]);
-        if (result.IsNull || result.ToString() == "0") return null!;
+        var isNewRandomId = await redis.GetDatabase().StringSetAsync(
+            $"sendmsg:{input.UserId}:{obj.RandomId}",
+            1,
+            TimeSpan.FromMinutes(15),
+            When.NotExists);
+        if (!isNewRandomId) return null!;
 
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
-        var media = await ProcessUrlsInMessageAsync(obj);
+        var media = await ProcessJoinChatUrlAsync(obj);
         if (obj.Message.StartsWith("/"))
         {
             obj.Entities ??= [];
@@ -117,7 +115,7 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
         long? paidMessageStars = null;
         if (toPeer.PeerType == PeerType.User)
         {
-            var targetGps = await queryProcessor.ProcessAsync(new GetGlobalPrivacySettingsQuery(toPeer.PeerId));
+            var targetGps = await privacyAppService.GetGlobalPrivacySettingsAsync(toPeer.PeerId);
             var requiredStars = targetGps?.NoncontactPeersPaidStars ?? 0;
             if (requiredStars > 0)
             {
@@ -165,7 +163,10 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
         var dialogId = DialogId.Create(input.UserId, toPeer.PeerType, toPeer.PeerId);
         var dialogCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-dialogreadmodel");
         var dialogFilter = Builders<BsonDocument>.Filter.Eq("_id", dialogId.Value);
-        var dialog = await dialogCollection.Find(dialogFilter).FirstOrDefaultAsync();
+        var dialog = await dialogCollection
+            .Find(dialogFilter)
+            .Project(Builders<BsonDocument>.Projection.Include("TtlPeriod"))
+            .FirstOrDefaultAsync();
         if (dialog != null && dialog.Contains("TtlPeriod"))
         {
             var ttl = dialog["TtlPeriod"];
@@ -181,7 +182,7 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
         // Send updateBotNewBusinessMessage to connected business bots
         if (toPeer.PeerType == PeerType.User)
         {
-            await NotifyConnectedBusinessBotsAsync(input.UserId, toPeer.PeerId, obj.Message, obj.RandomId);
+            _ = NotifyConnectedBusinessBotsSafelyAsync(input.UserId, toPeer.PeerId, obj.Message, obj.RandomId);
         }
 
         if (toPeer.PeerType == PeerType.User && toPeer.PeerId == XieFatherBotService.BotUserId)
@@ -189,10 +190,17 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
         return null !;
     }
 
-    private async Task<TMessageMediaWebPage?> ProcessUrlsInMessageAsync(RequestSendMessage obj)
+    private async Task<TMessageMediaWebPage?> ProcessJoinChatUrlAsync(RequestSendMessage obj)
     {
+        var joinChatDomain = options.Value.JoinChatDomain;
+        if (string.IsNullOrWhiteSpace(joinChatDomain) ||
+            !obj.Message.Contains(joinChatDomain, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
         var pattern = @"(?:^|\s)(https?://[^\s]+)(?=\s|$)";
-        var pattern2 = @$"{options.Value.JoinChatDomain}/\+([\S]{{16}})";
+        var pattern2 = @$"{Regex.Escape(joinChatDomain)}/\+([\S]{{16}})";
         var matches = Regex.Matches(obj.Message, pattern);
         var isInviteUrlAdded = false;
         TMessageMediaWebPage? media = null;
@@ -216,8 +224,8 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
                             Webpage = new Schema.TWebPage
                             {
                                 Id = Random.Shared.NextInt64(),
-                                Url = $"{options.Value.JoinChatDomain}/+{link}",
-                                DisplayUrl = $"{options.Value.JoinChatDomain}/+{link}",
+                                Url = $"{joinChatDomain}/+{link}",
+                                DisplayUrl = $"{joinChatDomain}/+{link}",
                                 Type = channelReadModel.Broadcast ? "telegram_channel" : "telegram_megagroup",
                                 SiteName = "MyTelegram",
                                 Title = channelReadModel.Title,
@@ -232,6 +240,18 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
         }
 
         return media;
+    }
+
+    private async Task NotifyConnectedBusinessBotsSafelyAsync(long userId, long peerId, string message, long randomId)
+    {
+        try
+        {
+            await NotifyConnectedBusinessBotsAsync(userId, peerId, message, randomId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to notify connected business bots for user {UserId}, peer {PeerId}", userId, peerId);
+        }
     }
 
     private async Task NotifyConnectedBusinessBotsAsync(long userId, long peerId, string message, long randomId)

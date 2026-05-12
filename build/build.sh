@@ -34,12 +34,50 @@ Build-Server() {
     dotnet publish "$sourceFolder" -c Release -o "$outputFolder"
 }
 
-Build-Server "./MyTelegram.AuthServer" "$authServerOutputFolder"
-Build-Server "./MyTelegram.GatewayServer" "$gatewayOutputFolder"
-Build-Server "./MyTelegram.Messenger.CommandServer" "$messengerProCommandOutputFolder"
-Build-Server "./MyTelegram.Messenger.QueryServer" "$messengerProQueryOutputFolder"
-#Build-Server "./MyTelegram.MessengerServer.GrpcService" "$messengerGrpcOutputFolder"
-Build-Server "./MyTelegram.SmsSender" "$smsOutputFolder"
-Build-Server "./MyTelegram.DataSeeder" "$dataSeederOutputFolder"
+Build-Target() {
+    target="$1"
+    case "$target" in
+        auth|auth-server)
+            Build-Server "./MyTelegram.AuthServer" "$authServerOutputFolder"
+            ;;
+        gateway|gateway-server)
+            Build-Server "./MyTelegram.GatewayServer" "$gatewayOutputFolder"
+            ;;
+        command|command-server|messenger-command|message|messages)
+            Build-Server "./MyTelegram.Messenger.CommandServer" "$messengerProCommandOutputFolder"
+            ;;
+        query|query-server|messenger-query)
+            Build-Server "./MyTelegram.Messenger.QueryServer" "$messengerProQueryOutputFolder"
+            ;;
+        sms|sms-sender)
+            Build-Server "./MyTelegram.SmsSender" "$smsOutputFolder"
+            ;;
+        data-seeder|seeder)
+            Build-Server "./MyTelegram.DataSeeder" "$dataSeederOutputFolder"
+            ;;
+        all)
+            Build-Target auth
+            Build-Target gateway
+            Build-Target command
+            Build-Target query
+            #Build-Server "./MyTelegram.MessengerServer.GrpcService" "$messengerGrpcOutputFolder"
+            Build-Target sms
+            Build-Target data-seeder
+            ;;
+        *)
+            echo "Unknown target: $target"
+            echo "Usage: ./build.sh [all|auth|gateway|command|query|sms|data-seeder]..."
+            exit 1
+            ;;
+    esac
+}
+
+if [ "$#" -eq 0 ]; then
+    Build-Target all
+else
+    for target in "$@"; do
+        Build-Target "$target"
+    done
+fi
 
 cd "$currentDir"

@@ -63,12 +63,18 @@ public class PrivacyAppService(
     {
         var cacheKey = GlobalPrivacySettingsCacheItem.GetCacheKey(userId);
         var item = await cacheManager.GetAsync(cacheKey);
+        if (item != null)
+        {
+            return item;
+        }
+
         var globalPrivacySettings = await queryProcessor.ProcessAsync(new GetGlobalPrivacySettingsQuery(userId));
         if (globalPrivacySettings != null)
         {
             item = new GlobalPrivacySettingsCacheItem(globalPrivacySettings.ArchiveAndMuteNewNoncontactPeers,
                 globalPrivacySettings.KeepArchivedUnmuted, globalPrivacySettings.KeepArchivedFolders,
-                globalPrivacySettings.HideReadMarks, globalPrivacySettings.NewNoncontactPeersRequirePremium);
+                globalPrivacySettings.HideReadMarks, globalPrivacySettings.NewNoncontactPeersRequirePremium,
+                globalPrivacySettings.NoncontactPeersPaidStars);
             await cacheManager.SetAsync(cacheKey, item);
         }
         return item;
