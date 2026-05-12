@@ -485,13 +485,18 @@ def build_emoji_group_docs(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
 def build_featured_emoji_set_docs(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     docs = []
+    seen_set_ids = set()
     order = 1
     for entry in entries:
         if not entry.get("is_custom_emoji"):
             continue
+        set_id = to_int64(entry["set_id"])
+        if set_id in seen_set_ids:
+            continue
+        seen_set_ids.add(set_id)
         docs.append({
-            "_id": f"featured-emoji-set-{entry['set_id']}",
-            "StickerSetId": to_int64(entry["set_id"]),
+            "_id": f"featured-emoji-set-{set_id}",
+            "StickerSetId": set_id,
             "Unread": False,
             "Order": order,
             "Version": 1,
