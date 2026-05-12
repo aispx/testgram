@@ -14,26 +14,36 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load .env
-with open("/root/testgram/bot/.env") as f:
-    for line in f:
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ[k] = v
+# Load local .env file.
+# The bot is usually started from docker/systemd, but reading .env here keeps
+# the same config working when the bot is launched manually from /root/testgram.
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(env_path):
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ[k.strip()] = v.strip()
+else:
+    logger.warning(".env file not found at %s, using environment variables only", env_path)
 
+# Main bot settings.
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 DB_PATH = os.environ.get("DB_PATH", "/root/testgram/bot/codes.db")
 RABBITMQ_URL = os.environ.get("RABBITMQ_URL", "amqp://test:testgram2024@localhost/")
 MAX_NUMBERS = 2
 
-# Bot placeholder - will be created in main after event loop starts
+# Bot placeholder - the real Bot object is created in main() after the
+# asyncio event loop exists, so proxy/session settings can be applied safely.
 bot = None
 dp = Dispatcher()
-dp = Dispatcher()
+
+# Users that pressed "add number" and are expected to send a phone number next.
 waiting_for_phone = set()
 
 async def init_db():
+    """Create a local SQLite table that maps Telegram user IDs to phone numbers."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS user_numbers (
@@ -43,11 +53,13 @@ async def init_db():
         await db.commit()
 
 async def get_user_numbers(tg_id):
+    """Return all TestGram phone numbers attached to a Telegram account."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT phone FROM user_numbers WHERE tg_id=?", (tg_id,)) as cur:
             return [r[0] for r in await cur.fetchall()]
 
 async def get_owner_of(phone):
+    """Find the Telegram user that owns a phone number from an incoming code event."""
     clean = re.sub(r'\D', '', phone)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT tg_id FROM user_numbers WHERE replace(replace(phone,'+',''),'-','')=?", (clean,)) as cur:
@@ -55,6 +67,7 @@ async def get_owner_of(phone):
             return r[0] if r else None
 
 async def add_number(tg_id, phone):
+    """Attach a phone number to a Telegram user, enforcing limits and uniqueness."""
     numbers = await get_user_numbers(tg_id)
     if len(numbers) >= MAX_NUMBERS:
         return "limit"
@@ -69,16 +82,19 @@ async def add_number(tg_id, phone):
     return "ok"
 
 async def remove_number(tg_id, phone):
+    """Detach a phone number from a Telegram user."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM user_numbers WHERE tg_id=? AND phone=?", (tg_id, phone))
         await db.commit()
 
 def numbers_keyboard(numbers):
+    """Build the inline keyboard for adding/removing linked numbers."""
     buttons = [[InlineKeyboardButton(text=f"❌ {n}", callback_data=f"del:{n}")] for n in numbers]
     buttons.append([InlineKeyboardButton(text="➕ Добавить номер", callback_data="add")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def status_text(numbers):
+    """Render the account status text shown in /start and after changes."""
     if not numbers:
         return f"📱 Нет привязанных номеров.\nЛимит: 0/{MAX_NUMBERS}"
     nums_str = "\n".join(f"  • {n}" for n in numbers)
@@ -92,6 +108,7 @@ async def cmd_start(message: Message):
 
 @dp.callback_query(F.data == "add")
 async def cb_add(call: CallbackQuery):
+    """Start phone-number binding flow."""
     numbers = await get_user_numbers(call.from_user.id)
     if len(numbers) >= MAX_NUMBERS:
         await call.answer(f"Лимит {MAX_NUMBERS} номера", show_alert=True)
@@ -102,6 +119,7 @@ async def cb_add(call: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("del:"))
 async def cb_del(call: CallbackQuery):
+    """Remove the selected phone number from the user's account."""
     phone = call.data[4:]
     await remove_number(call.from_user.id, phone)
     numbers = await get_user_numbers(call.from_user.id)
@@ -110,6 +128,7 @@ async def cb_del(call: CallbackQuery):
 
 @dp.message()
 async def handle_phone(message: Message):
+    """Validate and save the phone number sent after pressing the add button."""
     if message.from_user.id not in waiting_for_phone:
         return
     phone = message.text.strip()
@@ -130,6 +149,7 @@ async def handle_phone(message: Message):
     await message.answer(status_text(numbers), reply_markup=numbers_keyboard(numbers))
 
 async def send_code_to_owner(owner, digits, code):
+    """Send a login code to the Telegram user that owns the phone number."""
     text = f"📱 Код для {digits}: <code>{code}</code>"
     try:
         await bot.send_message(owner, text, parse_mode="HTML")
@@ -137,11 +157,12 @@ async def send_code_to_owner(owner, digits, code):
         logger.error(f"send_code_to_owner error: {e}")
 
 async def rabbitmq_consumer():
+    """Listen for MyTelegram code-created events and forward codes to owners."""
     while True:
         try:
             conn = await aio_pika.connect(RABBITMQ_URL)
             channel = await conn.channel()
-            # Use passive mode to get existing exchange
+            # Use the same exchange/routing key as the backend publishes.
             exchange = await channel.declare_exchange("mytelegram_exchange", aio_pika.ExchangeType.DIRECT, durable=False)
             queue = await channel.declare_queue("bot_codes", durable=False)
             await queue.bind(exchange, routing_key="AppCodeCreatedIntegrationEvent")
@@ -162,6 +183,7 @@ async def rabbitmq_consumer():
             await asyncio.sleep(5)
 
 async def handle_send(request):
+    """HTTP fallback endpoint: POST /send {"phone": "...", "code": "..."}."""
     try:
         data = await request.json()
         phone = data.get("phone", "")
@@ -181,7 +203,7 @@ async def main():
     global bot
     
     # Proxy configuration from .env (PROXY_URL)
-    # Leave empty to disable proxy
+    # Leave PROXY_URL empty to use a direct connection.
     from aiogram.client.session.aiohttp import AiohttpSession
     
     session = None
