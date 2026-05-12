@@ -1,5 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+using System.Text.RegularExpressions;
 
 namespace MyTelegram.Messenger.Handlers.Messages;
 
@@ -22,63 +24,50 @@ internal sealed class GetForumTopicsHandler(
 
         var channelId = peer.PeerId;
 
-        // Query topics from MongoDB
         var topicsCol = mongoDatabase.GetCollection<BsonDocument>("forum_topics");
-        var filter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
+        var filterBuilder = Builders<BsonDocument>.Filter;
+        var filter = filterBuilder.Eq("ChannelId", channelId);
 
-        // Sort by pinned first, then by date
-        var sort = Builders<BsonDocument>.Sort.Descending("Pinned").Descending("Date");
+        if (!string.IsNullOrWhiteSpace(obj.Q))
+        {
+            filter &= filterBuilder.Regex("Title", new BsonRegularExpression(Regex.Escape(obj.Q), "i"));
+        }
 
-        var topicDocs = await topicsCol.Find(filter).Sort(sort).Limit(obj.Limit).ToListAsync();
+        if (obj.OffsetDate > 0)
+        {
+            filter &= filterBuilder.Lt("Date", obj.OffsetDate);
+        }
+
+        if (obj.OffsetTopic > 0)
+        {
+            filter &= filterBuilder.Lt("TopicId", obj.OffsetTopic);
+        }
+
+        if (obj.OffsetId > 0)
+        {
+            filter &= filterBuilder.Lt("TopMessageId", obj.OffsetId);
+        }
+
+        var count = (int)await topicsCol.CountDocumentsAsync(filter);
+        var limit = obj.Limit > 0 ? obj.Limit : 100;
+        var sort = Builders<BsonDocument>.Sort
+            .Descending("Pinned")
+            .Descending("PinOrder")
+            .Descending("Date")
+            .Descending("TopicId");
+
+        var topicDocs = await topicsCol.Find(filter).Sort(sort).Limit(limit).ToListAsync();
 
         var topics = new TVector<IForumTopic>();
         foreach (var doc in topicDocs)
         {
-            var topicId = doc["TopicId"].AsInt32;
-            var title = doc["Title"].AsString;
-            var iconColor = doc.Contains("IconColor") ? doc["IconColor"].AsInt32 : 0x6FB9F0;
-            var iconEmojiId = doc.Contains("IconEmojiId") ? doc["IconEmojiId"].AsInt64 : 0L;
-            var creatorId = doc["CreatorId"].AsInt64;
-            var date = doc["Date"].AsInt32;
-            var closed = doc.Contains("Closed") && doc["Closed"].AsBoolean;
-            var hidden = doc.Contains("Hidden") && doc["Hidden"].AsBoolean;
-            var pinned = doc.Contains("Pinned") && doc["Pinned"].AsBoolean;
-
-            var forumTopic = new TForumTopic
-            {
-                Id = topicId,
-                Date = date,
-                Title = title,
-                IconColor = iconColor,
-                IconEmojiId = iconEmojiId,
-                TopMessage = topicId,
-                ReadInboxMaxId = 0,
-                ReadOutboxMaxId = 0,
-                UnreadCount = 0,
-                UnreadMentionsCount = 0,
-                UnreadReactionsCount = 0,
-                FromId = new TPeerUser { UserId = creatorId },
-                NotifySettings = new TPeerNotifySettings(),
-                Peer = new TPeerChannel { ChannelId = channelId }
-            };
-
-            if (iconEmojiId != 0)
-                forumTopic.IconEmojiId = iconEmojiId;
-
-            if (closed)
-                forumTopic.Closed = true;
-
-            if (hidden)
-                forumTopic.Hidden = true;
-
-            if (pinned)
-                forumTopic.Pinned = true;
-
-            topics.Add(forumTopic);
+            topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId));
         }
 
         return new TForumTopics
         {
+            Count = count,
+            OrderByCreateDate = true,
             Topics = topics,
             Messages = new TVector<IMessage>(),
             Chats = new TVector<IChat>(),

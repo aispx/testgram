@@ -141,7 +141,9 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
         bool autoCreateFromChat = false,
         bool ttlFromDefaultSetting = false,
         List<long>? memberUserIds = null,
-        List<long>? botUserIds = null
+        List<long>? botUserIds = null,
+        bool forum = false,
+        bool forumTabs = false
         )
     {
         Specs.AggregateIsNew.ThrowDomainErrorIfNotSatisfied(this);
@@ -166,7 +168,9 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
             autoCreateFromChat,
             ttlFromDefaultSetting,
             memberUserIds ?? [],
-            botUserIds ?? []
+            botUserIds ?? [],
+            forum,
+            forumTabs
         ));
     }
 
@@ -411,6 +415,7 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
             _state.LinkedChannelId,
             _state.UserName,
             _state.Forum,
+            _state.ForumTabs,
             _state.MaxTopicId,
             _state.TtlPeriod,
             _state.MigratedFromChatId,

@@ -155,10 +155,6 @@ public static class TlObjectExtensions
         switch (inputReplyTo)
         {
             case TInputReplyToMessage inputReplyToMessage:
-                if (inputReplyToMessage.TopMsgId != null)
-                {
-                    return inputReplyToMessage.TopMsgId;
-                }
                 return inputReplyToMessage.ReplyToMsgId;
             case TInputReplyToStory inputReplyToStory:
                 return inputReplyToStory.StoryId;

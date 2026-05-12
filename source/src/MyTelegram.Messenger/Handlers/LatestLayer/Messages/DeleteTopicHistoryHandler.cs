@@ -48,7 +48,11 @@ internal sealed class DeleteTopicHistoryHandler(
         var messagesCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
         var messageFilter = Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("OwnerPeerId", channelId),
-            Builders<BsonDocument>.Filter.Eq("ReplyToMsgId", obj.TopMsgId)
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Eq("TopMsgId", obj.TopMsgId),
+                Builders<BsonDocument>.Filter.Eq("ReplyToMsgId", obj.TopMsgId),
+                Builders<BsonDocument>.Filter.Eq("MessageId", obj.TopMsgId)
+            )
         );
 
         var deleteResult = await messagesCol.DeleteManyAsync(messageFilter);

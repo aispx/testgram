@@ -29,6 +29,9 @@ internal sealed class EditForumTopicHandler(
         if (!await channelAdminRightsChecker.HasChatAdminRightAsync(channelId, input.UserId, p => p.ManageTopics))
             RpcErrors.RpcErrors400.ChatAdminRequired.ThrowRpcError();
 
+        if (obj.Hidden.HasValue && obj.TopicId != Helpers.ForumTopicHelper.GeneralTopicId)
+            RpcErrors.RpcErrors400.TopicIdInvalid.ThrowRpcError();
+
         var topicsCol = mongoDatabase.GetCollection<BsonDocument>("forum_topics");
         var filter = Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("ChannelId", channelId),

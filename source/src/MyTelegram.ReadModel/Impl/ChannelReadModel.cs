@@ -70,6 +70,7 @@ public class ChannelReadModel : IChannelReadModel,
     public long? LinkedChatId { get; private set; }
 
     public bool Forum { get; private set; }
+    public bool ForumTabs { get; private set; }
     public int? TtlPeriod { get; private set; }
     public long? PhotoId { get; private set; }
     public bool NoForwards { get; private set; }
@@ -175,6 +176,8 @@ public class ChannelReadModel : IChannelReadModel,
         AdminList = new List<ChatAdmin>();
         TtlPeriod = aggregateEvent.TtlPeriod;
         PhotoId = aggregateEvent.PhotoId;
+        Forum = aggregateEvent.Forum;
+        ForumTabs = aggregateEvent.ForumTabs;
 
         AdminList = new List<ChatAdmin>
         {

@@ -52,6 +52,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
     public int SlowModeSeconds { get; private set; }
     public string? UserName { get; private set; }
     public bool Forum { get; private set; }
+    public bool ForumTabs { get; private set; }
     public int MaxTopicId { get; private set; }
     public int? TtlPeriod { get; private set; }
     public long? PhotoId { get; private set; }
@@ -135,6 +136,8 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
         MigratedMaxId = aggregateEvent.MigratedMaxId;
         ParticipantCount = 1;
         IsGeoGroup = aggregateEvent.GeoPoint != null;
+        Forum = aggregateEvent.Forum;
+        ForumTabs = aggregateEvent.ForumTabs;
         ChatAdmins = new Dictionary<long, ChatAdmin>
         {
             { CreatorId, new ChatAdmin(CreatorId, true, CreatorId, ChatAdminRights.GetCreatorRights(), string.Empty) }
@@ -298,6 +301,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
         LinkedChannelId = snapshot.LinkedChannelId;
         UserName = snapshot.UserName;
         Forum = snapshot.Forum;
+        ForumTabs = snapshot.ForumTabs;
         MaxTopicId = snapshot.MaxTopicId;
         TtlPeriod = snapshot.TtlPeriod;
         MigratedFromChatId = snapshot.MigratedFromChatId;

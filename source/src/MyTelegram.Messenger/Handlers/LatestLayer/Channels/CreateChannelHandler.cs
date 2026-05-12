@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Create a <a href="https://corefork.telegram.org/api/channel">supergroup/channel</a>.
@@ -16,7 +19,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CreateChannelHandler(ICommandBus commandBus, IIdGenerator idGenerator, IRandomHelper randomHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestCreateChannel, MyTelegram.Schema.IUpdates>
+internal sealed class CreateChannelHandler(ICommandBus commandBus, IIdGenerator idGenerator, IRandomHelper randomHelper, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestCreateChannel, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestCreateChannel obj)
     {
@@ -44,8 +47,13 @@ internal sealed class CreateChannelHandler(ICommandBus commandBus, IIdGenerator 
                 break;
         }
 
-        var command = new CreateChannelCommand(ChannelId.Create(channelId), input.ToRequestInfo(), channelId, input.UserId, obj.Broadcast, megagroup, obj.Title, obj.About ?? string.Empty, geoPoint, obj.Address, accessHash, date, randomHelper.NextInt64(), new TMessageActionChannelCreate { Title = obj.Title }, ttl, false, null, null, null, ttlFromDefaultSetting: ttlFromDefaultSetting);
+        var command = new CreateChannelCommand(ChannelId.Create(channelId), input.ToRequestInfo(), channelId, input.UserId, obj.Broadcast, megagroup, obj.Title, obj.About ?? string.Empty, geoPoint, obj.Address, accessHash, date, randomHelper.NextInt64(), new TMessageActionChannelCreate { Title = obj.Title }, ttl, false, null, null, null, ttlFromDefaultSetting: ttlFromDefaultSetting, forum: obj.Forum);
         await commandBus.PublishAsync(command);
+        if (obj.Forum)
+        {
+            await ForumTopicHelper.EnsureGeneralTopicAsync(mongoDatabase, channelId, input.UserId);
+        }
+
         return null !;
     }
 }

@@ -82,7 +82,7 @@ internal sealed class CreateForumTopicHandler(
             Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             Title = obj.Title,
             IconColor = obj.IconColor ?? 0x6FB9F0,
-            IconEmojiId = obj.IconEmojiId ?? 0L,
+            IconEmojiId = obj.IconEmojiId,
             TopMessage = topicId,
             ReadInboxMaxId = 0,
             ReadOutboxMaxId = 0,
@@ -100,7 +100,7 @@ internal sealed class CreateForumTopicHandler(
         {
             Title = obj.Title,
             IconColor = obj.IconColor ?? 0x6FB9F0,
-            IconEmojiId = obj.IconEmojiId ?? 0L,
+            IconEmojiId = obj.IconEmojiId,
             TitleMissing = obj.TitleMissing
         };
 
@@ -113,7 +113,8 @@ internal sealed class CreateForumTopicHandler(
             sendMessageType: SendMessageType.MessageService,
             messageType: MessageType.Text,
             messageAction: action,
-            topMsgId: topicId
+            topMsgId: topicId,
+            messageId: topicId
         );
 
         await messageAppService.SendMessageAsync([sendInput]);

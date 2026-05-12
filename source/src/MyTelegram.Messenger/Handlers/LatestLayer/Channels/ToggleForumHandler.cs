@@ -66,44 +66,21 @@ internal sealed class ToggleForumHandler(
             RpcErrors.RpcErrors400.ChatDiscussionUnallowed.ThrowRpcError();
 
         var currentForum = channelDoc.Contains("Forum") && channelDoc["Forum"].AsBoolean;
-        if (currentForum == obj.Enabled)
+        var currentTabs = channelDoc.Contains("ForumTabs") && channelDoc["ForumTabs"].AsBoolean;
+        var newTabs = obj.Enabled && obj.Tabs;
+        if (currentForum == obj.Enabled && currentTabs == newTabs)
             RpcErrors.RpcErrors400.ChatNotModified.ThrowRpcError();
 
         var filter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
-        var update = Builders<BsonDocument>.Update.Set("Forum", obj.Enabled);
+        var update = Builders<BsonDocument>.Update
+            .Set("Forum", obj.Enabled)
+            .Set("ForumTabs", newTabs);
         await collection.UpdateOneAsync(filter, update);
 
         // Create General topic when enabling forum
         if (obj.Enabled)
         {
-            var topicsCol = mongoDatabase.GetCollection<BsonDocument>("forum_topics");
-            var generalTopicFilter = Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("ChannelId", channelId),
-                Builders<BsonDocument>.Filter.Eq("TopicId", 1)
-            );
-            var existingGeneral = await topicsCol.Find(generalTopicFilter).FirstOrDefaultAsync();
-
-            if (existingGeneral == null)
-            {
-                var generalTopic = new BsonDocument
-                {
-                    ["_id"] = $"topic-{channelId}-1",
-                    ["ChannelId"] = channelId,
-                    ["TopicId"] = 1,
-                    ["Title"] = "General",
-                    ["IconColor"] = 0x6FB9F0,
-                    ["IconEmojiId"] = 0L,
-                    ["CreatorId"] = input.UserId,
-                    ["Date"] = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    ["Closed"] = false,
-                    ["Hidden"] = false,
-                    ["Pinned"] = false,
-                    ["Short"] = false,
-                    ["TopMessageId"] = 1
-                };
-
-                await topicsCol.InsertOneAsync(generalTopic);
-            }
+            await ForumTopicHelper.EnsureGeneralTopicAsync(mongoDatabase, channelId, input.UserId);
         }
 
         // Log to admin log
@@ -112,6 +89,11 @@ internal sealed class ToggleForumHandler(
         // Get updated channel
         var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channelId), default);
         var channel = objectMapper.Map<IChannelReadModel, IChat>(channelReadModel!);
+        if (channel is TChannel tChannel)
+        {
+            tChannel.Forum = obj.Enabled;
+            tChannel.ForumTabs = newTabs;
+        }
 
         return new TUpdates
         {

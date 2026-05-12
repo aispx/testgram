@@ -34,6 +34,7 @@ public interface IChannelReadModel : IReadModel
     bool Scam { get; }
     long? LinkedChatId { get; }
     bool Forum { get; }
+    bool ForumTabs { get; }
     //int? TtlPeriod { get; }
 
     long? PhotoId { get; }

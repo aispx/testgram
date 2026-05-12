@@ -264,6 +264,7 @@ public class ChatConverterService(
         if (channel is TChannel tChannel)
         {
             tChannel.Forum = channelReadModel.Forum;
+            tChannel.ForumTabs = channelReadModel.ForumTabs;
         }
 
         if (channelMemberIsLeft.HasValue)

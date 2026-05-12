@@ -3,6 +3,7 @@ using StackExchange.Redis;
 using MongoDB.Driver;
 using MongoDB.Bson;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
+using MyTelegram.Messenger.Helpers;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Sends a message to a chat
@@ -109,9 +110,12 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             obj.Entities.Add(new TMessageEntityBotCommand { Length = obj.Message.Length, Offset = 0 });
         }
 
-        int? topMsgId = null;
         var sendAs = peerHelper.GetPeer(obj.SendAs, input.UserId);
         var toPeer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (toPeer == null)
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+
+        var (topMsgId, savedPeerId) = await ResolveThreadRoutingAsync(input, toPeer, obj.ReplyTo);
         long? paidMessageStars = null;
         if (toPeer.PeerType == PeerType.User)
         {
@@ -176,7 +180,7 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             }
         }
 
-        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod);
+        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod, savedPeerId: savedPeerId);
         await messageAppService.SendMessageAsync([sendMessageInput]);
 
         // Send updateBotNewBusinessMessage to connected business bots
@@ -240,6 +244,86 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
         }
 
         return media;
+    }
+
+    private async Task<(int? TopMsgId, Peer? SavedPeerId)> ResolveThreadRoutingAsync(IRequestInput input, Peer toPeer, IInputReplyTo? replyTo)
+    {
+        if (replyTo is TInputReplyToMonoForum monoForumReply)
+        {
+            var savedPeer = await ResolveMonoforumSavedPeerAsync(input, toPeer, monoForumReply.MonoforumPeerId);
+            return (null, savedPeer);
+        }
+
+        if (replyTo is TInputReplyToMessage { MonoforumPeerId: not null } messageReply)
+        {
+            var savedPeer = await ResolveMonoforumSavedPeerAsync(input, toPeer, messageReply.MonoforumPeerId);
+            return (null, savedPeer);
+        }
+
+        if (toPeer.PeerType != PeerType.Channel)
+        {
+            return (null, null);
+        }
+
+        var channelDoc = await GetChannelDocumentAsync(toPeer.PeerId);
+        if (channelDoc == null)
+        {
+            return (null, null);
+        }
+
+        if (channelDoc.Contains("IsMonoforum") && channelDoc["IsMonoforum"].AsBoolean)
+        {
+            return (null, null);
+        }
+
+        if (!channelDoc.Contains("Forum") || !channelDoc["Forum"].AsBoolean)
+        {
+            return (null, null);
+        }
+
+        var topicId = ForumTopicHelper.GetRequestedTopicId(replyTo);
+        if (!topicId.HasValue)
+        {
+            return (null, null);
+        }
+
+        await ForumTopicHelper.ValidateTopicForSendAsync(mongoDatabase, toPeer.PeerId, topicId.Value);
+        if (topicId.Value != ForumTopicHelper.GeneralTopicId &&
+            replyTo is TInputReplyToMessage topicReply &&
+            topicReply.TopMsgId == null)
+        {
+            topicReply.TopMsgId = topicId.Value;
+        }
+
+        return (topicId.Value == ForumTopicHelper.GeneralTopicId ? null : topicId.Value, null);
+    }
+
+    private async Task<Peer> ResolveMonoforumSavedPeerAsync(IRequestInput input, Peer toPeer, IInputPeer monoforumPeerId)
+    {
+        if (toPeer.PeerType != PeerType.Channel)
+        {
+            RpcErrors.RpcErrors400.ReplyToMonoforumPeerInvalid.ThrowRpcError();
+        }
+
+        var channelDoc = await GetChannelDocumentAsync(toPeer.PeerId);
+        if (channelDoc == null || !channelDoc.Contains("IsMonoforum") || !channelDoc["IsMonoforum"].AsBoolean)
+        {
+            RpcErrors.RpcErrors400.ReplyToMonoforumPeerInvalid.ThrowRpcError();
+        }
+
+        var savedPeer = peerHelper.GetPeer(monoforumPeerId, input.UserId);
+        if (savedPeer == null || savedPeer.PeerType != PeerType.User)
+        {
+            RpcErrors.RpcErrors400.ReplyToMonoforumPeerInvalid.ThrowRpcError();
+        }
+
+        return savedPeer;
+    }
+
+    private async Task<BsonDocument?> GetChannelDocumentAsync(long channelId)
+    {
+        var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-channelreadmodel");
+        return await collection.Find(Builders<BsonDocument>.Filter.Eq("ChannelId", channelId)).FirstOrDefaultAsync();
     }
 
     private async Task NotifyConnectedBusinessBotsSafelyAsync(long userId, long peerId, string message, long randomId)

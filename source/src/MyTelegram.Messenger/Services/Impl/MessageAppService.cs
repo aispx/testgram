@@ -451,7 +451,7 @@ public class MessageAppService(
             reply = new MessageReply(linkedChannelId, 0, 0, 0, []);
         }
 
-        var messageId = await idGenerator.NextIdAsync(idType, ownerPeerId);
+        var messageId = input.MessageId ?? await idGenerator.NextIdAsync(idType, ownerPeerId);
         //var messageId = 0;
         int? scheduleMessageId = null;
         if (idType == IdType.ScheduleMessageId)
@@ -518,7 +518,7 @@ public class MessageAppService(
             Views: views,
 			EncryptedData: encryptedData,
             InboxMessageEncryptedData: inboxMessageEncryptedData,
-            SavedPeerId: channelReadModel?.IsMonoforum == true ? new Peer(PeerType.User, input.SenderUserId) : null,
+            SavedPeerId: input.SavedPeerId ?? (channelReadModel?.IsMonoforum == true ? new Peer(PeerType.User, input.SenderUserId) : null),
             PaidMessageStars: input.PaidMessageStars,
             TtlPeriod: input.TtlPeriod
         );

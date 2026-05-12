@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.Messages;
 
@@ -30,57 +31,23 @@ internal sealed class GetForumTopicsByIDHandler(
         );
 
         var topicDocs = await topicsCol.Find(filter).ToListAsync();
+        var byId = topicDocs.ToDictionary(d => d["TopicId"].AsInt32);
 
         var topics = new TVector<IForumTopic>();
         var messages = new TVector<IMessage>();
 
-        foreach (var doc in topicDocs)
+        foreach (var topicId in obj.Topics)
         {
-            var topicId = doc["TopicId"].AsInt32;
-            var title = doc["Title"].AsString;
-            var iconColor = doc.Contains("IconColor") ? doc["IconColor"].AsInt32 : 0x6FB9F0;
-            var iconEmojiId = doc.Contains("IconEmojiId") ? doc["IconEmojiId"].AsInt64 : 0L;
-            var creatorId = doc["CreatorId"].AsInt64;
-            var date = doc["Date"].AsInt32;
-            var closed = doc.Contains("Closed") && doc["Closed"].AsBoolean;
-            var hidden = doc.Contains("Hidden") && doc["Hidden"].AsBoolean;
-            var pinned = doc.Contains("Pinned") && doc["Pinned"].AsBoolean;
-
-            var forumTopic = new TForumTopic
+            if (byId.TryGetValue(topicId, out var doc))
             {
-                Id = topicId,
-                Date = date,
-                Title = title,
-                IconColor = iconColor,
-                IconEmojiId = iconEmojiId,
-                TopMessage = topicId,
-                ReadInboxMaxId = 0,
-                ReadOutboxMaxId = 0,
-                UnreadCount = 0,
-                UnreadMentionsCount = 0,
-                UnreadReactionsCount = 0,
-                FromId = new TPeerUser { UserId = creatorId },
-                NotifySettings = new TPeerNotifySettings(),
-                Peer = new TPeerChannel { ChannelId = channelId }
-            };
-
-            if (iconEmojiId != 0)
-                forumTopic.IconEmojiId = iconEmojiId;
-
-            if (closed)
-                forumTopic.Closed = true;
-
-            if (hidden)
-                forumTopic.Hidden = true;
-
-            if (pinned)
-                forumTopic.Pinned = true;
-
-            topics.Add(forumTopic);
+                topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId));
+            }
         }
 
         return new TForumTopics
         {
+            Count = topics.Count,
+            OrderByCreateDate = true,
             Topics = topics,
             Messages = messages,
             Chats = new TVector<IChat>(),

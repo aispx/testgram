@@ -21,6 +21,7 @@ public class ChannelSnapshot(
     long? linkedChannelId,
     string? userName,
     bool forum,
+    bool forumTabs,
     int maxTopicId,
     int? ttlPeriod,
     long? migratedFromChatId,
@@ -79,6 +80,7 @@ public class ChannelSnapshot(
     public int SlowModeSeconds { get; } = slowModeSeconds;
     public string? UserName { get; } = userName;
     public bool Forum { get; } = forum;
+    public bool ForumTabs { get; } = forumTabs;
     public int MaxTopicId { get; } = maxTopicId;
     public int? TtlPeriod { get; } = ttlPeriod;
     public long? MigratedFromChatId { get; } = migratedFromChatId;
