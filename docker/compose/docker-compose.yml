@@ -103,7 +103,7 @@ services:
       - ./data/coturn:/var/lib/coturn
     command: >
       --verbose
-      --external-ip 90.156.168.199
+      --external-ip ${MINIO_EXTERNAL_IP:-127.0.0.1}
       --realm testgram
       --server-name testgram
       --listening-port 3478
