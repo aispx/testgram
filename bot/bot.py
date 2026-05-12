@@ -31,8 +31,51 @@ else:
 # Main bot settings.
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 DB_PATH = os.environ.get("DB_PATH", "/root/testgram/bot/codes.db")
-RABBITMQ_URL = os.environ.get("RABBITMQ_URL", "amqp://test:testgram2024@localhost/")
 MAX_NUMBERS = 2
+
+def get_rabbitmq_url():
+    """Return RabbitMQ URL.
+
+    RABBITMQ_URL=AUTO is supported for the host-run systemd bot: the function
+    reads the RabbitMQ container IP with docker inspect and builds an AMQP URL.
+    A normal amqp:// URL can still be set explicitly in .env.
+    """
+    url = os.environ.get("RABBITMQ_URL", "")
+    if url and url.upper() != "AUTO":
+        return url
+
+    import subprocess
+
+    container_names = [
+        os.environ.get("RABBITMQ_CONTAINER", ""),
+        "compose_rabbitmq_1",
+        "compose-rabbitmq-1",
+    ]
+    user = os.environ.get("RABBITMQ_USER", "test")
+    password = os.environ.get("RABBITMQ_PASSWORD", "testgram2024")
+
+    for container in [name for name in container_names if name]:
+        try:
+            ip = subprocess.check_output(
+                [
+                    "docker",
+                    "inspect",
+                    "-f",
+                    "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+                    container,
+                ],
+                text=True,
+            ).strip()
+            if ip:
+                logger.info("RabbitMQ auto-detected at %s (%s)", ip, container)
+                return f"amqp://{user}:{password}@{ip}/"
+        except Exception as e:
+            logger.warning("Could not inspect RabbitMQ container %s: %s", container, e)
+
+    logger.warning("RabbitMQ auto-detect failed, falling back to localhost")
+    return f"amqp://{user}:{password}@localhost/"
+
+RABBITMQ_URL = get_rabbitmq_url()
 
 # Bot placeholder - the real Bot object is created in main() after the
 # asyncio event loop exists, so proxy/session settings can be applied safely.
