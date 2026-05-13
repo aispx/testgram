@@ -1,4 +1,5 @@
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 using System.Linq;
 using MongoDB.Driver;
 
@@ -25,7 +26,9 @@ internal sealed class DeleteMessagesHandler(
     IChannelAppService channelAppService,
     IChannelAdminRightsChecker channelAdminRightsChecker,
     IMongoDatabase mongoDatabase,
-    IMessageConverterService messageConverterService)
+    IMessageConverterService messageConverterService,
+    IMessageAppService messageAppService,
+    MyTelegram.Services.Services.IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestDeleteMessages, MyTelegram.Schema.Messages.IAffectedMessages>
 {
     protected override async Task<IAffectedMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestDeleteMessages obj)
@@ -90,6 +93,17 @@ internal sealed class DeleteMessagesHandler(
                         newTopMessageIdForDiscussionGroup = await queryProcessor.ProcessAsync(new GetTopMessageIdQuery(channelReadModel.LinkedChatId.Value, repliesMessageIds.ToList()));
                     }
                 }
+
+                // Refund any approved-but-not-settled suggested posts that are being deleted now.
+                // The published post lives in the broadcast channel; settlements are keyed by it.
+                await SuggestedPostRefundHelper.TryRefundOnDeleteAsync(
+                    mongoDatabase,
+                    messageAppService,
+                    broadcastChannelId: inputChannel.ChannelId,
+                    msgIds: ids,
+                    actorUserId: input.UserId,
+                    objectMessageSender: objectMessageSender,
+                    channelOwnerUserId: channelReadModel.CreatorId);
 
                 // Pass null for messagesToLog - will read from deleted_messages_temp instead
                 var command = new StartDeleteChannelMessagesCommand(

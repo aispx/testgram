@@ -5,28 +5,63 @@ using MyTelegram.Schema.Payments;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
-internal sealed class GetStarsStatusHandler(IMongoDatabase mongoDatabase)
+internal sealed class GetStarsStatusHandler(IMongoDatabase mongoDatabase, IPeerHelper peerHelper)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetStarsStatus, IStarsStatus>
 {
     protected override async Task<IStarsStatus> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetStarsStatus obj)
     {
-        if (obj.Ton)
+        const int pageSize = 50;
+
+        // Channel/bot revenue: return channel ledger balance + history.
+        if (obj.Peer is not TInputPeerSelf)
         {
+            var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+            var currency = obj.Ton ? ChannelRevenueHelper.TonCurrency : ChannelRevenueHelper.StarsCurrency;
+            var (current, _) = await ChannelRevenueHelper.GetBalanceAsync(mongoDatabase, peer.PeerId, currency);
+
+            var chFilter = Builders<ChannelRevenueTransactionDocument>.Filter.Eq(x => x.PeerId, peer.PeerId)
+                           & Builders<ChannelRevenueTransactionDocument>.Filter.Eq(x => x.Currency, currency);
+            var chDocs = await mongoDatabase.GetCollection<ChannelRevenueTransactionDocument>(ChannelRevenueHelper.TransactionCollection)
+                .Find(chFilter).SortByDescending(x => x.Date).Limit(pageSize).ToListAsync();
+            var chNext = chDocs.Count == pageSize ? chDocs[^1].Id : null;
             return new TStarsStatus
             {
-                Balance = new TStarsTonAmount { Amount = 0 },
-                Chats = new TVector<IChat>(), Users = new TVector<IUser>(), History = []
+                Balance = ChannelRevenueHelper.BuildAmount(currency, current),
+                History = new TVector<IStarsTransaction>(chDocs.Select(ChannelRevenueHelper.ToTl).Cast<IStarsTransaction>().ToList()),
+                NextOffset = chNext,
+                Chats = new TVector<IChat>(),
+                Users = new TVector<IUser>()
             };
         }
 
         var userId = input.UserId;
+
+        if (obj.Ton)
+        {
+            var tonBalance = await TonBalanceHelper.GetBalanceAsync(mongoDatabase, userId);
+            var tonTxDocs = await mongoDatabase.GetCollection<TonTransactionDocument>(TonBalanceHelper.TransactionCollection)
+                .Find(Builders<TonTransactionDocument>.Filter.Eq(x => x.UserId, userId))
+                .SortByDescending(x => x.Date)
+                .Limit(pageSize)
+                .ToListAsync();
+            var tonNextOffset = tonTxDocs.Count == pageSize ? tonTxDocs[^1].Id : null;
+            return new TStarsStatus
+            {
+                Balance = new TStarsTonAmount { Amount = tonBalance },
+                History = new TVector<IStarsTransaction>(tonTxDocs.Select(TonBalanceHelper.ToTl).Cast<IStarsTransaction>().ToList()),
+                NextOffset = tonNextOffset,
+                Chats = new TVector<IChat>(),
+                Users = new TVector<IUser>()
+            };
+        }
+
         var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, userId);
 
         // Use BsonDocument instead of typed model to avoid ObjectId deserialization issues
         var txDocs = await mongoDatabase.GetCollection<BsonDocument>("star-transactions")
             .Find(Builders<BsonDocument>.Filter.Eq("UserId", userId))
             .SortByDescending(x => x["Date"])
-            .Limit(5)
+            .Limit(pageSize)
             .ToListAsync();
 
         var transactions = new List<IStarsTransaction>();
@@ -34,11 +69,13 @@ internal sealed class GetStarsStatusHandler(IMongoDatabase mongoDatabase)
         {
             transactions.Add(StarsBalanceHelper.BsonToTl(doc));
         }
+        var nextOffset = txDocs.Count == pageSize ? txDocs[^1]["_id"].AsString : null;
 
         return new TStarsStatus
         {
             Balance = new TStarsAmount { Amount = balance },
             History = new TVector<IStarsTransaction>(transactions),
+            NextOffset = nextOffset,
             Chats = new TVector<IChat>(), Users = new TVector<IUser>()
         };
     }

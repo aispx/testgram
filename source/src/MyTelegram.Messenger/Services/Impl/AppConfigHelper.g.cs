@@ -838,7 +838,7 @@ public partial class AppConfigHelper
                 new TJsonObjectValue { Key = "ton_suggested_post_amount_max", Value = new TJsonNumber { Value = 10000000000000 } },
 
                 //  
-                new TJsonObjectValue { Key = "ton_suggested_post_amount_min", Value = new TJsonNumber { Value = 1 } },
+                new TJsonObjectValue { Key = "ton_suggested_post_amount_min", Value = new TJsonNumber { Value = 10000000 } },
 
                 //  
                 new TJsonObjectValue { Key = "ton_suggested_post_commission_permille", Value = new TJsonNumber { Value = 850 } },

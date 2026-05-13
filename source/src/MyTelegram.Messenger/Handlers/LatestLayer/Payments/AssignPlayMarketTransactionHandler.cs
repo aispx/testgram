@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.StarGifts;
+using MyTelegram.Services.Services;
 using System.Text.Json;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
@@ -13,7 +14,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// </summary>
 internal sealed class AssignPlayMarketTransactionHandler(
     IMongoDatabase mongoDatabase,
-    IOptions<MyTelegramMessengerServerOptions> options)
+    IOptions<MyTelegramMessengerServerOptions> options,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestAssignPlayMarketTransaction, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestAssignPlayMarketTransaction obj)
@@ -58,6 +60,7 @@ internal sealed class AssignPlayMarketTransactionHandler(
             await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, 1000);
             await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, 1000,
                 title: "Test top-up: 1000 stars");
+            await BalancePushHelper.PushStarsBalanceAsync(objectMessageSender, mongoDatabase, input.UserId);
             return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = DateTime.UtcNow.ToTimestamp(), Seq = 0 };
         }
 
@@ -77,6 +80,7 @@ internal sealed class AssignPlayMarketTransactionHandler(
         await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, intent!.Stars);
         await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, intent.Stars,
             title: $"Stripe top-up: {intent.Stars} stars");
+        await BalancePushHelper.PushStarsBalanceAsync(objectMessageSender, mongoDatabase, input.UserId);
 
         // Cleanup
         await col.DeleteOneAsync(x => x.Id == intent.Id);
