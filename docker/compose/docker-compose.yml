@@ -604,9 +604,11 @@ services:
       #RabbitMQ__EventBus__ClientName: ${RabbitMQ__EventBus__ClientName}
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
       Redis__Configuration: ${Redis__Configuration}
+      MYTELEGRAM_GEOIP_COUNTRY_DB: ${MYTELEGRAM_GEOIP_COUNTRY_DB:-/geoip/GeoLite2-City.mmdb}
     volumes:
       - ./data/mytelegram/query-server/logs:/app/Logs
       - /var/www/html/update.json:/app/update.json:ro
+      - ./geoip:/geoip:ro
     depends_on:
       mongodb:
         condition: service_healthy

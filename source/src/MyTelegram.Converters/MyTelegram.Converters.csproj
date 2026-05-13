@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="MaxMind.GeoIP2" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\MyTelegram.Domain.Shared\MyTelegram.Domain.Shared.csproj" />
     <ProjectReference Include="..\MyTelegram.ReadModel.Interfaces\MyTelegram.ReadModel.Interfaces.csproj" />
     <ProjectReference Include="..\MyTelegram.Schema\MyTelegram.Schema.csproj" />

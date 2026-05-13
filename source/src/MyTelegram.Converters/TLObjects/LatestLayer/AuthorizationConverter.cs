@@ -1,11 +1,12 @@
-﻿using MyTelegram.Schema.Auth;
+﻿using MyTelegram.Converters.Services.Interfaces;
+using MyTelegram.Schema.Auth;
 using MyTelegram.Schema.Help;
 using IAuthorization = MyTelegram.Schema.Auth.IAuthorization;
 using TAuthorization = MyTelegram.Schema.Auth.TAuthorization;
 
 namespace MyTelegram.Converters.TLObjects.LatestLayer;
 
-internal sealed class AuthorizationConverter(IObjectMapper objectMapper) : IAuthorizationConverter, ITransientDependency
+internal sealed class AuthorizationConverter(IObjectMapper objectMapper, ISessionLocationResolver sessionLocationResolver) : IAuthorizationConverter, ITransientDependency
 {
     
     public int Layer => Layers.LayerLatest;
@@ -60,8 +61,9 @@ internal sealed class AuthorizationConverter(IObjectMapper objectMapper) : IAuth
     {
         var authorization = objectMapper.Map<IDeviceReadModel, Schema.TAuthorization>(deviceReadModel);
         authorization.AppName = deviceReadModel.LangPack;
-        authorization.Country = "Test Country";
-        authorization.Region = string.Empty;
+        var location = sessionLocationResolver.Resolve(deviceReadModel);
+        authorization.Country = location.Country;
+        authorization.Region = location.Region;
 
         authorization.Current = selfPermAuthKeyId == deviceReadModel.PermAuthKeyId;
 
@@ -71,8 +73,9 @@ internal sealed class AuthorizationConverter(IObjectMapper objectMapper) : IAuth
     public IWebAuthorization ToWebAuthorization(IDeviceReadModel deviceReadModel, long selfPermAuthKeyId = -1)
     {
         var authorization = objectMapper.Map<IDeviceReadModel, TWebAuthorization>(deviceReadModel);
-        authorization.Region = "Test region";
-        authorization.Domain = "Test domain";
+        var location = sessionLocationResolver.Resolve(deviceReadModel);
+        authorization.Region = location.Region;
+        authorization.Domain = deviceReadModel.Parameters?.TryGetValue("domain", out var domain) == true ? domain : string.Empty;
 
         return authorization;
     }
