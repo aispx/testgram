@@ -26,7 +26,9 @@ internal sealed class SaveDraftHandler(ICommandBus commandBus, IPeerHelper peerH
             case TInputReplyToMessage inputReplyToMessage:
                 replyToMsgId = inputReplyToMessage.ReplyToMsgId;
                 break;
-            case TInputReplyToStory inputReplyToStory:
+            case TInputReplyToMonoForum:
+                break;
+            case TInputReplyToStory:
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
@@ -40,7 +42,7 @@ internal sealed class SaveDraftHandler(ICommandBus commandBus, IPeerHelper peerH
             media = await mediaHelper.SaveMediaAsync(obj.Media);
         }
 
-        var saveDraftCommand = new SaveDraftCommand(dialogId, input.ToRequestInfo(), new Draft(obj.NoWebpage, obj.InvertMedia, replyToMsgId, obj.Message, CurrentDate, entities2: obj.Entities, media: media, effect: obj.Effect, media2: obj.Media, replyTo: obj.ReplyTo), null);
+        var saveDraftCommand = new SaveDraftCommand(dialogId, input.ToRequestInfo(), new Draft(obj.NoWebpage, obj.InvertMedia, replyToMsgId, obj.Message, CurrentDate, entities2: obj.Entities, media: media, effect: obj.Effect, media2: obj.Media, replyTo: obj.ReplyTo, suggestedPost: obj.SuggestedPost), null);
         await commandBus.PublishAsync(saveDraftCommand);
         return new TBoolTrue();
     }

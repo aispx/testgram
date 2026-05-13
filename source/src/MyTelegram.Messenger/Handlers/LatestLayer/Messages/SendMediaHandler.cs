@@ -158,6 +158,11 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         }
 
         var toPeer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        var channelForMonoforum = toPeer.PeerType == PeerType.Channel
+            ? await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeer.PeerId))
+            : null;
+        var isMonoforum = channelForMonoforum?.IsMonoforum == true;
+        MonoforumCompatibilityHelper.ValidateSuggestedPostOrThrow(obj.SuggestedPost, isMonoforum);
         long? paidMessageStars = null;
         if (toPeer.PeerType == PeerType.User)
         {
@@ -180,6 +185,10 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         long? pollId = null;
         if (obj.Media is TInputMediaPoll inputMediaPoll)
         {
+            if (isMonoforum)
+            {
+                RpcErrors.RpcErrors403.ChatSendPollForbidden.ThrowRpcError();
+            }
             pollId = randomHelper.NextInt64();
             inputMediaPoll.Poll.Id = pollId.Value;
             await CreatePollAsync(input.UserId, toPeer, inputMediaPoll);
@@ -207,8 +216,15 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             savedPeerId = await ResolveMonoforumSavedPeerAsync(toPeer, monoForumReply.MonoforumPeerId);
         }
 
+        if (isMonoforum)
+        {
+            var (_, chargedStars) = await MonoforumCompatibilityHelper.TryChargeMonoforumMessageAsync(
+                input, toPeer, savedPeerId, obj.AllowPaidStars, queryProcessor, mongoDatabase);
+            paidMessageStars = chargedStars ?? paidMessageStars;
+        }
+
         var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), obj.Message, obj.RandomId, clearDraft: obj.ClearDraft, entities: obj.Entities, media: media, //replyToMsgId: replyToMsgId,
- inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId);
+ inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, suggestedPost: obj.SuggestedPost);
         await messageAppService.SendMessageAsync([sendMessageInput]);
         return null!;
     }

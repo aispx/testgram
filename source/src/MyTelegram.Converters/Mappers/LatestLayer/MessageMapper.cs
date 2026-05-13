@@ -33,6 +33,9 @@ internal sealed class MessageMapper
         //destination.Noforwards = source.Noforwards;
         destination.InvertMedia = source.InvertMedia;
         if (source.PaidMessageStars > 0) destination.PaidMessageStars = source.PaidMessageStars;
+        destination.SuggestedPost = source.SuggestedPost;
+        destination.PaidSuggestedPostStars = source.PaidSuggestedPostStars;
+        destination.PaidSuggestedPostTon = source.PaidSuggestedPostTon;
         //destination.Offline = source.Offline;
         //destination.VideoProcessingPending = source.VideoProcessingPending;
         destination.Id = source.MessageId;

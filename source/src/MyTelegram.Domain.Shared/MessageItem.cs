@@ -57,7 +57,10 @@ public record MessageItem
     List<long>? MentionedUserIds = null,
     ReadOnlyMemory<byte>? EncryptedData = null,
     ReadOnlyMemory<byte>? InboxMessageEncryptedData = null,
-    long? PaidMessageStars = null
+    long? PaidMessageStars = null,
+    ISuggestedPost? SuggestedPost = null,
+    bool PaidSuggestedPostStars = false,
+    bool PaidSuggestedPostTon = false
 //int? DefaultHistoryTtl = null,
 //int? Ttl = null
 );

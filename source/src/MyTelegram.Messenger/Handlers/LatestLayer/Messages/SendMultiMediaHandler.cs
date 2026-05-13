@@ -56,6 +56,10 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
         var toPeerForPaid = peerHelper.GetPeer(obj.Peer, input.UserId);
+        var channelForMonoforum = toPeerForPaid.PeerType == PeerType.Channel
+            ? await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeerForPaid.PeerId))
+            : null;
+        var isMonoforum = channelForMonoforum?.IsMonoforum == true;
         long? paidMessageStars = null;
         if (toPeerForPaid.PeerType == PeerType.User)
         {
@@ -80,10 +84,34 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
         var requestInfo = input.ToRequestInfo();
         int? replyToMsgId = null;
         int? topMsgId = null;
+        Peer? savedPeerId = null;
         if (obj.ReplyTo is TInputReplyToMessage replyToMessage)
         {
             replyToMsgId = replyToMessage.ReplyToMsgId;
             topMsgId = replyToMessage.TopMsgId;
+            if (replyToMessage.MonoforumPeerId != null)
+            {
+                savedPeerId = peerHelper.GetPeer(replyToMessage.MonoforumPeerId, input.UserId);
+                topMsgId = null;
+            }
+        }
+        else if (obj.ReplyTo is TInputReplyToMonoForum monoForumReply)
+        {
+            savedPeerId = peerHelper.GetPeer(monoForumReply.MonoforumPeerId, input.UserId);
+        }
+
+        if (isMonoforum)
+        {
+            foreach (var media in obj.MultiMedia)
+            {
+                if (media.Media is TInputMediaPoll)
+                {
+                    RpcErrors.RpcErrors403.ChatSendPollForbidden.ThrowRpcError();
+                }
+            }
+            var (_, chargedStars) = await MonoforumCompatibilityHelper.TryChargeMonoforumMessageAsync(
+                input, toPeerForPaid, savedPeerId, obj.AllowPaidStars, queryProcessor, mongoDatabase);
+            paidMessageStars = chargedStars ?? paidMessageStars;
         }
 
         var sendAs = peerHelper.GetPeer(obj.SendAs, input.UserId);
@@ -92,7 +120,7 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
         {
             var media = await mediaHelper.SaveMediaAsync(inputSingleMedia.Media);
             var sendMessageInput = new SendMessageInput(requestInfo, input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), inputSingleMedia.Message, inputSingleMedia.RandomId, clearDraft: obj.ClearDraft, entities: inputSingleMedia.Entities, media: media, //replyToMsgId: replyToMsgId,
- inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), groupId: groupId, groupItemCount: groupItemCount, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, isSendGroupedMessage: true, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars);
+ inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), groupId: groupId, groupItemCount: groupItemCount, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, isSendGroupedMessage: true, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId);
             inputs.Add(sendMessageInput);
         //await _messageAppService.SendMessageAsync(sendMessageInput);
         //_requestCacheAppService.AddRequest(input.ReqMsgId, input.AuthKeyId, input.RequestSessionId, input.SeqNumber);

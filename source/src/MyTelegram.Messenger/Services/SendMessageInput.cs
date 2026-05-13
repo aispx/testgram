@@ -39,7 +39,12 @@ public record SendMessageInput
         long? paidMessageStars = null,
         int? ttlPeriod = null,
         Peer? savedPeerId = null,
-        int? messageId = null
+        int? messageId = null,
+        ISuggestedPost? suggestedPost = null,
+        MessageFwdHeader? fwdHeader = null,
+        MessageSubType messageSubType = MessageSubType.Normal,
+        string? postAuthor = null,
+        int? views = null
         )
     {
         RequestInfo = requestInfo;
@@ -76,6 +81,11 @@ public record SendMessageInput
         TtlPeriod = ttlPeriod;
         SavedPeerId = savedPeerId;
         MessageId = messageId;
+        SuggestedPost = suggestedPost;
+        FwdHeader = fwdHeader;
+        MessageSubType = messageSubType;
+        PostAuthor = postAuthor;
+        Views = views;
     }
 
     public bool ClearDraft { get; }
@@ -99,6 +109,11 @@ public record SendMessageInput
     public int? TtlPeriod { get; }
     public Peer? SavedPeerId { get; }
     public int? MessageId { get; }
+    public ISuggestedPost? SuggestedPost { get; }
+    public MessageFwdHeader? FwdHeader { get; }
+    public MessageSubType MessageSubType { get; }
+    public string? PostAuthor { get; }
+    public int? Views { get; }
     public IMessageMedia? Media { get; }
     public IInputMedia? InputMedia { get; }
 

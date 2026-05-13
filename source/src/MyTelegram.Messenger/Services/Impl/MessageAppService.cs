@@ -274,7 +274,13 @@ public class MessageAppService(
         {
             if (channelReadModel is { Broadcast: false, LinkedChatId: not null, JoinToSend: false } || channelReadModel.IsMonoforum)
             {
-
+                // Auto-join the sender into the monoforum WITHOUT emitting a join service message.
+                // We publish CreateChannelMemberCommand directly (bypassing JoinChannelSaga which
+                // is what normally emits messageActionChatAddUser for non-broadcast channels).
+                if (channelReadModel.IsMonoforum)
+                {
+                    await AutoJoinMonoforumSilentlyAsync(channelReadModel, input);
+                }
             }
             else
             {
@@ -324,6 +330,51 @@ public class MessageAppService(
         //}
 
         return channelReadModel;
+    }
+
+    /// <summary>
+    /// Adds the sender as a channel member of the monoforum WITHOUT emitting the
+    /// <c>messageActionChatAddUser</c> service message. We publish
+    /// <see cref="CreateChannelMemberCommand"/> directly so <see cref="MyTelegram.Domain.Sagas.JoinChannelSaga"/>
+    /// (which is responsible for the join service message) never starts.
+    /// </summary>
+    private async Task AutoJoinMonoforumSilentlyAsync(IChannelReadModel channelReadModel, SendMessageInput input)
+    {
+        var channelId = channelReadModel.ChannelId;
+        var userId = input.SenderUserId;
+        var requestInfo = input.RequestInfo;
+        var date = DateTime.UtcNow.ToTimestamp();
+
+        try
+        {
+            await commandBus.PublishAsync(new CreateChannelMemberCommand(
+                ChannelMemberId.Create(channelId, userId),
+                requestInfo,
+                channelId,
+                userId,
+                inviterId: userId,
+                date,
+                isBot: false,
+                chatInviteId: null,
+                isBroadcast: channelReadModel.Broadcast,
+                ChatJoinType.BySelf));
+
+            await commandBus.PublishAsync(new IncrementParticipantCountCommand(ChannelId.Create(channelId)));
+
+            var toPeer = new Peer(PeerType.Channel, channelId);
+            await commandBus.PublishAsync(new CreateDialogCommand(
+                DialogId.Create(userId, toPeer),
+                requestInfo,
+                userId,
+                toPeer,
+                channelHistoryMinId: channelReadModel.HiddenPreHistory ? channelReadModel.TopMessageId : 0,
+                channelReadModel.TopMessageId));
+        }
+        catch (Exception ex) when (ex.GetType().Name == "UserAlreadyParticipantException"
+                                    || ex.GetType().Name == "DuplicateOperationException")
+        {
+            // Race with another concurrent send — membership already exists.
+        }
     }
 
     private async Task<Peer?> GetDefaultSendAsAsync(SendMessageInput input)
@@ -417,10 +468,15 @@ public class MessageAppService(
             await queryProcessor.ProcessAsync(new GetReplyToMsgIdListQuery(input.ToPeer, input.SenderUserId,
                 replyToMsgId));
         var idType = IdType.MessageId;
-        var subType = input.MessageAction is TMessageActionStarGift ? MessageSubType.StarGift : MessageSubType.Normal;
+        var subType = input.MessageSubType != MessageSubType.Normal
+            ? input.MessageSubType
+            : input.MessageAction is TMessageActionStarGift
+                ? MessageSubType.StarGift
+                : MessageSubType.Normal;
         var messageActionType = input.MessageAction switch
         {
             TMessageActionPaidMessagesPrice => MessageActionType.PaidMessagesPriceUpdated,
+            TMessageActionSuggestedPostApproval => MessageActionType.ToggleSuggestedPostApproval,
             TMessageActionGiftStars => MessageActionType.GiftStars,
             TMessageActionPaidMessage => MessageActionType.PaidMessage,
             TMessageActionGiftCode => MessageActionType.GiftCode,
@@ -455,6 +511,9 @@ public class MessageAppService(
                 sendAs = input.RequestInfo.UserId.ToUserPeer();
             }
         }
+
+        postAuthor = input.PostAuthor ?? postAuthor;
+        views = input.Views ?? views;
 
         var scheduleDate = input.ScheduleDate;
         if (scheduleDate.HasValue)
@@ -524,6 +583,7 @@ public class MessageAppService(
             entities,
             input.Media,
             input.GroupId,
+            FwdHeader: input.FwdHeader,
             PollId: input.PollId,
             Post: post,
             ReplyMarkup: input.ReplyMarkup,
@@ -547,6 +607,9 @@ public class MessageAppService(
             InboxMessageEncryptedData: inboxMessageEncryptedData,
             SavedPeerId: input.SavedPeerId ?? (channelReadModel?.IsMonoforum == true ? new Peer(PeerType.User, input.SenderUserId) : null),
             PaidMessageStars: input.PaidMessageStars,
+            SuggestedPost: input.SuggestedPost,
+            PaidSuggestedPostStars: input.SuggestedPost?.Price is TStarsAmount,
+            PaidSuggestedPostTon: input.SuggestedPost?.Price is TStarsTonAmount,
             TtlPeriod: input.TtlPeriod
         );
 

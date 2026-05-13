@@ -12,7 +12,8 @@ public class Draft(
     int? topMsgId = null,
     long? effect = null,
     IInputMedia? media2 = null,
-    IInputReplyTo? replyTo = null
+    IInputReplyTo? replyTo = null,
+    ISuggestedPost? suggestedPost = null
 )
 {
     //bool? invertMedia,
@@ -29,4 +30,5 @@ public class Draft(
     public long? Effect { get; } = effect;
     public IInputMedia? Media2 { get; } = media2;
     public IInputReplyTo? ReplyTo { get; } = replyTo;
+    public ISuggestedPost? SuggestedPost { get; } = suggestedPost;
 }

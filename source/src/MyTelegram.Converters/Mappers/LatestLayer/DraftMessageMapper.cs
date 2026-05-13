@@ -58,6 +58,7 @@ internal sealed class DraftMessageMapper
 
         destination.Date = source.Date;
         destination.Effect = source.Effect;
+        destination.SuggestedPost = source.SuggestedPost;
 
         return destination;
     }

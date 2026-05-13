@@ -97,6 +97,9 @@ public class MessageReadModel : IMessageReadModel,
     public long? TodoId { get; private set; }
     public ReadOnlyMemory<byte>? EncryptedData { get; private set; }
     public long? PaidMessageStars { get; private set; }
+    public ISuggestedPost? SuggestedPost { get; private set; }
+    public bool PaidSuggestedPostStars { get; private set; }
+    public bool PaidSuggestedPostTon { get; private set; }
 
     public Task ApplyAsync(IReadModelContext context,
         IDomainEvent<MessageAggregate, MessageId, OutboxMessageCreatedEvent> domainEvent,
@@ -169,6 +172,9 @@ public class MessageReadModel : IMessageReadModel,
         MentionedUserIds = messageItem.MentionedUserIds;
         EncryptedData = messageItem.EncryptedData;
         PaidMessageStars = messageItem.PaidMessageStars;
+        SuggestedPost = messageItem.SuggestedPost;
+        PaidSuggestedPostStars = messageItem.PaidSuggestedPostStars;
+        PaidSuggestedPostTon = messageItem.PaidSuggestedPostTon;
         SavedPeerId = messageItem.SavedPeerId;
 
         return Task.CompletedTask;
@@ -225,6 +231,9 @@ public class MessageReadModel : IMessageReadModel,
         InvertMedia = messageItem.InvertMedia;
         EncryptedData = messageItem.EncryptedData;
         PaidMessageStars = messageItem.PaidMessageStars;
+        SuggestedPost = messageItem.SuggestedPost;
+        PaidSuggestedPostStars = messageItem.PaidSuggestedPostStars;
+        PaidSuggestedPostTon = messageItem.PaidSuggestedPostTon;
         SavedPeerId = messageItem.SavedPeerId;
 
         return Task.CompletedTask;

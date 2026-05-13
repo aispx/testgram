@@ -61,4 +61,7 @@ public interface IMessageReadModel : IReadModel, IReactionItem
     long? TodoId { get; }
     ReadOnlyMemory<byte>? EncryptedData { get; }
     long? PaidMessageStars { get; }
+    ISuggestedPost? SuggestedPost { get; }
+    bool PaidSuggestedPostStars { get; }
+    bool PaidSuggestedPostTon { get; }
 }

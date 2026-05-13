@@ -120,6 +120,11 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
 
         var (topMsgId, savedPeerId) = await ResolveThreadRoutingAsync(input, toPeer, obj.ReplyTo);
+        var channelForMonoforum = toPeer.PeerType == PeerType.Channel
+            ? await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeer.PeerId))
+            : null;
+        var isMonoforum = channelForMonoforum?.IsMonoforum == true;
+        MonoforumCompatibilityHelper.ValidateSuggestedPostOrThrow(obj.SuggestedPost, isMonoforum);
         long? paidMessageStars = null;
         if (toPeer.PeerType == PeerType.User)
         {
@@ -166,6 +171,18 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             }
         }
 
+        if (isMonoforum && string.IsNullOrEmpty(obj.Message) && media == null)
+        {
+            RpcErrors.RpcErrors400.MessageEmpty.ThrowRpcError();
+        }
+
+        if (isMonoforum)
+        {
+            var (_, chargedStars) = await MonoforumCompatibilityHelper.TryChargeMonoforumMessageAsync(
+                input, toPeer, savedPeerId, obj.AllowPaidStars, queryProcessor, mongoDatabase, objectMessageSender);
+            paidMessageStars = chargedStars ?? paidMessageStars;
+        }
+
         // Get TTL period from dialog
         int? ttlPeriod = null;
         var dialogId = DialogId.Create(input.UserId, toPeer.PeerType, toPeer.PeerId);
@@ -184,7 +201,7 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             }
         }
 
-        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod, savedPeerId: savedPeerId);
+        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod, savedPeerId: savedPeerId, suggestedPost: obj.SuggestedPost);
         await messageAppService.SendMessageAsync([sendMessageInput]);
 
         // Send updateBotNewBusinessMessage to connected business bots
