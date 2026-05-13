@@ -79,16 +79,48 @@ internal sealed class GetAvailableReactionsHandler : RpcResultObjectHandler<MyTe
     {
         return new TDocument
         {
-            Id = doc["Id"].AsInt64,
-            AccessHash = doc["AccessHash"].AsInt64,
-            FileReference = doc["FileReference"].AsByteArray,
-            Date = doc["Date"].AsInt32,
+            Id = GetInt64(doc["Id"]),
+            AccessHash = GetInt64(doc["AccessHash"]),
+            FileReference = GetByteArray(doc["FileReference"]),
+            Date = GetInt32(doc["Date"]),
             MimeType = doc["MimeType"].AsString,
-            Size = doc["Size"].AsInt64,
+            Size = GetInt64(doc["Size"]),
             Thumbs = new TVector<IPhotoSize>(),
             VideoThumbs = new TVector<IVideoSize>(),
-            DcId = doc["DcId"].AsInt32,
+            DcId = GetInt32(doc["DcId"]),
             Attributes = new TVector<IDocumentAttribute>()
+        };
+    }
+
+    private static byte[] GetByteArray(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Binary => value.AsBsonBinaryData.Bytes,
+            BsonType.Array => value.AsBsonArray.Select(p => (byte)p.ToInt32()).ToArray(),
+            _ => []
+        };
+    }
+
+    private static long GetInt64(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Int64 => value.AsInt64,
+            BsonType.Int32 => value.AsInt32,
+            BsonType.Double => (long)value.AsDouble,
+            _ => value.ToInt64()
+        };
+    }
+
+    private static int GetInt32(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Int32 => value.AsInt32,
+            BsonType.Int64 => checked((int)value.AsInt64),
+            BsonType.Double => (int)value.AsDouble,
+            _ => value.ToInt32()
         };
     }
 }

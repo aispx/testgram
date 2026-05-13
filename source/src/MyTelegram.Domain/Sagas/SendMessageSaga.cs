@@ -279,10 +279,14 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
                 case TInputReplyToMessage inputReplyToMessage:
                     ReplyToMessage(outboxMessageItem, inputReplyToMessage.ReplyToMsgId);
                     return true;
+                case TInputReplyToMonoForum:
+                    // Sending to a monoforum topic is not a thread/discussion reply:
+                    // the target topic is carried by SavedPeerId/MonoforumPeerId instead.
+                    return false;
                 case TInputReplyToStory inputReplyToStory:
                     break;
                 default:
-                    throw new ArgumentOutOfRangeException();
+                    return false;
             }
         }
 

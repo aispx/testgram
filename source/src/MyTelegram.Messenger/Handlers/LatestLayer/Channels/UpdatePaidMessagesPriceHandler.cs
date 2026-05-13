@@ -41,7 +41,8 @@ internal sealed class UpdatePaidMessagesPriceHandler(
                     ChannelId.Create(monoforumId),
                     req with { ReqMsgId = req.ReqMsgId + 1, RequestId = Guid.NewGuid() },
                     monoforumId, isMonoforum: true, broadcastMessagesAllowed: false,
-                    linkedMonoforumId: channelPeer.PeerId));
+                    linkedMonoforumId: channelPeer.PeerId,
+                    sendPaidMessagesStars: obj.SendPaidMessagesStars));
 
                 await commandBus.PublishAsync(new EnableMonoforumCommand(
                     ChannelId.Create(channelPeer.PeerId),
@@ -62,6 +63,16 @@ internal sealed class UpdatePaidMessagesPriceHandler(
                     linkedMonoforumId: null,
                     sendPaidMessagesStars: 0));
 
+                if (channelReadModel.LinkedMonoforumId.HasValue)
+                {
+                    await commandBus.PublishAsync(new EnableMonoforumCommand(
+                        ChannelId.Create(channelReadModel.LinkedMonoforumId.Value),
+                        input.ToRequestInfo() with { RequestId = Guid.NewGuid() },
+                        channelReadModel.LinkedMonoforumId.Value, isMonoforum: true, broadcastMessagesAllowed: false,
+                        linkedMonoforumId: channelPeer.PeerId,
+                        sendPaidMessagesStars: 0));
+                }
+
                 // Send service message to channel
                 await SendPaidMessagesPriceServiceMessageAsync(input, channelPeer.PeerId, broadcastMessagesAllowed: false, stars: 0);
             }
@@ -74,6 +85,17 @@ internal sealed class UpdatePaidMessagesPriceHandler(
                     channelPeer.PeerId, isMonoforum: false, broadcastMessagesAllowed: true,
                     linkedMonoforumId: channelReadModel.LinkedMonoforumId,
                     sendPaidMessagesStars: obj.SendPaidMessagesStars));
+
+                if (channelReadModel.LinkedMonoforumId.HasValue)
+                {
+                    await commandBus.PublishAsync(new EnableMonoforumCommand(
+                        ChannelId.Create(channelReadModel.LinkedMonoforumId.Value),
+                        input.ToRequestInfo() with { RequestId = Guid.NewGuid() },
+                        channelReadModel.LinkedMonoforumId.Value, isMonoforum: true, broadcastMessagesAllowed: false,
+                        linkedMonoforumId: channelPeer.PeerId,
+                        sendPaidMessagesStars: obj.SendPaidMessagesStars));
+                }
+
                 await SendPaidMessagesPriceServiceMessageAsync(input, channelPeer.PeerId, broadcastMessagesAllowed: true, stars: obj.SendPaidMessagesStars);
             }
         }
