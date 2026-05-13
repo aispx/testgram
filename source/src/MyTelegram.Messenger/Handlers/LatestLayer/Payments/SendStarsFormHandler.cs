@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Messenger.Services.Boosts;
 using MyTelegram.Schema.Payments;
+using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
@@ -11,7 +12,8 @@ internal sealed class SendStarsFormHandler(
     IMongoDatabase mongoDatabase,
     IMessageAppService messageAppService,
     IPeerHelper peerHelper,
-    IServiceProvider services) : RpcResultObjectHandler<RequestSendStarsForm, IPaymentResult>
+    IServiceProvider services,
+    IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<RequestSendStarsForm, IPaymentResult>
 {
     protected override async Task<IPaymentResult> HandleCoreAsync(IRequestInput input, RequestSendStarsForm obj)
     {
@@ -349,11 +351,18 @@ internal sealed class SendStarsFormHandler(
         if (obj.Invoice is TInputInvoiceStarGiftResale resaleInvoice)
         {
             var uniqueCol = mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts");
-            var uniqueDoc = await uniqueCol.Find(d => d.Slug == resaleInvoice.Slug && d.ResellStars > 0).FirstOrDefaultAsync();
+            var uniqueDoc = await uniqueCol.Find(d => d.Slug == resaleInvoice.Slug).FirstOrDefaultAsync();
             if (uniqueDoc == null) RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
-            var price = uniqueDoc!.ResellStars;
-            var buyerBalance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+            // Layer 206: currency is selected by the `ton` flag on the invoice or
+            // forced to TON when the gift is flagged resale_ton_only.
+            bool useTon = resaleInvoice.Ton || uniqueDoc!.ResaleTonOnly;
+            long price = useTon ? uniqueDoc!.ResellTon : uniqueDoc!.ResellStars;
+            if (price <= 0) RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
+
+            long buyerBalance = useTon
+                ? await TonBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId)
+                : await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
             if (buyerBalance < price) RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
 
             var toPeer2 = peerHelper.GetPeer(resaleInvoice.ToId, input.UserId)!;
@@ -367,22 +376,36 @@ internal sealed class SendStarsFormHandler(
             if (sellerUserId == input.UserId || (newOwnerUserId > 0 && newOwnerUserId == sellerUserId))
                 RpcErrors.RpcErrors400.StargiftOwnerInvalid.ThrowRpcError();
 
-            // Deduct from buyer
-            await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -price);
-            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -price, gift: true, title: $"Buy {uniqueDoc.Title} #{uniqueDoc.Num}");
-
-            // Credit seller (85% after fee, same as Telegram)
+            // Debit buyer + credit seller (85 % after fee, same as Telegram).
             long sellerReceives = (long)Math.Floor(price * 0.85);
-            await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, sellerUserId, sellerReceives);
-            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, sellerUserId, sellerReceives, gift: true, title: $"Sold {uniqueDoc.Title} #{uniqueDoc.Num}");
+            var unit = useTon ? "TON" : "⭐️";
+            if (useTon)
+            {
+                await TonBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -price);
+                await TonBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -price, gift: true, title: $"Buy {uniqueDoc.Title} #{uniqueDoc.Num}");
+                await TonBalanceHelper.AddBalanceAsync(mongoDatabase, sellerUserId, sellerReceives);
+                await TonBalanceHelper.AddTransactionAsync(mongoDatabase, sellerUserId, sellerReceives, gift: true, title: $"Sold {uniqueDoc.Title} #{uniqueDoc.Num}");
+            }
+            else
+            {
+                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -price);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -price, gift: true, title: $"Buy {uniqueDoc.Title} #{uniqueDoc.Num}");
+                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, sellerUserId, sellerReceives);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, sellerUserId, sellerReceives, gift: true, title: $"Sold {uniqueDoc.Title} #{uniqueDoc.Num}");
+            }
 
-            // Transfer ownership
-            await uniqueCol.UpdateOneAsync(d => d.UniqueId == uniqueDoc.UniqueId,
-                Builders<UniqueStarGiftDocument>.Update
-                    .Set(d => d.OwnerUserId, newOwnerUserId)
-                    .Set(d => d.OwnerChannelId, newOwnerChannelId)
-                    .Set(d => d.ResellStars, 0L)
-                    .Set(d => d.InitialSaleStars, price));
+            // Transfer ownership. Both currency-specific listings are cleared and
+            // the initial-sale / last-resale columns are refreshed for the matching
+            // currency so future stats show the last paid amount.
+            var ownershipUpdate = Builders<UniqueStarGiftDocument>.Update
+                .Set(d => d.OwnerUserId, newOwnerUserId)
+                .Set(d => d.OwnerChannelId, newOwnerChannelId)
+                .Set(d => d.ResellStars, 0L)
+                .Set(d => d.ResellTon, 0L);
+            ownershipUpdate = useTon
+                ? ownershipUpdate.Set(d => d.LastResaleTon, price)
+                : ownershipUpdate.Set(d => d.LastResaleStars, price).Set(d => d.InitialSaleStars, price);
+            await uniqueCol.UpdateOneAsync(d => d.UniqueId == uniqueDoc.UniqueId, ownershipUpdate);
 
             var savedCol3 = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
             await savedCol3.DeleteOneAsync(d => d.IsUnique && d.UniqueSlug == uniqueDoc.Slug);
@@ -410,7 +433,7 @@ internal sealed class SendStarsFormHandler(
             // Notify seller
             uniqueDoc.OwnerUserId = newOwnerUserId;
             uniqueDoc.OwnerChannelId = newOwnerChannelId;
-            var sellerMsg = $"Your gift {uniqueDoc.Title} #{uniqueDoc.Num} was sold for {price} ⭐️. Your star balance has been topped up by {sellerReceives} ⭐️.";
+            var sellerMsg = $"Your gift {uniqueDoc.Title} #{uniqueDoc.Num} was sold for {price} {unit}. Your balance has been topped up by {sellerReceives} {unit}.";
             await messageAppService.SendMessageAsync([new SendMessageInput(
                 RequestInfo.Empty with { UserId = MyTelegramConsts.NotificationServiceUserId, Layer = MyTelegramConsts.Layer, Date = DateTime.UtcNow.ToTimestamp(), RequestId = Guid.NewGuid() },
                 MyTelegramConsts.NotificationServiceUserId,
@@ -421,11 +444,24 @@ internal sealed class SendStarsFormHandler(
                 messageType: MessageType.Text
             )]);
 
-            // Send gift action to buyer
+            // Send gift action to buyer. Layer 206: the resale price is surfaced to
+            // the client via messageActionStarGiftUnique.resale_amount so the
+            // buyer/seller chat UI can show "sold for N TON" or "sold for N ⭐️".
             if (newOwnerUserId > 0)
             {
                 var uniqueTl2 = UniqueStarGiftHelper.ToTl(uniqueDoc);
-                var action2 = new TMessageActionStarGiftUnique { Gift = uniqueTl2, Transferred = true, Saved = true, FromId = new TPeerUser { UserId = sellerUserId }, Peer = new TPeerUser { UserId = newOwnerUserId } };
+                IStarsAmount resaleAmount = useTon
+                    ? new TStarsTonAmount { Amount = price }
+                    : new TStarsAmount { Amount = price, Nanos = 0 };
+                var action2 = new TMessageActionStarGiftUnique
+                {
+                    Gift = uniqueTl2,
+                    Transferred = true,
+                    Saved = true,
+                    FromId = new TPeerUser { UserId = sellerUserId },
+                    Peer = new TPeerUser { UserId = newOwnerUserId },
+                    ResaleAmount = resaleAmount,
+                };
                 await messageAppService.SendMessageAsync([new SendMessageInput(
                     RequestInfo.Empty with { UserId = MyTelegramConsts.NotificationServiceUserId, Layer = MyTelegramConsts.Layer, Date = DateTime.UtcNow.ToTimestamp(), RequestId = Guid.NewGuid() },
                     MyTelegramConsts.NotificationServiceUserId,
@@ -436,6 +472,18 @@ internal sealed class SendStarsFormHandler(
                     messageType: MessageType.Text,
                     messageAction: action2
                 )]);
+            }
+
+            // Push balance updates to both parties.
+            if (useTon)
+            {
+                await BalancePushHelper.PushTonBalanceAsync(objectMessageSender, mongoDatabase, input.UserId);
+                await BalancePushHelper.PushTonBalanceAsync(objectMessageSender, mongoDatabase, sellerUserId);
+            }
+            else
+            {
+                await BalancePushHelper.PushStarsBalanceAsync(objectMessageSender, mongoDatabase, input.UserId);
+                await BalancePushHelper.PushStarsBalanceAsync(objectMessageSender, mongoDatabase, sellerUserId);
             }
 
             return new TPaymentResult { Updates = new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = DateTime.UtcNow.ToTimestamp(), Seq = 0 } };

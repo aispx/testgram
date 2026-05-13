@@ -55,6 +55,17 @@ public class UniqueStarGiftDocument
 
     // Bot API 9.1+ resale tracking
     public long? LastResaleStars { get; set; }     // Last resale price
+
+    // Layer 206: TON resale pricing (in nanotons, 1 TON = 1e9 nanotons).
+    // 0 = not listed for sale in TON.
+    public long ResellTon { get; set; }
+
+    // Layer 206: when true, this unique gift can only be purchased with TON —
+    // stars-priced offers are rejected by UpdateStarGiftPrice / SendStarsForm.
+    public bool ResaleTonOnly { get; set; }
+
+    // Layer 206 resale tracking in TON.
+    public long? LastResaleTon { get; set; }
 }
 
 public class UniqueGiftAttribute

@@ -11,13 +11,20 @@ internal sealed class GetResaleStarGiftsHandler(IMongoDatabase mongoDatabase)
     {
         var col = mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts");
 
+        // Layer 206: a gift is considered "on resale" if it has either a Stars
+        // or a TON price. The sort-by-price order still uses Stars as the
+        // primary key for backward compat; gifts priced only in TON appear
+        // after Stars-priced ones.
         var filter = Builders<UniqueStarGiftDocument>.Filter.And(
             Builders<UniqueStarGiftDocument>.Filter.Eq(d => d.GiftId, obj.GiftId),
-            Builders<UniqueStarGiftDocument>.Filter.Gt(d => d.ResellStars, 0L)
+            Builders<UniqueStarGiftDocument>.Filter.Or(
+                Builders<UniqueStarGiftDocument>.Filter.Gt(d => d.ResellStars, 0L),
+                Builders<UniqueStarGiftDocument>.Filter.Gt(d => d.ResellTon, 0L)
+            )
         );
 
         SortDefinition<UniqueStarGiftDocument> sort = obj.SortByPrice
-            ? Builders<UniqueStarGiftDocument>.Sort.Ascending(d => d.ResellStars)
+            ? Builders<UniqueStarGiftDocument>.Sort.Ascending(d => d.ResellStars).Ascending(d => d.ResellTon)
             : obj.SortByNum
                 ? Builders<UniqueStarGiftDocument>.Sort.Ascending(d => d.Num)
                 : Builders<UniqueStarGiftDocument>.Sort.Descending(d => d.Date);

@@ -39,16 +39,36 @@ internal sealed class UpdateStarGiftPriceHandler(IMongoDatabase mongoDatabase) :
 
         if (doc!.OwnerUserId != input.UserId && doc.OwnerChannelId == 0) RpcErrors.RpcErrors400.StargiftOwnerInvalid.ThrowRpcError();
 
-        long resellStars = obj.ResellAmount is TStarsAmount sa ? sa.Amount : 0;
+        // Layer 206: obj.ResellAmount may be a TStarsAmount (Stars pricing) or
+        // a TStarsTonAmount (TON pricing). Zero/absent means "delist". We only
+        // touch the column corresponding to the submitted currency so the
+        // seller can list the gift in both currencies simultaneously.
+        var update = Builders<UniqueStarGiftDocument>.Update;
+        switch (obj.ResellAmount)
+        {
+            case TStarsTonAmount tonAmount:
+                await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId,
+                    update.Set(d => d.ResellTon, tonAmount.Amount));
+                break;
+            case TStarsAmount starsAmount:
+                if (doc.ResaleTonOnly && starsAmount.Amount > 0)
+                    RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
+                await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId,
+                    update.Set(d => d.ResellStars, starsAmount.Amount));
+                break;
+            default:
+                // Delist from both currencies if an empty/unknown amount is passed.
+                await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId,
+                    update.Set(d => d.ResellStars, 0L).Set(d => d.ResellTon, 0L));
+                break;
+        }
 
-        await uniqueCol.UpdateOneAsync(
-            d => d.UniqueId == doc.UniqueId,
-            Builders<UniqueStarGiftDocument>.Update.Set(d => d.ResellStars, resellStars)
-        );
-
+        // Refresh CanResellAt on the saved-star-gift record based on the new combined state.
+        var refreshed = await uniqueCol.Find(d => d.UniqueId == doc.UniqueId).FirstOrDefaultAsync();
+        var anyListing = (refreshed?.ResellStars ?? 0) > 0 || (refreshed?.ResellTon ?? 0) > 0;
         await savedCol.UpdateOneAsync(
             d => d.IsUnique && d.UniqueSlug == doc.Slug,
-            Builders<SavedStarGiftDocument>.Update.Set(d => d.CanResellAt, resellStars > 0 ? 0 : (int?)null)
+            Builders<SavedStarGiftDocument>.Update.Set(d => d.CanResellAt, anyListing ? 0 : (int?)null)
         );
 
         return new TUpdates { Chats = new TVector<IChat>(), Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Date = CurrentDate };

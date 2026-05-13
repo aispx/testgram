@@ -118,16 +118,34 @@ internal sealed class GetPaymentFormHandler(
         if (obj.Invoice is TInputInvoiceStarGiftResale resaleForm)
         {
             var uniqueDoc = await mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts")
-                .Find(d => d.Slug == resaleForm.Slug && d.ResellStars > 0).FirstOrDefaultAsync();
+                .Find(d => d.Slug == resaleForm.Slug).FirstOrDefaultAsync();
             if (uniqueDoc == null) RpcErrors.RpcErrors400.StargiftSlugInvalid.ThrowRpcError();
 
+            // Layer 206: resaleForm.Ton flag selects the currency. When the gift is
+            // flagged resale_ton_only we ignore the Stars branch entirely.
+            var useTon = resaleForm.Ton || uniqueDoc!.ResaleTonOnly;
+            if (useTon)
+            {
+                if (uniqueDoc!.ResellTon <= 0) RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
+                return new TPaymentFormStarGift
+                {
+                    FormId = Random.Shared.NextInt64(),
+                    Invoice = new TInvoice
+                    {
+                        Currency = "TON",
+                        Prices = [new TLabeledPrice { Label = uniqueDoc.Title, Amount = uniqueDoc.ResellTon }],
+                    },
+                };
+            }
+
+            if (uniqueDoc!.ResellStars <= 0) RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
             return new TPaymentFormStarGift
             {
                 FormId = Random.Shared.NextInt64(),
                 Invoice = new TInvoice
                 {
                     Currency = "XTR",
-                    Prices = [new TLabeledPrice { Label = uniqueDoc!.Title, Amount = uniqueDoc.ResellStars }],
+                    Prices = [new TLabeledPrice { Label = uniqueDoc.Title, Amount = uniqueDoc.ResellStars }],
                 },
             };
         }

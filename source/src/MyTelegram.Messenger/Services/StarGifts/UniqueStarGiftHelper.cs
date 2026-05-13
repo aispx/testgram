@@ -50,6 +50,20 @@ public static class UniqueStarGiftHelper
             Message = doc.MessageText != null ? new TTextWithEntities { Text = doc.MessageText, Entities = [] } : null,
         });
 
+        // Build Layer 206 resale-amount vector. A unique gift may be listed
+        // simultaneously in Stars and/or TON; the vector may contain 0, 1 or 2
+        // entries. When ResaleTonOnly is set we emit only the TON amount.
+        TVector<IStarsAmount>? resellAmount = null;
+        if (doc.ResellStars > 0 || doc.ResellTon > 0)
+        {
+            resellAmount = new TVector<IStarsAmount>();
+            if (doc.ResellStars > 0 && !doc.ResaleTonOnly)
+                resellAmount.Add(new TStarsAmount { Amount = doc.ResellStars, Nanos = 0 });
+            if (doc.ResellTon > 0)
+                resellAmount.Add(new TStarsTonAmount { Amount = doc.ResellTon });
+            if (resellAmount.Count == 0) resellAmount = null;
+        }
+
         return new TStarGiftUnique
         {
             Id = doc.UniqueId,
@@ -63,9 +77,8 @@ public static class UniqueStarGiftHelper
             Attributes = attrs,
             AvailabilityIssued = doc.AvailabilityIssued,
             AvailabilityTotal = doc.AvailabilityTotal,
-            ResellAmount = doc.ResellStars > 0
-                ? new TVector<IStarsAmount> { new TStarsAmount { Amount = doc.ResellStars, Nanos = 0 } }
-                : null,
+            ResellAmount = resellAmount,
+            ResaleTonOnly = doc.ResaleTonOnly,
             ValueAmount = doc.InitialSaleStars > 0 ? doc.InitialSaleStars : null,
             ValueCurrency = doc.InitialSaleStars > 0 ? "XTR" : null,
             ValueUsdAmount = doc.InitialSaleStars > 0 ? doc.InitialSaleStars : null,
