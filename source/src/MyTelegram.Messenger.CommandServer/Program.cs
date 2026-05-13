@@ -5,6 +5,7 @@ using MyTelegram.Domain.Aggregates.Device;
 using MyTelegram.EventBus.RabbitMQ;
 using MyTelegram.EventBus.RabbitMQ.Extensions;
 using MyTelegram.Messenger;
+using MyTelegram.Messenger.Services.Email;
 using MyTelegram.Messenger.CommandServer.BackgroundServices;
 using MyTelegram.Messenger.CommandServer.Extensions;
 using Serilog;
@@ -64,6 +65,8 @@ builder.ConfigureServices((ctx,
         .ValidateDataAnnotations()
         .ValidateOnStart()
         ;
+
+    services.Configure<EmailSenderOptions>(ctx.Configuration.GetRequiredSection("EmailSenderOptions"));
     var appConfig = ctx.Configuration.GetRequiredSection("App").Get<MyTelegramMessengerServerOptions>();
 
     services.Configure<EventBusRabbitMqOptions>(ctx.Configuration.GetRequiredSection("RabbitMQ:EventBus"));

@@ -1,9 +1,10 @@
 using System.Security.Cryptography;
+using MyTelegram.Messenger.Services.Email;
 using MyTelegram.Messenger.Services.TwoFactor;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 
-internal sealed class UpdatePasswordSettingsHandler(ITwoFactorService twoFactorService)
+internal sealed class UpdatePasswordSettingsHandler(ITwoFactorService twoFactorService, IEmailSender emailSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdatePasswordSettings, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUpdatePasswordSettings obj)
@@ -50,6 +51,7 @@ internal sealed class UpdatePasswordSettingsHandler(ITwoFactorService twoFactorS
             var code = RandomNumberGenerator.GetBytes(4);
             var codeString = BitConverter.ToString(code).Replace("-", "").Substring(0, 6);
             await twoFactorService.SetRecoveryEmailAsync(input.UserId, settings.Email, codeString);
+            await emailSender.SendVerificationCodeAsync(settings.Email, "Testgram Recovery Email Confirmation", codeString);
             RpcErrors.RpcErrors400.EmailUnconfirmedX.ThrowRpcError(codeString.Length);
         }
 

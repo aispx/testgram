@@ -4,6 +4,7 @@ using MyTelegram;
 using MyTelegram.Caching.Redis;
 using MyTelegram.EventBus.RabbitMQ.Extensions;
 using MyTelegram.Messenger;
+using MyTelegram.Messenger.Services.Email;
 using MyTelegram.Messenger.QueryServer.BackgroundServices;
 using MyTelegram.Messenger.QueryServer.Extensions;
 using MyTelegram.Services.NativeAot;
@@ -62,6 +63,8 @@ builder.ConfigureServices((ctx,
         .ValidateDataAnnotations()
         .ValidateOnStart()
         ;
+
+    services.Configure<EmailSenderOptions>(ctx.Configuration.GetRequiredSection("EmailSenderOptions"));
 
     services.Configure<EventBusRabbitMqOptions>(ctx.Configuration.GetRequiredSection("RabbitMQ:EventBus"));
     services.Configure<RabbitMqOptions>(ctx.Configuration.GetRequiredSection("RabbitMQ:Connections:Default"));

@@ -1,28 +1,9 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Email;
 using MyTelegram.Schema.Account;
-using Microsoft.Extensions.Options;
-using System.Net.Mail;
-using System.Net;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
-
-public class EmailSenderOptions
-{
-    public bool Enabled { get; set; }
-    public string FromAddress { get; set; } = string.Empty;
-    public string FromDisplayName { get; set; } = string.Empty;
-    public SmtpEmailOptions SmtpEmailOptions { get; set; } = new();
-}
-
-public class SmtpEmailOptions
-{
-    public string Host { get; set; } = string.Empty;
-    public int Port { get; set; } = 587;
-    public string UserName { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
-    public bool EnableSsl { get; set; } = true;
-}
 
 /// <summary>
 /// Send an email verification code.
@@ -41,7 +22,7 @@ public class SmtpEmailOptions
 /// </remarks>
 internal sealed class SendVerifyEmailCodeHandler(
     IMongoDatabase database,
-    IOptions<EmailSenderOptions> emailOptions) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSendVerifyEmailCode, MyTelegram.Schema.Account.ISentEmailCode>
+    IEmailSender emailSender) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSendVerifyEmailCode, MyTelegram.Schema.Account.ISentEmailCode>
 {
     protected override async Task<MyTelegram.Schema.Account.ISentEmailCode> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSendVerifyEmailCode obj)
     {
@@ -75,65 +56,12 @@ internal sealed class SendVerifyEmailCodeHandler(
 
         await collection.InsertOneAsync(doc);
 
-        // Send email if SMTP is configured
-        var options = emailOptions.Value;
-        if (options.Enabled && !string.IsNullOrEmpty(options.SmtpEmailOptions.Host))
-        {
-            try
-            {
-                await SendEmailAsync(obj.Email, code, options);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[EMAIL ERROR] Failed to send email: {ex.Message}");
-                // Don't fail the request if email sending fails
-            }
-        }
-        else
-        {
-            // For testing, just log the code
-            Console.WriteLine($"[EMAIL VERIFICATION] Email: {obj.Email}, Code: {code}");
-        }
+        await emailSender.SendVerificationCodeAsync(obj.Email, "Testgram Email Verification", code);
 
         return new TSentEmailCode
         {
-            EmailPattern = MaskEmail(obj.Email),
+            EmailPattern = emailSender.MaskEmail(obj.Email),
             Length = 6
         };
-    }
-
-    private static async Task SendEmailAsync(string toEmail, string code, EmailSenderOptions options)
-    {
-        using var client = new SmtpClient(options.SmtpEmailOptions.Host, options.SmtpEmailOptions.Port);
-        client.EnableSsl = options.SmtpEmailOptions.EnableSsl;
-        client.Credentials = new NetworkCredential(
-            options.SmtpEmailOptions.UserName,
-            options.SmtpEmailOptions.Password
-        );
-
-        var message = new MailMessage
-        {
-            From = new MailAddress(options.FromAddress, options.FromDisplayName),
-            Subject = "Testgram Email Verification",
-            Body = $"Your verification code is: {code}\n\nThis code will expire in 5 minutes.",
-            IsBodyHtml = false
-        };
-        message.To.Add(toEmail);
-
-        await client.SendMailAsync(message);
-    }
-
-    private static string MaskEmail(string email)
-    {
-        var parts = email.Split('@');
-        if (parts.Length != 2) return email;
-
-        var local = parts[0];
-        var domain = parts[1];
-
-        if (local.Length <= 2)
-            return $"{local[0]}***@{domain}";
-
-        return $"{local[0]}***{local[^1]}@{domain}";
     }
 }

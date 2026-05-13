@@ -459,6 +459,14 @@ services:
       App__PasskeyRpName: ${App__PasskeyRpName}
       App__Stripe__PublishableKey: ${App__Stripe__PublishableKey}
       App__Stripe__SecretKey: ${App__Stripe__SecretKey}
+      EmailSenderOptions__Enabled: ${EmailSenderOptions__Enabled}
+      EmailSenderOptions__FromAddress: ${EmailSenderOptions__FromAddress}
+      EmailSenderOptions__FromDisplayName: ${EmailSenderOptions__FromDisplayName}
+      EmailSenderOptions__SmtpEmailOptions__Host: ${EmailSenderOptions__SmtpEmailOptions__Host}
+      EmailSenderOptions__SmtpEmailOptions__Port: ${EmailSenderOptions__SmtpEmailOptions__Port}
+      EmailSenderOptions__SmtpEmailOptions__UserName: ${EmailSenderOptions__SmtpEmailOptions__UserName}
+      EmailSenderOptions__SmtpEmailOptions__Password: ${EmailSenderOptions__SmtpEmailOptions__Password}
+      EmailSenderOptions__SmtpEmailOptions__EnableSsl: ${EmailSenderOptions__SmtpEmailOptions__EnableSsl}
       # App__ThisDcId: ${App__ThisDcId}
       # App__DcOptions__0__Enabled: ${App__DcOptions__0__Enabled}
       # App__DcOptions__0__Id: ${App__DcOptions__0__Id}
@@ -553,6 +561,14 @@ services:
       App__PasskeyRpName: ${App__PasskeyRpName}
       App__Stripe__PublishableKey: ${App__Stripe__PublishableKey}
       App__Stripe__SecretKey: ${App__Stripe__SecretKey}
+      EmailSenderOptions__Enabled: ${EmailSenderOptions__Enabled}
+      EmailSenderOptions__FromAddress: ${EmailSenderOptions__FromAddress}
+      EmailSenderOptions__FromDisplayName: ${EmailSenderOptions__FromDisplayName}
+      EmailSenderOptions__SmtpEmailOptions__Host: ${EmailSenderOptions__SmtpEmailOptions__Host}
+      EmailSenderOptions__SmtpEmailOptions__Port: ${EmailSenderOptions__SmtpEmailOptions__Port}
+      EmailSenderOptions__SmtpEmailOptions__UserName: ${EmailSenderOptions__SmtpEmailOptions__UserName}
+      EmailSenderOptions__SmtpEmailOptions__Password: ${EmailSenderOptions__SmtpEmailOptions__Password}
+      EmailSenderOptions__SmtpEmailOptions__EnableSsl: ${EmailSenderOptions__SmtpEmailOptions__EnableSsl}
       # App__ThisDcId: ${App__ThisDcId}
       # App__DcOptions__0__Enabled: ${App__DcOptions__0__Enabled}
       # App__DcOptions__0__Id: ${App__DcOptions__0__Id}
