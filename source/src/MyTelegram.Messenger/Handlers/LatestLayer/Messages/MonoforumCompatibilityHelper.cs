@@ -36,7 +36,16 @@ internal static class MonoforumCompatibilityHelper
         if (topicPeer.PeerId != input.UserId)
             return (channel, null);
 
-        var requiredStars = channel.SendPaidMessagesStars ?? 0;
+        // The paid-message price is configured via channels.updatePaidMessagesPrice on the
+        // BROADCAST side of the monoforum pair, not on the private monoforum channel that
+        // toPeer points to. We must follow LinkedMonoforumId back to the broadcast channel
+        // to read SendPaidMessagesStars; falling back to the monoforum-local value keeps
+        // this forward-compatible with deployments that may write it on both sides.
+        var broadcastChannel = channel.LinkedMonoforumId.HasValue
+            ? await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channel.LinkedMonoforumId.Value))
+            : null;
+        var requiredStars = (broadcastChannel?.SendPaidMessagesStars
+                             ?? channel.SendPaidMessagesStars) ?? 0;
         if (requiredStars <= 0)
             return (channel, null);
 
