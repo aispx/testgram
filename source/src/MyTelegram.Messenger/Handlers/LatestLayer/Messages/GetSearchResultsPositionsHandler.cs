@@ -1,18 +1,38 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
-/// Returns sparse positions of messages of the specified type in the chat to be used for shared media scroll implementation.Returns the results in reverse chronological order (i.e., in order of decreasing message_id).
-/// Possible errors
-/// Code Type Description
-/// 400 PEER_ID_INVALID The provided peer id is invalid.
-/// <para><c>See <a href="https://corefork.telegram.org/method/messages.getSearchResultsPositions"/> </c></para>
+/// Returns sparse positions of messages of the specified type in the chat.
 /// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class GetSearchResultsPositionsHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchResultsPositions, MyTelegram.Schema.Messages.ISearchResultsPositions>
+internal sealed class GetSearchResultsPositionsHandler(
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper,
+    IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchResultsPositions, MyTelegram.Schema.Messages.ISearchResultsPositions>
 {
-    protected override Task<MyTelegram.Schema.Messages.ISearchResultsPositions> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSearchResultsPositions obj)
+    protected override async Task<MyTelegram.Schema.Messages.ISearchResultsPositions> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSearchResultsPositions obj)
     {
-        return Task.FromResult<ISearchResultsPositions>(new TSearchResultsPositions { Count = 0, Positions = [] });
+        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
+        await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
+        var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
+        var filter = MessageSearchMongoHelper.BuildFilter(input, peerHelper, obj.Peer, obj.SavedPeerId, null, obj.Filter, obj.OffsetId);
+        var count = (int)await collection.CountDocumentsAsync(filter);
+        var limit = obj.Limit > 0 ? obj.Limit : 20;
+        var docs = await collection.Find(filter)
+            .Sort(Builders<BsonDocument>.Sort.Descending("MessageId"))
+            .Project(Builders<BsonDocument>.Projection.Include("MessageId").Include("Date"))
+            .Limit(limit)
+            .ToListAsync();
+
+        return new TSearchResultsPositions
+        {
+            Count = count,
+            Positions = new TVector<ISearchResultsPosition>(docs.Select((d, i) => (ISearchResultsPosition)new TSearchResultPosition
+            {
+                MsgId = d["MessageId"].AsInt32,
+                Date = d["Date"].AsInt32,
+                Offset = i
+            }))
+        };
     }
 }

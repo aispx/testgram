@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Obtain information about specific <a href="https://corefork.telegram.org/api/saved-messages#saved-message-dialogs">saved message dialogs »</a> or <a href="https://corefork.telegram.org/api/monoforum">monoforum topics »</a>.
@@ -11,7 +14,8 @@ internal sealed class GetSavedDialogsByIDHandler(
     IPeerHelper peerHelper,
     IAccessHashHelper accessHashHelper,
     IMessageAppService messageAppService,
-    IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSavedDialogsByID, MyTelegram.Schema.Messages.ISavedDialogs>
+    IGetHistoryConverterService getHistoryConverterService,
+    IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSavedDialogsByID, MyTelegram.Schema.Messages.ISavedDialogs>
 {
     protected override async Task<MyTelegram.Schema.Messages.ISavedDialogs> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSavedDialogsByID obj)
     {
@@ -58,15 +62,36 @@ internal sealed class GetSavedDialogsByIDHandler(
         var converted = getHistoryConverterService.ToMessages(input, output, input.Layer);
         var (messageList, chatList, userList) = GetSavedDialogsHandler.ExtractMessages(converted);
 
-        var monoDialogs = topMessages.Select(m => new TMonoForumDialog
+        var stateMap = await MonoForumTopicStateHelper.GetStatesAsync(
+            mongoDatabase,
+            monoforumPeer.PeerId,
+            input.UserId,
+            topMessages.Select(p => p.SavedPeerId!));
+        var messageCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
+        var monoDialogs = new List<ISavedDialog>();
+        foreach (var m in topMessages)
         {
-            Peer = GetSavedDialogsHandler.ToSchemaPeer(m.SavedPeerId!),
-            TopMessage = m.MessageId,
-            ReadInboxMaxId = 0,
-            ReadOutboxMaxId = 0,
-            UnreadCount = 0,
-            UnreadReactionsCount = 0
-        }).ToList<ISavedDialog>();
+            var state = stateMap.GetValueOrDefault(MonoForumTopicStateHelper.BuildId(monoforumPeer.PeerId, input.UserId, m.SavedPeerId!));
+            var readInboxMaxId = MonoForumTopicStateHelper.GetReadInboxMaxId(state);
+            var unreadCount = (int)await messageCollection.CountDocumentsAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("OwnerPeerId", monoforumPeer.PeerId),
+                    Builders<BsonDocument>.Filter.Eq("SavedPeerId.PeerType", m.SavedPeerId!.PeerType.ToString()),
+                    Builders<BsonDocument>.Filter.Eq("SavedPeerId.PeerId", m.SavedPeerId.PeerId),
+                    Builders<BsonDocument>.Filter.Gt("MessageId", readInboxMaxId),
+                    Builders<BsonDocument>.Filter.Ne("SenderUserId", input.UserId)));
+
+            monoDialogs.Add(new TMonoForumDialog
+            {
+                Peer = GetSavedDialogsHandler.ToSchemaPeer(m.SavedPeerId!),
+                TopMessage = m.MessageId,
+                ReadInboxMaxId = readInboxMaxId,
+                ReadOutboxMaxId = MonoForumTopicStateHelper.GetReadOutboxMaxId(state),
+                UnreadCount = unreadCount,
+                UnreadReactionsCount = 0,
+                UnreadMark = MonoForumTopicStateHelper.GetUnreadMark(state)
+            });
+        }
 
         return new TSavedDialogs
         {

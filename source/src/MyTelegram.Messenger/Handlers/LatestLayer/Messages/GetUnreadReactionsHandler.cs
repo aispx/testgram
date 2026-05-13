@@ -8,12 +8,22 @@ internal sealed class GetUnreadReactionsHandler(
     protected override async Task<MyTelegram.Schema.Messages.IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetUnreadReactions obj)
     {
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
+        await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, input.UserId);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
 
         var limit = obj.Limit > 0 && obj.Limit <= 100 ? obj.Limit : 20;
         var messages = await queryProcessor.ProcessAsync(
             new GetMessagesWithUnreadReactionsQuery(ownerPeerId, input.UserId, obj.OffsetId, limit, obj.MaxId, obj.MinId));
+        if (savedPeer != null)
+        {
+            messages = messages.Where(m => m.SavedPeerId?.PeerType == savedPeer.PeerType && m.SavedPeerId.PeerId == savedPeer.PeerId).ToList();
+        }
+        else if (obj.TopMsgId.HasValue)
+        {
+            messages = messages.Where(m => m.TopMsgId == obj.TopMsgId.Value).ToList();
+        }
 
         var msgList = messages.Select(m =>
         {
@@ -36,6 +46,7 @@ internal sealed class GetUnreadReactionsHandler(
             {
                 Id = m.MessageId,
                 PeerId = peer.ToPeer(),
+                SavedPeerId = savedPeer?.ToPeer(),
                 Date = m.Date,
                 Message = "",
                 Reactions = new TMessageReactions
