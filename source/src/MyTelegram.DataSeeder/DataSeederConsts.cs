@@ -13,4 +13,6 @@ public static class DataSeederConsts
     public const string WallPapersFileName = "wallpapers/wallpapers.data.json";
     public const string WallPapersDocumentFileName = "wallpapers/wallpapers.documents.json";
     public const string StickerSetRootFolder = "stickersets";
+    public const string LanguagePacksRootFolder = "langpacks";
+    public const string RussianAndroidLangPackFileName = "langpacks/ru/android.json";
 }

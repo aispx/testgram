@@ -72,9 +72,9 @@ internal sealed class ConfigConverter(IObjectMapper objectMapper) : IConfigConve
             CaptionLengthMax = 1024, // _options.CaptionLengthMax, //1024
             MessageLengthMax = 4096, // _options.MessageLengthMax, //4096
             WebfileDcId = mediaDcId, // _dataCenterHelper.GetMediaDcId(),
-            SuggestedLangCode = "en",
-            LangPackVersion = 0,
-            BaseLangPackVersion = 0,
+            SuggestedLangCode = "ru",
+            LangPackVersion = 1410686277,
+            BaseLangPackVersion = 1410686277,
             ReactionsDefault = new TReactionEmoji
             {
                 Emoticon = "👍"

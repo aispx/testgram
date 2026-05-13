@@ -160,8 +160,13 @@ public class LanguageCacheService(IQueryProcessor queryProcessor, ILogger<Langua
         return Task.CompletedTask;
     }
 
-    public Task<List<LanguageTextItem>> GetLanguageTextsAsync(string languageCode, string languagePack, IEnumerable<string> keys)
+    public async Task<List<LanguageTextItem>> GetLanguageTextsAsync(string languageCode, string languagePack, IEnumerable<string> keys)
     {
+        if (_languageTexts.Count == 0)
+        {
+            await LoadAllLanguageTextAsync();
+        }
+
         var languageTexts = new List<LanguageTextItem>();
 
         var languageKey = GetLanguageTextKey(languageCode, languagePack);
@@ -176,11 +181,16 @@ public class LanguageCacheService(IQueryProcessor queryProcessor, ILogger<Langua
             }
         }
 
-        return Task.FromResult(languageTexts);
+        return languageTexts;
     }
 
-    public Task<ILanguageReadModel?> GetLanguageAsync(string languageCode, string languagePack)
+    public async Task<ILanguageReadModel?> GetLanguageAsync(string languageCode, string languagePack)
     {
+        if (_languageReadModels.Count == 0)
+        {
+            await LoadAllLanguagesAsync();
+        }
+
         ILanguageReadModel? languageReadModel = null;
         if (_languageReadModels.TryGetValue(languagePack, out var languages))
         {
@@ -188,18 +198,23 @@ public class LanguageCacheService(IQueryProcessor queryProcessor, ILogger<Langua
             languages.TryGetValue(key, out languageReadModel);
         }
 
-        return Task.FromResult(languageReadModel);
+        return languageReadModel;
     }
 
-    public Task<List<LanguageTextItem>> GetLanguageDifferenceAsync(string languageCode, string languagePack, int fromVersion)
+    public async Task<List<LanguageTextItem>> GetLanguageDifferenceAsync(string languageCode, string languagePack, int fromVersion)
     {
+        if (_languageTexts.Count == 0)
+        {
+            await LoadAllLanguageTextAsync();
+        }
+
         var languageKey = GetLanguageTextKey(languageCode, languagePack);
         if (_languageTexts.TryGetValue(languageKey, out var texts))
         {
-            return Task.FromResult(texts.Values.Where(p => p.LanguageVersion > fromVersion).ToList());
+            return texts.Values.Where(p => p.LanguageVersion > fromVersion).ToList();
         }
 
-        return Task.FromResult<List<LanguageTextItem>>([]);
+        return [];
     }
 
     private string GetLanguageCode(string langCode)

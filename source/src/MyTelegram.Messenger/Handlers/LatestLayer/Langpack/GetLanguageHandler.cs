@@ -28,7 +28,7 @@ internal sealed class GetLanguageHandler(ILanguageCacheService languageCacheServ
             Name = languageReadModel.Name,
             NativeName = languageReadModel.NativeName,
             LangCode = languageReadModel.LanguageCode,
-            PluralCode = languageReadModel.LanguageCode,
+            PluralCode = languageReadModel.PluralCode,
             StringsCount = languageReadModel.TranslatedCount,
             TranslatedCount = languageReadModel.TranslatedCount,
             TranslationsUrl = languageReadModel.TranslationsUrl
