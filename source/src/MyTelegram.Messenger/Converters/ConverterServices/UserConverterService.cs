@@ -195,6 +195,7 @@ public class UserConverterService(
             .ToDictionary(k => k.PhotoId) ?? [];
 
         var targetUserContacts = contactReadModels?
+             .Where(p => p.TargetUserId == request.UserId)
              .DistinctBy(p => p.SelfUserId)
              .ToDictionary(k => k.SelfUserId) ?? [];
 
@@ -208,7 +209,7 @@ public class UserConverterService(
         foreach (var userReadModel in userReadModels)
         {
             myContacts.TryGetValue(userReadModel.UserId, out var myContactReadModel);
-            targetUserContacts.TryGetValue(request.UserId, out var targetUserContactReadModel);
+            targetUserContacts.TryGetValue(userReadModel.UserId, out var targetUserContactReadModel);
             groupedPrivacyReadModels.TryGetValue(userReadModel.UserId, out var currentUserPrivacyReadModels);
             var user = ToUserCore(request, userReadModel, photos, myContactReadModel,
                 targetUserContactReadModel, currentUserPrivacyReadModels, layer);
@@ -245,6 +246,7 @@ public class UserConverterService(
             .ToDictionary(k => k.PhotoId) ?? [];
 
         var targetUserContacts = contactReadModels?
+             .Where(p => p.TargetUserId == request.UserId)
              .DistinctBy(p => p.SelfUserId)
              .ToDictionary(k => k.SelfUserId) ?? [];
 
@@ -258,7 +260,7 @@ public class UserConverterService(
         foreach (var userReadModel in userReadModels)
         {
             myContacts.TryGetValue(userReadModel.UserId, out var myContactReadModel);
-            targetUserContacts.TryGetValue(request.UserId, out var targetUserContactReadModel);
+            targetUserContacts.TryGetValue(userReadModel.UserId, out var targetUserContactReadModel);
             groupedPrivacyReadModels.TryGetValue(userReadModel.UserId, out var currentUserPrivacyReadModels);
             var user = ToUserCore(request, userReadModel, photos, myContactReadModel,
                 targetUserContactReadModel, currentUserPrivacyReadModels, layer);
@@ -364,20 +366,12 @@ public class UserConverterService(
         var photos = photoReadModels ?? [];
         SetUserProfilePhoto(userReadModel, user, photos, layer);
         SetContactPersonalProfilePhoto(user, photos, myContactReadModel, layer);
+        SetMutualContact(user, contactType);
         ApplyPrivacyToUser(request.UserId, userReadModel, user, photos, contactType, privacyReadModels, layer);
 
-        if (!user.Self)
+        if (!user.Self && contactType != ContactType.Mutual)
         {
-            switch (contactType)
-            {
-                case ContactType.None:
-                case ContactType.TargetUserIsMyContact:
-                    user.Phone = null;
-                    break;
-                case ContactType.ContactOfTargetUser:
-                case ContactType.Mutual:
-                    break;
-            }
+            user.Phone = null;
         }
 
         return user;
@@ -477,6 +471,15 @@ public class UserConverterService(
                         break;
                 }
             }
+        }
+    }
+
+
+    private static void SetMutualContact(ILayeredUser user, ContactType contactType)
+    {
+        if (user is TUser tUser)
+        {
+            tUser.MutualContact = contactType == ContactType.Mutual;
         }
     }
 
