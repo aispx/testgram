@@ -17,10 +17,6 @@ internal sealed class RequestPasswordRecoveryHandler(ITwoFactorService twoFactor
         var recoveryCode = Random.Shared.Next(100000, 999999).ToString();
         await twoFactorService.SetRecoveryEmailAsync(input.UserId, passwordDoc.RecoveryEmail, recoveryCode);
 
-        var email = passwordDoc.RecoveryEmail;
-        var atIndex = email.IndexOf('@');
-        var maskedEmail = atIndex > 0 ? $"{email[0]}{new string('*', atIndex - 1)}@{email[(atIndex + 1)..]}" : email;
-
-        return new TPasswordRecovery { EmailPattern = maskedEmail };
+        return new TPasswordRecovery { EmailPattern = twoFactorService.GetRecoveryEmailPattern(passwordDoc.RecoveryEmail) ?? passwordDoc.RecoveryEmail };
     }
 }

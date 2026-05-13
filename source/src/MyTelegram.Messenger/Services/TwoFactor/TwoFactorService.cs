@@ -21,8 +21,18 @@ public interface ITwoFactorService
     Task<bool> CanResetPasswordAsync(long userId);
     Task StartPasswordResetAsync(long userId);
     Task<DateTime?> GetPasswordResetStateAsync(long userId);
+    Task<DateTime?> GetPasswordResetRetryAtAsync(long userId);
     Task ClearPasswordResetStateAsync(long userId);
     Task<bool> HasPendingRecoveryEmailCodeAsync(long userId);
+    Task<RecoveryCodeCheckResult> CheckRecoveryCodeAsync(long userId, string code);
+    string? GetRecoveryEmailPattern(string? email);
+}
+
+public enum RecoveryCodeCheckResult
+{
+    Ok,
+    CodeInvalid,
+    ExpiredOrMissing
 }
 
 public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSessionCache> cacheManager)
@@ -51,7 +61,8 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
             RecoveryEmailCode = existing?.RecoveryEmailCode,
             RecoveryEmailCodeExpire = existing?.RecoveryEmailCodeExpire,
             IsPasswordResetRequested = existing?.IsPasswordResetRequested ?? false,
-            PasswordResetRequestedAt = existing?.PasswordResetRequestedAt
+            PasswordResetRequestedAt = existing?.PasswordResetRequestedAt,
+            PasswordResetRetryAt = existing?.PasswordResetRetryAt
         };
         await Collection.ReplaceOneAsync(p => p.Id == userId, doc, new ReplaceOptions { IsUpsert = true });
     }
@@ -158,8 +169,8 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
     public async Task<bool> ConfirmRecoveryEmailAsync(long userId, string code)
     {
         var doc = await Collection.Find(p => p.Id == userId).FirstOrDefaultAsync();
-        if (doc == null || doc.RecoveryEmailCode != code) return false;
-        if (doc.RecoveryEmailCodeExpire.HasValue && doc.RecoveryEmailCodeExpire.Value < DateTime.UtcNow) return false;
+        var result = await CheckRecoveryCodeAsync(userId, code);
+        if (result != RecoveryCodeCheckResult.Ok) return false;
         doc.RecoveryEmailCode = null;
         doc.RecoveryEmailCodeExpire = null;
         await Collection.ReplaceOneAsync(p => p.Id == userId, doc);
@@ -197,6 +208,7 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
         if (doc == null || string.IsNullOrEmpty(doc.RecoveryEmail)) return false;
         doc.IsPasswordResetRequested = true;
         doc.PasswordResetRequestedAt = DateTime.UtcNow;
+        doc.PasswordResetRetryAt = null;
         await Collection.ReplaceOneAsync(p => p.Id == userId, doc);
         return true;
     }
@@ -205,8 +217,11 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
     {
         var doc = await Collection.Find(p => p.Id == userId).FirstOrDefaultAsync();
         if (doc == null) return;
+
+        var requestedAt = doc.PasswordResetRequestedAt ?? DateTime.UtcNow;
         doc.IsPasswordResetRequested = false;
         doc.PasswordResetRequestedAt = null;
+        doc.PasswordResetRetryAt = requestedAt.AddDays(7);
         await Collection.ReplaceOneAsync(p => p.Id == userId, doc);
     }
 
@@ -216,6 +231,7 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
         if (doc == null) return;
         doc.IsPasswordResetRequested = true;
         doc.PasswordResetRequestedAt = DateTime.UtcNow;
+        doc.PasswordResetRetryAt = null;
         await Collection.ReplaceOneAsync(p => p.Id == userId, doc);
     }
 
@@ -227,12 +243,19 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
         return doc.PasswordResetRequestedAt.Value;
     }
 
+    public async Task<DateTime?> GetPasswordResetRetryAtAsync(long userId)
+    {
+        var doc = await Collection.Find(p => p.Id == userId).FirstOrDefaultAsync();
+        return doc?.PasswordResetRetryAt;
+    }
+
     public async Task ClearPasswordResetStateAsync(long userId)
     {
         var doc = await Collection.Find(p => p.Id == userId).FirstOrDefaultAsync();
         if (doc == null) return;
         doc.IsPasswordResetRequested = false;
         doc.PasswordResetRequestedAt = null;
+        doc.PasswordResetRetryAt = null;
         await Collection.ReplaceOneAsync(p => p.Id == userId, doc);
     }
 
@@ -243,6 +266,40 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
         if (string.IsNullOrEmpty(doc.RecoveryEmailCode)) return false;
         if (doc.RecoveryEmailCodeExpire.HasValue && doc.RecoveryEmailCodeExpire.Value < DateTime.UtcNow) return false;
         return true;
+    }
+
+    public async Task<RecoveryCodeCheckResult> CheckRecoveryCodeAsync(long userId, string code)
+    {
+        var doc = await Collection.Find(p => p.Id == userId).FirstOrDefaultAsync();
+        if (doc == null || string.IsNullOrEmpty(doc.RecoveryEmailCode))
+        {
+            return RecoveryCodeCheckResult.ExpiredOrMissing;
+        }
+
+        if (doc.RecoveryEmailCodeExpire.HasValue && doc.RecoveryEmailCodeExpire.Value < DateTime.UtcNow)
+        {
+            return RecoveryCodeCheckResult.ExpiredOrMissing;
+        }
+
+        return string.Equals(doc.RecoveryEmailCode, code, StringComparison.Ordinal)
+            ? RecoveryCodeCheckResult.Ok
+            : RecoveryCodeCheckResult.CodeInvalid;
+    }
+
+    public string? GetRecoveryEmailPattern(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return null;
+        }
+
+        var atIndex = email.IndexOf('@');
+        if (atIndex <= 0 || atIndex >= email.Length - 1)
+        {
+            return email;
+        }
+
+        return $"{email[0]}{new string('*', Math.Max(1, atIndex - 1))}@{email[(atIndex + 1)..]}";
     }
 
     private static byte[] ToPaddedBytes(BigInteger n, int size)

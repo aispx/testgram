@@ -14,4 +14,5 @@ public class UserPasswordDocument
     public DateTime? RecoveryEmailCodeExpire { get; set; }
     public bool IsPasswordResetRequested { get; set; }
     public DateTime? PasswordResetRequestedAt { get; set; }
+    public DateTime? PasswordResetRetryAt { get; set; }
 }

@@ -1,19 +1,28 @@
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Auth;
-/// <summary>
-/// Check if the <a href="https://corefork.telegram.org/api/srp">2FA recovery code</a> sent using <a href="https://corefork.telegram.org/method/auth.requestPasswordRecovery">auth.requestPasswordRecovery</a> is valid, before passing it to <a href="https://corefork.telegram.org/method/auth.recoverPassword">auth.recoverPassword</a>.
-/// Possible errors
-/// Code Type Description
-/// 400 CODE_EMPTY The provided code is empty.
-/// 400 PASSWORD_RECOVERY_EXPIRED The recovery code has expired.
-/// <para><c>See <a href="https://corefork.telegram.org/method/auth.checkRecoveryPassword"/> </c></para>
-/// </summary>
-/// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
-/// </remarks>
-internal sealed class CheckRecoveryPasswordHandler : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestCheckRecoveryPassword, IBool>
+
+using MyTelegram.Messenger.Services.TwoFactor;
+
+internal sealed class CheckRecoveryPasswordHandler(ITwoFactorService twoFactorService) : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestCheckRecoveryPassword, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Auth.RequestCheckRecoveryPassword obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Auth.RequestCheckRecoveryPassword obj)
     {
-        throw new NotImplementedException();
+        if (string.IsNullOrWhiteSpace(obj.Code))
+        {
+            RpcErrors.RpcErrors400.CodeEmpty.ThrowRpcError();
+        }
+
+        var result = await twoFactorService.CheckRecoveryCodeAsync(input.UserId, obj.Code);
+        if (result == RecoveryCodeCheckResult.Ok)
+        {
+            return new TBoolTrue();
+        }
+
+        if (result == RecoveryCodeCheckResult.CodeInvalid)
+        {
+            RpcErrors.RpcErrors400.CodeInvalid.ThrowRpcError();
+        }
+
+        RpcErrors.RpcErrors400.PasswordRecoveryExpired.ThrowRpcError();
+        return null!;
     }
 }

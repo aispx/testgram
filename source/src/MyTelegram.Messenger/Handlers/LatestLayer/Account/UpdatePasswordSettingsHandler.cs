@@ -8,11 +8,17 @@ internal sealed class UpdatePasswordSettingsHandler(ITwoFactorService twoFactorS
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUpdatePasswordSettings obj)
     {
+        var currentPassword = await twoFactorService.GetPasswordAsync(input.UserId);
+
         // Verify current password if set
         if (obj.Password is TInputCheckPasswordSRP srp)
         {
             var ok = await twoFactorService.VerifySrpAsync(input.UserId, srp.SrpId, srp.A.ToArray(), srp.M1.ToArray());
             if (!ok) RpcErrors.RpcErrors400.PasswordHashInvalid.ThrowRpcError();
+        }
+        else if (currentPassword != null)
+        {
+            RpcErrors.RpcErrors400.PasswordHashInvalid.ThrowRpcError();
         }
 
         var settings = obj.NewSettings as TPasswordInputSettings;
@@ -31,16 +37,20 @@ internal sealed class UpdatePasswordSettingsHandler(ITwoFactorService twoFactorS
         }
         else if (settings.NewAlgo is TPasswordKdfAlgoUnknown || settings.NewPasswordHash is null or { Length: 0 })
         {
-            // Remove password
+            if (currentPassword == null)
+            {
+                RpcErrors.RpcErrors400.NewSettingsEmpty.ThrowRpcError();
+            }
+
             await twoFactorService.RemovePasswordAsync(input.UserId);
         }
 
-        // Handle recovery email setting
         if (settings.Email != null && (settings.Flags & 2) != 0)
         {
             var code = RandomNumberGenerator.GetBytes(4);
             var codeString = BitConverter.ToString(code).Replace("-", "").Substring(0, 6);
             await twoFactorService.SetRecoveryEmailAsync(input.UserId, settings.Email, codeString);
+            RpcErrors.RpcErrors400.EmailUnconfirmedX.ThrowRpcError(codeString.Length);
         }
 
         return new TBoolTrue();

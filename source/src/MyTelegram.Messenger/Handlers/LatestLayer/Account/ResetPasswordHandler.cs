@@ -8,30 +8,36 @@ internal sealed class ResetPasswordHandler(ITwoFactorService twoFactorService)
     protected override async Task<MyTelegram.Schema.Account.IResetPasswordResult> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestResetPassword obj)
     {
         var resetState = await twoFactorService.GetPasswordResetStateAsync(input.UserId);
-        
-        if (resetState == null)
+
+        if (resetState.HasValue)
         {
-            await twoFactorService.StartPasswordResetAsync(input.UserId);
-            var untilDate = (int)(DateTimeOffset.UtcNow.Add(TimeSpan.FromDays(7)).ToUnixTimeSeconds());
+            var untilDate = resetState.Value.AddDays(7);
+            if (untilDate <= DateTime.UtcNow)
+            {
+                await twoFactorService.RemovePasswordAsync(input.UserId);
+                await twoFactorService.ClearPasswordResetStateAsync(input.UserId);
+                return new MyTelegram.Schema.Account.TResetPasswordOk();
+            }
+
             return new MyTelegram.Schema.Account.TResetPasswordRequestedWait
             {
-                UntilDate = untilDate
+                UntilDate = (int)new DateTimeOffset(untilDate).ToUnixTimeSeconds()
             };
         }
 
-        var daysSinceRequested = (DateTime.UtcNow - resetState.Value).TotalDays;
-        
-        if (daysSinceRequested >= 7)
+        var retryAt = await twoFactorService.GetPasswordResetRetryAtAsync(input.UserId);
+        if (retryAt.HasValue && retryAt.Value > DateTime.UtcNow)
         {
-            await twoFactorService.RemovePasswordAsync(input.UserId);
-            await twoFactorService.ClearPasswordResetStateAsync(input.UserId);
-            return new MyTelegram.Schema.Account.TResetPasswordOk();
+            return new MyTelegram.Schema.Account.TResetPasswordFailedWait
+            {
+                RetryDate = (int)new DateTimeOffset(retryAt.Value).ToUnixTimeSeconds()
+            };
         }
 
-        var retryDate = (int)(DateTimeOffset.UtcNow.Add(TimeSpan.FromDays(7) - TimeSpan.FromDays(daysSinceRequested)).ToUnixTimeSeconds());
-        return new MyTelegram.Schema.Account.TResetPasswordFailedWait
+        await twoFactorService.StartPasswordResetAsync(input.UserId);
+        return new MyTelegram.Schema.Account.TResetPasswordRequestedWait
         {
-            RetryDate = retryDate
+            UntilDate = (int)DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeSeconds()
         };
     }
 }

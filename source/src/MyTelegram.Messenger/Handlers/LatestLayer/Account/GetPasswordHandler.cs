@@ -30,6 +30,20 @@ internal sealed class GetPasswordHandler(ITwoFactorService twoFactorService, IRa
 
         if (doc != null)
         {
+            password.EmailUnconfirmedPattern = await twoFactorService.HasPendingRecoveryEmailCodeAsync(input.UserId)
+                ? twoFactorService.GetRecoveryEmailPattern(doc.RecoveryEmail)
+                : null;
+            password.LoginEmailPattern = password.EmailUnconfirmedPattern == null
+                ? twoFactorService.GetRecoveryEmailPattern(doc.RecoveryEmail)
+                : null;
+            password.HasRecovery = !string.IsNullOrEmpty(doc.RecoveryEmail) && password.EmailUnconfirmedPattern == null;
+
+            var resetState = await twoFactorService.GetPasswordResetStateAsync(input.UserId);
+            if (resetState.HasValue)
+            {
+                password.PendingResetDate = (int)new DateTimeOffset(resetState.Value.AddDays(7)).ToUnixTimeSeconds();
+            }
+
             var (srpB, srpId) = await twoFactorService.GenerateSrpParamsAsync(input.UserId);
             password.HasPassword = true;
             password.CurrentAlgo = new TPasswordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow
