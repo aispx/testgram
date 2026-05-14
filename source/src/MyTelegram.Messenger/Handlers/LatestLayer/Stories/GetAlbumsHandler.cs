@@ -49,38 +49,10 @@ internal sealed class GetAlbumsHandler(
                 continue;
             }
 
-            IPhoto? iconPhoto = null;
-            IDocument? iconVideo = null;
+            var iconPhoto = StoryHelper.BuildAlbumIconPhoto(firstStory);
+            var iconVideo = StoryHelper.BuildAlbumIconVideo(firstStory);
 
-            if (firstStory.MediaType == 1)
-            {
-                iconPhoto = new TPhoto
-                {
-                    Id = firstStory.MediaFileId,
-                    AccessHash = firstStory.MediaAccessHash,
-                    DcId = firstStory.MediaDcId,
-                    FileReference = firstStory.MediaFileReference ?? [],
-                    Date = (int)firstStory.Date,
-                    Sizes = new TVector<IPhotoSize>()
-                };
-            }
-            else if (firstStory.MediaType == 2)
-            {
-                iconVideo = new TDocument
-                {
-                    Id = firstStory.MediaFileId,
-                    AccessHash = firstStory.MediaAccessHash,
-                    DcId = firstStory.MediaDcId,
-                    FileReference = firstStory.MediaFileReference != null ? new ReadOnlyMemory<byte>(firstStory.MediaFileReference) : ReadOnlyMemory<byte>.Empty,
-                    Size = firstStory.MediaSize,
-                    MimeType = firstStory.MediaMimeType ?? "video/mp4",
-                    Date = (int)firstStory.Date,
-                    Thumbs = new TVector<IPhotoSize>(),
-                    VideoThumbs = new TVector<IVideoSize>(),
-                    Attributes = new TVector<IDocumentAttribute>()
-                };
-            }
-            else
+            if (iconPhoto == null && iconVideo == null)
             {
                 // Unknown media type - skip this album
                 continue;

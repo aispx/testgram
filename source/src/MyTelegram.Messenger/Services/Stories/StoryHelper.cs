@@ -253,6 +253,69 @@ public static IStoryItem ConvertToStoryItem(StoryDocument doc, long requestingUs
         }
     }
 
+    public static IPhoto? BuildAlbumIconPhoto(StoryDocument? doc)
+    {
+        if (doc == null || doc.MediaType != 1 || doc.MediaFileId == 0)
+        {
+            return null;
+        }
+
+        return new TPhoto
+        {
+            Id = doc.MediaFileId,
+            AccessHash = doc.MediaAccessHash,
+            FileReference = doc.MediaFileReference ?? [],
+            Date = (int)doc.Date,
+            Sizes = new TVector<IPhotoSize>
+            {
+                new TPhotoSize { Type = "x", W = 720, H = 1280, Size = doc.MediaSize > 0 ? (int)doc.MediaSize : 100000 },
+                new TPhotoSize { Type = "m", W = 360, H = 640, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 4) : 25000 },
+                new TPhotoSize { Type = "s", W = 180, H = 320, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 8) : 6000 }
+            },
+            DcId = doc.MediaDcId > 0 ? doc.MediaDcId : 2
+        };
+    }
+
+    public static IDocument? BuildAlbumIconVideo(StoryDocument? doc)
+    {
+        if (doc == null || doc.MediaType != 2 || doc.MediaFileId == 0)
+        {
+            return null;
+        }
+
+        var attributes = new TVector<IDocumentAttribute>();
+        if (doc.VideoWidth.HasValue || doc.VideoHeight.HasValue || doc.VideoDuration.HasValue)
+        {
+            attributes.Add(new TDocumentAttributeVideo
+            {
+                W = doc.VideoWidth ?? 720,
+                H = doc.VideoHeight ?? 1280,
+                Duration = doc.VideoDuration ?? 0,
+                RoundMessage = false,
+                SupportsStreaming = true
+            });
+        }
+
+        var thumbs = new TVector<IPhotoSize>();
+        if (doc.VideoThumbBytes != null && doc.VideoThumbBytes.Length > 0)
+        {
+            thumbs.Add(new TPhotoStrippedSize { Type = "i", Bytes = doc.VideoThumbBytes });
+        }
+
+        return new TDocument
+        {
+            Id = doc.MediaFileId,
+            AccessHash = doc.MediaAccessHash,
+            FileReference = doc.MediaFileReference != null ? new ReadOnlyMemory<byte>(doc.MediaFileReference) : ReadOnlyMemory<byte>.Empty,
+            Date = (int)doc.Date,
+            MimeType = doc.MediaMimeType ?? "video/mp4",
+            Size = doc.MediaSize,
+            DcId = doc.MediaDcId > 0 ? doc.MediaDcId : 2,
+            Attributes = attributes,
+            Thumbs = thumbs
+        };
+    }
+
     public static IPeer CreatePeer(int peerType, long peerId)
     {
         return peerType switch

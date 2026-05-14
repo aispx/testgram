@@ -60,34 +60,8 @@ internal sealed class UpdateAlbumHandler(
 
         var currentTitle = firstStory?.AlbumTitle ?? $"Album {obj.AlbumId}";
 
-        IPhoto? iconPhoto = null;
-        IDocument? iconVideo = null;
-        
-        if (firstStory != null)
-        {
-            if (firstStory.MediaType == 1 && firstStory.MediaFileId != 0)
-            {
-                iconPhoto = new TPhoto
-                {
-                    Id = firstStory.MediaFileId,
-                    AccessHash = firstStory.MediaAccessHash,
-                    DcId = firstStory.MediaDcId,
-                    FileReference = firstStory.MediaFileReference ?? []
-                };
-            }
-            else if (firstStory.MediaType == 2 && firstStory.MediaFileId != 0)
-            {
-                iconVideo = new TDocument
-                {
-                    Id = firstStory.MediaFileId,
-                    AccessHash = firstStory.MediaAccessHash,
-                    DcId = firstStory.MediaDcId,
-                    FileReference = firstStory.MediaFileReference != null ? new ReadOnlyMemory<byte>(firstStory.MediaFileReference) : ReadOnlyMemory<byte>.Empty,
-                    Size = firstStory.MediaSize,
-                    MimeType = firstStory.MediaMimeType ?? "video/mp4"
-                };
-            }
-        }
+        var iconPhoto = StoryHelper.BuildAlbumIconPhoto(firstStory);
+        var iconVideo = StoryHelper.BuildAlbumIconVideo(firstStory);
 
         return new TStoryAlbum
         {

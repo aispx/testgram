@@ -36,31 +36,8 @@ internal sealed class CreateAlbumHandler(
                 if (iconPhoto == null && iconVideo == null)
                 {
                     var story = await _storyCollection.Find(filter).FirstOrDefaultAsync();
-                    if (story != null)
-                    {
-                        if (story.MediaType == 1 && story.MediaFileId != 0)
-                        {
-                            iconPhoto = new TPhoto
-                            {
-                                Id = story.MediaFileId,
-                                AccessHash = story.MediaAccessHash,
-                                DcId = story.MediaDcId,
-                                FileReference = story.MediaFileReference ?? []
-                            };
-                        }
-                        else if (story.MediaType == 2 && story.MediaFileId != 0)
-                        {
-                            iconVideo = new TDocument
-                            {
-                                Id = story.MediaFileId,
-                                AccessHash = story.MediaAccessHash,
-                                DcId = story.MediaDcId,
-                                FileReference = story.MediaFileReference != null ? new ReadOnlyMemory<byte>(story.MediaFileReference) : ReadOnlyMemory<byte>.Empty,
-                                Size = story.MediaSize,
-                                MimeType = story.MediaMimeType ?? "video/mp4"
-                            };
-                        }
-                    }
+                    iconPhoto = StoryHelper.BuildAlbumIconPhoto(story);
+                    iconVideo = StoryHelper.BuildAlbumIconVideo(story);
                 }
             }
         }
