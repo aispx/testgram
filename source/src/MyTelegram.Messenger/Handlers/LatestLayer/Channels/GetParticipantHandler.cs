@@ -40,6 +40,27 @@ internal sealed class GetParticipantHandler(IQueryProcessor queryProcessor, IPee
                         Users = new TVector<IUser>(monoforumUser)
                     };
                 }
+
+                // Item 9: when the caller asks about THEMSELVES in a public channel
+                // they haven't joined yet (e.g. opened by deep-link), return a
+                // channelParticipantLeft entry instead of erroring out with
+                // USER_NOT_PARTICIPANT. Without this, clients block secondary calls
+                // (messages.getStickers, etc.) thinking the user is banned.
+                var isSelfQuery = peer.PeerId == input.UserId;
+                var isPublicChannel = channelReadModel2 != null && !string.IsNullOrEmpty(channelReadModel2.UserName);
+                if (isSelfQuery && isPublicChannel)
+                {
+                    var selfUser = await userConverterService.GetUserAsync(input, input.UserId, false, false, input.Layer);
+                    var selfPhoto = await photoAppService.GetAsync(channelReadModel2!.PhotoId);
+                    var selfChannel = chatConverterService.ToChannel(input, channelReadModel2, selfPhoto, null, true, input.Layer);
+                    return new MyTelegram.Schema.Channels.TChannelParticipant
+                    {
+                        Chats = new TVector<IChat>(selfChannel),
+                        Participant = new TChannelParticipantLeft { Peer = new TPeerUser { UserId = input.UserId } },
+                        Users = new TVector<IUser>(selfUser),
+                    };
+                }
+
                 RpcErrors.RpcErrors400.UserNotParticipant.ThrowRpcError();
             }
 

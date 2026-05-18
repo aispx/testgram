@@ -77,9 +77,28 @@ internal sealed class GetPeerSettingsHandler(
             // Get user info for additional fields from MongoDB
             if (settings is Schema.TPeerSettings tSettings)
             {
+                // Item 18: per Telegram's peerSettings docs the "doxxing" fields
+                // (registration_month, phone_country, name_change_date, photo_change_date)
+                // must only appear when the peer is suspicious — i.e. they wrote first
+                // and have not yet been confirmed as a contact. Once we've replied (any
+                // outbox message exists) or saved them as a contact, the fields must be
+                // hidden, otherwise a known contact's profile would still leak when
+                // opening peerSettings.
+                var shouldExposeProfileMeta = contactType is null or ContactType.None;
+                if (shouldExposeProfileMeta)
+                {
+                    var msgCol = database.GetCollection<BsonDocument>("eventflow-messagereadmodel");
+                    var weReplied = await msgCol.Find(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("OwnerPeerId", input.UserId),
+                        Builders<BsonDocument>.Filter.Eq("ToPeerId", peer.PeerId),
+                        Builders<BsonDocument>.Filter.Eq("ToPeerType", (int)PeerType.User),
+                        Builders<BsonDocument>.Filter.Eq("Out", true)
+                    )).Project(Builders<BsonDocument>.Projection.Include("_id")).Limit(1).AnyAsync();
+                    if (weReplied) shouldExposeProfileMeta = false;
+                }
                 var userCol = database.GetCollection<BsonDocument>("eventflow-userreadmodel");
                 var userDoc = await userCol.Find(Builders<BsonDocument>.Filter.Eq("UserId", peer.PeerId)).FirstOrDefaultAsync();
-                if (userDoc != null)
+                if (userDoc != null && shouldExposeProfileMeta)
                 {
                     // Phone country - extract from phone number
                     if (userDoc.Contains("PhoneNumber") && !userDoc["PhoneNumber"].IsBsonNull)
@@ -249,6 +268,18 @@ internal sealed class GetPeerSettingsHandler(
             if (peerType != PeerType.User)
             {
                 // Not a user chat - it's a channel, group, or bot - don't show banner
+                return;
+            }
+
+            // Item 8: never show "bot manages this chat" banner when the peer itself is a
+            // bot or a system user (support/notification). Telegram never shows it for these.
+            if (PeerKindHelper.IsSystemUserId(targetPeerId))
+            {
+                return;
+            }
+            var targetUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(targetPeerId));
+            if (targetUser == null || targetUser.Bot)
+            {
                 return;
             }
 

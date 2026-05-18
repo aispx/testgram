@@ -15,11 +15,23 @@ public class MtpConnectionHandler(
         var proxyProtocolFeature = connection.Features.Get<ProxyProtocolFeature>();
         var connectionTypeFeature = connection.Features.Get<ConnectionTypeFeature>();
 
-        var clientIp = (connection.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? string.Empty;
+        var remoteAddress = (connection.RemoteEndPoint as IPEndPoint)?.Address;
+        // Map IPv4-mapped IPv6 (::ffff:1.2.3.4) back to plain IPv4 so saved session
+        // metadata doesn't surface the ::ffff: prefix in clients.
+        if (remoteAddress != null && remoteAddress.IsIPv4MappedToIPv6)
+        {
+            remoteAddress = remoteAddress.MapToIPv4();
+        }
+        var clientIp = remoteAddress?.ToString() ?? string.Empty;
         if (proxyProtocolFeature != null)
         {
-            remoteEndPoint = new IPEndPoint(proxyProtocolFeature.SourceIp, proxyProtocolFeature.SourcePort);
-            clientIp = proxyProtocolFeature.SourceIp.ToString();
+            var sourceIp = proxyProtocolFeature.SourceIp;
+            if (sourceIp.IsIPv4MappedToIPv6)
+            {
+                sourceIp = sourceIp.MapToIPv4();
+            }
+            remoteEndPoint = new IPEndPoint(sourceIp, proxyProtocolFeature.SourcePort);
+            clientIp = sourceIp.ToString();
 
             logger.NewClientConnectedWUsingProxyProtocolV2(
                 connection.ConnectionId,

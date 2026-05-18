@@ -60,6 +60,22 @@ public class PollAggregate : AggregateRoot<PollAggregate, PollId>
         }
         else
         {
+            // Item 23: when a user re-votes in a non-quiz poll, decrement their previous
+            // option voter counts first so the totals reflect the new selection instead
+            // of double-counting. Without this, every revote inflates AnswerVoters
+            // forever and the broadcast updateMessagePoll shows wrong tallies.
+            if (!_state.Quiz && _state.VotedPeerIds.Contains(voteUserPeerId))
+            {
+                retractVoteOptions = _state.GetVoteOptionsByUserId(voteUserPeerId);
+                foreach (var pollAnswerVoter in answerVoters)
+                {
+                    if (retractVoteOptions.Contains(pollAnswerVoter.Option))
+                    {
+                        pollAnswerVoter.DecrementVoters();
+                    }
+                }
+            }
+
             foreach (var answer in answerVoters)
             {
                 if (options.Contains(answer.Option))

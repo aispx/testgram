@@ -12,7 +12,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Contacts;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class AddContactHandler(ICommandBus commandBus, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestAddContact, MyTelegram.Schema.IUpdates>
+internal sealed class AddContactHandler(ICommandBus commandBus, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestAddContact, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestAddContact obj)
     {
@@ -20,6 +20,14 @@ internal sealed class AddContactHandler(ICommandBus commandBus, IPeerHelper peer
         {
             await accessHashHelper.CheckAccessHashAsync(input, inputUser.UserId, inputUser.AccessHash, AccessHashType.User);
             var peer = peerHelper.GetPeer(obj.Id, input.UserId);
+
+            // Bots and system users cannot be added as contacts (would otherwise let users
+            // give bots a custom display name, which is not allowed by Telegram).
+            if (peer.PeerId != input.UserId && await PeerKindHelper.IsBotOrSystemAsync(queryProcessor, peer.PeerId))
+            {
+                RpcErrors.RpcErrors400.ContactIdInvalid.ThrowRpcError();
+            }
+
             var command = new AddContactCommand(ContactId.Create(input.UserId, peer.PeerId), input.ToRequestInfo(), input.UserId, peer.PeerId, obj.Phone, obj.FirstName, obj.LastName, obj.AddPhonePrivacyException);
             await commandBus.PublishAsync(command, default);
             return null !;

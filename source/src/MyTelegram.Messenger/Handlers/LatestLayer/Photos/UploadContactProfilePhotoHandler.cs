@@ -4,7 +4,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Photos;
 /// Possible errors
 /// Code Type Description
 /// 400 CONTACT_MISSING The specified user is not a contact.
-/// 400 NEED_ACTION_MISSING  
+/// 400 NEED_ACTION_MISSING
 /// 400 USER_ID_INVALID The provided user ID is invalid.
 /// <para><c>See <a href="https://corefork.telegram.org/method/photos.uploadContactProfilePhoto"/> </c></para>
 /// </summary>
@@ -36,7 +36,18 @@ internal sealed class UploadContactProfilePhotoHandler(ICommandBus commandBus, I
         IPhoto? photo = null;
         if (file != null)
         {
-            var r = file == null ? null : await mediaHelper.SavePhotoAsync(input.ReqMsgId, input.UserId, file.GetFileId(), obj.Video != null, obj.VideoStartTs, parts, name, md5 ?? string.Empty);
+            var r = file == null
+                ? null
+                : await mediaHelper.SavePhotoAsync(
+                    input.ReqMsgId,
+                    input.UserId,
+                    file.GetFileId(),
+                    obj.Video != null,
+                    obj.VideoStartTs,
+                    parts,
+                    name,
+                    md5 ?? string.Empty,
+                    isProfilePhoto: true);
             if (r != null)
             {
                 photoId = r.PhotoId;

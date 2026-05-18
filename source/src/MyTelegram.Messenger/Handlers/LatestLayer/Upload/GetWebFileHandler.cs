@@ -15,21 +15,8 @@ internal sealed class GetWebFileHandler : RpcResultObjectHandler<MyTelegram.Sche
 
     protected override Task<MyTelegram.Schema.Upload.IWebFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Upload.RequestGetWebFile obj)
     {
-        // GetWebFile is used for downloading web files through Telegram proxy
-        // This requires HTTP proxy infrastructure which is not implemented
-        // Return empty web file for now
-
         _logger.LogWarning("GetWebFile called but web proxy not implemented. Location: {Location}", obj.Location);
-
-        var result = new MyTelegram.Schema.Upload.TWebFile
-        {
-            Size = 0,
-            MimeType = "application/octet-stream",
-            FileType = new MyTelegram.Schema.Storage.TFileUnknown(),
-            Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            Bytes = Array.Empty<byte>()
-        };
-
-        return Task.FromResult<MyTelegram.Schema.Upload.IWebFile>(result);
+        RpcErrors.RpcErrors400.WebfileNotAvailable.ThrowRpcError();
+        throw new InvalidOperationException();
     }
 }

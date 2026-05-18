@@ -165,8 +165,9 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                     RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
                 await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
                 await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, toPeer.PeerId, requiredStars);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId);
+                var paidMsgCount = (int)Math.Max(1, requiredStars);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId, paidMessages: paidMsgCount);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId, paidMessages: paidMsgCount);
                 paidMessageStars = requiredStars;
             }
         }

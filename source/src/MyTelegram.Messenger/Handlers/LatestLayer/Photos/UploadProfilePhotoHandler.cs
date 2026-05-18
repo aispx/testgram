@@ -37,7 +37,17 @@ internal sealed class UploadProfilePhotoHandler(IMediaHelper mediaHelper, IComma
                 break;
         }
 
-        var r = await mediaHelper.SavePhotoAsync(input.ReqMsgId, input.UserId, file.GetFileId(), obj.Video != null, obj.VideoStartTs, parts, name, md5 ?? string.Empty, obj.VideoEmojiMarkup);
+        var r = await mediaHelper.SavePhotoAsync(
+            input.ReqMsgId,
+            input.UserId,
+            file.GetFileId(),
+            obj.Video != null,
+            obj.VideoStartTs,
+            parts,
+            name,
+            md5 ?? string.Empty,
+            obj.VideoEmojiMarkup,
+            isProfilePhoto: true);
         var command = new UploadProfilePhotoCommand(UserId.Create(input.UserId), input.ToRequestInfo(), r.PhotoId, obj.Fallback, obj.VideoEmojiMarkup);
         await commandBus.PublishAsync(command);
         return null !;

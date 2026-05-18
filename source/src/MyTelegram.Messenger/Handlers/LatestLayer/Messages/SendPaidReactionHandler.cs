@@ -37,8 +37,10 @@ internal sealed class SendPaidReactionHandler(
         // Deduct stars from sender, add to channel owner
         await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -obj.Count);
         await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, channelReadModel.CreatorId, obj.Count);
-        await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -obj.Count, peerChannelId: peer.PeerId);
-        await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, channelReadModel.CreatorId, obj.Count, peerChannelId: peer.PeerId);
+        // Tag both legs with reaction:true so starsTransaction renders the
+        // "paid reaction" label on both sender and receiver wallets.
+        await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -obj.Count, peerChannelId: peer.PeerId, reaction: true, msgId: obj.MsgId);
+        await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, channelReadModel.CreatorId, obj.Count, peerChannelId: peer.PeerId, reaction: true, msgId: obj.MsgId);
 
         // Build new reactions list: keep existing non-paid reactions + add count paid reactions for this user
         var existingReactions = messageReadModel!.RecentReactions2?

@@ -17,7 +17,7 @@ public class XieFatherBotService(
     ICommandBus commandBus,
     IQueryProcessor queryProcessor) : IXieFatherBotService, ISingletonDependency
 {
-    public const long BotUserId = 2667001;
+    public const long BotUserId = MyTelegramConsts.BotFatherUserId;
     private const string BotCollection = "xiefather-bot-state";
 
     private const string WelcomeText =
@@ -241,6 +241,8 @@ public class XieFatherBotService(
                     await ClearStateAsync(fromUserId);
                     await SendAsync(input, fromUserId, $"Success! Name for @{username2} changed to *{Esc(text)}*.");
                 }
+                else if (step == "pick")
+                    await HandleBotPickAsync(input, fromUserId, text, SendBotMenuTextAsync);
                 break;
 
             case "setdescription":
@@ -250,6 +252,8 @@ public class XieFatherBotService(
                     await ClearStateAsync(fromUserId);
                     await SendAsync(input, fromUserId, $"Success! Description for @{extra} updated.");
                 }
+                else if (step == "pick")
+                    await HandleBotPickAsync(input, fromUserId, text, SendBotMenuTextAsync);
                 break;
 
             case "setabouttext":
@@ -262,8 +266,40 @@ public class XieFatherBotService(
                         .UpdateOneAsync(new BsonDocument("UserName", extra), new BsonDocument("$set", new BsonDocument("About", text)));
                     await SendAsync(input, fromUserId, $"Success! About text for @{extra} updated.");
                 }
+                else if (step == "pick")
+                    await HandleBotPickAsync(input, fromUserId, text, SendBotMenuTextAsync);
+                break;
+            case "token":
+                if (step == "pick")
+                    await HandleBotPickAsync(input, fromUserId, text, SendTokenTextAsync);
+                break;
+            case "revoke":
+                if (step == "pick")
+                    await HandleBotPickAsync(input, fromUserId, text, SendRevokedTokenTextAsync);
+                break;
+            case "deletebot":
+                if (step == "pick")
+                    await HandleBotPickAsync(input, fromUserId, text, SendDeleteConfirmTextAsync);
+                break;
+            case "setuserpic":
+            case "setcommands":
+                if (step == "pick")
+                    await HandleBotPickAsync(input, fromUserId, text, SendBotMenuTextAsync);
                 break;
         }
+    }
+
+    private async Task HandleBotPickAsync(IRequestInput input, long fromUserId, string text, Func<IRequestInput, long, string, BsonDocument, Task> handler)
+    {
+        var username = text.Trim().TrimStart('@').ToLowerInvariant();
+        var bot = await GetBotAsync(fromUserId, username);
+        if (bot == null)
+        {
+            await SendAsync(input, fromUserId, $"I couldn't find a bot @{username} owned by you.", new TReplyKeyboardHide());
+            return;
+        }
+
+        await handler(input, fromUserId, username, bot);
     }
 
     private async Task HandleEditFieldAsync(IRequestInput input, long fromUserId, int msgId, string field, string username)
@@ -335,6 +371,44 @@ public class XieFatherBotService(
             $"Here is the token for bot *{Esc(name)}* @{username}:\n\n`{token}`",
             InlineRows(
                 InlineRow(Btn("Revoke current token", $"revoke_token:{username}"), Btn("« Back to Bot", $"bot_select:{username}"))
+            ));
+    }
+
+    private async Task SendTokenTextAsync(IRequestInput input, long fromUserId, string username, BsonDocument bot)
+    {
+        await ClearStateAsync(fromUserId);
+        var name = bot["Name"].AsString;
+        var token = bot["Token"].AsString;
+        await SendAsync(input, fromUserId, $"Here is the token for bot *{Esc(name)}* @{username}:\n\n`{token}`", new TReplyKeyboardHide());
+    }
+
+    private async Task SendRevokedTokenTextAsync(IRequestInput input, long fromUserId, string username, BsonDocument bot)
+    {
+        await ClearStateAsync(fromUserId);
+        var newToken = await DoRevokeAsync(fromUserId, username);
+        await SendAsync(input, fromUserId, $"Done! New token for @{username}:\n`{newToken}`", new TReplyKeyboardHide());
+    }
+
+    private async Task SendDeleteConfirmTextAsync(IRequestInput input, long fromUserId, string username, BsonDocument bot)
+    {
+        await ClearStateAsync(fromUserId);
+        await SendAsync(input, fromUserId,
+            $"You are about to delete your bot *{Esc(bot["Name"].AsString)}* @{username}. Is that correct?",
+            InlineRows(
+                InlineRow(Btn("Nope, nevermind", $"bot_select:{username}")),
+                InlineRow(Btn("Yes, delete the bot", $"delete_do:{username}"))
+            ));
+    }
+
+    private async Task SendBotMenuTextAsync(IRequestInput input, long fromUserId, string username, BsonDocument bot)
+    {
+        await ClearStateAsync(fromUserId);
+        await SendAsync(input, fromUserId,
+            $"Here it is: *{Esc(bot["Name"].AsString)}* @{username}.\nWhat do you want to do with the bot?",
+            InlineRows(
+                InlineRow(Btn("API Token", $"api_token:{username}"), Btn("Edit Bot", $"edit_bot:{username}")),
+                InlineRow(Btn("Bot Settings", $"bot_settings:{username}")),
+                InlineRow(Btn("Transfer Ownership", $"transfer_ownership:{username}"), Btn("Delete Bot", $"delete_confirm:{username}"))
             ));
     }
 
@@ -578,9 +652,19 @@ public class XieFatherBotService(
 
     private async Task<long> GetNextUserIdAsync()
     {
+        var filter = new BsonDocument
+        {
+            { "Bot", true },
+            { "UserId", new BsonDocument
+                {
+                    { "$gte", MyTelegramConsts.BotUserInitId },
+                    { "$lt", MyTelegramConsts.ChatIdInitId }
+                }
+            }
+        };
         var last = await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
-            .Find(new BsonDocument()).Sort(new BsonDocument("UserId", -1)).Limit(1).FirstOrDefaultAsync();
-        return (last?["UserId"].AsInt64 ?? 2667001) + 1;
+            .Find(filter).Sort(new BsonDocument("UserId", -1)).Limit(1).FirstOrDefaultAsync();
+        return Math.Max(last?["UserId"].AsInt64 + 1 ?? MyTelegramConsts.BotUserInitId + 1, MyTelegramConsts.BotUserInitId + 1);
     }
 
     private static string GenerateToken()

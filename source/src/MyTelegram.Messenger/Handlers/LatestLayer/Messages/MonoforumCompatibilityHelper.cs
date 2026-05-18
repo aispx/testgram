@@ -26,8 +26,55 @@ internal static class MonoforumCompatibilityHelper
             return (null, null);
 
         var channel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeer.PeerId));
-        if (channel == null || !channel.IsMonoforum)
+        if (channel == null)
             return (channel, null);
+
+        // Item 16: when sending a paid message to a regular group/broadcast channel
+        // (non-monoforum), credit the recipient channel's revenue ledger so admins can
+        // see the income via payments.getStarsRevenueStats and withdraw it.
+        if (!channel.IsMonoforum)
+        {
+            var groupRequiredStars = channel.SendPaidMessagesStars ?? 0;
+            if (groupRequiredStars <= 0)
+                return (channel, null);
+
+            // Admins/creator are exempt — they don't pay to post in their own channel.
+            if (channel.CreatorId == input.UserId)
+                return (channel, null);
+            var adminCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-chatadminreadmodel");
+            var adminDoc = await adminCol.Find(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("PeerId", toPeer.PeerId),
+                    Builders<BsonDocument>.Filter.Eq("AdminId", input.UserId)
+                )).FirstOrDefaultAsync();
+            if (adminDoc != null)
+                return (channel, null);
+
+            if ((allowPaidStars ?? 0) < groupRequiredStars)
+                RpcErrors.RpcErrors403.AllowPaymentRequiredX.ThrowRpcError((int)groupRequiredStars);
+
+            var groupBalance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+            if (groupBalance < groupRequiredStars)
+                RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
+
+            await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -groupRequiredStars);
+            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -groupRequiredStars,
+                peerChannelId: toPeer.PeerId, title: "Paid message",
+                paidMessages: (int)Math.Max(1, groupRequiredStars));
+            await ChannelRevenueHelper.CreditAsync(mongoDatabase, toPeer.PeerId,
+                ChannelRevenueHelper.StarsCurrency, groupRequiredStars,
+                sourceUserId: input.UserId,
+                title: "Paid message revenue");
+
+            if (objectMessageSender != null)
+            {
+                await BalancePushHelper.PushStarsBalanceAsync(objectMessageSender, mongoDatabase, input.UserId);
+                await BalancePushHelper.PushChannelRevenueStatusAsync(objectMessageSender, mongoDatabase,
+                    toPeer.PeerId, PeerType.Channel, channel.CreatorId, ChannelRevenueHelper.StarsCurrency);
+            }
+
+            return (channel, groupRequiredStars);
+        }
 
         var topicPeer = savedPeerId ?? new Peer(PeerType.User, input.UserId);
         if (topicPeer.PeerType != PeerType.User)
@@ -71,7 +118,8 @@ internal static class MonoforumCompatibilityHelper
         await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
         await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars,
             peerChannelId: revenueChannelId,
-            title: "Paid message");
+            title: "Paid message",
+            paidMessages: (int)Math.Max(1, requiredStars));
         await ChannelRevenueHelper.CreditAsync(mongoDatabase, revenueChannelId,
             ChannelRevenueHelper.StarsCurrency, requiredStars,
             sourceUserId: input.UserId,

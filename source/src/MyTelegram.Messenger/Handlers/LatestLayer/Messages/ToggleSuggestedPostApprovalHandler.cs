@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 using MyTelegram.Messenger.Services.StarGifts;
@@ -177,6 +178,26 @@ internal sealed class ToggleSuggestedPostApprovalHandler(IAccessHashHelper acces
         );
 
         await messageAppService.SendMessageAsync([sendInput]);
+
+        // Item 2: flip the original suggestion message's SuggestedPost.Accepted /
+        // Rejected flags so clients stop rendering the Accept/Reject inline buttons
+        // (clients hide them once either flag is set per the suggested-posts API).
+        // Mutating the read model directly avoids piping a new field through the
+        // EditOutboxMessageCommand event flow purely for this UX patch.
+        if (!balanceTooLow)
+        {
+            var msgDocId = MessageId.Create(monoforumPeer.PeerId, obj.MsgId).Value;
+            var msgCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
+            // Set the polymorphic SuggestedPost.{Accepted,Rejected,Flags} fields in place.
+            var newFlags = (suggestionMessage.SuggestedPost as TSuggestedPost)?.Flags ?? 0;
+            if (obj.Reject) { newFlags |= 1 << 2; } else { newFlags |= 1 << 1; }
+            var update = Builders<BsonDocument>.Update
+                .Set("SuggestedPost.Accepted", !obj.Reject)
+                .Set("SuggestedPost.Rejected", obj.Reject)
+                .Set("SuggestedPost.Flags", newFlags);
+            await msgCol.UpdateOneAsync(Builders<BsonDocument>.Filter.Eq("_id", msgDocId), update);
+        }
+
         return null!;
     }
 }

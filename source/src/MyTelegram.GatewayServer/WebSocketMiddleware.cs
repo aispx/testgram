@@ -24,10 +24,22 @@ public class WebSocketMiddleware(
                 _isWebSocketConnected = true;
 
                 var proxyProtocolFeature = context.Features.Get<ProxyProtocolFeature>();
-                var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+                var remoteIp = context.Connection.RemoteIpAddress;
+                // Map IPv4-mapped IPv6 (::ffff:1.2.3.4) back to plain IPv4 so saved
+                // session metadata doesn't show the ::ffff: prefix in clients.
+                if (remoteIp != null && remoteIp.IsIPv4MappedToIPv6)
+                {
+                    remoteIp = remoteIp.MapToIPv4();
+                }
+                var clientIp = remoteIp?.ToString() ?? string.Empty;
                 if (proxyProtocolFeature != null)
                 {
-                    clientIp = proxyProtocolFeature.SourceIp.ToString();
+                    var sourceIp = proxyProtocolFeature.SourceIp;
+                    if (sourceIp.IsIPv4MappedToIPv6)
+                    {
+                        sourceIp = sourceIp.MapToIPv4();
+                    }
+                    clientIp = sourceIp.ToString();
                 }
 
                 var connectionTypeFeature = context.Features.Get<ConnectionTypeFeature>();

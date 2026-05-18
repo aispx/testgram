@@ -37,6 +37,7 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
             TInputDocumentFileLocation doc => doc.Id,
             TInputPhotoFileLocation photo => photo.Id,
             TInputFileLocation file => file.VolumeId, // Legacy
+            TInputPeerPhotoFileLocation peerPhoto => peerPhoto.PhotoId,
             _ => 0
         };
 
@@ -84,25 +85,30 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
             };
         }
 
-        // File not found in parts, check if it's a stored document
+        // File not found in parts, check if it's a stored document/photo
+        // Stored files should be served by the FileServer, not the messenger server
         var documentsCollection = _database.GetCollection<BsonDocument>("eventflow-documentreadmodel");
         var docFilter = Builders<BsonDocument>.Filter.Eq("DocumentId", fileId);
         var document = await documentsCollection.Find(docFilter).FirstOrDefaultAsync();
 
         if (document == null)
         {
-            RpcErrors.RpcErrors400.FileIdInvalid.ThrowRpcError();
+            // Check if it's a photo
+            var photosCollection = _database.GetCollection<BsonDocument>("eventflow-photoreadmodel");
+            var photoFilter = Builders<BsonDocument>.Filter.Eq("PhotoId", fileId);
+            var photo = await photosCollection.Find(photoFilter).FirstOrDefaultAsync();
+
+            if (photo == null)
+            {
+                RpcErrors.RpcErrors400.FileIdInvalid.ThrowRpcError();
+            }
         }
 
-        // For stored documents, return empty bytes (actual file data should be in FileServer/MinIO)
-        // This is a simplified implementation - full implementation would fetch from FileServer
-        _logger.LogWarning("GetFile called for stored document {FileId} - returning empty (FileServer integration needed)", fileId);
+        // Stored files are served by the FileServer; messenger cannot serve them directly
+        _logger.LogWarning("GetFile called for stored file {FileId} - returning FileIdInvalid (should be served by FileServer)", fileId);
+        RpcErrors.RpcErrors400.FileIdInvalid.ThrowRpcError();
 
-        return new MyTelegram.Schema.Upload.TFile
-        {
-            Type = new MyTelegram.Schema.Storage.TFileUnknown(), // Unknown type for stored files
-            Mtime = document.Contains("Date") ? document["Date"].AsInt32 : (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            Bytes = Array.Empty<byte>() // Empty - needs FileServer integration
-        };
+        // Unreachable
+        throw new InvalidOperationException();
     }
 }

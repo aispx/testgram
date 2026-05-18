@@ -56,6 +56,21 @@ public class PollState : AggregateState<PollAggregate, PollId, PollState>, IAppl
 
         AnswerVoters = aggregateEvent.AnswerVoters;
 
+        // Item 23: drop the voter from any options they're retracting so a follow-up
+        // re-vote can correctly look up "what did they previously pick". Without this,
+        // _optionToVoterPeers accumulates every historical pick and over-decrements
+        // AnswerVoters on the next re-vote.
+        if (aggregateEvent.RetractVoteOptions is { Count: > 0 } retracted)
+        {
+            foreach (var option in retracted)
+            {
+                if (_optionToVoterPeers.TryGetValue(option, out var voterPeers))
+                {
+                    voterPeers.Remove(aggregateEvent.VoteUserPeerId);
+                }
+            }
+        }
+
         foreach (var option in aggregateEvent.Options)
         {
             if (!_optionToVoterPeers.TryGetValue(option, out var voterPeers))

@@ -60,7 +60,14 @@ internal sealed class AuthorizationConverter(IObjectMapper objectMapper, ISessio
     public Schema.IAuthorization ToAuthorization(IDeviceReadModel deviceReadModel, long selfPermAuthKeyId = -1)
     {
         var authorization = objectMapper.Map<IDeviceReadModel, Schema.TAuthorization>(deviceReadModel);
-        authorization.AppName = deviceReadModel.LangPack;
+        if (string.IsNullOrWhiteSpace(authorization.Platform))
+        {
+            authorization.Platform = !string.IsNullOrWhiteSpace(deviceReadModel.LangPack)
+                ? deviceReadModel.LangPack
+                : deviceReadModel.ApiId == 4
+                    ? "android"
+                    : authorization.Platform;
+        }
         var location = sessionLocationResolver.Resolve(deviceReadModel);
         authorization.Country = location.Country;
         authorization.Region = location.Region;

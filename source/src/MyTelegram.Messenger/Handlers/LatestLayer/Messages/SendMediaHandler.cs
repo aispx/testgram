@@ -158,6 +158,20 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         }
 
         var toPeer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        // Item 22: same blocklist guard as SendMessageHandler. Without this, media
+        // (photos / docs / voice / paid media) bypassed the block and still reached
+        // the recipient. Throw matches the documented errors above (403 / 400).
+        if (toPeer.PeerType == PeerType.User && toPeer.PeerId != input.UserId)
+        {
+            var blocksCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("user-blocks");
+            var blockedByThemFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", $"{toPeer.PeerId}-{input.UserId}");
+            if (await blocksCol.Find(blockedByThemFilter).Limit(1).AnyAsync())
+                RpcErrors.RpcErrors403.UserIsBlocked.ThrowRpcError();
+            var blockedByUsFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", $"{input.UserId}-{toPeer.PeerId}");
+            if (await blocksCol.Find(blockedByUsFilter).Limit(1).AnyAsync())
+                RpcErrors.RpcErrors400.YouBlockedUser.ThrowRpcError();
+        }
+
         var channelForMonoforum = toPeer.PeerType == PeerType.Channel
             ? await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeer.PeerId))
             : null;
@@ -177,8 +191,9 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
                     RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
                 await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
                 await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, toPeer.PeerId, requiredStars);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId);
+                var paidMsgCount = (int)Math.Max(1, requiredStars);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId, paidMessages: paidMsgCount);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId, paidMessages: paidMsgCount);
                 paidMessageStars = requiredStars;
             }
         }
@@ -216,7 +231,7 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             savedPeerId = await ResolveMonoforumSavedPeerAsync(toPeer, monoForumReply.MonoforumPeerId);
         }
 
-        if (isMonoforum)
+        if (toPeer.PeerType == PeerType.Channel)
         {
             var (_, chargedStars) = await MonoforumCompatibilityHelper.TryChargeMonoforumMessageAsync(
                 input, toPeer, savedPeerId, obj.AllowPaidStars, queryProcessor, mongoDatabase);

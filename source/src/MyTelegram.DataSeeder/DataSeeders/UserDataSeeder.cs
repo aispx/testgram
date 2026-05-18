@@ -23,7 +23,7 @@ public class UserDataSeeder(
         await CreateOfficialUserAsync();
         await CreateDefaultSupportUserAsync();
         await CreateAnonymousUserAsync();
-        await CreateUserIfNeededAsync(2667001, "0", "xiefather", null, "xiefather", true);
+        await CreateUserIfNeededAsync(MyTelegramConsts.BotFatherUserId, "0", "xiefather", null, "xiefather", true);
 
         if (options.CurrentValue.CreateTestUsers)
         {

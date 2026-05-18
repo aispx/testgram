@@ -119,6 +119,23 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
         if (toPeer == null)
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
 
+        // Item 22: enforce the persisted blocklist before doing any further work. We
+        // intentionally check both directions: the recipient may have blocked us
+        // (USER_IS_BLOCKED) or we may have blocked them and forgotten about it
+        // (YOU_BLOCKED_USER). Without this guard messages happily flow through the
+        // entire pipeline even after contacts.block has been called.
+        if (toPeer.PeerType == PeerType.User && toPeer.PeerId != input.UserId)
+        {
+            var blocksCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("user-blocks");
+            var blockedByThemFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", $"{toPeer.PeerId}-{input.UserId}");
+            var blockedByThem = await blocksCol.Find(blockedByThemFilter).Limit(1).AnyAsync();
+            if (blockedByThem) RpcErrors.RpcErrors403.UserIsBlocked.ThrowRpcError();
+
+            var blockedByUsFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", $"{input.UserId}-{toPeer.PeerId}");
+            var blockedByUs = await blocksCol.Find(blockedByUsFilter).Limit(1).AnyAsync();
+            if (blockedByUs) RpcErrors.RpcErrors400.YouBlockedUser.ThrowRpcError();
+        }
+
         var (topMsgId, savedPeerId) = await ResolveThreadRoutingAsync(input, toPeer, obj.ReplyTo);
         var channelForMonoforum = toPeer.PeerType == PeerType.Channel
             ? await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeer.PeerId))
@@ -149,8 +166,11 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
                         RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
                     await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
                     await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, toPeer.PeerId, requiredStars);
-                    await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId);
-                    await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId);
+                    // Tag both legs with paidMessages so starsTransaction shows the
+                    // "paid message" row rather than a generic transfer.
+                    var paidMsgCount = (int)Math.Max(1, requiredStars);
+                    await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId, paidMessages: paidMsgCount);
+                    await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId, paidMessages: paidMsgCount);
 
                     // Save to paid_messages_revenue collection
                     var revenueCol = mongoDatabase.GetCollection<BsonDocument>("paid_messages_revenue");
@@ -176,7 +196,7 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             RpcErrors.RpcErrors400.MessageEmpty.ThrowRpcError();
         }
 
-        if (isMonoforum)
+        if (toPeer.PeerType == PeerType.Channel)
         {
             var (_, chargedStars) = await MonoforumCompatibilityHelper.TryChargeMonoforumMessageAsync(
                 input, toPeer, savedPeerId, obj.AllowPaidStars, queryProcessor, mongoDatabase, objectMessageSender);

@@ -53,11 +53,17 @@ public class PollReadModel : IPollReadModel,
         CancellationToken cancellationToken)
     {
         AnswerVoters = domainEvent.AggregateEvent.AnswerVoters;
-        if (domainEvent.AggregateEvent.Options.Count > 0)
+        // Item 23: keep TotalVoters in sync with reality. A fresh vote bumps it, a
+        // retract drops it, and a re-vote (RetractVoteOptions set together with new
+        // Options) is a swap so the total is unchanged. Without this check, switching
+        // a non-quiz vote inflated TotalVoters once per click.
+        var retractedSomething = domainEvent.AggregateEvent.RetractVoteOptions is { Count: > 0 };
+        var votedSomething = domainEvent.AggregateEvent.Options.Count > 0;
+        if (votedSomething && !retractedSomething)
         {
             TotalVoters++;
         }
-        else
+        else if (!votedSomething && retractedSomething)
         {
             TotalVoters--;
         }

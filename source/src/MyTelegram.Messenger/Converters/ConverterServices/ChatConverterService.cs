@@ -533,12 +533,6 @@ public class ChatConverterService(
             };
         }
 
-        if (channelMemberReadModel.UserId == request.UserId)
-        {
-            return channelParticipantSelfLayeredService.GetConverter(layer)
-                .ToChannelParticipantSelf(channelMemberReadModel);
-        }
-
         return channelParticipantLayeredService.GetConverter(layer).ToChatParticipant(channelMemberReadModel);
     }
 }

@@ -1,3 +1,5 @@
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Check the validity of a chat invite link and get basic info about it
@@ -12,8 +14,16 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPhotoAppService photoAppService, IChannelAppService channelAppService, IChatConverterService chatConverterService, ILayeredService<IPhotoConverter> layeredPhotoService) : RpcResultObjectHandler<RequestCheckChatInvite, IChatInvite>
+internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPhotoAppService photoAppService, IChannelAppService channelAppService, IChatConverterService chatConverterService, ILayeredService<IPhotoConverter> layeredPhotoService, MongoDB.Driver.IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestCheckChatInvite, IChatInvite>
 {
+    private async Task<MyTelegram.Schema.IBotVerification?> GetBotVerificationAsync(long channelId)
+    {
+        var col = mongoDatabase.GetCollection<MyTelegram.Messenger.Services.BotVerificationDocument>("bot-verifications");
+        var doc = await col.Find(MongoDB.Driver.Builders<MyTelegram.Messenger.Services.BotVerificationDocument>.Filter.Eq(x => x.ChannelId, channelId)).FirstOrDefaultAsync();
+        if (doc == null) return null;
+        return new TBotVerification { BotId = doc.BotId, Icon = doc.Icon, Description = doc.Description };
+    }
+
     protected override async Task<IChatInvite> HandleCoreAsync(IRequestInput input, RequestCheckChatInvite obj)
     {
         if (string.IsNullOrEmpty(obj.Hash))
@@ -72,6 +82,7 @@ internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPh
             Photo = layeredPhotoService.GetConverter(input.Layer).ToPhoto(chatPhoto),
             RequestNeeded = chatInviteReadModel.RequestNeeded,
             Title = channelReadModel.Title,
+            BotVerification = await GetBotVerificationAsync(channelReadModel.ChannelId),
         };
     }
 }

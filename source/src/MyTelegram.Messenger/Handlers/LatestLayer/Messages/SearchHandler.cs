@@ -34,6 +34,7 @@ internal sealed class SearchHandler(IMessageAppService messageAppService, IToken
         var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, userId);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : userId;
         var tokens = tokenizer.BuildSearchTokens(obj.Q);
+        Console.WriteLine($"[SearchHandler] userId={userId} peer={peer} filter={obj.Filter?.GetType().Name} q={obj.Q}");
         var getMessageOutput = await messageAppService.SearchAsync(new SearchInput
         {
             OwnerPeerId = ownerPeerId,
@@ -87,6 +88,9 @@ internal sealed class SearchHandler(IMessageAppService messageAppService, IToken
                     break;
                 case TInputMessagesFilterPhoneCalls:
                     messageType = MessageType.PhoneCall;
+                    break;
+                case TInputMessagesFilterPoll:
+                    messageType = MessageType.Poll;
                     break;
                 case TInputMessagesFilterPhotos:
                     messageType = MessageType.Photo;

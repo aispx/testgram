@@ -26,13 +26,21 @@ public class VoteSaga : MyInMemoryAggregateSaga<VoteSaga, VoteSagaId, VoteSagaLo
             Publish(command);
         }
 
-        foreach (var _ in domainEvent.AggregateEvent.RetractVoteOptions ?? [])
+        // Item 23: only fire DeleteVoteAnswerCommand for a true retraction (Options
+        // empty). Re-votes also carry RetractVoteOptions to undo the previous
+        // selection's tally, but the user still has an active vote afterwards, so
+        // deleting their answer records here would yank them out of VotedPeerIds and
+        // break subsequent re-vote tallies.
+        if (domainEvent.AggregateEvent.Options.Count == 0)
         {
-            var command = new DeleteVoteAnswerCommand(
-                domainEvent.AggregateIdentity,
-                domainEvent.AggregateEvent.PollId,
-                domainEvent.AggregateEvent.VoteUserPeerId);
-            Publish(command);
+            foreach (var _ in domainEvent.AggregateEvent.RetractVoteOptions ?? [])
+            {
+                var command = new DeleteVoteAnswerCommand(
+                    domainEvent.AggregateIdentity,
+                    domainEvent.AggregateEvent.PollId,
+                    domainEvent.AggregateEvent.VoteUserPeerId);
+                Publish(command);
+            }
         }
 
         Emit(new VoteSagaCompletedSagaEvent(domainEvent.AggregateEvent.RequestInfo,

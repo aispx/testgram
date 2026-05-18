@@ -56,6 +56,19 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
         var toPeerForPaid = peerHelper.GetPeer(obj.Peer, input.UserId);
+        // Item 22: enforce blocklist for album/multimedia sends too. Without this guard
+        // a blocked user could spam media albums while their text messages 403'd.
+        if (toPeerForPaid.PeerType == PeerType.User && toPeerForPaid.PeerId != input.UserId)
+        {
+            var blocksCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("user-blocks");
+            var blockedByThemFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", $"{toPeerForPaid.PeerId}-{input.UserId}");
+            if (await blocksCol.Find(blockedByThemFilter).Limit(1).AnyAsync())
+                RpcErrors.RpcErrors403.UserIsBlocked.ThrowRpcError();
+            var blockedByUsFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", $"{input.UserId}-{toPeerForPaid.PeerId}");
+            if (await blocksCol.Find(blockedByUsFilter).Limit(1).AnyAsync())
+                RpcErrors.RpcErrors400.YouBlockedUser.ThrowRpcError();
+        }
+
         var channelForMonoforum = toPeerForPaid.PeerType == PeerType.Channel
             ? await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeerForPaid.PeerId))
             : null;
@@ -74,8 +87,9 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
                     RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
                 await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
                 await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, toPeerForPaid.PeerId, requiredStars);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeerForPaid.PeerId);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeerForPaid.PeerId, requiredStars, peerUserId: input.UserId);
+                var paidMsgCount = (int)Math.Max(1, requiredStars);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeerForPaid.PeerId, paidMessages: paidMsgCount);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeerForPaid.PeerId, requiredStars, peerUserId: input.UserId, paidMessages: paidMsgCount);
                 paidMessageStars = requiredStars;
             }
         }
@@ -109,6 +123,9 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
                     RpcErrors.RpcErrors403.ChatSendPollForbidden.ThrowRpcError();
                 }
             }
+        }
+        if (toPeerForPaid.PeerType == PeerType.Channel)
+        {
             var (_, chargedStars) = await MonoforumCompatibilityHelper.TryChargeMonoforumMessageAsync(
                 input, toPeerForPaid, savedPeerId, obj.AllowPaidStars, queryProcessor, mongoDatabase);
             paidMessageStars = chargedStars ?? paidMessageStars;
