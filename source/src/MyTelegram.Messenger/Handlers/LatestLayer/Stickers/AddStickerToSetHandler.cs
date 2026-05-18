@@ -6,6 +6,7 @@ using MyTelegram.Schema.Stickers;
 using IStickerSet = MyTelegram.Schema.Messages.IStickerSet;
 using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
 using TDocument = MyTelegram.Schema.TDocument;
+using TDocumentAttributeCustomEmoji = MyTelegram.Schema.TDocumentAttributeCustomEmoji;
 using TDocumentAttributeSticker = MyTelegram.Schema.TDocumentAttributeSticker;
 using TInputStickerSetID = MyTelegram.Schema.TInputStickerSetID;
 
@@ -54,6 +55,8 @@ internal sealed class AddStickerToSetHandler(
         var accessHash = GetInt64(setDoc["AccessHash"]);
         var title = setDoc["Title"].AsString;
         var shortName = setDoc.Contains("ShortName") ? setDoc["ShortName"].AsString : setDoc["Slug"].AsString;
+        var isEmojiSet = setDoc.Contains("Emojis") && setDoc["Emojis"].ToBoolean();
+        var textColor = setDoc.Contains("TextColor") && setDoc["TextColor"].ToBoolean();
         
         var docIds = new List<long>();
         if (setDoc.Contains("DocumentIds") && setDoc["DocumentIds"].IsBsonArray)
@@ -91,12 +94,7 @@ internal sealed class AddStickerToSetHandler(
             }
 
             // Update document with stickerset information in Attributes2
-            var stickerAttribute = new TDocumentAttributeSticker
-            {
-                Alt = stickerItem.Emoji,
-                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                Mask = false
-            };
+            var stickerAttribute = BuildPrimaryAttribute(isEmojiSet, textColor, stickerItem.Emoji, setId, accessHash);
 
             var attributes2List = new List<IDocumentAttribute> { stickerAttribute };
 
@@ -105,9 +103,10 @@ internal sealed class AddStickerToSetHandler(
             {
                 try
                 {
-                    // Keep non-sticker attributes
+                    // Keep only non-primary attributes; sticker/custom-emoji identity must
+                    // follow the destination set type.
                     var existingAttrs = BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(existingDoc["Attributes2"].ToJson());
-                    attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker));
+                    attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker and not TDocumentAttributeCustomEmoji));
                 }
                 catch
                 {
@@ -160,6 +159,8 @@ internal sealed class AddStickerToSetHandler(
         var title = setDoc["Title"].AsString;
         var shortName = setDoc.Contains("ShortName") ? setDoc["ShortName"].AsString : setDoc["Slug"].AsString;
         var count = GetInt32(setDoc["Count"]);
+        var isEmojiSet = setDoc.Contains("Emojis") && setDoc["Emojis"].ToBoolean();
+        var textColor = setDoc.Contains("TextColor") && setDoc["TextColor"].ToBoolean();
         
         var docIds = new List<long>();
         if (setDoc.Contains("DocumentIds") && setDoc["DocumentIds"].IsBsonArray)
@@ -180,7 +181,7 @@ internal sealed class AddStickerToSetHandler(
             {
                 if (docMap.TryGetValue(docId, out var docBson))
                 {
-                    documents.Add(BuildDocument(docBson, setId, accessHash));
+                    documents.Add(BuildDocument(docBson, setId, accessHash, isEmojiSet, textColor, GetAltForDocument(setDoc, docId)));
                 }
             }
         }
@@ -207,7 +208,9 @@ internal sealed class AddStickerToSetHandler(
                 Title = title,
                 ShortName = shortName,
                 Count = count,
-                Hash = 0
+                Hash = 0,
+                Emojis = isEmojiSet,
+                TextColor = textColor
             },
             Packs = new TVector<IStickerPack>(packs),
             Documents = new TVector<IDocument>(documents),
@@ -215,7 +218,7 @@ internal sealed class AddStickerToSetHandler(
         };
     }
 
-    private IDocument BuildDocument(BsonDocument docBson, long setId, long setAccessHash)
+    private IDocument BuildDocument(BsonDocument docBson, long setId, long setAccessHash, bool isEmojiSet, bool textColor, string alt)
     {
         var docId = GetInt64(docBson["DocumentId"]);
         var accessHash = GetInt64(docBson["AccessHash"]);
@@ -252,14 +255,45 @@ internal sealed class AddStickerToSetHandler(
             DcId = dcId,
             Attributes = new TVector<IDocumentAttribute>(new IDocumentAttribute[]
             {
-                new TDocumentAttributeSticker
-                {
-                    Alt = "",
-                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = setAccessHash },
-                    Mask = false
-                }
+                BuildPrimaryAttribute(isEmojiSet, textColor, alt, setId, setAccessHash)
             })
         };
+    }
+
+    private static IDocumentAttribute BuildPrimaryAttribute(bool isEmojiSet, bool textColor, string alt, long setId, long accessHash)
+    {
+        return isEmojiSet
+            ? new TDocumentAttributeCustomEmoji
+            {
+                Alt = alt,
+                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                Free = true,
+                TextColor = textColor
+            }
+            : new TDocumentAttributeSticker
+            {
+                Alt = alt,
+                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                Mask = false
+            };
+    }
+
+    private static string GetAltForDocument(BsonDocument setDoc, long documentId)
+    {
+        if (!setDoc.Contains("Packs") || !setDoc["Packs"].IsBsonArray)
+        {
+            return string.Empty;
+        }
+
+        foreach (var pack in setDoc["Packs"].AsBsonArray.Select(x => x.AsBsonDocument))
+        {
+            if (pack.Contains("Documents") && pack["Documents"].AsBsonArray.Any(x => GetInt64(x) == documentId))
+            {
+                return pack.Contains("Emoticon") ? pack["Emoticon"].AsString : string.Empty;
+            }
+        }
+
+        return string.Empty;
     }
 
     private static long GetInt64(BsonValue v)

@@ -11,29 +11,28 @@ internal sealed class InstallStickerSetHandler(
 {
     private static readonly Dictionary<string, string> DiceSlugMap = new()
     {
-        ["🎲"] = "dice_🎲",
-        ["🎯"] = "dice_🎯",
-        ["🏀"] = "dice_🏀",
-        ["⚽"] = "dice_⚽",
-        ["⚽️"] = "dice_⚽",
-        ["🎰"] = "dice_🎰",
-        ["🎳"] = "dice_🎳",
+        ["🎲"] = "AnimatedDice2",
+        ["🎯"] = "AnimatedDart",
+        ["🏀"] = "AnimatedBasketball",
+        ["⚽"] = "AnimatedPenalty",
+        ["⚽️"] = "AnimatedPenalty",
+        ["🎰"] = "SlotMachineAnimated",
+        ["🎳"] = "AnimatedBowling",
     };
 
     private static readonly Dictionary<Type, string> SpecialSetSlugMap = new()
     {
-        [typeof(TInputStickerSetAnimatedEmoji)] = "animated_emoji",
-        [typeof(TInputStickerSetAnimatedEmojiAnimations)] = "animated_emoji_animations",
-        [typeof(TInputStickerSetPremiumGifts)] = "premium_gifts",
-        [typeof(TInputStickerSetEmojiGenericAnimations)] = "emoji_generic_animations",
-        [typeof(TInputStickerSetEmojiDefaultStatuses)] = "emoji_default_statuses",
-        [typeof(TInputStickerSetEmojiDefaultTopicIcons)] = "emoji_default_topic_icons",
-        [typeof(TInputStickerSetEmojiChannelDefaultStatuses)] = "emoji_channel_statuses",
+        [typeof(TInputStickerSetAnimatedEmoji)] = "AnimatedEmojies",
+        [typeof(TInputStickerSetAnimatedEmojiAnimations)] = "EmojiAnimations",
+        [typeof(TInputStickerSetPremiumGifts)] = "GiftsPremium",
+        [typeof(TInputStickerSetEmojiGenericAnimations)] = "EmojiGenericAnimations",
+        [typeof(TInputStickerSetEmojiDefaultStatuses)] = "StatusPack",
+        [typeof(TInputStickerSetEmojiDefaultTopicIcons)] = "Topics",
+        [typeof(TInputStickerSetEmojiChannelDefaultStatuses)] = "StatusPack",
     };
 
     protected override async Task<IStickerSetInstallResult> HandleCoreAsync(IRequestInput input, RequestInstallStickerSet obj)
     {
-        Console.WriteLine($"[DEBUG] InstallStickerSetHandler called: Type={obj.Stickerset.GetType().Name}, UserId={input.UserId}");
         var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
         BsonDocument? setDoc = null;
 

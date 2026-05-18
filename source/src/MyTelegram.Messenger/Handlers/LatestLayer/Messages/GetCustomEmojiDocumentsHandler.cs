@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -18,6 +19,8 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
             return [];
         }
 
+        Console.WriteLine($"[GetCustomEmojiDocuments] documentIds=[{string.Join(",", obj.DocumentId)}]");
+
         var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
         var filter = Builders<BsonDocument>.Filter.In("DocumentId", obj.DocumentId.Select(x => (BsonValue)new BsonInt64(x)));
         var docs = await docCol.Find(filter).ToListAsync();
@@ -31,7 +34,15 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
                 continue;
             }
 
-            result.Add(BuildDocument(d));
+            try
+            {
+                result.Add(BuildDocument(d));
+            }
+            catch (Exception ex)
+            {
+                // Skip malformed documents instead of crashing
+                Console.WriteLine($"[GetCustomEmojiDocuments] Failed to build document {documentId}: {ex.Message}");
+            }
         }
 
         return new TVector<IDocument>(result);
@@ -49,18 +60,7 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
                 fileRef = fr.AsBsonArray.Select(x => (byte)GetInt32(x)).ToArray();
         }
 
-        TVector<IDocumentAttribute> attributes = [];
-        if (d.Contains("Attributes2") && !d["Attributes2"].IsBsonNull)
-        {
-            try
-            {
-                attributes = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(d["Attributes2"].ToJson());
-            }
-            catch
-            {
-                attributes = [];
-            }
-        }
+        var attributes = GetValidCustomEmojiAttributes(d);
 
         return new TDocument
         {
@@ -77,6 +77,22 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
         };
     }
 
+    private static TVector<IDocumentAttribute> GetValidCustomEmojiAttributes(BsonDocument d)
+    {
+        if (!d.Contains("Attributes2") || d["Attributes2"].IsBsonNull)
+        {
+            throw new InvalidDataException("Missing custom emoji attributes.");
+        }
+
+        if (!CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(d, out var customEmojiAttribute))
+        {
+            throw new InvalidDataException("Document is not a custom emoji.");
+        }
+
+        customEmojiAttribute.Stickerset ??= new TInputStickerSetEmpty();
+        return [customEmojiAttribute];
+    }
+
     private static long GetInt64(BsonValue v)
     {
         return v.BsonType switch
@@ -84,7 +100,7 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
             BsonType.Int64 => v.AsInt64,
             BsonType.Int32 => v.AsInt32,
             BsonType.Double => (long)v.AsDouble,
-            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int64")
+            _ => 0
         };
     }
 
@@ -95,7 +111,7 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
             BsonType.Int32 => v.AsInt32,
             BsonType.Int64 => (int)v.AsInt64,
             BsonType.Double => (int)v.AsDouble,
-            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int32")
+            _ => 0
         };
     }
 }

@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Stickers;
 using TDocument = MyTelegram.Schema.TDocument;
+using TDocumentAttributeCustomEmoji = MyTelegram.Schema.TDocumentAttributeCustomEmoji;
 using TDocumentAttributeSticker = MyTelegram.Schema.TDocumentAttributeSticker;
 using TInputStickerSetID = MyTelegram.Schema.TInputStickerSetID;
 using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
@@ -16,7 +17,6 @@ internal sealed class CreateStickerSetHandler(
 {
     protected override async Task<Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input, RequestCreateStickerSet obj)
     {
-        Console.WriteLine($"[DEBUG] CreateStickerSetHandler called: Title={obj.Title}, ShortName={obj.ShortName}, Stickers={obj.Stickers.Count}, UserId={input.UserId}");
         if (string.IsNullOrWhiteSpace(obj.Title))
         {
             RpcErrors.RpcErrors400.PackTitleInvalid.ThrowRpcError();
@@ -60,6 +60,8 @@ internal sealed class CreateStickerSetHandler(
         var documentIds = new List<long>();
         var packs = new BsonArray();
         var documents = new List<IDocument>();
+        var isEmojiSet = obj.Emojis;
+        var textColor = obj.TextColor;
 
         foreach (var stickerItem in obj.Stickers)
         {
@@ -89,12 +91,20 @@ internal sealed class CreateStickerSetHandler(
             }
 
             // Update document with stickerset information in Attributes2
-            var stickerAttribute = new TDocumentAttributeSticker
-            {
-                Alt = sticker.Emoji,
-                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                Mask = obj.Masks
-            };
+            IDocumentAttribute stickerAttribute = isEmojiSet
+                ? new TDocumentAttributeCustomEmoji
+                {
+                    Alt = sticker.Emoji,
+                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                    Free = true,
+                    TextColor = textColor
+                }
+                : new TDocumentAttributeSticker
+                {
+                    Alt = sticker.Emoji,
+                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                    Mask = obj.Masks
+                };
 
             var attributes2List = new List<IDocumentAttribute> { stickerAttribute };
 
@@ -103,9 +113,10 @@ internal sealed class CreateStickerSetHandler(
             {
                 try
                 {
-                    // Keep non-sticker attributes
+                    // Keep non-primary attributes only; replace stale sticker/custom-emoji
+                    // classification when a document is attached to a new set.
                     var existingAttrs = BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(existingDoc["Attributes2"].ToJson());
-                    attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker));
+                    attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker and not TDocumentAttributeCustomEmoji));
                 }
                 catch
                 {
@@ -164,12 +175,7 @@ internal sealed class CreateStickerSetHandler(
                 DcId = dcId,
                 Attributes = new TVector<IDocumentAttribute>(new IDocumentAttribute[]
                 {
-                    new TDocumentAttributeSticker
-                    {
-                        Alt = "",
-                        Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                        Mask = obj.Masks
-                    }
+                    BuildPrimaryAttribute(isEmojiSet, textColor, sticker.Emoji, setId, accessHash, obj.Masks)
                 })
             });
         }
@@ -186,6 +192,8 @@ internal sealed class CreateStickerSetHandler(
             ["Count"] = documentIds.Count,
             ["DocumentIds"] = new BsonArray(documentIds),
             ["Packs"] = packs,
+            ["Emojis"] = isEmojiSet,
+            ["TextColor"] = textColor,
             ["CreatorUserId"] = input.UserId,
             ["Version"] = 1
         };
@@ -228,7 +236,9 @@ internal sealed class CreateStickerSetHandler(
                 Title = obj.Title,
                 ShortName = obj.ShortName,
                 Count = documentIds.Count,
-                Hash = 0
+                Hash = 0,
+                Emojis = isEmojiSet,
+                TextColor = textColor
             },
             Packs = new TVector<IStickerPack>(stickerPacks),
             Documents = new TVector<IDocument>(documents),
@@ -242,6 +252,24 @@ internal sealed class CreateStickerSetHandler(
         Random.Shared.NextBytes(bytes);
         bytes[0] &= 0x7F;
         return BitConverter.ToInt64(bytes, 0) & 0x7FFFFFFFFFFFFFFF;
+    }
+
+    private static IDocumentAttribute BuildPrimaryAttribute(bool isEmojiSet, bool textColor, string alt, long setId, long accessHash, bool mask)
+    {
+        return isEmojiSet
+            ? new TDocumentAttributeCustomEmoji
+            {
+                Alt = alt,
+                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                Free = true,
+                TextColor = textColor
+            }
+            : new TDocumentAttributeSticker
+            {
+                Alt = alt,
+                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                Mask = mask
+            };
     }
 
     private static long GenerateAccessHash()

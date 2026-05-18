@@ -50,7 +50,7 @@ internal sealed class GetFeaturedEmojiStickersHandler(IMongoDatabase mongoDataba
             var stickerSet = BuildStickerSet(setDoc);
             var packs = BuildPacks(setDoc);
             var keywords = BuildKeywords(setDoc);
-            var documents = BuildDocuments(setDoc, documentMap);
+            var documents = BuildDocuments(setDoc, documentMap, packs);
             sets.Add(new TStickerSetFullCovered
             {
                 Set = stickerSet,
@@ -117,7 +117,7 @@ internal sealed class GetFeaturedEmojiStickersHandler(IMongoDatabase mongoDataba
         }).ToList();
     }
 
-    private static List<IDocument> BuildDocuments(BsonDocument setDoc, Dictionary<long, BsonDocument> documentMap)
+    private static List<IDocument> BuildDocuments(BsonDocument setDoc, Dictionary<long, BsonDocument> documentMap, List<IStickerPack> packs)
     {
         if (!setDoc.Contains("DocumentIds") || !setDoc["DocumentIds"].IsBsonArray)
         {
@@ -127,19 +127,38 @@ internal sealed class GetFeaturedEmojiStickersHandler(IMongoDatabase mongoDataba
         var result = new List<IDocument>();
         foreach (var documentIdValue in setDoc["DocumentIds"].AsBsonArray)
         {
-            var documentId = documentIdValue.ToInt64();
-            if (!documentMap.TryGetValue(documentId, out var doc))
+            try
             {
-                continue;
-            }
+                var documentId = documentIdValue.ToInt64();
+                if (!documentMap.TryGetValue(documentId, out var doc))
+                {
+                    continue;
+                }
 
-            result.Add(BuildDocument(doc));
+                result.Add(BuildDocument(doc, setDoc, documentId, packs));
+            }
+            catch
+            {
+                // Skip malformed document entries
+            }
         }
 
         return result;
     }
 
-    private static IDocument BuildDocument(BsonDocument d)
+    private static string GetAltForDocument(long documentId, List<IStickerPack> packs)
+    {
+        foreach (var pack in packs)
+        {
+            if (pack.Documents.Contains(documentId))
+            {
+                return pack.Emoticon;
+            }
+        }
+        return string.Empty;
+    }
+
+    private static IDocument BuildDocument(BsonDocument d, BsonDocument setDoc, long documentId, List<IStickerPack> packs)
     {
         byte[] fileRef = [];
         if (d.Contains("FileReference") && !d["FileReference"].IsBsonNull)
@@ -162,6 +181,36 @@ internal sealed class GetFeaturedEmojiStickersHandler(IMongoDatabase mongoDataba
             {
                 attributes = [];
             }
+        }
+
+        if (attributes.Count == 0)
+        {
+            var setId = setDoc["StickerSetId"].ToInt64();
+            var accessHash = setDoc.Contains("AccessHash") ? setDoc["AccessHash"].ToInt64() : 0;
+            var alt = GetAltForDocument(documentId, packs);
+            var isEmoji = setDoc.Contains("Emojis") && setDoc["Emojis"].ToBoolean();
+
+            var fallbackAttributes = new List<IDocumentAttribute>
+            {
+                new TDocumentAttributeSticker
+                {
+                    Alt = alt,
+                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                    Mask = false,
+                }
+            };
+
+            if (isEmoji)
+            {
+                fallbackAttributes.Add(new TDocumentAttributeCustomEmoji
+                {
+                    Alt = alt,
+                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                    Free = true,
+                });
+            }
+
+            attributes = new TVector<IDocumentAttribute>(fallbackAttributes);
         }
 
         return new TDocument

@@ -7,25 +7,25 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
 {
     private static readonly Dictionary<string, string> DiceSlugMap = new()
     {
-        ["🎲"] = "dice_🎲",
-        ["🎯"] = "dice_🎯",
-        ["🏀"] = "dice_🏀",
-        ["⚽"] = "dice_⚽",
-        ["⚽️"] = "dice_⚽",
-        ["🎰"] = "dice_🎰",
-        ["🎳"] = "dice_🎳",
+        ["🎲"] = "AnimatedDice2",
+        ["🎯"] = "AnimatedDart",
+        ["🏀"] = "AnimatedBasketball",
+        ["⚽"] = "AnimatedPenalty",
+        ["⚽️"] = "AnimatedPenalty",
+        ["🎰"] = "SlotMachineAnimated",
+        ["🎳"] = "AnimatedBowling",
     };
 
     private static readonly Dictionary<Type, string> SpecialSetSlugMap = new()
     {
-        [typeof(TInputStickerSetAnimatedEmoji)] = "animated_emoji",
-        [typeof(TInputStickerSetAnimatedEmojiAnimations)] = "animated_emoji_animations",
-        [typeof(TInputStickerSetPremiumGifts)] = "premium_gifts",
-        [typeof(TInputStickerSetEmojiGenericAnimations)] = "emoji_generic_animations",
-        [typeof(TInputStickerSetEmojiDefaultStatuses)] = "emoji_default_statuses",
-        [typeof(TInputStickerSetEmojiDefaultTopicIcons)] = "emoji_default_topic_icons",
-        [typeof(TInputStickerSetEmojiChannelDefaultStatuses)] = "emoji_channel_statuses",
-        [typeof(TInputStickerSetTonGifts)] = "ton_gifts",
+        [typeof(TInputStickerSetAnimatedEmoji)] = "AnimatedEmojies",
+        [typeof(TInputStickerSetAnimatedEmojiAnimations)] = "EmojiAnimations",
+        [typeof(TInputStickerSetPremiumGifts)] = "GiftsPremium",
+        [typeof(TInputStickerSetEmojiGenericAnimations)] = "EmojiGenericAnimations",
+        [typeof(TInputStickerSetEmojiDefaultStatuses)] = "StatusPack",
+        [typeof(TInputStickerSetEmojiDefaultTopicIcons)] = "Topics",
+        [typeof(TInputStickerSetEmojiChannelDefaultStatuses)] = "StatusPack",
+        [typeof(TInputStickerSetTonGifts)] = "GiftsTons",
     };
 
     private static long GetInt64(BsonValue v)
@@ -137,13 +137,14 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
         var title = setDoc["Title"].AsString;
         var shortName = setDoc["ShortName"].AsString;
         var count = GetInt32(setDoc["Count"]);
+        var isEmojiSet = setDoc.Contains("Emojis") && setDoc["Emojis"].ToBoolean();
+        var textColor = setDoc.Contains("TextColor") && setDoc["TextColor"].ToBoolean();
 
         var docIds = GetInt64List(setDoc["DocumentIds"].AsBsonArray);
-        Console.WriteLine($"[DEBUG] BuildResponse: slug={shortName}, docIds.Count={docIds.Count}");
 
         var docFilter = Builders<BsonDocument>.Filter.In("DocumentId", docIds.Select(id => (BsonValue)new BsonInt64(id)));
         var docDocs = await docCol.Find(docFilter).ToListAsync();
-        Console.WriteLine($"[DEBUG] Found docs in DB: {docDocs.Count}");
+        var altByDocumentId = BuildAltByDocumentId(setDoc, emoticon);
 
         var docMap = docDocs.ToDictionary(d => GetInt64(d["DocumentId"]));
         var documents = docIds
@@ -151,7 +152,7 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
             .Select(id =>
             {
                 var d = docMap[id];
-                var alt = emoticon ?? string.Empty;
+                var alt = altByDocumentId.GetValueOrDefault(id) ?? string.Empty;
 
                 // Handle FileReference safely
                 byte[] fileRef;
@@ -170,33 +171,24 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
                     fileRef = [];
                 }
 
-                // Use Attributes2 if available, otherwise create default sticker attribute
+                // Use Attributes2 if available, otherwise create the correct fallback attribute
+                // for the set kind so clients do not confuse stickers with custom emoji.
                 TVector<IDocumentAttribute> attributes;
                 if (d.Contains("Attributes2") && !d["Attributes2"].IsBsonNull)
                 {
                     try
                     {
                         attributes = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(d["Attributes2"].ToJson());
+                        attributes = NormalizeAttributesForSetKind(attributes, isEmojiSet, textColor, alt, setId, accessHash);
                     }
                     catch
                     {
-                        // Fallback to default attribute
-                        attributes = [new TDocumentAttributeSticker
-                        {
-                            Alt = alt,
-                            Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                            Mask = false,
-                        }];
+                        attributes = BuildFallbackAttributes(isEmojiSet, textColor, alt, setId, accessHash);
                     }
                 }
                 else
                 {
-                    attributes = [new TDocumentAttributeSticker
-                    {
-                        Alt = alt,
-                        Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                        Mask = false,
-                    }];
+                    attributes = BuildFallbackAttributes(isEmojiSet, textColor, alt, setId, accessHash);
                 }
 
                 return (IDocument)new TDocument
@@ -257,7 +249,102 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
                 ShortName = shortName,
                 Count = count,
                 Hash = 0,
+                Emojis = isEmojiSet,
+                TextColor = textColor,
             }
         };
+    }
+
+    private static TVector<IDocumentAttribute> BuildFallbackAttributes(bool isEmojiSet, bool textColor, string alt, long setId, long accessHash)
+    {
+        return isEmojiSet
+            ?
+            [
+                new TDocumentAttributeCustomEmoji
+                {
+                    Alt = alt,
+                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                    Free = true,
+                    TextColor = textColor,
+                }
+            ]
+            :
+            [
+                new TDocumentAttributeSticker
+                {
+                    Alt = alt,
+                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
+                    Mask = false,
+                }
+            ];
+    }
+
+    private static TVector<IDocumentAttribute> NormalizeAttributesForSetKind(
+        TVector<IDocumentAttribute> attributes,
+        bool isEmojiSet,
+        bool textColor,
+        string alt,
+        long setId,
+        long accessHash)
+    {
+        var compatibleAttributes = attributes
+            .Where(attribute => isEmojiSet
+                ? attribute is not TDocumentAttributeSticker
+                : attribute is not TDocumentAttributeCustomEmoji)
+            .ToList();
+
+        var hasExpectedPrimaryAttribute = isEmojiSet
+            ? compatibleAttributes.Any(attribute => attribute is TDocumentAttributeCustomEmoji)
+            : compatibleAttributes.Any(attribute => attribute is TDocumentAttributeSticker);
+
+        if (!hasExpectedPrimaryAttribute)
+        {
+            compatibleAttributes.InsertRange(0, BuildFallbackAttributes(isEmojiSet, textColor, alt, setId, accessHash));
+        }
+
+        return new TVector<IDocumentAttribute>(compatibleAttributes);
+    }
+
+    private static Dictionary<long, string> BuildAltByDocumentId(BsonDocument setDoc, string? fallbackEmoticon)
+    {
+        var result = new Dictionary<long, string>();
+        if (setDoc.Contains("Packs") && setDoc["Packs"].IsBsonArray)
+        {
+            foreach (var packValue in setDoc["Packs"].AsBsonArray)
+            {
+                if (!packValue.IsBsonDocument)
+                {
+                    continue;
+                }
+
+                var pack = packValue.AsBsonDocument;
+                var emoticon = pack.Contains("Emoticon") && pack["Emoticon"].IsString
+                    ? pack["Emoticon"].AsString
+                    : string.Empty;
+                if (!pack.Contains("Documents") || !pack["Documents"].IsBsonArray)
+                {
+                    continue;
+                }
+
+                foreach (var value in pack["Documents"].AsBsonArray)
+                {
+                    var documentId = GetInt64(value);
+                    if (!result.ContainsKey(documentId))
+                    {
+                        result[documentId] = emoticon;
+                    }
+                }
+            }
+        }
+
+        if (fallbackEmoticon != null)
+        {
+            foreach (var documentId in GetInt64List(setDoc["DocumentIds"].AsBsonArray))
+            {
+                result.TryAdd(documentId, fallbackEmoticon);
+            }
+        }
+
+        return result;
     }
 }

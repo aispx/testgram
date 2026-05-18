@@ -60,6 +60,7 @@ EXTRA_SHORT_NAME_TARGETS = [
     "RestrictedEmoji",
     "StatusPack",
     "GiftsPremium",
+    "tg_placeholders_android",
 ]
 
 MIME_TO_EXT = {
@@ -98,7 +99,13 @@ def get_promo_sections_for_set(short_name: str, slug: str) -> List[str]:
     return values
 
 
-async def fetch_sticker_set(client, input_set, fallback_name: str, slug: Optional[str] = None) -> Optional[Dict[str, Any]]:
+async def fetch_sticker_set(
+    client,
+    input_set,
+    fallback_name: str,
+    slug: Optional[str] = None,
+    input_stickerset_type: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     from telethon.tl import functions
 
     try:
@@ -166,6 +173,7 @@ async def fetch_sticker_set(client, input_set, fallback_name: str, slug: Optiona
             "documents": docs,
             "packs": packs,
             "promo_sections": promo_sections,
+            "input_stickerset_type": input_stickerset_type,
         },
         "downloaded_count": downloaded_count,
         "skipped_count": skipped_count,
@@ -224,26 +232,34 @@ async def cmd_download():
         skipped_count += payload["skipped_count"]
 
     print("\n=== Processing special sets ===")
+    # Resolve Telegram-owned sets through their actual InputStickerSet constructors.
+    # The fetched server short_name is kept as the canonical slug instead of a
+    # local alias such as "animated_emoji" or "dice_🎲".
     special_inputs = [
-        ("animated_emoji", "AnimatedEmoji", types.InputStickerSetAnimatedEmoji()),
-        ("animated_emoji_animations", "AnimatedEmojiAnimations", types.InputStickerSetAnimatedEmojiAnimations()),
-        ("premium_gifts", "PremiumGifts", types.InputStickerSetPremiumGifts()),
-        ("emoji_generic_animations", "EmojiGenericAnimations", types.InputStickerSetEmojiGenericAnimations()),
-        ("emoji_default_statuses", "EmojiDefaultStatuses", types.InputStickerSetEmojiDefaultStatuses()),
-        ("emoji_default_topic_icons", "EmojiDefaultTopicIcons", types.InputStickerSetEmojiDefaultTopicIcons()),
-        ("emoji_channel_statuses", "EmojiChannelStatuses", types.InputStickerSetEmojiChannelDefaultStatuses()),
-        ("dice_🎲", "Dice_🎲", types.InputStickerSetDice(emoticon="🎲")),
-        ("dice_🎯", "Dice_🎯", types.InputStickerSetDice(emoticon="🎯")),
-        ("dice_🏀", "Dice_🏀", types.InputStickerSetDice(emoticon="🏀")),
-        ("dice_⚽", "Dice_⚽", types.InputStickerSetDice(emoticon="⚽")),
-        ("dice_🎰", "Dice_🎰", types.InputStickerSetDice(emoticon="🎰")),
-        ("dice_🎳", "Dice_🎳", types.InputStickerSetDice(emoticon="🎳")),
-        ("ton_gifts", "TonGifts", types.InputStickerSetTonGifts()),
+        ("AnimatedEmojies", types.InputStickerSetAnimatedEmoji(), "inputStickerSetAnimatedEmoji"),
+        ("EmojiAnimations", types.InputStickerSetAnimatedEmojiAnimations(), "inputStickerSetAnimatedEmojiAnimations"),
+        ("GiftsPremium", types.InputStickerSetPremiumGifts(), "inputStickerSetPremiumGifts"),
+        ("EmojiGenericAnimations", types.InputStickerSetEmojiGenericAnimations(), "inputStickerSetEmojiGenericAnimations"),
+        ("StatusPack", types.InputStickerSetEmojiDefaultStatuses(), "inputStickerSetEmojiDefaultStatuses"),
+        ("Topics", types.InputStickerSetEmojiDefaultTopicIcons(), "inputStickerSetEmojiDefaultTopicIcons"),
+        ("StatusPack", types.InputStickerSetEmojiChannelDefaultStatuses(), "inputStickerSetEmojiChannelDefaultStatuses"),
+        ("AnimatedDice2", types.InputStickerSetDice(emoticon="🎲"), "inputStickerSetDice:🎲"),
+        ("AnimatedDart", types.InputStickerSetDice(emoticon="🎯"), "inputStickerSetDice:🎯"),
+        ("AnimatedBasketball", types.InputStickerSetDice(emoticon="🏀"), "inputStickerSetDice:🏀"),
+        ("AnimatedPenalty", types.InputStickerSetDice(emoticon="⚽"), "inputStickerSetDice:⚽"),
+        ("SlotMachineAnimated", types.InputStickerSetDice(emoticon="🎰"), "inputStickerSetDice:🎰"),
+        ("AnimatedBowling", types.InputStickerSetDice(emoticon="🎳"), "inputStickerSetDice:🎳"),
+        ("GiftsTons", types.InputStickerSetTonGifts(), "inputStickerSetTonGifts"),
     ]
 
-    for slug, name, input_set in special_inputs:
+    for name, input_set, input_stickerset_type in special_inputs:
         print(f"  Processing: {name}")
-        payload = await fetch_sticker_set(client, input_set, name, slug)
+        payload = await fetch_sticker_set(
+            client,
+            input_set,
+            name,
+            input_stickerset_type=input_stickerset_type,
+        )
         if payload is None:
             continue
 
@@ -326,7 +342,8 @@ def merge_attributes(existing_attributes: Any, new_primary_attribute: Dict[str, 
         for attribute in existing_attributes:
             if not isinstance(attribute, dict):
                 continue
-            if attribute.get("_t") in {"TDocumentAttributeSticker", "TDocumentAttributeCustomEmoji"}:
+            attribute_type = attribute.get("_t") or ""
+            if attribute_type.endswith(("TDocumentAttributeSticker", "TDocumentAttributeCustomEmoji")):
                 continue
             attributes.append(attribute)
     return attributes
@@ -405,7 +422,7 @@ def build_emoji_group_docs(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]
             if not emoticon:
                 continue
             all_emoticons.append(emoticon)
-            if entry.get("channel_emoji_status") or entry.get("slug") == "emoji_default_statuses":
+            if entry.get("channel_emoji_status") or entry.get("input_stickerset_type") == "inputStickerSetEmojiDefaultStatuses":
                 status_emoticons.append(emoticon)
 
     def unique(values: List[str]) -> List[str]:
@@ -535,19 +552,25 @@ def build_premium_promo_docs(entries: List[Dict[str, Any]]) -> List[Dict[str, An
 
 
 def infer_set_flags(entry: Dict[str, Any]) -> Dict[str, Any]:
-    slug = entry.get("slug") or ""
-    is_custom_emoji = bool(entry.get("is_custom_emoji")) or slug.startswith("emoji_") or slug.startswith("animated_emoji")
-    text_color = bool(entry.get("text_color")) or slug in {
-        "animated_emoji",
-        "emoji_default_statuses",
-        "emoji_default_topic_icons",
-        "emoji_channel_statuses",
+    input_stickerset_type = entry.get("input_stickerset_type") or {
+        "AnimatedEmojies": "inputStickerSetAnimatedEmoji",
+        "StatusPack": "inputStickerSetEmojiDefaultStatuses",
+        "Topics": "inputStickerSetEmojiDefaultTopicIcons",
+    }.get(entry.get("short_name") or "", "")
+    is_custom_emoji = bool(entry.get("is_custom_emoji")) or input_stickerset_type in {
+        "inputStickerSetEmojiDefaultStatuses",
+        "inputStickerSetEmojiDefaultTopicIcons",
+        "inputStickerSetEmojiChannelDefaultStatuses",
     }
-    channel_emoji_status = bool(entry.get("channel_emoji_status")) or slug == "emoji_channel_statuses"
-    free = bool(entry.get("free")) or slug in {
-        "animated_emoji",
-        "emoji_default_statuses",
-        "emoji_default_topic_icons",
+    text_color = bool(entry.get("text_color")) or input_stickerset_type in {
+        "inputStickerSetEmojiDefaultStatuses",
+        "inputStickerSetEmojiDefaultTopicIcons",
+        "inputStickerSetEmojiChannelDefaultStatuses",
+    }
+    channel_emoji_status = bool(entry.get("channel_emoji_status")) or input_stickerset_type == "inputStickerSetEmojiChannelDefaultStatuses"
+    free = bool(entry.get("free")) or input_stickerset_type in {
+        "inputStickerSetEmojiDefaultStatuses",
+        "inputStickerSetEmojiDefaultTopicIcons",
     }
     return {
         "is_custom_emoji": is_custom_emoji,

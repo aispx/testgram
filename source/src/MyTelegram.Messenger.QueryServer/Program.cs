@@ -102,6 +102,9 @@ builder.ConfigureServices((ctx,
     services.AddHostedService<MessageQueueDataProcessorBackgroundService<IDomainEvent>>();
     services.AddHostedService<MyTelegramQueryServerBackgroundService>();
     services.AddHostedService<DataProcessorBackgroundService>();
+    services.AddSingleton<FileDownloadLaneRouter>();
+    services.AddSingleton<IFileDownloadLaneRouter>(sp => sp.GetRequiredService<FileDownloadLaneRouter>());
+    services.AddHostedService(sp => sp.GetRequiredService<FileDownloadLaneRouter>());
     services.AddHostedService<ObjectMessageSenderBackgroundService>();
     services.AddHostedService<MyTelegramInvokeAfterMsgProcessorBackgroundService>();
     services.AddHostedService<QueuedCommandExecutorBackgroundService>();

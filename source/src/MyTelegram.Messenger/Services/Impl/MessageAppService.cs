@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Services.Impl;
 
@@ -820,43 +821,125 @@ public class MessageAppService(
                 RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
             }
 
-            if (!TryGetCustomEmojiAttribute(document, out var attribute))
+            if (!CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(document, out var attribute))
             {
+                if (await TryDowngradeLegacyAnimatedEmojiEntityAsync(message, entities, entity))
+                {
+                    continue;
+                }
+
                 RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
             }
 
             var text = message.Substring(entity.Offset, entity.Length);
-            if (string.IsNullOrEmpty(attribute.Alt) || !string.Equals(text, attribute.Alt, StringComparison.Ordinal))
+            if (IsSameEmoji(text, attribute.Alt))
             {
-                RpcErrors.RpcErrors400.EmoticonInvalid.ThrowRpcError();
+                continue;
             }
+
+            var replacement = await TryResolveReplacementCustomEmojiDocumentAsync(text, attribute);
+            if (replacement != null)
+            {
+                entity.DocumentId = replacement.Value;
+                continue;
+            }
+
+            RpcErrors.RpcErrors400.EmoticonInvalid.ThrowRpcError();
         }
     }
 
-    private static bool TryGetCustomEmojiAttribute(BsonDocument document, out TDocumentAttributeCustomEmoji attribute)
+    private async Task<bool> TryDowngradeLegacyAnimatedEmojiEntityAsync(
+        string message,
+        IList<IMessageEntity> entities,
+        TMessageEntityCustomEmoji entity)
     {
-        attribute = null!;
-        if (!document.Contains("Attributes2") || document["Attributes2"].IsBsonNull)
+        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
+        var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("ShortName", "AnimatedEmojies")).FirstOrDefaultAsync();
+        if (setDoc == null || !setDoc.Contains("Packs") || !setDoc["Packs"].IsBsonArray)
         {
             return false;
         }
 
-        try
+        var text = message.Substring(entity.Offset, entity.Length);
+        var belongsToLegacyAnimatedEmojiSet = setDoc["Packs"].AsBsonArray
+            .Where(x => x.IsBsonDocument)
+            .Select(x => x.AsBsonDocument)
+            .Any(x =>
+                x.Contains("Emoticon") &&
+                x["Emoticon"].IsString &&
+                IsSameEmoji(text, x["Emoticon"].AsString) &&
+                x.Contains("Documents") &&
+                x["Documents"].IsBsonArray &&
+                x["Documents"].AsBsonArray.Any(documentId => documentId.ToInt64() == entity.DocumentId));
+
+        if (!belongsToLegacyAnimatedEmojiSet)
         {
-            var attributes = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(document["Attributes2"].ToJson());
-            var customEmojiAttribute = attributes.OfType<TDocumentAttributeCustomEmoji>().FirstOrDefault();
-            if (customEmojiAttribute == null)
+            return false;
+        }
+
+        entities.Remove(entity);
+        return true;
+    }
+
+    private async Task<long?> TryResolveReplacementCustomEmojiDocumentAsync(string text, TDocumentAttributeCustomEmoji attribute)
+    {
+        if (attribute.Stickerset is not TInputStickerSetID stickerSetId || stickerSetId.Id == 0)
+        {
+            return null;
+        }
+
+        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
+        var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", stickerSetId.Id)).FirstOrDefaultAsync();
+        if (setDoc == null || !setDoc.Contains("Packs") || !setDoc["Packs"].IsBsonArray)
+        {
+            return null;
+        }
+
+        var candidateDocumentIds = setDoc["Packs"].AsBsonArray
+            .Where(x => x.IsBsonDocument)
+            .Select(x => x.AsBsonDocument)
+            .Where(x => x.Contains("Emoticon") && x["Emoticon"].IsString && IsSameEmoji(text, x["Emoticon"].AsString))
+            .Where(x => x.Contains("Documents") && x["Documents"].IsBsonArray)
+            .SelectMany(x => x["Documents"].AsBsonArray)
+            .Select(x => x.ToInt64())
+            .Distinct()
+            .ToList();
+
+        if (candidateDocumentIds.Count == 0)
+        {
+            return null;
+        }
+
+        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
+        var filter = Builders<BsonDocument>.Filter.In("DocumentId", candidateDocumentIds.Select(x => (BsonValue)new BsonInt64(x)));
+        var docs = await docCol.Find(filter).ToListAsync();
+        foreach (var candidateDocumentId in candidateDocumentIds)
+        {
+            var candidate = docs.FirstOrDefault(x => x["DocumentId"].ToInt64() == candidateDocumentId);
+            if (candidate != null &&
+                CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(candidate, out var candidateAttribute) &&
+                IsSameEmoji(text, candidateAttribute.Alt))
             {
-                return false;
+                return candidateDocumentId;
             }
-
-            attribute = customEmojiAttribute;
-            return true;
         }
-        catch
+
+        return null;
+    }
+
+    private static bool IsSameEmoji(string? left, string? right)
+    {
+        if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right))
         {
             return false;
         }
+
+        return string.Equals(NormalizeEmoji(left), NormalizeEmoji(right), StringComparison.Ordinal);
+    }
+
+    private static string NormalizeEmoji(string value)
+    {
+        return value.Replace("\uFE0F", string.Empty, StringComparison.Ordinal);
     }
 
     private async Task<List<long>> ProcessMessageEntityMentionAsync(string message, IList<IMessageEntity>? entities, Peer toPeer)

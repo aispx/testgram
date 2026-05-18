@@ -21,6 +21,8 @@ public static class MyTelegramMessengerQueryServerExtensions
     {
         services.AddSubscription<MessengerQueryDataReceivedEvent, MessengerEventHandler>();
         services.AddSubscription<StickerDataReceivedEvent, MessengerEventHandler>();
+        services.AddSubscription<DownloadDataReceivedEvent, MessengerEventHandler>();
+        services.AddSubscription<UploadDataReceivedEvent, MessengerEventHandler>();
 
         services.AddSubscription<UserIsOnlineEvent, UserIsOnlineEventHandler>();
 

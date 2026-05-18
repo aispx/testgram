@@ -58,6 +58,7 @@ internal sealed class SearchStickerSetsHandler(IMongoDatabase mongoDatabase) : R
 
             var docIds = GetInt64List(setDoc["DocumentIds"].AsBsonArray);
             var firstDocId = docIds.FirstOrDefault();
+            var firstAlt = GetAltForDocument(setDoc, firstDocId);
 
             if (firstDocId == 0)
                 continue;
@@ -94,7 +95,7 @@ internal sealed class SearchStickerSetsHandler(IMongoDatabase mongoDatabase) : R
                 {
                     attributes = [new TDocumentAttributeSticker
                     {
-                        Alt = "",
+                        Alt = firstAlt,
                         Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
                         Mask = false,
                     }];
@@ -104,7 +105,7 @@ internal sealed class SearchStickerSetsHandler(IMongoDatabase mongoDatabase) : R
             {
                 attributes = [new TDocumentAttributeSticker
                 {
-                    Alt = "",
+                    Alt = firstAlt,
                     Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
                     Mask = false,
                 }];
@@ -173,5 +174,36 @@ internal sealed class SearchStickerSetsHandler(IMongoDatabase mongoDatabase) : R
     private static List<long> GetInt64List(BsonArray arr)
     {
         return arr.Select(x => GetInt64(x)).ToList();
+    }
+
+    private static string GetAltForDocument(BsonDocument setDoc, long documentId)
+    {
+        if (!setDoc.Contains("Packs") || !setDoc["Packs"].IsBsonArray)
+        {
+            return string.Empty;
+        }
+
+        foreach (var packValue in setDoc["Packs"].AsBsonArray)
+        {
+            if (!packValue.IsBsonDocument)
+            {
+                continue;
+            }
+
+            var pack = packValue.AsBsonDocument;
+            if (!pack.Contains("Documents") || !pack["Documents"].IsBsonArray)
+            {
+                continue;
+            }
+
+            if (pack["Documents"].AsBsonArray.Any(x => GetInt64(x) == documentId))
+            {
+                return pack.Contains("Emoticon") && pack["Emoticon"].IsString
+                    ? pack["Emoticon"].AsString
+                    : string.Empty;
+            }
+        }
+
+        return string.Empty;
     }
 }

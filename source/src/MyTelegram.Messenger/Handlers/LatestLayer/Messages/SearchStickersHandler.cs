@@ -34,6 +34,10 @@ internal sealed class SearchStickersHandler(IMongoDatabase mongoDatabase) : RpcR
             {
                 continue;
             }
+            if (!obj.Emojis && isEmojiSet)
+            {
+                continue;
+            }
 
             if (setDoc.Contains("Packs") && setDoc["Packs"].IsBsonArray)
             {
