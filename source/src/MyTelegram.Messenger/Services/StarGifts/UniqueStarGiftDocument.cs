@@ -23,7 +23,9 @@ public class UniqueStarGiftDocument
     public int AvailabilityIssued { get; set; }
     public int AvailabilityTotal { get; set; }
     public bool NameHidden { get; set; }
+    public bool OriginalDetailsDropped { get; set; }
     public string? MessageText { get; set; }
+    public TVector<IMessageEntity>? MessageEntities { get; set; }
     public long ResellStars { get; set; }  // 0 = not for sale
     public long InitialSaleStars { get; set; } // original purchase price
     public long OriginalRecipientUserId { get; set; } // original recipient (never changes on transfer)

@@ -43,23 +43,42 @@ internal sealed class UpdateStarGiftPriceHandler(IMongoDatabase mongoDatabase) :
         // a TStarsTonAmount (TON pricing). Zero/absent means "delist". We only
         // touch the column corresponding to the submitted currency so the
         // seller can list the gift in both currencies simultaneously.
+        //
+        // Item 1: when the seller lists *only* for TON (no prior Stars price), mark the
+        // gift as ResaleTonOnly so the buy form picks the TON branch instead of falling
+        // into the Stars branch with ResellStars=0 and rejecting with STARGIFT_INVALID.
+        // When the seller (re-)lists in Stars, clear ResaleTonOnly so both currencies
+        // remain available.
         var update = Builders<UniqueStarGiftDocument>.Update;
         switch (obj.ResellAmount)
         {
             case TStarsTonAmount tonAmount:
-                await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId,
-                    update.Set(d => d.ResellTon, tonAmount.Amount));
+            {
+                var setTonOnly = tonAmount.Amount > 0 && doc.ResellStars <= 0;
+                var u = update.Set(d => d.ResellTon, tonAmount.Amount);
+                if (setTonOnly) u = u.Set(d => d.ResaleTonOnly, true);
+                if (tonAmount.Amount <= 0) u = u.Set(d => d.ResaleTonOnly, false);
+                await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId, u);
                 break;
+            }
             case TStarsAmount starsAmount:
                 if (doc.ResaleTonOnly && starsAmount.Amount > 0)
-                    RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
-                await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId,
-                    update.Set(d => d.ResellStars, starsAmount.Amount));
+                {
+                    // Switching back to a Stars listing automatically clears the
+                    // TON-only flag instead of rejecting with STARGIFT_INVALID.
+                    await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId,
+                        update.Set(d => d.ResellStars, starsAmount.Amount).Set(d => d.ResaleTonOnly, false));
+                }
+                else
+                {
+                    await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId,
+                        update.Set(d => d.ResellStars, starsAmount.Amount));
+                }
                 break;
             default:
                 // Delist from both currencies if an empty/unknown amount is passed.
                 await uniqueCol.UpdateOneAsync(d => d.UniqueId == doc.UniqueId,
-                    update.Set(d => d.ResellStars, 0L).Set(d => d.ResellTon, 0L));
+                    update.Set(d => d.ResellStars, 0L).Set(d => d.ResellTon, 0L).Set(d => d.ResaleTonOnly, false));
                 break;
         }
 

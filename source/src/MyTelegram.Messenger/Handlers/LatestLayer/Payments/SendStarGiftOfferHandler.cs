@@ -6,7 +6,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 internal sealed class SendStarGiftOfferHandler(
     IMongoDatabase mongoDatabase,
     IMessageAppService messageAppService,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IQueryProcessor queryProcessor)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestSendStarGiftOffer, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestSendStarGiftOffer obj)
@@ -36,7 +37,11 @@ internal sealed class SendStarGiftOfferHandler(
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer == null || peer.PeerType != PeerType.User) RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
 
-        var recipientUserId = peer.PeerId;
+        var recipientUserId = peer!.PeerId;
+        if (recipientUserId != input.UserId)
+        {
+            await PeerKindHelper.EnsureNotBotOrSystemAsync(queryProcessor, recipientUserId);
+        }
         var expiresAt = DateTime.UtcNow.AddSeconds(obj.Duration).ToTimestamp();
 
         var offer = new StarGiftOfferDocument
@@ -60,7 +65,6 @@ internal sealed class SendStarGiftOfferHandler(
         };
 
         var now = DateTime.UtcNow.ToTimestamp();
-        Console.WriteLine($"[DEBUG] SendStarGiftOffer: Creating offer - Sender={input.UserId}, Recipient={recipientUserId}, Slug={obj.Slug}, RandomId={obj.RandomId}, Price={priceAmount}");
         
         await messageAppService.SendMessageAsync([new SendMessageInput(
             RequestInfo.Empty with { UserId = input.UserId, Layer = MyTelegramConsts.Layer, Date = now, RequestId = Guid.NewGuid() },
@@ -73,7 +77,6 @@ internal sealed class SendStarGiftOfferHandler(
             messageAction: action
         )]);
 
-        Console.WriteLine($"[DEBUG] SendStarGiftOffer: Message sent, RandomId={obj.RandomId}");
         return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = now, Seq = 0 };
     }
 }

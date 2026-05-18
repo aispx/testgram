@@ -38,17 +38,22 @@ public static class UniqueStarGiftHelper
             attrs.Add(attr);
         }
 
-        // Add original details attribute
-        var originalRecipientId = doc.OriginalRecipientUserId > 0 ? doc.OriginalRecipientUserId : doc.OwnerUserId;
-        attrs.Add(new TStarGiftAttributeOriginalDetails
+        // Add original details attribute only while the collectible still keeps
+        // the original provenance. After drop-original-details the client must
+        // not receive either the sender or the original recipient row.
+        if (!doc.OriginalDetailsDropped)
         {
-            RecipientId = originalRecipientId > 0
-                ? (IPeer)new TPeerUser { UserId = originalRecipientId }
-                : new TPeerChannel { ChannelId = doc.OwnerChannelId },
-            SenderId = doc.NameHidden || doc.FromUserId == 0 ? null : new TPeerUser { UserId = doc.FromUserId },
-            Date = doc.Date,
-            Message = doc.MessageText != null ? new TTextWithEntities { Text = doc.MessageText, Entities = [] } : null,
-        });
+            var originalRecipientId = doc.OriginalRecipientUserId > 0 ? doc.OriginalRecipientUserId : doc.OwnerUserId;
+            attrs.Add(new TStarGiftAttributeOriginalDetails
+            {
+                RecipientId = originalRecipientId > 0
+                    ? (IPeer)new TPeerUser { UserId = originalRecipientId }
+                    : new TPeerChannel { ChannelId = doc.OwnerChannelId },
+                SenderId = doc.NameHidden || doc.FromUserId == 0 ? null : new TPeerUser { UserId = doc.FromUserId },
+                Date = doc.Date,
+                Message = doc.MessageText != null ? new TTextWithEntities { Text = doc.MessageText, Entities = doc.MessageEntities ?? [] } : null,
+            });
+        }
 
         // Build Layer 206 resale-amount vector. A unique gift may be listed
         // simultaneously in Stars and/or TON; the vector may contain 0, 1 or 2
@@ -126,7 +131,16 @@ public static class UniqueStarGiftHelper
         // Use craft config for crafted gifts, upgrade config for regular upgrades
         var collectionName = crafted ? "star-gift-craft-config" : "star-gift-upgrade-config";
         var col = db.GetCollection<UpgradeConfigEntry>(collectionName);
-        var all = await col.Find(Builders<UpgradeConfigEntry>.Filter.In("gift_id", new[] { gift.GiftId, 0L })).ToListAsync();
+        // Match seeded PascalCase BSON layout: pull gift-specific entries
+        // (GiftId == this gift) plus the global pool (GiftId == 0 or absent).
+        // Previously this used snake_case "gift_id", which never matched any
+        // document, so every upgrade silently fell back to the gift's own
+        // sticker for model/pattern and a hard-coded "Default" backdrop.
+        var filter = Builders<UpgradeConfigEntry>.Filter.Or(
+            Builders<UpgradeConfigEntry>.Filter.Eq(e => e.GiftId, gift.GiftId),
+            Builders<UpgradeConfigEntry>.Filter.Eq(e => e.GiftId, 0L),
+            Builders<UpgradeConfigEntry>.Filter.Exists("GiftId", false));
+        var all = await col.Find(filter).ToListAsync();
 
         var models    = all.Where(e => e.Type == "model"   && e.GiftId == gift.GiftId).ToList();
         if (models.Count == 0) models = all.Where(e => e.Type == "model" && e.GiftId == 0).ToList();

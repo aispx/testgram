@@ -3,7 +3,7 @@ using MyTelegram.Messenger.Services.StarGifts;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
-internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMessageAppService messageAppService, IPeerHelper peerHelper)
+internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMessageAppService messageAppService, IPeerHelper peerHelper, IQueryProcessor queryProcessor)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestTransferStarGift, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestTransferStarGift obj)
@@ -49,6 +49,12 @@ internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMes
         var toPeer = peerHelper.GetPeer(obj.ToId, input.UserId)!;
         var newOwnerUserId = toPeer.PeerType == PeerType.User ? toPeer.PeerId : 0L;
         var newOwnerChannelId = toPeer.PeerType == PeerType.Channel ? toPeer.PeerId : 0L;
+
+        // Cannot transfer NFT to bots / system users.
+        if (newOwnerUserId > 0 && newOwnerUserId != input.UserId)
+        {
+            await PeerKindHelper.EnsureNotBotOrSystemAsync(queryProcessor, newOwnerUserId);
+        }
 
         // Update owner in unique-star-gifts
         await col.UpdateOneAsync(
@@ -101,6 +107,24 @@ internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMes
                 RequestInfo.Empty with { UserId = input.UserId, Layer = MyTelegramConsts.Layer, Date = now, RequestId = Guid.NewGuid() },
                 input.UserId,
                 new Peer(PeerType.User, newOwnerUserId),
+                string.Empty,
+                Random.Shared.NextInt64(),
+                sendMessageType: SendMessageType.MessageService,
+                messageType: MessageType.Text,
+                messageAction: action
+            )]);
+        }
+        else if (newOwnerChannelId > 0)
+        {
+            // Item 19: also surface the transfer in the recipient channel so the unique-gift
+            // record (including any upgrade attributes) is visible there. Without this, an
+            // upgraded NFT transferred to a channel would silently change owner with no
+            // service-message trail and clients could fail to surface it.
+            action.Peer = new TPeerChannel { ChannelId = newOwnerChannelId };
+            await messageAppService.SendMessageAsync([new SendMessageInput(
+                RequestInfo.Empty with { UserId = input.UserId, Layer = MyTelegramConsts.Layer, Date = now, RequestId = Guid.NewGuid() },
+                input.UserId,
+                new Peer(PeerType.Channel, newOwnerChannelId),
                 string.Empty,
                 Random.Shared.NextInt64(),
                 sendMessageType: SendMessageType.MessageService,

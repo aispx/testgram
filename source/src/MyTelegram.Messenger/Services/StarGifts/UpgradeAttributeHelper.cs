@@ -7,7 +7,15 @@ public static class UpgradeAttributeHelper
     public static async Task<TVector<IStarGiftAttribute>> GetAllAsync(IMongoDatabase db, StarGiftDocument gift)
     {
         var col = db.GetCollection<UpgradeConfigEntry>("star-gift-upgrade-config");
-        var all = await col.Find(Builders<UpgradeConfigEntry>.Filter.In("gift_id", new[] { gift.GiftId, 0L })).ToListAsync();
+        // Pull both the gift-specific pool (GiftId == this gift) and the
+        // global default pool (GiftId absent or 0). The "GiftId missing"
+        // branch is needed because the original seed for the global pattern /
+        // backdrop / model variants didn't write the field at all.
+        var filter = Builders<UpgradeConfigEntry>.Filter.Or(
+            Builders<UpgradeConfigEntry>.Filter.Eq(e => e.GiftId, gift.GiftId),
+            Builders<UpgradeConfigEntry>.Filter.Eq(e => e.GiftId, 0L),
+            Builders<UpgradeConfigEntry>.Filter.Exists("GiftId", false));
+        var all = await col.Find(filter).ToListAsync();
 
         var models    = all.Where(e => e.Type == "model"   && e.GiftId == gift.GiftId).ToList();
         if (models.Count == 0) models = all.Where(e => e.Type == "model" && e.GiftId == 0).ToList();

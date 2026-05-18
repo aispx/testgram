@@ -45,10 +45,17 @@ internal sealed class GetPaymentFormHandler(
         if (obj.Invoice is TInputInvoiceStarGiftUpgrade upgradeInvoice)
         {
             var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
-            SavedStarGiftDocument? saved = upgradeInvoice.Stargift is TInputSavedStarGiftUser u
-                ? await savedCol.Find(d => d.OwnerUserId == input.UserId && d.MessageId == u.MsgId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync()
-                  ?? await savedCol.Find(d => d.OwnerUserId == input.UserId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync()
-                : null;
+            SavedStarGiftDocument? saved = upgradeInvoice.Stargift switch
+            {
+                TInputSavedStarGiftUser u => await savedCol.Find(d => d.OwnerUserId == input.UserId && d.MessageId == u.MsgId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync()
+                    ?? await savedCol.Find(d => d.OwnerUserId == input.UserId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync(),
+                TInputSavedStarGiftChat c => await savedCol.Find(d =>
+                    d.OwnerChannelId == ((c.Peer as TInputPeerChannel) == null ? 0 : ((TInputPeerChannel)c.Peer).ChannelId) &&
+                    d.RandomId == c.SavedId &&
+                    !d.IsUnique &&
+                    d.UpgradeStars.HasValue).FirstOrDefaultAsync(),
+                _ => null
+            };
             if (saved == null || saved.IsUnique || !saved.UpgradeStars.HasValue)
                 RpcErrors.RpcErrors400.StargiftUpgradeUnavailable.ThrowRpcError();
 

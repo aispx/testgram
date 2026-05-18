@@ -1,41 +1,46 @@
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace MyTelegram.Messenger.Services.StarGifts;
 
+// IMPORTANT: BSON element names mirror the seeded documents in
+// `star-gift-upgrade-config` (see scripts/init-star-gifts.sh) which use
+// PascalCase. Do NOT reintroduce snake_case attributes here — the previous
+// snake_case mapping silently broke deserialization, so every upgrade fell
+// through to the fallback branch in UpgradeAttributeHelper and produced
+// model=<gift's own sticker>, pattern=<gift's own sticker>, backdrop=Default.
 public class UpgradeConfigEntry
 {
-    [BsonElement("type")]
     public string Type { get; set; } = "";
-    [BsonElement("gift_id")]
     public long GiftId { get; set; }
-    [BsonElement("name")]
     public string Name { get; set; } = "";
-    [BsonElement("rarity_permille")]
     public int RarityPermille { get; set; }
 
-    [BsonElement("document_id")]
     public long? DocumentId { get; set; }
-    [BsonElement("document_access_hash")]
     public long? DocumentAccessHash { get; set; }
-    [BsonElement("file_reference")]
+
+    [BsonIgnore]
     public byte[]? FileReference { get; set; }
-    [BsonElement("document_date")]
+
+    // Some seeded documents store FileReference as a BSON array of int32
+    // values (see seed_reactions.py / add-klitor-gift.py).  The default
+    // driver mapping refuses to convert int32→byte, so we adapt manually.
+    [BsonElement("FileReference")]
+    [BsonIgnoreIfNull]
+    public BsonArray? FileReferenceBson
+    {
+        get => FileReference == null ? null : new BsonArray(FileReference.Select(b => new BsonInt32(b)));
+        set => FileReference = value?.Select(v => (byte)v.AsInt32).ToArray();
+    }
+
     public int? DocumentDate { get; set; }
-    [BsonElement("mime_type")]
     public string? MimeType { get; set; }
-    [BsonElement("document_size")]
     public long? DocumentSize { get; set; }
-    [BsonElement("dc_id")]
     public int? DcId { get; set; }
 
-    [BsonElement("backdrop_id")]
     public int? BackdropId { get; set; }
-    [BsonElement("center_color")]
     public int? CenterColor { get; set; }
-    [BsonElement("edge_color")]
     public int? EdgeColor { get; set; }
-    [BsonElement("pattern_color")]
     public int? PatternColor { get; set; }
-    [BsonElement("text_color")]
     public int? TextColor { get; set; }
 }

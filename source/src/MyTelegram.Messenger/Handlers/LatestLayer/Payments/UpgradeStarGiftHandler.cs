@@ -4,23 +4,53 @@ using MyTelegram.Messenger.Services.StarGifts;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
-internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMessageAppService messageAppService, IPtsHelper ptsHelper)
+internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMessageAppService messageAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestUpgradeStarGift, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestUpgradeStarGift obj)
     {
         var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
 
-        SavedStarGiftDocument? saved = obj.Stargift switch
+        // Resolve the saved gift precisely from whichever InputSavedStarGift
+        // variant the client sent. Loose matching ("MessageId == X || MessageId == 0")
+        // used to silently grab the oldest non-unique gift in the user's bag,
+        // so a click on Klitor would actually upgrade a Blue Star.
+        SavedStarGiftDocument? saved = null;
+        switch (obj.Stargift)
         {
-            TInputSavedStarGiftUser u when u.MsgId == 0 =>
-                await savedCol.Find(d => d.OwnerUserId == input.UserId && d.UpgradeStars.HasValue && !d.IsUnique).FirstOrDefaultAsync(),
-            TInputSavedStarGiftUser u =>
-                await savedCol.Find(d => d.OwnerUserId == input.UserId && (d.MessageId == u.MsgId || d.MessageId == 0) && !d.IsUnique).FirstOrDefaultAsync(),
-            TInputSavedStarGiftSlug s =>
-                await savedCol.Find(d => d.OwnerUserId == input.UserId && d.UniqueSlug == s.Slug && !d.IsUnique).FirstOrDefaultAsync(),
-            _ => null
-        };
+            case TInputSavedStarGiftUser u when u.MsgId != 0:
+                saved = await savedCol.Find(d =>
+                    d.OwnerUserId == input.UserId && d.MessageId == u.MsgId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
+                if (saved == null)
+                {
+                    saved = await savedCol.Find(d =>
+                        d.OwnerUserId == input.UserId && d.RandomId == u.MsgId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
+                }
+                if (saved == null)
+                {
+                    saved = await savedCol
+                        .Find(d => d.OwnerUserId == input.UserId && d.MessageId == 0 && !d.IsUnique && d.UpgradeStars.HasValue)
+                        .Sort(Builders<SavedStarGiftDocument>.Sort.Descending(d => d.Date))
+                        .FirstOrDefaultAsync();
+                }
+                break;
+            case TInputSavedStarGiftUser:
+                // msg_id == 0 → most recently received upgradable gift only.
+                saved = await savedCol
+                    .Find(d => d.OwnerUserId == input.UserId && d.MessageId == 0 && !d.IsUnique && d.UpgradeStars.HasValue)
+                    .Sort(Builders<SavedStarGiftDocument>.Sort.Descending(d => d.Date))
+                    .FirstOrDefaultAsync();
+                break;
+            case TInputSavedStarGiftChat c:
+                var channelId = (c.Peer as TInputPeerChannel)?.ChannelId ?? 0;
+                saved = await savedCol.Find(d =>
+                    d.OwnerChannelId == channelId && d.RandomId == c.SavedId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
+                break;
+            case TInputSavedStarGiftSlug s:
+                saved = await savedCol.Find(d =>
+                    d.OwnerUserId == input.UserId && d.UniqueSlug == s.Slug && !d.IsUnique).FirstOrDefaultAsync();
+                break;
+        }
 
         if (saved == null)
             throw new RpcException(new RpcError(400, "STARGIFT_NOT_FOUND"));
@@ -42,13 +72,14 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
         }
 
         // Deduct upgrade stars only if not prepaid
+        long? chargedUpgradeStars = null;
         if (!saved.PrepaidUpgrade && saved.UpgradeStars.HasValue && saved.UpgradeStars.Value > 0)
         {
             var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
             if (balance < saved.UpgradeStars.Value)
                 RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
             await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -saved.UpgradeStars.Value);
-            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -saved.UpgradeStars.Value, gift: true, title: "Gift upgrade");
+            chargedUpgradeStars = saved.UpgradeStars.Value;
         }
 
         // upgradeStarGift is only for prepaid upgrades (sender already paid)
@@ -79,12 +110,18 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
         }
         if (gift == null) RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
-        return await UpgradeAsync(input, saved!, gift!);
+        return await UpgradeAsync(input, saved!, gift!, chargedUpgradeStars, "Gift upgrade");
     }
 
-    public async Task<IUpdates> UpgradeAsync(IRequestInput input, SavedStarGiftDocument saved, StarGiftDocument? gift = null, long? overrideUserId = null)
+    public async Task<IUpdates> UpgradeAsync(IRequestInput input, SavedStarGiftDocument saved, StarGiftDocument? gift = null,
+        long? chargedUpgradeStars = null, string? transactionTitle = null, long? overrideUserId = null)
     {
-        var effectiveUserId = overrideUserId ?? input.UserId;
+        var effectiveUserId = saved.OwnerChannelId > 0 ? 0 : (overrideUserId ?? saved.OwnerUserId);
+        if (effectiveUserId == 0 && saved.OwnerChannelId == 0)
+        {
+            effectiveUserId = input.UserId;
+        }
+        var effectiveChannelId = saved.OwnerChannelId;
         var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
         gift ??= await mongoDatabase.GetCollection<StarGiftDocument>("star-gifts")
             .Find(d => d.GiftId == saved.GiftId).FirstOrDefaultAsync();
@@ -110,14 +147,16 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
             Slug = slug,
             Num = num,
             OwnerUserId = effectiveUserId,
+            OwnerChannelId = effectiveChannelId,
             FromUserId = saved.FromUserId,
             Date = currentTimestamp,
             AvailabilityIssued = num,
             AvailabilityTotal = gift.AvailabilityTotal ?? 0,
             NameHidden = saved.NameHidden,
             MessageText = saved.MessageText,
+            MessageEntities = saved.MessageEntities,
             InitialSaleStars = saved.Stars > 0 ? saved.Stars : (gift.Stars),
-            OriginalRecipientUserId = effectiveUserId,
+            OriginalRecipientUserId = effectiveChannelId > 0 ? 0 : effectiveUserId,
             Attributes = attrs,
             DocumentId = saved.DocumentId,
             DocumentAccessHash = saved.DocumentAccessHash,
@@ -131,6 +170,12 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
         };
         await mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts").InsertOneAsync(uniqueDoc);
 
+        if (chargedUpgradeStars.HasValue && chargedUpgradeStars.Value > 0)
+        {
+            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, effectiveUserId, -chargedUpgradeStars.Value,
+                gift: true, title: transactionTitle ?? "Gift upgrade", stargiftUpgrade: true, stargiftSlug: uniqueDoc.Slug);
+        }
+
         // Update AvailabilityIssued for all unique gifts of this type
         await mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts")
             .UpdateManyAsync(d => d.GiftId == saved.GiftId, Builders<UniqueStarGiftDocument>.Update.Set(d => d.AvailabilityIssued, num));
@@ -141,6 +186,7 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
         {
             Id = ObjectId.GenerateNewId(),
             OwnerUserId = effectiveUserId,
+            OwnerChannelId = effectiveChannelId,
             FromUserId = saved.FromUserId,
             GiftId = saved.GiftId,
             Stars = saved.Stars,
@@ -149,6 +195,7 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
             Saved = true,
             Date = uniqueDoc.Date,
             MessageText = saved.MessageText,
+            MessageEntities = saved.MessageEntities,
             RandomId = uniqueDoc.UniqueId,
             IsUnique = true,
             UniqueSlug = uniqueDoc.Slug,
@@ -162,48 +209,36 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
             DcId = saved.DcId,
         });
 
-        // Send messageActionStarGiftUnique service message
-        var uniqueTl = UniqueStarGiftHelper.ToTl(uniqueDoc);
-        var action = new TMessageActionStarGiftUnique
+        // Telegram does not need a visible upgrade notice for channel-owned gifts:
+        // keep the collectible on the channel profile without injecting a service
+        // message into either the channel history or the admin's Saved Messages.
+        if (effectiveChannelId == 0)
         {
-            Gift = uniqueTl,
-            Upgrade = true,
-            Saved = true,
-            FromId = saved.NameHidden ? null : new TPeerUser { UserId = saved.FromUserId },
-        };
+            var uniqueTl = UniqueStarGiftHelper.ToTl(uniqueDoc);
+            var action = new TMessageActionStarGiftUnique
+            {
+                Gift = uniqueTl,
+                Upgrade = true,
+                Saved = true,
+                FromId = saved.NameHidden ? null : new TPeerUser { UserId = saved.FromUserId },
+            };
 
-        // Send in dialog with gift sender (so client shows ActionUniqueGiftUpgradeOutbound with sender as un1)
-        // If anonymous or self-gift, fall back to Saved Messages
-        var dialogPeerId = saved.FromUserId > 0 && saved.FromUserId != effectiveUserId
-            ? saved.FromUserId
-            : effectiveUserId;
-
-        var sendInput = new SendMessageInput(
-            input.ToRequestInfo() with { ReqMsgId = 0 },
-            effectiveUserId,
-            new Peer(PeerType.User, dialogPeerId),
-            string.Empty,
-            Random.Shared.NextInt64(),
-            sendMessageType: SendMessageType.MessageService,
-            messageType: MessageType.Text,
-            messageAction: action
-        );
-        await messageAppService.SendMessageAsync([sendInput]);
-
-        var pts = await ptsHelper.IncrementPtsAsync(effectiveUserId, ptsHelper.GetCachedPts(effectiveUserId));
-        var serviceMsg = new TMessageService
-        {
-            Id = pts,
-            FromId = new TPeerUser { UserId = effectiveUserId },
-            PeerId = new TPeerUser { UserId = dialogPeerId },
-            Date = uniqueDoc.Date,
-            Action = action,
-            Out = true,
-        };
+            var sendInput = new SendMessageInput(
+                input.ToRequestInfo() with { ReqMsgId = 0 },
+                effectiveUserId,
+                new Peer(PeerType.User, effectiveUserId),
+                string.Empty,
+                Random.Shared.NextInt64(),
+                sendMessageType: SendMessageType.MessageService,
+                messageType: MessageType.Text,
+                messageAction: action
+            );
+            await messageAppService.SendMessageAsync([sendInput]);
+        }
 
         return new TUpdates
         {
-            Updates = [new TUpdateNewMessage { Message = serviceMsg, Pts = pts, PtsCount = 1 }],
+            Updates = new TVector<IUpdate>(),
             Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = uniqueDoc.Date, Seq = 0
         };
     }

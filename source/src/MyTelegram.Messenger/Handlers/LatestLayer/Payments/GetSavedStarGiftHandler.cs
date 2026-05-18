@@ -27,7 +27,7 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
                 doc = await savedCol.Find(d => d.OwnerChannelId == channelId && d.RandomId == savedId).FirstOrDefaultAsync();
             }
             else if (stargift is TInputSavedStarGiftSlug s)
-                doc = await savedCol.Find(d => d.UniqueSlug == s.Slug).FirstOrDefaultAsync();
+                doc = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.UniqueSlug == s.Slug).FirstOrDefaultAsync();
             if (doc == null) continue;
 
             IStarGift giftTl;
@@ -64,8 +64,9 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
             }
 
             IPeer? fromId = (!doc.NameHidden && doc.FromUserId != 0) ? new TPeerUser { UserId = doc.FromUserId } : null;
+            // Item 14: restore preserved entities (custom emoji, bold, etc.) instead of stripping.
             ITextWithEntities? message = !string.IsNullOrEmpty(doc.MessageText)
-                ? new TTextWithEntities { Text = doc.MessageText, Entities = [] } : null;
+                ? new TTextWithEntities { Text = doc.MessageText, Entities = doc.MessageEntities ?? new TVector<IMessageEntity>() } : null;
 
             gifts.Add(new TSavedStarGift
             {
@@ -76,7 +77,7 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
                 MsgId = (!doc.IsUnique && doc.MessageId > 0) ? doc.MessageId : null,
                 SavedId = (doc.IsUnique || doc.MessageId == 0) ? doc.RandomId : null,
                 ConvertStars = doc.IsUnique || doc.IsAuction ? null : (doc.ConvertStars > 0 ? doc.ConvertStars : null),
-                UpgradeStars = doc.IsUnique ? null : doc.UpgradeStars,
+                UpgradeStars = !doc.IsUnique && doc.PrepaidUpgrade ? doc.UpgradeStars : null,
                 CanUpgrade = !doc.IsUnique && doc.UpgradeStars.HasValue,
                 Unsaved = !doc.Saved,
                 NameHidden = doc.NameHidden,

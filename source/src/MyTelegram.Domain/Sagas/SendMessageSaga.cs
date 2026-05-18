@@ -177,7 +177,14 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
         switch (aggregateEvent.OutboxMessageItem.ToPeer.PeerType)
         {
             case PeerType.User:
-                await CreateInboxMessageForUserAsync(aggregateEvent.OutboxMessageItem, aggregateEvent.OutboxMessageItem.ToPeer.PeerId);
+                // Messages to Saved Messages are already represented by the
+                // outbox row owned by the current user. Creating an inbox copy
+                // for the same owner makes self-directed service actions (gift
+                // sends/upgrades in particular) appear multiple times.
+                if (aggregateEvent.OutboxMessageItem.ToPeer.PeerId != aggregateEvent.OutboxMessageItem.OwnerPeer.PeerId)
+                {
+                    await CreateInboxMessageForUserAsync(aggregateEvent.OutboxMessageItem, aggregateEvent.OutboxMessageItem.ToPeer.PeerId);
+                }
                 break;
             case PeerType.Chat:
                 if (aggregateEvent.ChatMembers?.Count > 0)

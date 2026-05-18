@@ -385,7 +385,9 @@ internal sealed class SendPaymentFormHandler(
             Gift = starGiftTl,
             Message = invoice.Message,
             ConvertStars = gift.ConvertStars,
-            UpgradeStars = gift.UpgradeStars,
+            // Android interprets upgrade_stars as an already-paid upgrade amount,
+            // not as the regular upgrade price. Keep it unset unless prepaid.
+            UpgradeStars = invoice.IncludeUpgrade ? gift.UpgradeStars : null,
             FromId = invoice.HideName ? null : new TPeerUser { UserId = input.UserId },
             // Set Peer and SavedId for channel gifts (both use flags.12)
             Peer = recipientPeer.PeerType == PeerType.Channel
@@ -686,6 +688,12 @@ internal sealed class SendPaymentFormHandler(
                 var recipientUserId = userId is TInputUser inputUser ? inputUser.UserId : 0;
                 if (recipientUserId > 0)
                 {
+                    // Premium gifting is not allowed to bots / system users.
+                    if (recipientUserId != input.UserId)
+                    {
+                        await PeerKindHelper.EnsureNotBotOrSystemAsync(queryProcessor, recipientUserId);
+                    }
+
                     await userCol.UpdateOneAsync(
                         Builders<BsonDocument>.Filter.Eq("UserId", recipientUserId),
                         Builders<BsonDocument>.Update.Set("Premium", true).Set("PremiumExpireDate", expireDate)

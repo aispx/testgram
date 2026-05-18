@@ -27,7 +27,15 @@ public static class StarsBalanceHelper
     public static async Task AddTransactionAsync(IMongoDatabase db, long userId, long amount, bool gift = false,
         long? peerUserId = null, long? peerChannelId = null, string? title = null, bool stargiftUpgrade = false,
         bool stargiftAuctionBid = false, bool offer = false, string? stargiftSlug = null, int? premiumGiftMonths = null,
-        int? starrefCommissionPermille = null, long? starrefPeerUserId = null, long? starrefPeerChannelId = null, long? starrefAmount = null)
+        int? starrefCommissionPermille = null, long? starrefPeerUserId = null, long? starrefPeerChannelId = null, long? starrefAmount = null,
+        // Layer-223 flags wired into the transaction ledger so reaction sales,
+        // resale flows, paid messages, drop-original-details, etc. surface the
+        // correct boolean / int columns in starsTransaction on the client.
+        bool pending = false, bool failed = false, bool refund = false, bool reaction = false,
+        bool businessTransfer = false, bool stargiftResale = false, bool postsSearch = false,
+        bool stargiftPrepaidUpgrade = false, bool stargiftDropOriginalDetails = false,
+        bool phonegroupMessage = false, int? paidMessages = null, int? msgId = null,
+        int? transactionDate = null, string? transactionUrl = null, string? description = null)
     {
         var transactionId = Guid.NewGuid().ToString("N");
         await db.GetCollection<StarsTransactionDocument>("star-transactions").InsertOneAsync(new StarsTransactionDocument
@@ -38,9 +46,11 @@ public static class StarsBalanceHelper
             Amount = amount,
             Date = DateTime.UtcNow.ToTimestamp(),
             Gift = gift,
+            Refund = refund,
             PeerUserId = peerUserId,
             PeerChannelId = peerChannelId,
             Title = title,
+            Description = description,
             StargiftUpgrade = stargiftUpgrade,
             StargiftAuctionBid = stargiftAuctionBid,
             Offer = offer,
@@ -50,6 +60,19 @@ public static class StarsBalanceHelper
             StarrefPeerUserId = starrefPeerUserId,
             StarrefPeerChannelId = starrefPeerChannelId,
             StarrefAmount = starrefAmount,
+            Pending = pending,
+            Failed = failed,
+            Reaction = reaction,
+            BusinessTransfer = businessTransfer,
+            StargiftResale = stargiftResale,
+            PostsSearch = postsSearch,
+            StargiftPrepaidUpgrade = stargiftPrepaidUpgrade,
+            StargiftDropOriginalDetails = stargiftDropOriginalDetails,
+            PhonegroupMessage = phonegroupMessage,
+            PaidMessages = paidMessages,
+            MsgId = msgId,
+            TransactionDate = transactionDate,
+            TransactionUrl = transactionUrl,
         });
     }
 
@@ -104,6 +127,13 @@ public static class StarsBalanceHelper
                 ? new TPeerChannel { ChannelId = starrefPeerChannelId.Value }
                 : null;
 
+        // Layer-223 flag accessors. Older documents are missing these fields,
+        // so we default-treat them as false / null which keeps the result
+        // bit-compatible with previously persisted transactions.
+        bool BoolField(string name) => doc.Contains(name) && doc[name].AsBoolean;
+        int? IntField(string name) => doc.Contains(name) && !doc[name].IsBsonNull ? (int?)doc[name].AsInt32 : null;
+        string? StrField(string name) => doc.Contains(name) && !doc[name].IsBsonNull ? doc[name].AsString : null;
+
         return new TStarsTransaction
         {
             Id = transactionId,
@@ -113,6 +143,7 @@ public static class StarsBalanceHelper
             Gift = gift,
             Refund = refund,
             Title = title,
+            Description = StrField("Description"),
             StargiftUpgrade = stargiftUpgrade,
             StargiftAuctionBid = stargiftAuctionBid,
             Offer = offer,
@@ -120,7 +151,54 @@ public static class StarsBalanceHelper
             StarrefCommissionPermille = starrefCommissionPermille,
             StarrefPeer = starrefPeer,
             StarrefAmount = starrefAmount.HasValue ? new TStarsAmount { Amount = starrefAmount.Value } : null,
+            Pending = BoolField("Pending"),
+            Failed = BoolField("Failed"),
+            Reaction = BoolField("Reaction"),
+            BusinessTransfer = BoolField("BusinessTransfer"),
+            StargiftResale = BoolField("StargiftResale"),
+            PostsSearch = BoolField("PostsSearch"),
+            StargiftPrepaidUpgrade = BoolField("StargiftPrepaidUpgrade"),
+            StargiftDropOriginalDetails = BoolField("StargiftDropOriginalDetails"),
+            PhonegroupMessage = BoolField("PhonegroupMessage"),
+            PaidMessages = IntField("PaidMessages"),
+            MsgId = IntField("MsgId"),
+            TransactionDate = IntField("TransactionDate"),
+            TransactionUrl = StrField("TransactionUrl"),
         };
+    }
+
+    /// <summary>
+    /// Hydrates the embedded <c>Stargift</c> field of each transaction by
+    /// looking up the unique gift document referenced by <c>StargiftSlug</c>.
+    /// One batched query covers every gift transaction in the page.
+    /// </summary>
+    public static async Task HydrateGiftsAsync(IMongoDatabase db, IList<TStarsTransaction> transactions, IList<string?> slugs)
+    {
+        var distinct = slugs.Where(s => !string.IsNullOrEmpty(s)).Select(s => s!).Distinct().ToList();
+        var uniqueCol = db.GetCollection<UniqueStarGiftDocument>("unique-star-gifts");
+        var docs = distinct.Count == 0
+            ? []
+            : await uniqueCol
+                .Find(Builders<UniqueStarGiftDocument>.Filter.In(d => d.Slug, distinct))
+                .ToListAsync();
+        var giftMap = docs.ToDictionary(d => d.Slug, d => (MyTelegram.Schema.IStarGift)UniqueStarGiftHelper.ToTl(d));
+        for (int i = 0; i < transactions.Count; i++)
+        {
+            var slug = slugs[i];
+            if (!string.IsNullOrEmpty(slug) && giftMap.TryGetValue(slug!, out var gift))
+            {
+                transactions[i].Stargift = gift;
+            }
+            else
+            {
+                transactions[i].StargiftUpgrade = false;
+                transactions[i].StargiftResale = false;
+                transactions[i].StargiftPrepaidUpgrade = false;
+                transactions[i].StargiftDropOriginalDetails = false;
+                transactions[i].StargiftAuctionBid = false;
+                transactions[i].Offer = false;
+            }
+        }
     }
 
     public static TStarsTransaction ToTl(StarsTransactionDocument doc)
@@ -146,6 +224,7 @@ public static class StarsBalanceHelper
             Gift = doc.Gift,
             Refund = doc.Refund,
             Title = doc.Title,
+            Description = doc.Description,
             StargiftUpgrade = doc.StargiftUpgrade,
             StargiftAuctionBid = doc.StargiftAuctionBid,
             Offer = doc.Offer,
@@ -153,6 +232,19 @@ public static class StarsBalanceHelper
             StarrefCommissionPermille = doc.StarrefCommissionPermille,
             StarrefPeer = starrefPeer,
             StarrefAmount = doc.StarrefAmount.HasValue ? new TStarsAmount { Amount = doc.StarrefAmount.Value } : null,
+            Pending = doc.Pending,
+            Failed = doc.Failed,
+            Reaction = doc.Reaction,
+            BusinessTransfer = doc.BusinessTransfer,
+            StargiftResale = doc.StargiftResale,
+            PostsSearch = doc.PostsSearch,
+            StargiftPrepaidUpgrade = doc.StargiftPrepaidUpgrade,
+            StargiftDropOriginalDetails = doc.StargiftDropOriginalDetails,
+            PhonegroupMessage = doc.PhonegroupMessage,
+            PaidMessages = doc.PaidMessages,
+            MsgId = doc.MsgId,
+            TransactionDate = doc.TransactionDate,
+            TransactionUrl = doc.TransactionUrl,
         };
     }
 }

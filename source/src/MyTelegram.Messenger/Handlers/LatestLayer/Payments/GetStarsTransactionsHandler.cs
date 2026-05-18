@@ -97,10 +97,13 @@ internal sealed class GetStarsTransactionsHandler(IMongoDatabase mongoDatabase, 
 
         var nextOffset = docs.Count == pageSize ? docs.Last().Id.ToString() : null;
 
+        var history = docs.Select(StarsBalanceHelper.ToTl).ToList();
+        await StarsBalanceHelper.HydrateGiftsAsync(mongoDatabase, history, docs.Select(d => d.StargiftSlug).ToList());
+
         return new TStarsStatus
         {
             Balance = new TStarsAmount { Amount = balance },
-            History = new TVector<IStarsTransaction>(docs.Select(StarsBalanceHelper.ToTl).ToList()),
+            History = new TVector<IStarsTransaction>(history.Cast<IStarsTransaction>().ToList()),
             NextOffset = nextOffset,
             Chats = new TVector<IChat>(), Users = new TVector<IUser>()
         };

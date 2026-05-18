@@ -140,7 +140,14 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
 
             ITextWithEntities? message = null;
             if (!string.IsNullOrEmpty(doc.MessageText))
-                message = new TTextWithEntities { Text = doc.MessageText, Entities = [] };
+            {
+                // Item 14: restore preserved entities (custom emoji, bold, etc.) instead of stripping.
+                message = new TTextWithEntities
+                {
+                    Text = doc.MessageText,
+                    Entities = doc.MessageEntities ?? new TVector<IMessageEntity>(),
+                };
+            }
 
             IStarGift giftTl;
             if (doc.IsUnique && doc.UniqueSlug != null && uniqueBySlug.TryGetValue(doc.UniqueSlug, out var uniqueDoc))
@@ -185,7 +192,7 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
                 MsgId = (!isChannel && !doc.IsUnique && doc.MessageId > 0) ? doc.MessageId : (!isChannel && doc.IsUnique ? (int?)doc.RandomId : null),
                 SavedId = (isChannel || doc.IsUnique || doc.MessageId == 0) ? doc.RandomId : null,
                 ConvertStars = doc.IsUnique || doc.IsAuction ? null : (doc.ConvertStars > 0 ? doc.ConvertStars : null),
-                UpgradeStars = doc.IsUnique ? null : doc.UpgradeStars,
+                UpgradeStars = !doc.IsUnique && doc.PrepaidUpgrade ? doc.UpgradeStars : null,
                 CanUpgrade = !doc.IsUnique && doc.UpgradeStars.HasValue,
                 Unsaved = !doc.Saved,
                 NameHidden = doc.NameHidden,

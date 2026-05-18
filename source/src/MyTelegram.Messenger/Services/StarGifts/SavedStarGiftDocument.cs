@@ -23,6 +23,9 @@ public class SavedStarGiftDocument
     public bool Saved { get; set; }         // displayed on profile
     public int Date { get; set; }
     public string? MessageText { get; set; }
+    // Item 14: preserve custom-emoji / formatting entities of the gift comment so the
+    // recipient sees the same animated emojis and styling the sender typed.
+    public TVector<IMessageEntity>? MessageEntities { get; set; }
     public long RandomId { get; set; }
     public bool PinnedToTop { get; set; }
     public bool? ChatNotificationsEnabled { get; set; } // channel-only

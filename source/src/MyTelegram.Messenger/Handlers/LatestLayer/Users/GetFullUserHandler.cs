@@ -187,7 +187,15 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         var result = await collection.AggregateAsync<BsonDocument>(pipeline);
         var doc = await result.FirstOrDefaultAsync();
         var totalStars = doc != null && doc.Contains("total") ? doc["total"].ToInt64() : 0;
-        if (totalStars <= 0) return;
+
+        // Telegram omits stars_rating entirely until there is actual rating
+        // activity. Returning an explicit level 0 / 0 stars object makes every
+        // freshly registered account look like it already participates in the
+        // public stars ladder.
+        if (totalStars <= 0)
+        {
+            return;
+        }
 
         var (level, currentLevelStars, nextLevelStars) = CalcRatingLevel(totalStars);
 

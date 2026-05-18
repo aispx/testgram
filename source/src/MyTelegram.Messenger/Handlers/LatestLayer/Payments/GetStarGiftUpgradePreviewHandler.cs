@@ -16,6 +16,16 @@ internal sealed class GetStarGiftUpgradePreviewHandler(IMongoDatabase mongoDatab
             ? await UpgradeAttributeHelper.GetAllAsync(mongoDatabase, gift)
             : new TVector<IStarGiftAttribute>();
 
-        return new TStarGiftUpgradePreview { SampleAttributes = attrs, Prices = [], NextPrices = [] };
+        var prices = new TVector<IStarGiftUpgradePrice>();
+        if (gift?.UpgradeStars is > 0)
+        {
+            prices.Add(new TStarGiftUpgradePrice
+            {
+                Date = CurrentDate,
+                UpgradeStars = gift.UpgradeStars.Value,
+            });
+        }
+
+        return new TStarGiftUpgradePreview { SampleAttributes = attrs, Prices = prices, NextPrices = [] };
     }
 }

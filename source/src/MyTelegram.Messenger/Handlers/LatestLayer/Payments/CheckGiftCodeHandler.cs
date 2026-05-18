@@ -34,7 +34,12 @@ internal sealed class CheckGiftCodeHandler(IMongoDatabase mongoDatabase, IQueryP
         var users = new TVector<IUser>();
 
         var fromId = code.Contains("FromId") && !code["FromId"].IsBsonNull ? code["FromId"].AsInt64 : 0L;
-        var toId = code.Contains("ToId") && !code["ToId"].IsBsonNull ? code["ToId"].AsInt64 : (long?)null;
+        var used = code.Contains("Used") && code["Used"].AsBoolean;
+        // Per Telegram spec, to_id must only be present after the code has been imported (activated).
+        // For not-yet-activated codes (including giveaway winners who haven't claimed yet) we return null.
+        var toId = used && code.Contains("UsedBy") && !code["UsedBy"].IsBsonNull
+            ? code["UsedBy"].AsInt64
+            : (long?)null;
         var viaGiveaway = code.Contains("ViaGiveaway") && code["ViaGiveaway"].AsBoolean;
 
         // For giveaways, use ChannelId instead of FromId

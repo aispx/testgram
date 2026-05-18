@@ -64,17 +64,20 @@ internal sealed class GetStarsStatusHandler(IMongoDatabase mongoDatabase, IPeerH
             .Limit(pageSize)
             .ToListAsync();
 
-        var transactions = new List<IStarsTransaction>();
+        var transactions = new List<TStarsTransaction>();
+        var slugs = new List<string?>();
         foreach (var doc in txDocs)
         {
             transactions.Add(StarsBalanceHelper.BsonToTl(doc));
+            slugs.Add(doc.Contains("StargiftSlug") && !doc["StargiftSlug"].IsBsonNull ? doc["StargiftSlug"].AsString : null);
         }
+        await StarsBalanceHelper.HydrateGiftsAsync(mongoDatabase, transactions, slugs);
         var nextOffset = txDocs.Count == pageSize ? txDocs[^1]["_id"].AsString : null;
 
         return new TStarsStatus
         {
             Balance = new TStarsAmount { Amount = balance },
-            History = new TVector<IStarsTransaction>(transactions),
+            History = new TVector<IStarsTransaction>(transactions.Cast<IStarsTransaction>().ToList()),
             NextOffset = nextOffset,
             Chats = new TVector<IChat>(), Users = new TVector<IUser>()
         };

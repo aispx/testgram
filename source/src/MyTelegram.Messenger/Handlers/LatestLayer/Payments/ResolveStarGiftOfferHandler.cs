@@ -16,7 +16,6 @@ internal sealed class ResolveStarGiftOfferHandler(
         var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
 
         // Try to find by MessageId first, then by RandomId
-        Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Looking for offer - OfferMsgId={obj.OfferMsgId}, UserId={input.UserId}");
         
         var now = DateTime.UtcNow.ToTimestamp();
         
@@ -30,12 +29,10 @@ internal sealed class ResolveStarGiftOfferHandler(
         
         if (offer == null)
         {
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Not found by MessageId={obj.OfferMsgId} or expired");
             // Don't fallback to RandomId to prevent IDOR
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
         }
         
-        Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Found offer - Slug={offer.Slug}, MessageId={offer.MessageId}, Price={offer.PriceAmount}");
 
         var doc = await uniqueCol.Find(d => d.Slug == offer.Slug).FirstOrDefaultAsync();
         if (doc == null) RpcErrors.RpcErrors400.StargiftNotFound.ThrowRpcError();
@@ -53,7 +50,6 @@ internal sealed class ResolveStarGiftOfferHandler(
         
         if (updateResult.ModifiedCount == 0)
         {
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Offer already resolved (race condition prevention)");
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
         }
 
@@ -77,11 +73,9 @@ internal sealed class ResolveStarGiftOfferHandler(
                 messageType: MessageType.Text,
                 messageAction: declinedAction
             )]);
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Sent declined message to buyer {offer.SenderUserId}");
         }
         else
         {
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Processing acceptance - Slug={doc.Slug}, Buyer={offer.SenderUserId}, Price={offer.PriceAmount}");
             
             // SECURITY FIX: Check buyer has sufficient balance before any operations
             var buyerBalance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, offer.SenderUserId);
@@ -111,7 +105,6 @@ internal sealed class ResolveStarGiftOfferHandler(
                 Console.WriteLine($"[SECURITY] ResolveStarGiftOffer: NFT ownership changed or already transferred");
                 RpcErrors.RpcErrors400.StargiftNotFound.ThrowRpcError();
             }
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: NFT owner changed to {offer.SenderUserId}");
 
             // Delete any existing saved gift for this slug and create new one for buyer
             await savedCol.DeleteOneAsync(s => s.IsUnique && s.UniqueSlug == doc.Slug);
@@ -135,19 +128,16 @@ internal sealed class ResolveStarGiftOfferHandler(
                 DocumentSize = doc.DocumentSize,
                 DcId = doc.DcId
             });
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Saved gift created for buyer {offer.SenderUserId}");
 
             // Update balances and add transactions for BUYER (pays for the NFT)
             await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, offer.SenderUserId, -offer.PriceAmount);
             await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, offer.SenderUserId, -offer.PriceAmount, 
                 offer: true, peerUserId: offer.RecipientUserId, stargiftSlug: doc.Slug);
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Debited buyer {offer.SenderUserId}: -{offer.PriceAmount}");
 
             // Update balances and add transactions for SELLER (receives payment for the NFT)
             await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, offer.RecipientUserId, offer.PriceAmount);
             await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, offer.RecipientUserId, offer.PriceAmount, 
                 offer: true, peerUserId: offer.SenderUserId, stargiftSlug: doc.Slug);
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Credited seller {offer.RecipientUserId}: +{offer.PriceAmount}");
 
             // Send accepted message to SELLER (the one who owned the NFT) - tells them they sold it
             // Message from the BUYER to the SELLER
@@ -168,7 +158,6 @@ internal sealed class ResolveStarGiftOfferHandler(
                 messageType: MessageType.Text,
                 messageAction: acceptedAction
             )]);
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Sent accepted message to seller {offer.RecipientUserId}");
 
             // Send from_offer message to BUYER (the one who sent the offer) - tells them they received the NFT
             // Message from the SELLER to the BUYER
@@ -188,7 +177,6 @@ internal sealed class ResolveStarGiftOfferHandler(
                 messageType: MessageType.Text,
                 messageAction: receivedAction
             )]);
-            Console.WriteLine($"[DEBUG] ResolveStarGiftOffer: Sent from_offer message to buyer {offer.SenderUserId}");
         }
 
         return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = now, Seq = 0 };

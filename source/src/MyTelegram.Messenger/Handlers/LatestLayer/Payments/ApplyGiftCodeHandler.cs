@@ -32,53 +32,58 @@ internal sealed class ApplyGiftCodeHandler(IMongoDatabase mongoDatabase)
         // Check if code is for specific user
         var toId = codeDoc.Contains("ToId") && !codeDoc["ToId"].IsBsonNull ? codeDoc["ToId"].AsInt64 : (long?)null;
 
-        if (toId.HasValue)
+        if (toId.HasValue && toId.Value != input.UserId)
         {
             // Private gift code - only specific user can use
-            if (toId.Value != input.UserId)
-                RpcErrors.RpcErrors400.SlugInvalid.ThrowRpcError();
+            RpcErrors.RpcErrors400.SlugInvalid.ThrowRpcError();
         }
-        else
-        {
-            // Public gift code - anyone can use, but only once
-            // Use atomic update to prevent race condition
-            var atomicUpdate = Builders<BsonDocument>.Update
-                .Set("Used", true)
-                .Set("UsedBy", input.UserId)
-                .Set("UsedDate", (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-
-            var atomicFilter = Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("Slug", obj.Slug),
-                Builders<BsonDocument>.Filter.Or(
-                    Builders<BsonDocument>.Filter.Exists("Used", false),
-                    Builders<BsonDocument>.Filter.Eq("Used", false)
-                )
-            );
-
-            var result = await codeCol.UpdateOneAsync(atomicFilter, atomicUpdate);
-
-            if (result.MatchedCount == 0)
-            {
-                // Code was already used by someone else
-                RpcErrors.RpcErrors400.SlugInvalid.ThrowRpcError();
-            }
-
-            // Successfully claimed, continue to grant premium/stars
-            goto skipUpdate;
-        }
-
-        // Mark private code as used
-        var update = Builders<BsonDocument>.Update
-            .Set("Used", true)
-            .Set("UsedDate", (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        await codeCol.UpdateOneAsync(filter, update);
-
-        skipUpdate:
 
         // Get months or stars from code
         int months = codeDoc.Contains("Months") ? codeDoc["Months"].AsInt32 : 1;
         var stars = codeDoc.Contains("Stars") && !codeDoc["Stars"].IsBsonNull ? codeDoc["Stars"].AsInt64 : (long?)null;
         var now = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        // Premium subscription - check if user already has active Premium BEFORE marking the slug as used,
+        // so a wasted activation does not happen when the user already has Premium.
+        if (!stars.HasValue)
+        {
+            var subCol = mongoDatabase.GetCollection<BsonDocument>("premium_subscriptions");
+            var existingSub = await subCol.Find(
+                Builders<BsonDocument>.Filter.Eq("_id", $"premium-{input.UserId}")
+            ).FirstOrDefaultAsync();
+
+            if (existingSub != null &&
+                existingSub.Contains("Active") && existingSub["Active"].AsBoolean &&
+                existingSub.Contains("ExpiresAt") && existingSub["ExpiresAt"].AsInt32 > now)
+            {
+                // User already has active Premium - throw error with expiration date.
+                // The gift code slug is NOT marked as used, so it remains valid for a different account.
+                var existingExpiresAt = existingSub["ExpiresAt"].AsInt32;
+                RpcErrors.RpcErrors420.PremiumSubActiveUntilX.ThrowRpcError(existingExpiresAt);
+            }
+        }
+
+        // Atomically mark code as used (also handles race condition for public codes)
+        var atomicUpdate = Builders<BsonDocument>.Update
+            .Set("Used", true)
+            .Set("UsedBy", input.UserId)
+            .Set("UsedDate", now);
+
+        var atomicFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("Slug", obj.Slug),
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Exists("Used", false),
+                Builders<BsonDocument>.Filter.Eq("Used", false)
+            )
+        );
+
+        var result = await codeCol.UpdateOneAsync(atomicFilter, atomicUpdate);
+
+        if (result.MatchedCount == 0)
+        {
+            // Code was already used by someone else
+            RpcErrors.RpcErrors400.SlugInvalid.ThrowRpcError();
+        }
 
         if (stars.HasValue)
         {
@@ -104,22 +109,8 @@ internal sealed class ApplyGiftCodeHandler(IMongoDatabase mongoDatabase)
         }
         else
         {
-            // Premium subscription - check if user already has active Premium
-            var subCol = mongoDatabase.GetCollection<BsonDocument>("premium_subscriptions");
-            var existingSub = await subCol.Find(
-                Builders<BsonDocument>.Filter.Eq("_id", $"premium-{input.UserId}")
-            ).FirstOrDefaultAsync();
-
-            if (existingSub != null &&
-                existingSub.Contains("Active") && existingSub["Active"].AsBoolean &&
-                existingSub.Contains("ExpiresAt") && existingSub["ExpiresAt"].AsInt32 > now)
-            {
-                // User already has active Premium - throw error with expiration date
-                var existingExpiresAt = existingSub["ExpiresAt"].AsInt32;
-                RpcErrors.RpcErrors420.PremiumSubActiveUntilX.ThrowRpcError(existingExpiresAt);
-            }
-
             // No active Premium - activate subscription
+            var subCol = mongoDatabase.GetCollection<BsonDocument>("premium_subscriptions");
             var expiresAt = now + (months * 30 * 24 * 3600);
 
             // Create premium subscription

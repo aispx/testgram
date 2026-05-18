@@ -37,4 +37,18 @@ public class StarsTransactionDocument
     public long? StarrefPeerUserId { get; set; }
     public long? StarrefPeerChannelId { get; set; }
     public long? StarrefAmount { get; set; }
+    // layer-223 starsTransaction flags that were previously not persisted
+    public bool Pending { get; set; }
+    public bool Failed { get; set; }
+    public bool Reaction { get; set; }
+    public bool BusinessTransfer { get; set; }
+    public bool StargiftResale { get; set; }
+    public bool PostsSearch { get; set; }
+    public bool StargiftPrepaidUpgrade { get; set; }
+    public bool StargiftDropOriginalDetails { get; set; }
+    public bool PhonegroupMessage { get; set; }
+    public int? PaidMessages { get; set; }
+    public int? MsgId { get; set; }
+    public int? TransactionDate { get; set; }
+    public string? TransactionUrl { get; set; }
 }

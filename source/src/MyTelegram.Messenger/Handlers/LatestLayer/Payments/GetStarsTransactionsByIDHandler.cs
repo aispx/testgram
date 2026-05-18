@@ -15,10 +15,12 @@ internal sealed class GetStarsTransactionsByIDHandler(IMongoDatabase mongoDataba
             .ToListAsync();
 
         var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+        var history = docs.Select(StarsBalanceHelper.ToTl).ToList();
+        await StarsBalanceHelper.HydrateGiftsAsync(mongoDatabase, history, docs.Select(d => d.StargiftSlug).ToList());
         return new TStarsStatus
         {
             Balance = new TStarsAmount { Amount = balance },
-            History = new TVector<IStarsTransaction>(docs.Select(StarsBalanceHelper.ToTl).ToList()),
+            History = new TVector<IStarsTransaction>(history.Cast<IStarsTransaction>().ToList()),
             Chats = new TVector<IChat>(), Users = new TVector<IUser>()
         };
     }

@@ -46,6 +46,13 @@ internal sealed class SendStarsFormHandler(
                 _ => peerHelper.GetPeer(premiumStars.UserId, input.UserId).PeerId
             };
 
+            // Premium gifting is not allowed to bots/system users (Telegram clients also reject this UI-side).
+            if (targetUserId != input.UserId)
+            {
+                var queryProcessor0 = services.GetRequiredService<IQueryProcessor>();
+                await PeerKindHelper.EnsureNotBotOrSystemAsync(queryProcessor0, targetUserId);
+            }
+
             // Deduct Stars from sender
             await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -starsPrice);
             await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -starsPrice,
@@ -221,7 +228,7 @@ internal sealed class SendStarsFormHandler(
                 !d.IsUnique).FirstOrDefaultAsync();
             if (saved == null) RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
-            var upgradeHandler = new UpgradeStarGiftHandler(mongoDatabase, messageAppService, null!);
+            var upgradeHandler = new UpgradeStarGiftHandler(mongoDatabase, messageAppService);
             return new TPaymentResult { Updates = await upgradeHandler.UpgradeAsync(input, saved!, overrideUserId: saved!.OwnerUserId) };
         }
 
@@ -229,34 +236,77 @@ internal sealed class SendStarsFormHandler(
         {
             var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
             SavedStarGiftDocument? saved = null;
-            if (upgradeInvoice.Stargift is TInputSavedStarGiftUser u)
+
+            // Resolve the exact saved gift the client referred to. Each
+            // InputSavedStarGift variant carries a unique key, so we MUST
+            // match on it precisely — falling back to "first non-unique gift
+            // with UpgradeStars" used to upgrade an arbitrary Blue Star when
+            // the user actually clicked Upgrade on a different gift.
+            switch (upgradeInvoice.Stargift)
             {
-                // First try auction gifts (they have proper UpgradeStars and GiftNum)
-                saved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.IsAuction && !d.IsUnique && d.UpgradeStars.HasValue && d.GiftNum.HasValue).FirstOrDefaultAsync();
-                // Then try exact message match
-                if (saved == null)
+                case TInputSavedStarGiftUser u:
                 {
-                    saved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.MessageId == u.MsgId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
+                    // 1. Exact message-anchored match.
+                    if (u.MsgId != 0)
+                    {
+                        saved = await savedCol.Find(d =>
+                            d.OwnerUserId == input.UserId &&
+                            d.MessageId == u.MsgId &&
+                            !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
+
+                        // Some clients pass the saved-id in MsgId for self-bought
+                        // gifts that were never anchored to a message.
+                        if (saved == null)
+                        {
+                            saved = await savedCol.Find(d =>
+                                d.OwnerUserId == input.UserId &&
+                                d.RandomId == u.MsgId &&
+                                !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
+                        }
+                    }
+                    // 2. Buy-flow doesn't write back the service-message id, so
+                    //    self-bought gifts always have MessageId=0 in the DB.
+                    //    When no exact match was found, fall back to the most
+                    //    recently received upgradable gift — that's the one the
+                    //    user just clicked Upgrade on. Sort by Date desc instead
+                    //    of MongoDB natural order, otherwise the OLDEST gift is
+                    //    silently picked (the original bug).
+                    if (saved == null)
+                    {
+                        saved = await savedCol
+                            .Find(d => d.OwnerUserId == input.UserId && d.MessageId == 0 && !d.IsUnique && d.UpgradeStars.HasValue)
+                            .Sort(Builders<SavedStarGiftDocument>.Sort.Descending(d => d.Date))
+                            .FirstOrDefaultAsync();
+                    }
+                    break;
                 }
-                // Finally try MessageId = 0 (for older saved gifts)
-                if (saved == null)
-                {
-                    saved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.MessageId == 0 && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
-                }
+                case TInputSavedStarGiftChat c:
+                    var channelId = (c.Peer as TInputPeerChannel)?.ChannelId ?? 0;
+                    saved = await savedCol.Find(d =>
+                        d.OwnerChannelId == channelId &&
+                        d.RandomId == c.SavedId &&
+                        !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
+                    break;
+                case TInputSavedStarGiftSlug s:
+                    saved = await savedCol.Find(d =>
+                        d.OwnerUserId == input.UserId &&
+                        d.UniqueSlug == s.Slug &&
+                        !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
+                    break;
             }
+
             if (saved == null || saved.IsUnique || !saved.UpgradeStars.HasValue)
                 RpcErrors.RpcErrors400.StargiftUpgradeUnavailable.ThrowRpcError();
 
             var bal = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
             if (bal < saved!.UpgradeStars!.Value)
                 RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
+            var chargedUpgradeStars = saved.UpgradeStars.Value;
             await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -saved.UpgradeStars.Value);
-            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -saved.UpgradeStars.Value, gift: true, title: "In-App Purchase", stargiftUpgrade: true);
 
             var giftCol = mongoDatabase.GetCollection<StarGiftDocument>("star-gifts");
             StarGiftDocument? giftDoc = null;
             
-            Console.WriteLine($"[DEBUG] Upgrade: saved.IsAuction={saved.IsAuction}, GiftId={saved.GiftId}, GiftNum={saved.GiftNum}");
             
             // First try to find via auction lookup
             if (saved.IsAuction && saved.GiftNum.HasValue && saved.GiftNum.Value > 0)
@@ -269,14 +319,11 @@ internal sealed class SendStarsFormHandler(
                         Builders<BsonDocument>.Filter.Eq("GiftNum", saved.GiftNum.Value)
                     );
                     var acquiredGift = await acquiredCollection.Find(filter).FirstOrDefaultAsync();
-                    Console.WriteLine($"[DEBUG] Acquired gift: {acquiredGift != null}");
                     if (acquiredGift != null)
                     {
                         var actualGiftId = acquiredGift.GetValue("GiftId").AsInt64;
-                        Console.WriteLine($"[DEBUG] Looking up star-gifts with GiftId={actualGiftId}");
                         var giftFilter = Builders<StarGiftDocument>.Filter.Eq(g => g.GiftId, actualGiftId);
                         giftDoc = await giftCol.Find(giftFilter).FirstOrDefaultAsync();
-                        Console.WriteLine($"[DEBUG] Found gift in star-gifts: {giftDoc != null}");
                         if (giftDoc != null)
                         {
                             await mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts")
@@ -293,19 +340,15 @@ internal sealed class SendStarsFormHandler(
             // Fallback to direct lookup
             if (giftDoc == null)
             {
-                Console.WriteLine($"[DEBUG] Falling back to direct lookup with GiftId={saved.GiftId}");
                 var directFilter = Builders<StarGiftDocument>.Filter.Eq(g => g.GiftId, saved.GiftId);
                 giftDoc = await giftCol.Find(directFilter).FirstOrDefaultAsync();
-                Console.WriteLine($"[DEBUG] Direct lookup result: {giftDoc != null}");
             }
             
             if (giftDoc == null)
                 RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
-            // Get IPtsHelper from service provider
-            var ptsHelper = services.GetRequiredService<IPtsHelper>();
-            var upgradeHandler = new UpgradeStarGiftHandler(mongoDatabase, messageAppService, ptsHelper);
-            return new TPaymentResult { Updates = await upgradeHandler.UpgradeAsync(input, saved, giftDoc) };
+            var upgradeHandler = new UpgradeStarGiftHandler(mongoDatabase, messageAppService);
+            return new TPaymentResult { Updates = await upgradeHandler.UpgradeAsync(input, saved, giftDoc, chargedUpgradeStars, "In-App Purchase") };
         }
 
         if (obj.Invoice is TInputInvoiceStarGiftDropOriginalDetails dropInvoice)
@@ -324,12 +367,18 @@ internal sealed class SendStarsFormHandler(
             var bal2 = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
             if (bal2 < dropCost) RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
 
+            // Drop-original-details is modelled as a self-transfer: the gift stays
+            // owned by the same user, but the original sender is replaced with self
+            // and the inscription/comment are wiped. No service message is emitted,
+            // matching the user-facing semantics of "removing the signature".
             await savedCol2.UpdateOneAsync(
                 Builders<SavedStarGiftDocument>.Filter.Eq(d => d.Id, saved2!.Id),
                 Builders<SavedStarGiftDocument>.Update
                     .Set(d => d.MessageText, null)
-                    .Set(d => d.FromUserId, 0)
-                    .Set(d => d.NameHidden, true));
+                    .Set(d => d.MessageEntities, null)
+                    .Set(d => d.FromUserId, input.UserId)
+                    .Set(d => d.NameHidden, true)
+                    .Set(d => d.Date, DateTime.UtcNow.ToTimestamp()));
 
             // For unique gifts also update unique-star-gifts
             if (saved2!.IsUnique && saved2.UniqueSlug != null)
@@ -338,12 +387,19 @@ internal sealed class SendStarsFormHandler(
                     .UpdateOneAsync(d => d.Slug == saved2.UniqueSlug,
                         Builders<UniqueStarGiftDocument>.Update
                             .Set(d => d.NameHidden, true)
+                            .Set(d => d.OriginalDetailsDropped, true)
                             .Set(d => d.MessageText, null)
-                            .Set(d => d.FromUserId, 0));
+                            .Set(d => d.MessageEntities, null)
+                            .Set(d => d.FromUserId, input.UserId));
             }
 
             await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -dropCost);
-            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -dropCost, title: "Remove original details");
+            // Tag with stargiftDropOriginalDetails and slug so the wallet entry
+            // shows the dedicated layer-223 transaction kind, and clients can
+            // hydrate the embedded gift visual from the slug.
+            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -dropCost,
+                title: "Remove original details", stargiftDropOriginalDetails: true,
+                stargiftSlug: saved2!.UniqueSlug, gift: true);
 
             return new TPaymentResult { Updates = new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = DateTime.UtcNow.ToTimestamp(), Seq = 0 } };
         }
@@ -376,9 +432,15 @@ internal sealed class SendStarsFormHandler(
             if (sellerUserId == input.UserId || (newOwnerUserId > 0 && newOwnerUserId == sellerUserId))
                 RpcErrors.RpcErrors400.StargiftOwnerInvalid.ThrowRpcError();
 
+            // Cannot send NFT to bots / system users.
+            if (newOwnerUserId > 0 && newOwnerUserId != input.UserId)
+            {
+                var queryProcessorR = services.GetRequiredService<IQueryProcessor>();
+                await PeerKindHelper.EnsureNotBotOrSystemAsync(queryProcessorR, newOwnerUserId);
+            }
+
             // Debit buyer + credit seller (85 % after fee, same as Telegram).
             long sellerReceives = (long)Math.Floor(price * 0.85);
-            var unit = useTon ? "TON" : "⭐️";
             if (useTon)
             {
                 await TonBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -price);
@@ -388,10 +450,12 @@ internal sealed class SendStarsFormHandler(
             }
             else
             {
+                // Tag both legs with stargiftResale:true so the buyer/seller see
+                // the resale-specific row in their Stars wallet history.
                 await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -price);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -price, gift: true, title: $"Buy {uniqueDoc.Title} #{uniqueDoc.Num}");
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -price, gift: true, stargiftResale: true, title: $"Buy {uniqueDoc.Title} #{uniqueDoc.Num}", stargiftSlug: uniqueDoc.Slug);
                 await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, sellerUserId, sellerReceives);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, sellerUserId, sellerReceives, gift: true, title: $"Sold {uniqueDoc.Title} #{uniqueDoc.Num}");
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, sellerUserId, sellerReceives, gift: true, stargiftResale: true, title: $"Sold {uniqueDoc.Title} #{uniqueDoc.Num}", stargiftSlug: uniqueDoc.Slug);
             }
 
             // Transfer ownership. Both currency-specific listings are cleared and
@@ -418,6 +482,9 @@ internal sealed class SendStarsFormHandler(
                 Stars = 0,
                 IsUnique = true,
                 UniqueSlug = uniqueDoc.Slug,
+                NameHidden = uniqueDoc.NameHidden,
+                MessageText = uniqueDoc.MessageText,
+                MessageEntities = uniqueDoc.MessageEntities,
                 RandomId = uniqueDoc.UniqueId,
                 Saved = true,
                 Date = DateTime.UtcNow.ToTimestamp(),
@@ -430,18 +497,38 @@ internal sealed class SendStarsFormHandler(
                 DcId = uniqueDoc.DcId,
             });
 
-            // Notify seller
+            // Notify seller via a structured service action so the client can localise it
+            // (previously this was sent as hard-coded English text).
             uniqueDoc.OwnerUserId = newOwnerUserId;
             uniqueDoc.OwnerChannelId = newOwnerChannelId;
-            var sellerMsg = $"Your gift {uniqueDoc.Title} #{uniqueDoc.Num} was sold for {price} {unit}. Your balance has been topped up by {sellerReceives} {unit}.";
+            uniqueDoc.ResellStars = 0;
+            uniqueDoc.ResellTon = 0;
+            uniqueDoc.ResaleTonOnly = false;
+            var sellerUniqueTl = UniqueStarGiftHelper.ToTl(uniqueDoc);
+            IStarsAmount sellerReceivedAmount = useTon
+                ? new TStarsTonAmount { Amount = sellerReceives }
+                : new TStarsAmount { Amount = sellerReceives, Nanos = 0 };
+            IPeer sellerActionPeer = newOwnerUserId > 0
+                ? new TPeerUser { UserId = newOwnerUserId }
+                : new TPeerChannel { ChannelId = newOwnerChannelId };
+            var sellerAction = new TMessageActionStarGiftUnique
+            {
+                Gift = sellerUniqueTl,
+                Transferred = true,
+                Saved = false,
+                FromId = new TPeerUser { UserId = input.UserId },
+                Peer = sellerActionPeer,
+                ResaleAmount = sellerReceivedAmount,
+            };
             await messageAppService.SendMessageAsync([new SendMessageInput(
                 RequestInfo.Empty with { UserId = MyTelegramConsts.NotificationServiceUserId, Layer = MyTelegramConsts.Layer, Date = DateTime.UtcNow.ToTimestamp(), RequestId = Guid.NewGuid() },
                 MyTelegramConsts.NotificationServiceUserId,
                 new Peer(PeerType.User, sellerUserId),
-                sellerMsg,
+                string.Empty,
                 Random.Shared.NextInt64(),
-                sendMessageType: SendMessageType.Text,
-                messageType: MessageType.Text
+                sendMessageType: SendMessageType.MessageService,
+                messageType: MessageType.Text,
+                messageAction: sellerAction
             )]);
 
             // Send gift action to buyer. Layer 206: the resale price is surfaced to
@@ -544,6 +631,31 @@ internal sealed class SendStarsFormHandler(
             if (channelReadModel == null || !channelReadModel.GetValue("Broadcast", false).AsBoolean)
                 RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
         }
+        else if (toPeer.PeerId != input.UserId)
+        {
+            // Cannot gift to bots / system users.
+            var queryProcessorG = services.GetRequiredService<IQueryProcessor>();
+            await PeerKindHelper.EnsureNotBotOrSystemAsync(queryProcessorG, toPeer.PeerId);
+
+            // Item 15: forbid attaching a comment to a star gift if the recipient charges
+            // for incoming messages (NoncontactPeersPaidStars > 0). Without this guard a
+            // sender could bypass the paid-message price by tucking text into the gift.
+            var hasComment = !starGiftInvoice.HideName && !string.IsNullOrEmpty((starGiftInvoice.Message as TTextWithEntities)?.Text);
+            if (hasComment)
+            {
+                var privacyAppService = services.GetRequiredService<IPrivacyAppService>();
+                var targetGps = await privacyAppService.GetGlobalPrivacySettingsAsync(toPeer.PeerId);
+                if ((targetGps?.NoncontactPeersPaidStars ?? 0) > 0)
+                {
+                    throw new RpcException(new RpcError(400, "STARGIFT_MESSAGE_NOT_ALLOWED"));
+                }
+            }
+        }
+
+        var randomId = Random.Shared.NextInt64();
+        var prepaidUpgradeHash = starGiftInvoice.IncludeUpgrade && gift.UpgradeStars.HasValue
+            ? Guid.NewGuid().ToString("N")
+            : null;
 
         var starGift = new TStarGift
         {
@@ -568,15 +680,19 @@ internal sealed class SendStarsFormHandler(
         {
             Gift = starGift,
             NameHidden = starGiftInvoice.HideName,
-            CanUpgrade = gift.UpgradeStars.HasValue,
+            CanUpgrade = gift.UpgradeStars.HasValue && prepaidUpgradeHash == null,
             ConvertStars = gift.ConvertStars,
+            // Android treats upgrade_stars > 0 as "the upgrade is already paid":
+            // it adds the amount to the displayed gift value and shows the
+            // "free upgrade" copy. Regular gifts must therefore expose zero here.
+            UpgradeStars = prepaidUpgradeHash != null ? gift.UpgradeStars : null,
             Message = starGiftInvoice.HideName ? null : starGiftInvoice.Message,
             Peer = isChannel ? new TPeerChannel { ChannelId = toPeer.PeerId } : null,
             SavedId = isChannel ? 0L : null,
-            FromId = isChannel && !starGiftInvoice.HideName ? new TPeerUser { UserId = input.UserId } : null,
+            FromId = starGiftInvoice.HideName ? null : new TPeerUser { UserId = input.UserId },
+            PrepaidUpgrade = prepaidUpgradeHash != null,
+            PrepaidUpgradeHash = prepaidUpgradeHash,
         };
-
-        var randomId = Random.Shared.NextInt64();
 
         if (isChannel)
         {
@@ -639,6 +755,8 @@ internal sealed class SendStarsFormHandler(
             Saved = true,
             Date = DateTime.UtcNow.ToTimestamp(),
             MessageText = starGiftInvoice.HideName ? null : starGiftInvoice.Message?.Text,
+            // Item 14: persist entities so animated/custom emoji in the gift comment survive a round-trip.
+            MessageEntities = starGiftInvoice.HideName ? null : (starGiftInvoice.Message as TTextWithEntities)?.Entities,
             RandomId = randomId,
             DocumentId = gift.DocumentId,
             DocumentAccessHash = gift.DocumentAccessHash,
@@ -656,17 +774,13 @@ internal sealed class SendStarsFormHandler(
             peerUserId: isChannel ? null : toPeer.PeerId,
             peerChannelId: isChannel ? toPeer.PeerId : null);
 
-        if (starGiftInvoice.IncludeUpgrade && gift.UpgradeStars.HasValue)
+        if (prepaidUpgradeHash != null)
         {
-            var hash = Guid.NewGuid().ToString("N");
             await mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts")
                 .UpdateOneAsync(d => d.RandomId == randomId,
                     Builders<SavedStarGiftDocument>.Update
                         .Set(d => d.PrepaidUpgrade, true)
-                        .Set(d => d.PrepaidUpgradeHash, hash)
-                        .Set(d => d.UpgradeStars, 0)); // already paid
-            messageAction.PrepaidUpgrade = true;
-            messageAction.PrepaidUpgradeHash = hash;
+                        .Set(d => d.PrepaidUpgradeHash, prepaidUpgradeHash));
         }
 
         return new TPaymentResult { Updates = new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = DateTime.UtcNow.ToTimestamp(), Seq = 0 } };

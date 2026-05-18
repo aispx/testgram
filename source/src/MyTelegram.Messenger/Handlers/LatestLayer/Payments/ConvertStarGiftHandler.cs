@@ -7,17 +7,22 @@ internal sealed class ConvertStarGiftHandler(IMongoDatabase mongoDatabase) : Rpc
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestConvertStarGift obj)
     {
-        if (obj.Stargift is not TInputSavedStarGiftUser u || u.MsgId == 0)
-            RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
-
-        var msgId = ((TInputSavedStarGiftUser)obj.Stargift).MsgId;
         var collection = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
-        var gift = await collection.Find(
-            Builders<SavedStarGiftDocument>.Filter.And(
-                Builders<SavedStarGiftDocument>.Filter.Eq(d => d.OwnerUserId, input.UserId),
-                Builders<SavedStarGiftDocument>.Filter.Eq(d => d.MessageId, msgId)
-            )
-        ).FirstOrDefaultAsync();
+        var chatChannelId = obj.Stargift is TInputSavedStarGiftChat c0 && c0.Peer is TInputPeerChannel ch0
+            ? ch0.ChannelId
+            : 0;
+
+        SavedStarGiftDocument? gift = obj.Stargift switch
+        {
+            TInputSavedStarGiftUser u when u.MsgId != 0 => await collection.Find(d =>
+                d.OwnerUserId == input.UserId && (d.MessageId == u.MsgId || d.RandomId == u.MsgId)).FirstOrDefaultAsync(),
+            TInputSavedStarGiftSlug s => await collection.Find(d =>
+                d.OwnerUserId == input.UserId && d.UniqueSlug == s.Slug).FirstOrDefaultAsync(),
+            TInputSavedStarGiftChat c => await collection.Find(d =>
+                d.OwnerChannelId == chatChannelId &&
+                d.RandomId == c.SavedId).FirstOrDefaultAsync(),
+            _ => null
+        };
 
         if (gift == null)
             throw new RpcException(new RpcError(400, "STARGIFT_NOT_FOUND"));
