@@ -12,10 +12,39 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendChangePhoneCodeHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSendChangePhoneCode, MyTelegram.Schema.Auth.ISentCode>
+internal sealed class SendChangePhoneCodeHandler(
+    ICommandBus commandBus,
+    IQueryProcessor queryProcessor,
+    IVerificationCodeGenerator verificationCodeGenerator,
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSendChangePhoneCode, MyTelegram.Schema.Auth.ISentCode>
 {
-    protected override Task<MyTelegram.Schema.Auth.ISentCode> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSendChangePhoneCode obj)
+    protected override async Task<MyTelegram.Schema.Auth.ISentCode> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSendChangePhoneCode obj)
     {
-        throw new NotImplementedException();
+        var phoneNumber = obj.PhoneNumber.ToPhoneNumber();
+        if (!long.TryParse(phoneNumber, out _))
+            RpcErrors.RpcErrors400.PhoneNumberInvalid.ThrowRpcError();
+
+        var existing = await queryProcessor.ProcessAsync(new GetUserByPhoneNumberQuery(phoneNumber));
+        if (existing != null)
+            RpcErrors.RpcErrors400.PhoneNumberOccupied.ThrowRpcError();
+
+        var code = verificationCodeGenerator.Generate();
+        var phoneCodeHash = Guid.NewGuid().ToString("N");
+        await commandBus.PublishAsync(new CreateAppCodeCommand(
+            AppCodeId.Create(phoneNumber, phoneCodeHash),
+            input.ToRequestInfo(),
+            input.UserId,
+            phoneNumber,
+            code,
+            phoneCodeHash,
+            DateTime.UtcNow.ToTimestamp()));
+
+        return new TSentCode
+        {
+            Type = new TSentCodeTypeSms { Length = code.Length },
+            PhoneCodeHash = phoneCodeHash,
+            Timeout = options.CurrentValue.VerificationCodeExpirationSeconds,
+        };
     }
 }

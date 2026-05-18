@@ -8,6 +8,7 @@ using MyTelegram.Messenger;
 using MyTelegram.Messenger.Services.Email;
 using MyTelegram.Messenger.CommandServer.BackgroundServices;
 using MyTelegram.Messenger.CommandServer.Extensions;
+using MyTelegram.Messenger.Services.HistoryTTL;
 using Serilog;
 using Serilog.Sinks.SystemConsole.Themes;
 using MyTelegramConsts = MyTelegram.MyTelegramConsts;
@@ -118,6 +119,7 @@ builder.ConfigureServices((ctx,
     services.AddHostedService<MessageQueueDataProcessorBackgroundService<MessengerCommandDataReceivedEvent>>();
     services.AddHostedService<MessageQueueDataProcessorBackgroundService<NewDeviceCreatedEvent>>();
     services.AddHostedService<MessageQueueDataProcessorBackgroundService<ISessionMessage>>();
+    services.AddHostedService<MessageAutoDeleteService>();
     services.AddHostedService<MessageQueueDataProcessorBackgroundService<IDomainEvent>>();
     services.AddHostedService<QueuedCommandExecutorBackgroundService<DeviceAggregate, DeviceId>>();
     services.AddHostedService<QueuedCommandExecutorBackgroundService<PtsAggregate, PtsId>>();

@@ -1,3 +1,6 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// Change the phone number of the current account
@@ -13,10 +16,37 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ChangePhoneHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestChangePhone, MyTelegram.Schema.IUser>
+internal sealed class ChangePhoneHandler(
+    IQueryProcessor queryProcessor,
+    IMongoDatabase mongoDatabase,
+    IUserAppService userAppService,
+    IUserConverterService userConverterService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestChangePhone, MyTelegram.Schema.IUser>
 {
-    protected override Task<MyTelegram.Schema.IUser> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestChangePhone obj)
+    protected override async Task<MyTelegram.Schema.IUser> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestChangePhone obj)
     {
-        throw new NotImplementedException();
+        var phoneNumber = obj.PhoneNumber.ToPhoneNumber();
+        if (!long.TryParse(phoneNumber, out _))
+            RpcErrors.RpcErrors400.PhoneNumberInvalid.ThrowRpcError();
+        if (string.IsNullOrWhiteSpace(obj.PhoneCode))
+            RpcErrors.RpcErrors400.PhoneCodeEmpty.ThrowRpcError();
+
+        var existing = await queryProcessor.ProcessAsync(new GetUserByPhoneNumberQuery(phoneNumber));
+        if (existing != null && existing.UserId != input.UserId)
+            RpcErrors.RpcErrors400.PhoneNumberOccupied.ThrowRpcError();
+
+        var appCode = await queryProcessor.ProcessAsync(new GetLatestAppCodeQuery(phoneNumber, obj.PhoneCodeHash));
+        if (appCode == null || appCode.Expire < DateTime.UtcNow.ToTimestamp())
+            RpcErrors.RpcErrors400.PhoneCodeExpired.ThrowRpcError();
+        if (!string.Equals(appCode.Code, obj.PhoneCode, StringComparison.OrdinalIgnoreCase))
+            RpcErrors.RpcErrors400.PhoneCodeInvalid.ThrowRpcError();
+
+        await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
+            .UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("UserId.low", (int)input.UserId),
+                Builders<BsonDocument>.Update.Set("PhoneNumber", phoneNumber));
+
+        var user = await userAppService.GetAsync(input.UserId);
+        return userConverterService.ToUser(input, user!, layer: input.Layer);
     }
 }

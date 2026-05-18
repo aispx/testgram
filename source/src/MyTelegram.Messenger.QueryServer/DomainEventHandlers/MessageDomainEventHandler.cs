@@ -62,7 +62,7 @@ public partial class MessageDomainEventHandler(
 
         await SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo,
             updates,
-            domainEvent.AggregateEvent.NewMessageItem.SenderPeer.PeerId,
+            domainEvent.AggregateEvent.RequestInfo.UserId,
             domainEvent.AggregateEvent.NewMessageItem.Pts,
             domainEvent.AggregateEvent.NewMessageItem.ToPeer.PeerType
         );
@@ -246,6 +246,17 @@ public partial class MessageDomainEventHandler(
     {
         var updates = sendMessageConverterService.ToUpdates(aggregateEvent);
         var item = aggregateEvent.MessageItems.Last();
+
+        // tdesktop's `Updates::applyUpdatesNoPtsCheck` (api_updates.cpp) routes a
+        // `updateShortMessage` / `updateShortChatMessage` push through `DataIsLoaded`
+        // which short-circuits to `getDifference()` whenever the sender or chat is
+        // not yet cached on the client. The Desktop fork in particular ends up
+        // silently dropping the message render until the next manual refresh.
+        // Promote inbox short-form updates to a full `TUpdates` with the sender
+        // resolved inline so clients can render immediately regardless of cache
+        // state.
+        updates = await EnrichInboxUpdatesAsync(aggregateEvent, updates);
+
         await PushUpdatesToPeerAsync(item.OwnerPeer,
             updates,
             pts: item.Pts,
@@ -255,14 +266,108 @@ public partial class MessageDomainEventHandler(
         // Update MessageId in star-gift-offers by RandomId for recipient's message
         if (item.MessageAction is TMessageActionStarGiftPurchaseOffer && item.RandomId != 0)
         {
-            Console.WriteLine($"[DEBUG] HandleReceiveMessage StarGiftPurchaseOffer: RandomId={item.RandomId}, MessageId={item.MessageId}");
             var offerCol = mongoDatabase.GetCollection<StarGiftOfferDocument>("star-gift-offers");
             // Update recipient's message id (in case sender's id was already stored)
             var updateResult = await offerCol.UpdateOneAsync(
                 Builders<StarGiftOfferDocument>.Filter.Eq(d => d.RandomId, item.RandomId),
                 Builders<StarGiftOfferDocument>.Update.Set(d => d.MessageId, item.MessageId)
             );
-            Console.WriteLine($"[DEBUG] HandleReceiveMessage update result: {updateResult.ModifiedCount} documents updated");
+        }
+    }
+
+    private async Task<IUpdates> EnrichInboxUpdatesAsync(
+        ReceiveInboxMessageCompletedSagaEvent aggregateEvent,
+        IUpdates updates)
+    {
+        // Already a full TUpdates (media / forward / service / grouped) -- just make
+        // sure the sender's TUser is embedded so tdesktop doesn't trigger a
+        // getDifference round-trip when the peer hasn't been cached yet.
+        if (updates is TUpdates tUpdates)
+        {
+            await EnsureSenderUserAsync(aggregateEvent, tUpdates);
+            return tUpdates;
+        }
+
+        // Short-form updates need to be promoted to full TUpdates with the
+        // sender resolved so the client can render the message without a
+        // round-trip.
+        var item = aggregateEvent.MessageItems.Last();
+        var senderPeer = item.SenderPeer;
+        if (senderPeer.PeerType != PeerType.User && senderPeer.PeerType != PeerType.Self &&
+            senderPeer.PeerType != PeerType.Chat)
+        {
+            return updates;
+        }
+
+        var fullUpdates = new TUpdates
+        {
+            Chats = [],
+            Users = [],
+            Date = item.Date,
+            Seq = 0,
+            Updates = new TVector<IUpdate>(aggregateEvent.MessageItems.Select(p => (IUpdate)new TUpdateNewMessage
+            {
+                Pts = p.Pts,
+                PtsCount = 1,
+                Message = messageConverterService.ToMessage(0, p)
+            }))
+        };
+
+        if (item.MessageActionType == MessageActionType.SetMessagesTtl &&
+            item.MessageAction is TMessageActionSetMessagesTTL messageActionSetMessagesTtl)
+        {
+            fullUpdates.Updates.Insert(0, new TUpdatePeerHistoryTTL
+            {
+                Peer = item.ToPeer.ToPeer(),
+                TtlPeriod = messageActionSetMessagesTtl.Period == 0 ? null : messageActionSetMessagesTtl.Period
+            });
+        }
+
+        await EnsureSenderUserAsync(aggregateEvent, fullUpdates);
+        return fullUpdates;
+    }
+
+    private async Task EnsureSenderUserAsync(
+        ReceiveInboxMessageCompletedSagaEvent aggregateEvent,
+        TUpdates tUpdates)
+    {
+        var senderUserId = aggregateEvent.MessageItem.SenderPeer.PeerType switch
+        {
+            PeerType.User or PeerType.Self => aggregateEvent.MessageItem.SenderPeer.PeerId,
+            PeerType.Chat => aggregateEvent.MessageItem.SenderUserId,
+            _ => 0L
+        };
+
+        if (senderUserId <= 0)
+        {
+            return;
+        }
+
+        if (tUpdates.Users.Any(u => u.Id == senderUserId))
+        {
+            return;
+        }
+
+        try
+        {
+            // ReceiveInboxMessageCompletedSagaEvent has no RequestInfo (the recipient is
+            // not the request initiator), so use RequestInfo.Empty -- GetUserAsync only
+            // needs the user id and resolves the rest from read models. Access hash is
+            // regenerated client-side by the embedded user object inside the push.
+            var user = await userConverterService.GetUserAsync(
+                RequestInfo.Empty,
+                senderUserId,
+                skipSetContactProperties: false,
+                skipPrivacy: false);
+            tUpdates.Users.Add(user);
+        }
+        catch (Exception ex)
+        {
+            // Don't break the inbox push if the sender can't be resolved -- log and fall
+            // back to the original short-form push behavior.
+            logger.LogWarning(ex,
+                "Failed to embed sender {SenderUserId} in inbox updates for owner {OwnerUserId}",
+                senderUserId, aggregateEvent.MessageItem.OwnerPeer.PeerId);
         }
     }
 
@@ -352,7 +457,6 @@ public partial class MessageDomainEventHandler(
         // Update MessageId in star-gift-offers by RandomId
         if (item.MessageAction is TMessageActionStarGiftPurchaseOffer && item.RandomId != 0)
         {
-            Console.WriteLine($"[DEBUG] StarGiftPurchaseOffer: RandomId={item.RandomId}, MessageId={item.MessageId}");
             var offerCol = mongoDatabase.GetCollection<StarGiftOfferDocument>("star-gift-offers");
             var updateResult = await offerCol.UpdateOneAsync(
                 Builders<StarGiftOfferDocument>.Filter.And(
@@ -361,7 +465,6 @@ public partial class MessageDomainEventHandler(
                 ),
                 Builders<StarGiftOfferDocument>.Update.Set(d => d.MessageId, item.MessageId)
             );
-            Console.WriteLine($"[DEBUG] StarGiftPurchaseOffer update result: {updateResult.ModifiedCount} documents updated");
         }
     }
 
