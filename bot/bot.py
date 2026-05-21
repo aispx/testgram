@@ -75,7 +75,8 @@ def get_rabbitmq_url():
     logger.warning("RabbitMQ auto-detect failed, falling back to localhost")
     return f"amqp://{user}:{password}@localhost/"
 
-RABBITMQ_URL = get_rabbitmq_url()
+ENABLE_RABBITMQ_CONSUMER = os.environ.get("ENABLE_RABBITMQ_CONSUMER", "false").lower() in {"1", "true", "yes", "on"}
+RABBITMQ_URL = get_rabbitmq_url() if ENABLE_RABBITMQ_CONSUMER else ""
 
 # Bot placeholder - the real Bot object is created in main() after the
 # asyncio event loop exists, so proxy/session settings can be applied safely.
@@ -196,6 +197,7 @@ async def send_code_to_owner(owner, digits, code):
     text = f"📱 Код для {digits}: <code>{code}</code>"
     try:
         await bot.send_message(owner, text, parse_mode="HTML")
+        logger.info("Sent login code for %s to Telegram user %s", digits, owner)
     except Exception as e:
         logger.error(f"send_code_to_owner error: {e}")
 
@@ -259,7 +261,10 @@ async def main():
     bot = Bot(token=BOT_TOKEN, session=session)
     
     await init_db()
-    asyncio.create_task(rabbitmq_consumer())
+    if ENABLE_RABBITMQ_CONSUMER:
+        asyncio.create_task(rabbitmq_consumer())
+    else:
+        logger.info("RabbitMQ consumer disabled; codes are received via HTTP /send")
     
     app = web.Application()
     app.router.add_post("/send", handle_send)

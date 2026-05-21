@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Impl;
+using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 using TPeerSettings = MyTelegram.Schema.TPeerSettings;
@@ -355,13 +356,18 @@ public class UserConverterService(
         }
 
         user.Status = userStatusCacheAppService.GetUserStatus(user.Id);
-        EmojiStatus? emojiStatus = null;
-        if (userReadModel.EmojiStatusDocumentId != null)
+        if (userReadModel.EmojiStatusCollectibleId.HasValue && userReadModel.EmojiStatusDocumentId.HasValue)
         {
-            emojiStatus = new EmojiStatus(userReadModel.EmojiStatusDocumentId.Value, userReadModel.EmojiStatusValidUntil);
+            user.EmojiStatus = BuildCollectibleEmojiStatus(
+                userReadModel.EmojiStatusCollectibleId.Value,
+                userReadModel.EmojiStatusDocumentId.Value,
+                userReadModel.EmojiStatusValidUntil);
         }
-
-        user.EmojiStatus = emojiStatusLayeredService.GetConverter(layer).ToEmojiStatus(emojiStatus);
+        else if (userReadModel.EmojiStatusDocumentId != null)
+        {
+            var emojiStatus = new EmojiStatus(userReadModel.EmojiStatusDocumentId.Value, userReadModel.EmojiStatusValidUntil);
+            user.EmojiStatus = emojiStatusLayeredService.GetConverter(layer).ToEmojiStatus(emojiStatus);
+        }
         var contactType = contactHelper.GetContactType(myContactReadModel, targetUserContactReadModel);
         var photos = photoReadModels ?? [];
         SetUserProfilePhoto(userReadModel, user, photos, layer);
@@ -505,6 +511,35 @@ public class UserConverterService(
                 }
             }
         }
+    }
+
+    private IEmojiStatus? BuildCollectibleEmojiStatus(long collectibleId, long documentId, int? until)
+    {
+        var doc = mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts")
+            .Find(d => d.UniqueId == collectibleId && !d.Burned)
+            .FirstOrDefault();
+
+        if (doc == null)
+        {
+            return new TEmojiStatus { DocumentId = documentId, Until = until };
+        }
+
+        var pattern = doc.Attributes.FirstOrDefault(a => a.Type == "pattern");
+        var backdrop = doc.Attributes.FirstOrDefault(a => a.Type == "backdrop");
+
+        return new TEmojiStatusCollectible
+        {
+            CollectibleId = doc.UniqueId,
+            DocumentId = documentId,
+            Title = $"{doc.Title} #{doc.Num}",
+            Slug = doc.Slug,
+            PatternDocumentId = pattern?.DocumentId ?? 0,
+            CenterColor = backdrop?.CenterColor ?? 0,
+            EdgeColor = backdrop?.EdgeColor ?? 0,
+            PatternColor = backdrop?.PatternColor ?? 0,
+            TextColor = backdrop?.TextColor ?? 0,
+            Until = until,
+        };
     }
 
     private void SetUserProfilePhoto(IUserReadModel userReadModel,

@@ -32,6 +32,7 @@ public interface IUserReadModel : IReadModel
     string? Email { get; }
     long? EmojiStatusDocumentId { get; }
     int? EmojiStatusValidUntil { get; }
+    long? EmojiStatusCollectibleId { get; }
     List<long> RecentEmojiStatuses { get; }
     VideoSizeEmojiMarkup? VideoEmojiMarkup { get; }
 

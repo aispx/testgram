@@ -10,7 +10,7 @@ echo "MongoDB is ready. Checking XieFather bot..."
 
 mongosh --host mongodb:27017 tg <<'EOF'
 // Check if XieFather bot exists
-var xieFatherUserId = NumberLong(2667001);
+var xieFatherUserId = NumberLong("600000000000");
 var xieFatherUsername = "xiefather";
 
 var existingBot = db.getCollection("eventflow-userreadmodel").findOne({ UserId: xieFatherUserId });

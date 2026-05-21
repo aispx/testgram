@@ -14,12 +14,15 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class UpdateEmojiStatusHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdateEmojiStatus, IBool>
+internal sealed class UpdateEmojiStatusHandler(
+    IMongoDatabase mongoDatabase,
+    MyTelegram.Services.Services.IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdateEmojiStatus, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUpdateEmojiStatus obj)
     {
         long? documentId = null;
         int? until = null;
+        long? collectibleId = null;
 
         switch (obj.EmojiStatus)
         {
@@ -38,6 +41,7 @@ internal sealed class UpdateEmojiStatusHandler(IMongoDatabase mongoDatabase) : R
                     RpcErrors.RpcErrors400.CollectibleInvalid.ThrowRpcError();
                 var model = doc.Attributes.FirstOrDefault(a => a.Type == "model");
                 documentId = model?.DocumentId ?? doc.DocumentId;
+                collectibleId = collectible.CollectibleId;
                 until = collectible.Until;
                 break;
             }
@@ -51,12 +55,45 @@ internal sealed class UpdateEmojiStatusHandler(IMongoDatabase mongoDatabase) : R
         BsonValue emojiStatusUntilValue = until.HasValue ? new BsonInt32(until.Value) : BsonNull.Value;
         var update = Builders<BsonDocument>.Update
             .Set("EmojiStatusDocumentId", emojiStatusDocumentValue)
-            .Set("EmojiStatusValidUntil", emojiStatusUntilValue);
+            .Set("EmojiStatusValidUntil", emojiStatusUntilValue)
+            .Set("EmojiStatusCollectibleId", (BsonValue)(collectibleId.HasValue ? new BsonInt64(collectibleId.Value) : BsonNull.Value));
         if (documentId.HasValue)
         {
             update = update.PushEach("RecentEmojiStatuses", [documentId.Value], slice: -10);
         }
-        await col.UpdateOneAsync(Builders<BsonDocument>.Filter.Eq("UserId.low", (int)input.UserId), update);
+        await col.UpdateOneAsync(Builders<BsonDocument>.Filter.Eq("UserId", input.UserId), update);
+
+        IEmojiStatus resolvedStatus = documentId.HasValue
+            ? new TEmojiStatus { DocumentId = documentId.Value, Until = until }
+            : new TEmojiStatusEmpty();
+
+        var emojiUpdate = new TUpdateUserEmojiStatus
+        {
+            UserId = input.UserId,
+            EmojiStatus = resolvedStatus
+        };
+        var updates = new TUpdates
+        {
+            Updates = new TVector<IUpdate>(emojiUpdate),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+        };
+        await objectMessageSender.PushMessageToPeerAsync(
+            new Peer(PeerType.User, input.UserId),
+            updates);
+
+        var recentUpdate = new TUpdateRecentEmojiStatuses();
+        var recentUpdates = new TUpdates
+        {
+            Updates = new TVector<IUpdate>(recentUpdate),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+        };
+        await objectMessageSender.PushMessageToPeerAsync(
+            new Peer(PeerType.User, input.UserId),
+            recentUpdates);
 
         return new TBoolTrue();
     }

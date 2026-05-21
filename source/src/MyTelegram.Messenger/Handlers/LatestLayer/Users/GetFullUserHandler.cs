@@ -59,6 +59,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetChatThemeAsync(input.UserId, targetUserId, userFull);
         await SetStarRefProgramAsync(targetUserId, userFull);
         await SetPinnedMsgIdAsync(input.UserId, targetUserId, userFull);
+        await SetBotCanManageEmojiStatusAsync(input.UserId, targetUserId, userReadModel, userFull);
 
         // CRITICAL: Cast to concrete TUser for proper serialization
         // ILayeredUser interface doesn't serialize correctly in TVector
@@ -608,6 +609,30 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to load star ref program for bot {BotId}", targetUserId);
+        }
+    }
+
+    private async Task SetBotCanManageEmojiStatusAsync(long selfUserId, long targetBotId, IUserReadModel targetUser, IUserFull userFull)
+    {
+        if (!targetUser.Bot)
+            return;
+
+        try
+        {
+            var permissionCol = mongoDatabase.GetCollection<BsonDocument>("bot_emoji_status_permissions");
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("BotId", targetBotId),
+                Builders<BsonDocument>.Filter.Eq("UserId", selfUserId)
+            );
+            var permissionDoc = await permissionCol.Find(filter).FirstOrDefaultAsync();
+            if (permissionDoc != null && permissionDoc.Contains("Enabled") && permissionDoc["Enabled"].AsBoolean)
+            {
+                userFull.BotCanManageEmojiStatus = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to check bot emoji status permission for bot {BotId} user {UserId}", targetBotId, selfUserId);
         }
     }
 

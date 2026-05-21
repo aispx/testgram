@@ -68,6 +68,9 @@ public class UniqueStarGiftDocument
 
     // Layer 206 resale tracking in TON.
     public long? LastResaleTon { get; set; }
+
+    // Emoji status expiration (unix timestamp), set when gift is used as emoji status
+    public int? Until { get; set; }
 }
 
 public class UniqueGiftAttribute
@@ -86,6 +89,9 @@ public class UniqueGiftAttribute
     public string? MimeType { get; set; }
     public long? DocumentSize { get; set; }
     public int? DcId { get; set; }
+
+    // collectible
+    public long? CollectibleId { get; set; }
 
     // backdrop
     public int? BackdropId { get; set; }

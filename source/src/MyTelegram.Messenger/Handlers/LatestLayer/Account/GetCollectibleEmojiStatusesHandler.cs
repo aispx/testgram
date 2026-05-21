@@ -23,10 +23,11 @@ internal sealed class GetCollectibleEmojiStatusesHandler(IMongoDatabase mongoDat
             var model = doc.Attributes.FirstOrDefault(a => a.Type == "model");
             var pattern = doc.Attributes.FirstOrDefault(a => a.Type == "pattern");
             var backdrop = doc.Attributes.FirstOrDefault(a => a.Type == "backdrop");
+            var collectible = doc.Attributes.FirstOrDefault(a => a.Type == "collectible");
             statuses.Add(new TEmojiStatusCollectible
             {
-                CollectibleId = doc.UniqueId,
-                DocumentId = model?.DocumentId ?? doc.DocumentId,
+                CollectibleId = collectible?.CollectibleId ?? doc.UniqueId,
+                DocumentId = doc.DocumentId,
                 Title = $"{doc.Title} #{doc.Num}",
                 Slug = doc.Slug,
                 PatternDocumentId = pattern?.DocumentId ?? 0,
@@ -34,6 +35,8 @@ internal sealed class GetCollectibleEmojiStatusesHandler(IMongoDatabase mongoDat
                 EdgeColor = backdrop?.EdgeColor ?? 0,
                 PatternColor = backdrop?.PatternColor ?? 0,
                 TextColor = backdrop?.TextColor ?? 0,
+                Until = doc.Until,
+                Flags = doc.Until.HasValue ? 1 : 0,
             });
         }
 

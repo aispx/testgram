@@ -40,6 +40,7 @@ public class UserReadModel : IUserReadModel,
     public string? Email { get; private set; }
     public long? EmojiStatusDocumentId { get; private set; }
     public int? EmojiStatusValidUntil { get; private set; }
+    public long? EmojiStatusCollectibleId { get; private set; }
     public long? FallbackPhotoId { get; private set; }
     public virtual string FirstName { get; private set; } = null!;
     public GlobalPrivacySettings? GlobalPrivacySettings { get; private set; }

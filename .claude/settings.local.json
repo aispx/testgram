@@ -59,5 +59,8 @@
   },
   "sessions": {
     "save": true
-  }
+  },
+  "disabledMcpjsonServers": [
+    "claude-flow"
+  ]
 }

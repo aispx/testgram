@@ -1,3 +1,5 @@
+using MyTelegram.Schema.Account;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// Get recently used <a href="https://corefork.telegram.org/api/emoji-status">emoji statuses</a>
@@ -14,7 +16,8 @@ internal sealed class GetRecentEmojiStatusesHandler(IUserAppService userAppServi
         {
             return new TEmojiStatuses
             {
-                Statuses = []
+                Hash = 0,
+                Statuses = new TVector<IEmojiStatus>()
             };
         }
 
@@ -26,15 +29,37 @@ internal sealed class GetRecentEmojiStatusesHandler(IUserAppService userAppServi
 
         if (user!.RecentEmojiStatuses?.Count > 0)
         {
+            var hash = ComputeHash(user.RecentEmojiStatuses);
+            if (obj.Hash != 0 && obj.Hash == hash)
+            {
+                return new TEmojiStatusesNotModified();
+            }
+
             return new TEmojiStatuses
             {
-                Statuses = [..user!.RecentEmojiStatuses.Select(p => new TEmojiStatus() { DocumentId = p })]
+                Hash = hash,
+                Statuses = new TVector<IEmojiStatus>(user.RecentEmojiStatuses.Select(p => new TEmojiStatus { DocumentId = p }).ToList())
             };
         }
 
         return new TEmojiStatuses
         {
-            Statuses = []
+            Hash = 0,
+            Statuses = new TVector<IEmojiStatus>()
         };
+    }
+
+    private static long ComputeHash(IEnumerable<long> statuses)
+    {
+        unchecked
+        {
+            var hash = 0L;
+            foreach (var status in statuses)
+            {
+                hash = (hash * 20261) + status;
+            }
+
+            return hash;
+        }
     }
 }

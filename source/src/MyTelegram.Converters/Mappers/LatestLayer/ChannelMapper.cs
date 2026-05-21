@@ -66,26 +66,11 @@ internal sealed class ChannelMapper
 
         if (source.EmojiStatus != null)
         {
-            if (source.EmojiStatus.Until.HasValue)
+            destination.EmojiStatus = new TEmojiStatus
             {
-                //destination.EmojiStatus = new TEmojiStatusUntil
-                //{
-                //    DocumentId = source.EmojiStatus.DocumentId,
-                //    Until = source.EmojiStatus.Until.Value
-                //};
-                //destination.EmojiStatus = new TEmojiStatusCollectible
-                //{
-                //    Until = source.EmojiStatus.Until,
-                //    DocumentId=source.EmojiStatus.DocumentId
-                //};
-            }
-            else
-            {
-                destination.EmojiStatus = new TEmojiStatus
-                {
-                    DocumentId = source.EmojiStatus.DocumentId
-                };
-            }
+                DocumentId = source.EmojiStatus.DocumentId,
+                Until = source.EmojiStatus.Until
+            };
         }
 
         destination.SignatureProfiles = source.SignatureProfiles;
