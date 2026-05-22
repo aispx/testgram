@@ -38,6 +38,39 @@ internal static class CustomEmojiAttributeHelper
         return false;
     }
 
+    public static bool TryGetStickerAttributeAsCustomEmoji(BsonDocument document, out TDocumentAttributeCustomEmoji attribute)
+    {
+        attribute = null!;
+        if (!document.Contains("Attributes2") || document["Attributes2"].IsBsonNull || !document["Attributes2"].IsBsonArray)
+        {
+            return false;
+        }
+
+        foreach (var value in document["Attributes2"].AsBsonArray)
+        {
+            if (!value.IsBsonDocument)
+            {
+                continue;
+            }
+
+            var attrDoc = value.AsBsonDocument;
+            if (!IsType(attrDoc, nameof(TDocumentAttributeSticker)))
+            {
+                continue;
+            }
+
+            attribute = new TDocumentAttributeCustomEmoji
+            {
+                Alt = attrDoc.TryGetValue("Alt", out var alt) && alt.IsString ? alt.AsString : "🎁",
+                Free = true,
+                Stickerset = ParseStickerSet(attrDoc)
+            };
+            return true;
+        }
+
+        return false;
+    }
+
     private static IInputStickerSet ParseStickerSet(BsonDocument attrDoc)
     {
         if (!attrDoc.TryGetValue("Stickerset", out var stickerSetValue) || stickerSetValue.IsBsonNull || !stickerSetValue.IsBsonDocument)

@@ -6,7 +6,8 @@ using MyTelegram.Schema.Phone;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 
 internal sealed class JoinGroupCallHandler(
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper)
     : RpcResultObjectHandler<RequestJoinGroupCall, IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -20,11 +21,7 @@ internal sealed class JoinGroupCallHandler(
             return null!;
         }
 
-        var filter = Builders<GroupCallDocument>.Filter.And(
-            Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, inputGroupCall.Id),
-            Builders<GroupCallDocument>.Filter.Eq(g => g.AccessHash, inputGroupCall.AccessHash)
-        );
-
+        var filter = GroupCallStateHelper.Filter(inputGroupCall);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         if (groupCall == null || !groupCall.Active)
         {
@@ -32,36 +29,43 @@ internal sealed class JoinGroupCallHandler(
             return null!;
         }
 
-        var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var joinAs = peerHelper.GetPeer(obj.JoinAs, input.UserId);
+        if (joinAs == null)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var currentDate = GroupCallStateHelper.CurrentDate();
         var ssrc = Random.Shared.Next(100000, 999999);
+        while (groupCall.Participants.Any(p => p.Source == ssrc))
+        {
+            ssrc = Random.Shared.Next(100000, 999999);
+        }
 
         var participant = new GroupCallParticipantDoc
         {
-            PeerId = input.UserId,
-            PeerType = 0,
+            PeerId = joinAs.PeerId,
+            PeerType = (int)joinAs.PeerType,
             Source = ssrc,
-            Muted = obj.Muted,
+            Muted = obj.Muted || groupCall.JoinMuted,
             VideoStopped = obj.VideoStopped,
             Date = currentDate,
-            ParamsJson = obj.Params?.Data
+            ParamsJson = obj.Params?.Data,
+            PublicKey = obj.PublicKey?.ToArray()
         };
 
-        var updateFilter = Builders<GroupCallDocument>.Filter.And(
-            Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, inputGroupCall.Id),
-            Builders<GroupCallDocument>.Filter.Eq(g => g.AccessHash, inputGroupCall.AccessHash)
-        );
-
-        await _groupCallCollection.UpdateOneAsync(updateFilter,
-            Builders<GroupCallDocument>.Update
-                .Push(g => g.Participants, participant)
-                .Inc(g => g.Version, 1));
-
-        return new TUpdates
+        groupCall.Participants.RemoveAll(p => p.PeerId == participant.PeerId && p.PeerType == participant.PeerType);
+        groupCall.Participants.Add(participant);
+        groupCall.Version++;
+        if (obj.Block is { } block)
         {
-            Updates = new TVector<IUpdate>(),
-            Chats = new TVector<IChat>(),
-            Users = new TVector<IUser>(),
-            Date = currentDate
-        };
+            groupCall.ChainBlocks.Add(new GroupCallChainBlockDoc { Block = block.ToArray() });
+        }
+
+        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+
+        return GroupCallStateHelper.Updates(
+            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]));
     }
 }

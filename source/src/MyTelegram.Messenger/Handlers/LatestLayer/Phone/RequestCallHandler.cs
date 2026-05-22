@@ -1,8 +1,10 @@
 using MongoDB.Driver;
+using MyTelegram.Domain.Shared;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
+using MyTelegram.Services.Phone;
 using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
@@ -40,6 +42,26 @@ internal sealed class RequestCallHandler(
             return null!;
         }
 
+        ValidateHandshakeProtocol(obj.Protocol);
+
+        var duplicateFilter = Builders<CallSessionDocument>.Filter.And(
+            Builders<CallSessionDocument>.Filter.Eq(s => s.CallerId, input.UserId),
+            Builders<CallSessionDocument>.Filter.Eq(s => s.RandomId, obj.RandomId));
+        if (await _callCollection.Find(duplicateFilter).AnyAsync())
+        {
+            RpcErrors.RpcErrors500.RandomIdDuplicate.ThrowRpcError();
+            return null!;
+        }
+
+        var busyFilter = Builders<CallSessionDocument>.Filter.And(
+            Builders<CallSessionDocument>.Filter.Eq(s => s.CalleeId, calleeId),
+            Builders<CallSessionDocument>.Filter.In(s => s.State, ["received", "accepted", "confirmed"]));
+        if (await _callCollection.Find(busyFilter).AnyAsync())
+        {
+            RpcErrors.RpcErrors400.CallOccupyFailed.ThrowRpcError();
+            return null!;
+        }
+
         var callId = Random.Shared.NextInt64();
         callId = Math.Abs(callId);
         if (callId == 0) callId = 1;
@@ -62,15 +84,20 @@ internal sealed class RequestCallHandler(
             Video = obj.Video,
             State = "requested",
             Date = currentDate,
-            ProtocolJson = System.Text.Json.JsonSerializer.Serialize(new
-            {
-                UdpP2p = obj.Protocol is TPhoneCallProtocol p ? p.UdpP2p : true,
-                UdpReflector = obj.Protocol is TPhoneCallProtocol p2 ? p2.UdpReflector : true,
-                MinLayer = obj.Protocol is TPhoneCallProtocol p3 ? p3.MinLayer : 65,
-                MaxLayer = obj.Protocol is TPhoneCallProtocol p4 ? p4.MaxLayer : 92
-            })
+            CallerLibraryVersions = [.. PhoneCallProtocolHelper.GetLibraryVersions(obj.Protocol)]
         };
         await _callCollection.InsertOneAsync(session);
+
+        var phoneCallWaiting = new MyTelegram.Schema.TPhoneCallWaiting
+        {
+            Id = callId,
+            AccessHash = accessHash,
+            AdminId = input.UserId,
+            ParticipantId = calleeId,
+            Date = currentDate,
+            Protocol = PhoneCallProtocolHelper.Normalize(obj.Protocol),
+            Video = obj.Video
+        };
 
         var phoneCallRequested = new MyTelegram.Schema.TPhoneCallRequested
         {
@@ -80,7 +107,7 @@ internal sealed class RequestCallHandler(
             ParticipantId = calleeId,
             GAHash = obj.GAHash,
             Date = currentDate,
-            Protocol = BuildProtocol(obj.Protocol),
+            Protocol = PhoneCallProtocolHelper.Normalize(obj.Protocol),
             Video = obj.Video
         };
 
@@ -88,50 +115,53 @@ internal sealed class RequestCallHandler(
         var usersVector = new TVector<MyTelegram.Schema.IUser>(users);
 
         var updatePhoneCall = new MyTelegram.Schema.TUpdatePhoneCall { PhoneCall = phoneCallRequested };
+        var incomingCallUpdates = new TUpdates
+        {
+            Updates = new TVector<IUpdate> { updatePhoneCall },
+            Users = usersVector,
+            Chats = new TVector<IChat>(),
+            Date = currentDate
+        };
 
         var calleePeer = new Peer(PeerType.User, calleeId);
-        await objectMessageSender.PushMessageToPeerAsync(calleePeer,
-            new TUpdates
-            {
-                Updates = new TVector<IUpdate> { updatePhoneCall },
-                Users = usersVector,
-                Chats = new TVector<IChat>(),
-                Date = currentDate
-            });
+        await objectMessageSender.PushMessageToPeerAsync(
+            calleePeer,
+            incomingCallUpdates,
+            pushData: CreateIncomingCallPushData(input.UserId, calleeId, callId, accessHash, incomingCallUpdates, users));
 
-        await SendIncomingCallServiceMessageAsync(input, callId, calleeId);
+        await SendIncomingCallServiceMessageAsync(input, callId, calleeId, obj.Video);
 
         return new MyTelegram.Schema.Phone.TPhoneCall
         {
-            PhoneCall = phoneCallRequested,
+            PhoneCall = phoneCallWaiting,
             Users = usersVector
         };
     }
 
-    private static TPhoneCallProtocol BuildProtocol(IPhoneCallProtocol? proto)
+    private static void ValidateHandshakeProtocol(IPhoneCallProtocol? protocol)
     {
-        var p = proto as TPhoneCallProtocol;
-        return new TPhoneCallProtocol
+        if (!PhoneCallProtocolHelper.HasValidLegacyFlags(protocol))
         {
-            UdpP2p = p?.UdpP2p ?? true,
-            UdpReflector = p?.UdpReflector ?? true,
-            MinLayer = p?.MinLayer ?? 65,
-            MaxLayer = p?.MaxLayer ?? 92,
-            LibraryVersions = new TVector<string> { "2.7.7" }
-        };
+            RpcErrors.RpcErrors400.CallProtocolFlagsInvalid.ThrowRpcError();
+        }
+
+        if (!PhoneCallProtocolHelper.HasValidLegacyLayers(protocol))
+        {
+            RpcErrors.RpcErrors400.CallProtocolLayerInvalid.ThrowRpcError();
+        }
     }
 
-    private async Task SendIncomingCallServiceMessageAsync(IRequestInput input, long callId, long calleeId)
+    private async Task SendIncomingCallServiceMessageAsync(IRequestInput input, long callId, long calleeId, bool video)
     {
         var action = new TMessageActionPhoneCall
         {
             CallId = callId,
-            Video = false
+            Video = video
         };
 
         var sendInput = new SendMessageInput(
             input.ToRequestInfo() with { ReqMsgId = 0 },
-            calleeId,
+            input.UserId,
             new Peer(PeerType.User, calleeId),
             string.Empty,
             Random.Shared.NextInt64(),
@@ -140,5 +170,35 @@ internal sealed class RequestCallHandler(
             messageAction: action
         );
         await messageAppService.SendMessageAsync([sendInput]);
+    }
+
+    private static PushData CreateIncomingCallPushData(
+        long callerId,
+        long calleeId,
+        long callId,
+        long accessHash,
+        TUpdates updates,
+        IReadOnlyCollection<IUser> users)
+    {
+        var callerName = callerId.ToString();
+        var caller = users.OfType<TUser>().FirstOrDefault(user => user.Id == callerId);
+        if (caller != null)
+        {
+            callerName = string.IsNullOrWhiteSpace(caller.LastName)
+                ? caller.FirstName ?? callerName
+                : $"{caller.FirstName} {caller.LastName}".Trim();
+        }
+
+        return new PushData(
+            PushNotificationTypes.PhoneCallRequest,
+            [callerName],
+            calleeId,
+            new PushNotificationCustomData
+            {
+                Updates = updates.ToBytes().ToBase64Url(),
+                CallId = callId,
+                CallAh = accessHash
+            },
+            null);
     }
 }

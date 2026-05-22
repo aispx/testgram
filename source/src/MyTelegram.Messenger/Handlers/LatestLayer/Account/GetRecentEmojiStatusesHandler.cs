@@ -1,3 +1,5 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
 using MyTelegram.Schema.Account;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
@@ -8,7 +10,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetRecentEmojiStatusesHandler(IUserAppService userAppService) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetRecentEmojiStatuses, MyTelegram.Schema.Account.IEmojiStatuses>
+internal sealed class GetRecentEmojiStatusesHandler(IUserAppService userAppService, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetRecentEmojiStatuses, MyTelegram.Schema.Account.IEmojiStatuses>
 {
     protected override async Task<MyTelegram.Schema.Account.IEmojiStatuses> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetRecentEmojiStatuses obj)
     {
@@ -27,9 +29,15 @@ internal sealed class GetRecentEmojiStatusesHandler(IUserAppService userAppServi
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }
 
-        if (user!.RecentEmojiStatuses?.Count > 0)
+        var recentEmojiStatuses = await GetLatestRecentEmojiStatusesAsync(input.UserId);
+        if (recentEmojiStatuses.Count == 0 && user!.RecentEmojiStatuses?.Count > 0)
         {
-            var hash = ComputeHash(user.RecentEmojiStatuses);
+            recentEmojiStatuses = user.RecentEmojiStatuses;
+        }
+
+        if (recentEmojiStatuses.Count > 0)
+        {
+            var hash = ComputeHash(recentEmojiStatuses);
             if (obj.Hash != 0 && obj.Hash == hash)
             {
                 return new TEmojiStatusesNotModified();
@@ -38,7 +46,7 @@ internal sealed class GetRecentEmojiStatusesHandler(IUserAppService userAppServi
             return new TEmojiStatuses
             {
                 Hash = hash,
-                Statuses = new TVector<IEmojiStatus>(user.RecentEmojiStatuses.Select(p => new TEmojiStatus { DocumentId = p }).ToList())
+                Statuses = new TVector<IEmojiStatus>(recentEmojiStatuses.Select(p => new TEmojiStatus { DocumentId = p }).ToList())
             };
         }
 
@@ -46,6 +54,37 @@ internal sealed class GetRecentEmojiStatusesHandler(IUserAppService userAppServi
         {
             Hash = 0,
             Statuses = new TVector<IEmojiStatus>()
+        };
+    }
+
+    private async Task<List<long>> GetLatestRecentEmojiStatusesAsync(long userId)
+    {
+        var userDoc = await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
+            .Find(Builders<BsonDocument>.Filter.Eq("UserId", userId))
+            .Project(Builders<BsonDocument>.Projection.Include("RecentEmojiStatuses"))
+            .FirstOrDefaultAsync();
+
+        if (userDoc == null ||
+            !userDoc.TryGetValue("RecentEmojiStatuses", out var value) ||
+            !value.IsBsonArray)
+        {
+            return [];
+        }
+
+        return value.AsBsonArray
+            .Select(GetInt64)
+            .Where(x => x != 0)
+            .ToList();
+    }
+
+    private static long GetInt64(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Int64 => value.AsInt64,
+            BsonType.Int32 => value.AsInt32,
+            BsonType.Double => (long)value.AsDouble,
+            _ => 0
         };
     }
 

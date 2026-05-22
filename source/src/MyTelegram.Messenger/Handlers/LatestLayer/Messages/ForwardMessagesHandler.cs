@@ -150,6 +150,15 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
         }
 
         MonoforumCompatibilityHelper.ValidateSuggestedPostOrThrow(obj.SuggestedPost, isMonoforum);
+        var targetNoForwards = targetChannelReadModel?.NoForwards == true;
+        if (!targetNoForwards && toPeer.PeerType == PeerType.Chat)
+        {
+            targetNoForwards = (await channelAppService.GetAsync(toPeer.PeerId))?.NoForwards == true;
+        }
+        if (!targetNoForwards && toPeer.PeerType == PeerType.User)
+        {
+            targetNoForwards = await IsPrivateChatNoForwardsEnabledAsync(input.UserId, toPeer.PeerId);
+        }
 
         long? paidMessageStars = null;
         if (toPeer.PeerType == PeerType.User)
@@ -202,9 +211,11 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
             }
         }
 
+        await ThrowIfForwardingRestrictedAsync(input.UserId, fromPeer, messagesToCheck);
+
         if (!isMonoforum)
         {
-            var command = new StartForwardMessagesCommand(TempId.New, input.ToRequestInfo(), obj.Silent, obj.Background, obj.WithMyScore, obj.DropAuthor, obj.DropMediaCaptions, obj.Noforwards, fromPeer, toPeer, obj.Id.ToList(), obj.RandomId.ToList(), obj.ScheduleDate, sendAs, false, post);
+            var command = new StartForwardMessagesCommand(TempId.New, input.ToRequestInfo(), obj.Silent, obj.Background, obj.WithMyScore, obj.DropAuthor, obj.DropMediaCaptions, obj.Noforwards || targetNoForwards, fromPeer, toPeer, obj.Id.ToList(), obj.RandomId.ToList(), obj.ScheduleDate, sendAs, false, post);
             await commandBus.PublishAsync(command);
             return null!;
         }
@@ -273,7 +284,8 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                 postAuthor: sourceMessage.PostAuthor,
                 views: sourceMessage.Views,
                 pollId: sourceMessage.PollId,
-                invertMedia: sourceMessage.InvertMedia
+                invertMedia: sourceMessage.InvertMedia,
+                noForwards: obj.Noforwards
             );
             inputs.Add(sendInput);
         }
@@ -285,6 +297,62 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
         await messageAppService.SendMessageAsync(inputs);
         return null!;
+    }
+
+    private async Task ThrowIfForwardingRestrictedAsync(
+        long selfUserId,
+        Peer fromPeer,
+        IReadOnlyCollection<IMessageReadModel> messages)
+    {
+        if (messages.Any(m => m.NoForwards))
+        {
+            RpcErrors.RpcErrors406.ChatForwardsRestricted.ThrowRpcError();
+        }
+
+        if (fromPeer.PeerType == PeerType.User &&
+            await IsPrivateChatForwardingRestrictedAsync(selfUserId, fromPeer.PeerId, messages))
+        {
+            RpcErrors.RpcErrors406.ChatForwardsRestricted.ThrowRpcError();
+        }
+
+        if (fromPeer.PeerType is not (PeerType.Channel or PeerType.Chat))
+        {
+            return;
+        }
+
+        var sourceChannel = await channelAppService.GetAsync(fromPeer.PeerId);
+        if (sourceChannel?.NoForwards == true)
+        {
+            RpcErrors.RpcErrors406.ChatForwardsRestricted.ThrowRpcError();
+        }
+    }
+
+    private async Task<bool> IsPrivateChatForwardingRestrictedAsync(
+        long selfUserId,
+        long otherUserId,
+        IReadOnlyCollection<IMessageReadModel> messages)
+    {
+        foreach (var senderUserId in messages.Select(x => x.SenderPeerId).Distinct())
+        {
+            var peerUserId = senderUserId == selfUserId ? otherUserId : selfUserId;
+            if (await IsPrivateChatNoForwardsEnabledAsync(senderUserId, peerUserId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async Task<bool> IsPrivateChatNoForwardsEnabledAsync(long ownerUserId, long peerUserId)
+    {
+        var collection = mongoDatabase.GetCollection<PrivateChatNoForwardsDocument>("private_chat_noforwards");
+        var filter = Builders<PrivateChatNoForwardsDocument>.Filter.And(
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.OwnerUserId, ownerUserId),
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.PeerUserId, peerUserId),
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.Enabled, true));
+
+        return await collection.Find(filter).AnyAsync();
     }
 
     private async Task<Peer?> ResolveMonoforumSavedPeerAsync(Peer toPeer, IInputReplyTo? replyTo, long selfUserId)

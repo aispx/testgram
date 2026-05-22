@@ -57,6 +57,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetUserStoriesAsync(targetUserId, userFull, input.UserId);
         await SetSavedMusicAsync(targetUserId, userFull);
         await SetChatThemeAsync(input.UserId, targetUserId, userFull);
+        await SetNoForwardsAsync(input.UserId, targetUserId, userFull);
         await SetStarRefProgramAsync(targetUserId, userFull);
         await SetPinnedMsgIdAsync(input.UserId, targetUserId, userFull);
         await SetBotCanManageEmojiStatusAsync(input.UserId, targetUserId, userReadModel, userFull);
@@ -143,22 +144,22 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
     private static (int level, long current, long? next) CalcRatingLevel(long totalStars)
     {
         // Beyond the fixed table: each level multiplies threshold by 3
-        long threshold = RatingLevels[^1]; // 50000
-        int level = RatingLevels.Length - 1;
+        long threshold = RatingLevels[^1];
+        int levelIndex = RatingLevels.Length - 1;
         while (totalStars >= threshold * 3)
         {
             threshold *= 3;
-            level++;
+            levelIndex++;
         }
         if (totalStars < RatingLevels[^1])
         {
             for (int i = RatingLevels.Length - 1; i >= 0; i--)
-                if (totalStars >= RatingLevels[i]) { level = i; break; }
-            long current = RatingLevels[level];
-            long? next = level + 1 < RatingLevels.Length ? RatingLevels[level + 1] : null;
-            return (level, current, next);
+                if (totalStars >= RatingLevels[i]) { levelIndex = i; break; }
+            long current = RatingLevels[levelIndex];
+            long? next = levelIndex + 1 < RatingLevels.Length ? RatingLevels[levelIndex + 1] : null;
+            return (levelIndex + 1, current, next);
         }
-        return (level, threshold, threshold * 3);
+        return (levelIndex + 1, threshold, threshold * 3);
     }
 
     private async Task SetStarsRatingAsync(long userId, IUserFull userFull, bool isSelf = false)
@@ -663,5 +664,23 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         {
             logger.LogWarning(ex, "Failed to load pinned message for user {SelfUserId} -> {TargetUserId}", selfUserId, targetUserId);
         }
+    }
+
+    private async Task SetNoForwardsAsync(long selfUserId, long targetUserId, IUserFull userFull)
+    {
+        var collection = mongoDatabase.GetCollection<PrivateChatNoForwardsDocument>("private_chat_noforwards");
+        var enabledFilter = Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.Enabled, true);
+
+        var myFilter = Builders<PrivateChatNoForwardsDocument>.Filter.And(
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.OwnerUserId, selfUserId),
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.PeerUserId, targetUserId),
+            enabledFilter);
+        userFull.NoforwardsMyEnabled = await collection.Find(myFilter).AnyAsync();
+
+        var peerFilter = Builders<PrivateChatNoForwardsDocument>.Filter.And(
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.OwnerUserId, targetUserId),
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.PeerUserId, selfUserId),
+            enabledFilter);
+        userFull.NoforwardsPeerEnabled = await collection.Find(peerFilter).AnyAsync();
     }
 }

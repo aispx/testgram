@@ -54,7 +54,8 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
             domainEvent.AggregateEvent.FromNames,
             domainEvent.AggregateEvent.SendAs,
             domainEvent.AggregateEvent.DropAuthor,
-            domainEvent.AggregateEvent.DropMediaCaptions
+            domainEvent.AggregateEvent.DropMediaCaptions,
+            domainEvent.AggregateEvent.NoForwards
         ));
         ForwardMessage(domainEvent.AggregateEvent);
         return Task.CompletedTask;
@@ -272,7 +273,8 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
             EncryptedData: _encryptionHelper.IsEnabled && !string.IsNullOrEmpty(message) ? _encryptionHelper.Encrypt(ownerPeerId, message) : null,
             InboxMessageEncryptedData: _encryptionHelper.IsEnabled && !string.IsNullOrEmpty(message) && _state.ToPeer.PeerType == PeerType.User
                 ? _encryptionHelper.Encrypt(_state.ToPeer.PeerId, message)
-                : null
+                : null,
+            NoForwards: _state.NoForwards
         );
 
         var reqMsgId = _state.ForwardFromLinkedChannel ? 0 : _state.RequestInfo.ReqMsgId;

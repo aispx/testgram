@@ -337,6 +337,11 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
         CheckAdminRights(requestInfo, rights => rights.ChangeInfo);
+        if (_state.NoForwards == enabled)
+        {
+            RpcErrors.RpcErrors400.ChatNotModified.ThrowRpcError();
+        }
+
         Emit(new ChannelNoForwardsChangedEvent(requestInfo, _state.ChannelId, enabled));
     }
 

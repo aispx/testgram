@@ -10,10 +10,18 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SaveDefaultGroupCallJoinAsHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestSaveDefaultGroupCallJoinAs, IBool>
+internal sealed class SaveDefaultGroupCallJoinAsHandler(
+    IPeerHelper peerHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestSaveDefaultGroupCallJoinAs, IBool>
 {
     protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestSaveDefaultGroupCallJoinAs obj)
     {
-        throw new NotImplementedException();
+        if (peerHelper.GetPeer(obj.Peer, input.UserId) == null || peerHelper.GetPeer(obj.JoinAs, input.UserId) == null)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return Task.FromResult<IBool>(null!);
+        }
+
+        return Task.FromResult<IBool>(new TBoolTrue());
     }
 }

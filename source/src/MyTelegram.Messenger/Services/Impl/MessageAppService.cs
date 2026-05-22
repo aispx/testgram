@@ -452,6 +452,17 @@ public class MessageAppService(
         //await CheckSendAsAsync(input);
         await CheckGlobalPrivacySettingsAsync(input);
         var channelReadModel = await CheckChannelBannedRightsAsync(input);
+        var targetNoForwards = channelReadModel?.NoForwards == true;
+        if (!targetNoForwards && input.ToPeer.PeerType == PeerType.Chat)
+        {
+            targetNoForwards = (await channelAppService.GetAsync(input.ToPeer.PeerId))?.NoForwards == true;
+        }
+        if (!targetNoForwards &&
+            input.ToPeer.PeerType == PeerType.User &&
+            input.ToPeer.PeerId != input.SenderUserId)
+        {
+            targetNoForwards = await IsPrivateChatNoForwardsEnabledAsync(input.SenderUserId, input.ToPeer.PeerId);
+        }
 
         var entities = input.Entities ?? [];
         var mentionedUserIds = await ProcessMessageEntitiesAsync(input.Message, entities, input.ToPeer);
@@ -611,12 +622,24 @@ public class MessageAppService(
             SuggestedPost: input.SuggestedPost,
             PaidSuggestedPostStars: input.SuggestedPost?.Price is TStarsAmount,
             PaidSuggestedPostTon: input.SuggestedPost?.Price is TStarsTonAmount,
-            TtlPeriod: input.TtlPeriod
+            TtlPeriod: input.TtlPeriod,
+            NoForwards: input.NoForwards || targetNoForwards
         );
 
         var sendMessageItem = new SendMessageItem(messageItem, input.ClearDraft, mentionedUserIds, []);
 
         return sendMessageItem;
+    }
+
+    private async Task<bool> IsPrivateChatNoForwardsEnabledAsync(long ownerUserId, long peerUserId)
+    {
+        var collection = mongoDatabase.GetCollection<PrivateChatNoForwardsDocument>("private_chat_noforwards");
+        var filter = Builders<PrivateChatNoForwardsDocument>.Filter.And(
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.OwnerUserId, ownerUserId),
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.PeerUserId, peerUserId),
+            Builders<PrivateChatNoForwardsDocument>.Filter.Eq(x => x.Enabled, true));
+
+        return await collection.Find(filter).AnyAsync();
     }
 
     public List<string> GetHashtags(string? message)
@@ -693,7 +716,7 @@ public class MessageAppService(
             }
 
             doc["Silent"] = messageItem.Silent;
-            doc["NoForwards"] = false;
+            doc["NoForwards"] = messageItem.NoForwards;
 
             await collection.InsertOneAsync(doc);
         }
@@ -712,7 +735,8 @@ public class MessageAppService(
                 Date = messageItem.ScheduleDate!.Value,
                 Message = messageItem.Message,
                 Entities = messageItem.Entities ?? new TVector<IMessageEntity>(),
-                Silent = messageItem.Silent
+                Silent = messageItem.Silent,
+                Noforwards = messageItem.NoForwards
             };
 
             if (messageItem.InputReplyTo != null)
@@ -821,7 +845,7 @@ public class MessageAppService(
                 RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
             }
 
-            if (!CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(document, out var attribute))
+            if (!TryGetCustomEmojiAttributeForEntity(document!, out var attribute))
             {
                 if (await TryDowngradeLegacyAnimatedEmojiEntityAsync(message, entities, entity))
                 {
@@ -917,7 +941,7 @@ public class MessageAppService(
         {
             var candidate = docs.FirstOrDefault(x => x["DocumentId"].ToInt64() == candidateDocumentId);
             if (candidate != null &&
-                CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(candidate, out var candidateAttribute) &&
+                TryGetCustomEmojiAttributeForEntity(candidate, out var candidateAttribute) &&
                 IsSameEmoji(text, candidateAttribute.Alt))
             {
                 return candidateDocumentId;
@@ -925,6 +949,12 @@ public class MessageAppService(
         }
 
         return null;
+    }
+
+    private static bool TryGetCustomEmojiAttributeForEntity(BsonDocument document, out TDocumentAttributeCustomEmoji attribute)
+    {
+        return CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(document, out attribute) ||
+               CustomEmojiAttributeHelper.TryGetStickerAttributeAsCustomEmoji(document, out attribute);
     }
 
     private static bool IsSameEmoji(string? left, string? right)

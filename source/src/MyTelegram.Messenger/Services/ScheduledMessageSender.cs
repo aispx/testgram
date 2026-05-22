@@ -137,7 +137,8 @@ public class ScheduledMessageSender : BackgroundService
                         entities: entities,
                         sendMessageType: SendMessageType.Text,
                         messageType: MessageType.Text,
-                        silent: doc.Contains("Silent") && doc["Silent"].AsBoolean
+                        silent: doc.Contains("Silent") && doc["Silent"].AsBoolean,
+                        noForwards: doc.Contains("NoForwards") && doc["NoForwards"].AsBoolean
                     );
 
                     sendInputs.Add(sendInput);

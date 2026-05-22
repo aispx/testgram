@@ -221,7 +221,7 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             }
         }
 
-        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod, savedPeerId: savedPeerId, suggestedPost: obj.SuggestedPost);
+        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod, savedPeerId: savedPeerId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
         await messageAppService.SendMessageAsync([sendMessageInput]);
 
         // Send updateBotNewBusinessMessage to connected business bots

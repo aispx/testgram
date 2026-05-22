@@ -60,7 +60,9 @@ public class ReactionDomainEventHandler(
             Big = r.Big,
             My = r.UserId == e.RequestInfo.UserId,
             Unread = r.UserId != e.RequestInfo.UserId && messageItem.SenderUserId == e.RequestInfo.UserId,
-            Reaction = string.IsNullOrEmpty(r.Emoticon)
+            Reaction = r.IsPaid
+                ? new TReactionPaid()
+                : string.IsNullOrEmpty(r.Emoticon)
                 ? new TReactionCustomEmoji { DocumentId = r.CustomEmojiDocumentId!.Value }
                 : new TReactionEmoji { Emoticon = r.Emoticon }
         }).Cast<IMessagePeerReaction>().ToList();

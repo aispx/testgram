@@ -25,6 +25,7 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
         var filter = Builders<BsonDocument>.Filter.In("DocumentId", obj.DocumentId.Select(x => (BsonValue)new BsonInt64(x)));
         var docs = await docCol.Find(filter).ToListAsync();
         var docMap = docs.ToDictionary(d => GetInt64(d["DocumentId"]));
+        var collectibleModelDocumentIds = await GetCollectibleModelDocumentIdsAsync(obj.DocumentId);
         var result = new List<IDocument>();
 
         foreach (var documentId in obj.DocumentId)
@@ -36,7 +37,7 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
 
             try
             {
-                result.Add(BuildDocument(d));
+                result.Add(BuildDocument(d, collectibleModelDocumentIds.Contains(documentId)));
             }
             catch (Exception ex)
             {
@@ -48,7 +49,55 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
         return new TVector<IDocument>(result);
     }
 
-    private static IDocument BuildDocument(BsonDocument d)
+    private async Task<HashSet<long>> GetCollectibleModelDocumentIdsAsync(ICollection<long> documentIds)
+    {
+        var modelAttributeFilter = new BsonDocument
+        {
+            ["Type"] = "model",
+            ["DocumentId"] = new BsonDocument("$in", new BsonArray(documentIds))
+        };
+        var giftFilter = new BsonDocument("Attributes",
+            new BsonDocument("$elemMatch", modelAttributeFilter));
+
+        var gifts = await mongoDatabase.GetCollection<BsonDocument>("unique-star-gifts")
+            .Find(giftFilter)
+            .Project(Builders<BsonDocument>.Projection.Include("Attributes"))
+            .ToListAsync();
+
+        return gifts
+            .SelectMany(GetModelDocumentIds)
+            .Where(documentIds.Contains)
+            .ToHashSet();
+    }
+
+    private static IEnumerable<long> GetModelDocumentIds(BsonDocument gift)
+    {
+        if (!gift.TryGetValue("Attributes", out var attributes) || !attributes.IsBsonArray)
+        {
+            yield break;
+        }
+
+        foreach (var value in attributes.AsBsonArray)
+        {
+            if (!value.IsBsonDocument)
+            {
+                continue;
+            }
+
+            var attribute = value.AsBsonDocument;
+            if (!attribute.TryGetValue("Type", out var type) ||
+                !type.IsString ||
+                type.AsString != "model" ||
+                !attribute.TryGetValue("DocumentId", out var documentId))
+            {
+                continue;
+            }
+
+            yield return GetInt64(documentId);
+        }
+    }
+
+    private static IDocument BuildDocument(BsonDocument d, bool isCollectibleModelDocument)
     {
         byte[] fileRef = [];
         if (d.Contains("FileReference") && !d["FileReference"].IsBsonNull)
@@ -60,7 +109,7 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
                 fileRef = fr.AsBsonArray.Select(x => (byte)GetInt32(x)).ToArray();
         }
 
-        var attributes = GetValidCustomEmojiAttributes(d);
+        var attributes = GetValidCustomEmojiAttributes(d, isCollectibleModelDocument);
 
         return new TDocument
         {
@@ -77,20 +126,47 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
         };
     }
 
-    private static TVector<IDocumentAttribute> GetValidCustomEmojiAttributes(BsonDocument d)
+    private static TVector<IDocumentAttribute> GetValidCustomEmojiAttributes(BsonDocument d, bool isCollectibleModelDocument)
     {
+        if (CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(d, out var customEmojiAttribute))
+        {
+            customEmojiAttribute.Stickerset ??= new TInputStickerSetEmpty();
+            return [customEmojiAttribute];
+        }
+
+        // Emoji statuses may reference regular animated sticker documents
+        // (not only documents that were originally stored with
+        // documentAttributeCustomEmoji). Clients still fetch them through
+        // messages.getCustomEmojiDocuments when resolving the status after
+        // reconnect/account reload, so expose the sticker as a custom-emoji
+        // document instead of dropping it and causing a stale-status fallback.
+        if (CustomEmojiAttributeHelper.TryGetStickerAttributeAsCustomEmoji(d, out var stickerAsCustomEmoji))
+        {
+            stickerAsCustomEmoji.Stickerset ??= new TInputStickerSetEmpty();
+            return [stickerAsCustomEmoji];
+        }
+
+        // Unique gift models are valid collectible emoji-status documents even
+        // when their source document was uploaded before Attributes2 existed.
+        if (isCollectibleModelDocument)
+        {
+            return
+            [
+                new TDocumentAttributeCustomEmoji
+                {
+                    Alt = "🎁",
+                    Free = true,
+                    Stickerset = new TInputStickerSetEmpty()
+                }
+            ];
+        }
+
         if (!d.Contains("Attributes2") || d["Attributes2"].IsBsonNull)
         {
             throw new InvalidDataException("Missing custom emoji attributes.");
         }
 
-        if (!CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(d, out var customEmojiAttribute))
-        {
-            throw new InvalidDataException("Document is not a custom emoji.");
-        }
-
-        customEmojiAttribute.Stickerset ??= new TInputStickerSetEmpty();
-        return [customEmojiAttribute];
+        throw new InvalidDataException("Document is not a custom emoji.");
     }
 
     private static long GetInt64(BsonValue v)

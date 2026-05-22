@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Subscribe or unsubscribe to a scheduled group call
@@ -10,10 +13,42 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ToggleGroupCallStartSubscriptionHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestToggleGroupCallStartSubscription, MyTelegram.Schema.IUpdates>
+internal sealed class ToggleGroupCallStartSubscriptionHandler(
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestToggleGroupCallStartSubscription, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestToggleGroupCallStartSubscription obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestToggleGroupCallStartSubscription obj)
     {
-        throw new NotImplementedException();
+        if (obj.Call is not MyTelegram.Schema.TInputGroupCall inputGroupCall)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
+        if (groupCall == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+        if (!groupCall.ScheduleDate.HasValue)
+        {
+            RpcErrors.RpcErrors403.GroupcallAlreadyStarted.ThrowRpcError();
+            return null!;
+        }
+
+        groupCall.ScheduleStartSubscriberIds.Remove(input.UserId);
+        if (obj.Subscribed)
+        {
+            groupCall.ScheduleStartSubscriberIds.Add(input.UserId);
+        }
+        groupCall.Version++;
+        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+        return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper));
     }
 }

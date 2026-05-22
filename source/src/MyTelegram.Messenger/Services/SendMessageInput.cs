@@ -44,7 +44,8 @@ public record SendMessageInput
         MessageFwdHeader? fwdHeader = null,
         MessageSubType messageSubType = MessageSubType.Normal,
         string? postAuthor = null,
-        int? views = null
+        int? views = null,
+        bool noForwards = false
         )
     {
         RequestInfo = requestInfo;
@@ -86,6 +87,7 @@ public record SendMessageInput
         MessageSubType = messageSubType;
         PostAuthor = postAuthor;
         Views = views;
+        NoForwards = noForwards;
     }
 
     public bool ClearDraft { get; }
@@ -114,6 +116,7 @@ public record SendMessageInput
     public MessageSubType MessageSubType { get; }
     public string? PostAuthor { get; }
     public int? Views { get; }
+    public bool NoForwards { get; }
     public IMessageMedia? Media { get; }
     public IInputMedia? InputMedia { get; }
 

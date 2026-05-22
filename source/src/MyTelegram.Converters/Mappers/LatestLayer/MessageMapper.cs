@@ -30,7 +30,7 @@ internal sealed class MessageMapper
         //destination.Legacy = source.Legacy;
         destination.EditHide = source.EditHide;
         destination.Pinned = source.Pinned;
-        //destination.Noforwards = source.Noforwards;
+        destination.Noforwards = source.NoForwards;
         destination.InvertMedia = source.InvertMedia;
         if (source.PaidMessageStars > 0) destination.PaidMessageStars = source.PaidMessageStars;
         destination.SuggestedPost = source.SuggestedPost;
@@ -118,7 +118,7 @@ internal sealed class MessageMapper
         //destination.Legacy = source.Legacy;
         destination.EditHide = source.EditHide;
         destination.Pinned = source.Pinned;
-        //destination.Noforwards = source.Noforwards;
+        destination.Noforwards = source.NoForwards;
         destination.InvertMedia = source.InvertMedia;
         if (source.PaidMessageStars > 0) destination.PaidMessageStars = source.PaidMessageStars;
         //destination.Offline = source.Offline;

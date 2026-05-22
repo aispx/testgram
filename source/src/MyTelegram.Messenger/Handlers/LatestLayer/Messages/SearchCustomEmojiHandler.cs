@@ -217,7 +217,8 @@ internal sealed class SearchCustomEmojiHandler(IMongoDatabase mongoDatabase) : R
             return false;
         }
 
-        return CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(document, out _);
+        return CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(document, out _) ||
+               CustomEmojiAttributeHelper.TryGetStickerAttributeAsCustomEmoji(document, out _);
     }
 
     private static long GetInt64(BsonValue value)

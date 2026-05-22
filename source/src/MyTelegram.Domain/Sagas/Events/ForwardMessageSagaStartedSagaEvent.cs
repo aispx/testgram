@@ -12,7 +12,8 @@ public class ForwardMessageSagaStartedSagaEvent(
     Dictionary<long, string>? fromNames,
     Peer? sendAs,
     bool dropAuthor,
-    bool dropMediaCaptions
+    bool dropMediaCaptions,
+    bool noForwards
     )
     : RequestAggregateEvent2<ForwardMessageSaga, ForwardMessageSagaId>(requestInfo)
 {
@@ -28,4 +29,5 @@ public class ForwardMessageSagaStartedSagaEvent(
     public Peer? SendAs { get; } = sendAs;
     public bool DropAuthor { get; } = dropAuthor;
     public bool DropMediaCaptions { get; } = dropMediaCaptions;
+    public bool NoForwards { get; } = noForwards;
 }

@@ -1,3 +1,7 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Schema;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Check whether the group call Server Forwarding Unit is currently receiving the streams with the specified WebRTC source IDs.<br/>
@@ -11,10 +15,34 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckGroupCallHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestCheckGroupCall, TVector<int>>
+internal sealed class CheckGroupCallHandler(
+    IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestCheckGroupCall, TVector<int>>
 {
-    protected override Task<TVector<int>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestCheckGroupCall obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<TVector<int>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestCheckGroupCall obj)
     {
-        throw new NotImplementedException();
+        if (obj.Call is not TInputGroupCall inputGroupCall)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync();
+        if (groupCall == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+        if (!groupCall.Participants.Any(p => p.PeerId == input.UserId))
+        {
+            RpcErrors.RpcErrors400.GroupcallJoinMissing.ThrowRpcError();
+            return null!;
+        }
+
+        var sources = groupCall.Participants.Select(p => p.Source).ToHashSet();
+        return new TVector<int>(obj.Sources.Where(sources.Contains));
     }
 }

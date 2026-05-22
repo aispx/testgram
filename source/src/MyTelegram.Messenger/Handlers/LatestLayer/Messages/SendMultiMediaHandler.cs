@@ -137,7 +137,7 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
         {
             var media = await mediaHelper.SaveMediaAsync(inputSingleMedia.Media);
             var sendMessageInput = new SendMessageInput(requestInfo, input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), inputSingleMedia.Message, inputSingleMedia.RandomId, clearDraft: obj.ClearDraft, entities: inputSingleMedia.Entities, media: media, //replyToMsgId: replyToMsgId,
- inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), groupId: groupId, groupItemCount: groupItemCount, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, isSendGroupedMessage: true, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId);
+ inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), groupId: groupId, groupItemCount: groupItemCount, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, isSendGroupedMessage: true, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, noForwards: obj.Noforwards);
             inputs.Add(sendMessageInput);
         //await _messageAppService.SendMessageAsync(sendMessageInput);
         //_requestCacheAppService.AddRequest(input.ReqMsgId, input.AuthKeyId, input.RequestSessionId, input.SeqNumber);

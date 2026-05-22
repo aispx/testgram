@@ -1,4 +1,6 @@
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
+using System.Globalization;
+using MyTelegram.Domain.Aggregates.UserConfig;
 /// <summary>
 /// Mark <a href="https://corefork.telegram.org/api/reactions">message reactions »</a> as read
 /// Possible errors
@@ -13,15 +15,23 @@ internal sealed class ReadReactionsHandler(
     IPtsHelper ptsHelper,
     IPeerHelper peerHelper,
     IAccessHashHelper accessHashHelper,
-    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadReactions, MyTelegram.Schema.Messages.IAffectedHistory>
+    ICommandBus commandBus) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadReactions, MyTelegram.Schema.Messages.IAffectedHistory>
 {
-    private readonly IQueryProcessor _queryProcessor = queryProcessor;
-
     protected override async Task<MyTelegram.Schema.Messages.IAffectedHistory> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReadReactions obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
+        var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, input.UserId);
+        var key = ReactionReadState.GetKey(peer, obj.TopMsgId, savedPeer);
+        var command = new UpdateUserConfigCommand(
+            UserConfigId.Create(input.UserId, key),
+            input.ToRequestInfo(),
+            input.UserId,
+            key,
+            CurrentDate.ToString(CultureInfo.InvariantCulture));
+        await commandBus.PublishAsync(command);
+
         return new TAffectedHistory
         {
             Pts = ptsHelper.GetCachedPts(peer.PeerId),

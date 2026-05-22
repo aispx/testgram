@@ -4,11 +4,19 @@ namespace MyTelegram.Messenger.Services.StarGifts;
 
 public static class UniqueStarGiftHelper
 {
-    public static TStarGiftUnique ToTl(UniqueStarGiftDocument doc)
+    public static TStarGiftUnique ToTl(UniqueStarGiftDocument doc, Func<long, bool>? documentExists = null)
     {
         var attrs = new TVector<IStarGiftAttribute>();
         foreach (var a in doc.Attributes)
         {
+            if ((a.Type == "model" || a.Type == "pattern")
+                && a.DocumentId.HasValue
+                && documentExists != null
+                && !documentExists(a.DocumentId.Value))
+            {
+                continue;
+            }
+
             IStarGiftAttribute attr = a.Type switch
             {
                 "backdrop" => new TStarGiftAttributeBackdrop

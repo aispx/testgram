@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Phone;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Declines a conference call invite.
@@ -13,6 +15,12 @@ internal sealed class DeclineConferenceCallInviteHandler : RpcResultObjectHandle
 {
     protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDeclineConferenceCallInvite obj)
     {
-        throw new NotImplementedException();
+        if (obj.MsgId <= 0)
+        {
+            RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+            return Task.FromResult<MyTelegram.Schema.IUpdates>(null!);
+        }
+
+        return Task.FromResult<MyTelegram.Schema.IUpdates>(GroupCallStateHelper.Updates());
     }
 }

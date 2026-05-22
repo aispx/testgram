@@ -20,6 +20,7 @@ public class ForwardMessageState : AggregateState<ForwardMessageSaga, ForwardMes
     public Peer? SendAs { get; private set; }
     public bool DropAuthor { get; private set; }
     public bool DropMediaCaptions { get; private set; }
+    public bool NoForwards { get; private set; }
     public void Apply(ForwardMessageSagaStartedSagaEvent aggregateEvent)
     {
         RequestInfo = aggregateEvent.RequestInfo;
@@ -34,6 +35,7 @@ public class ForwardMessageState : AggregateState<ForwardMessageSaga, ForwardMes
         SendAs = aggregateEvent.SendAs;
         DropAuthor = aggregateEvent.DropAuthor;
         DropMediaCaptions = aggregateEvent.DropMediaCaptions;
+        NoForwards = aggregateEvent.NoForwards;
     }
 
     public void Apply(ForwardSingleMessageSuccessSagaEvent aggregateEvent)

@@ -1,3 +1,7 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Schema;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Terminate a group call
@@ -11,10 +15,43 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class DiscardGroupCallHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDiscardGroupCall, MyTelegram.Schema.IUpdates>
+internal sealed class DiscardGroupCallHandler(
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDiscardGroupCall, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDiscardGroupCall obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDiscardGroupCall obj)
     {
-        throw new NotImplementedException();
+        if (obj.Call is not TInputGroupCall inputGroupCall)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
+        if (groupCall == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+        if (!groupCall.Active)
+        {
+            RpcErrors.RpcErrors400.GroupcallAlreadyDiscarded.ThrowRpcError();
+            return null!;
+        }
+
+        groupCall.Active = false;
+        groupCall.Version++;
+        var date = GroupCallStateHelper.CurrentDate();
+        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+        return GroupCallStateHelper.Updates(new TUpdateGroupCall
+        {
+            Peer = peerHelper.ToPeer((PeerType)groupCall.PeerType, groupCall.PeerId),
+            Call = GroupCallStateHelper.ToDiscardedGroupCall(groupCall, date)
+        });
     }
 }

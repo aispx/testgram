@@ -60,7 +60,8 @@ public record MessageItem
     long? PaidMessageStars = null,
     ISuggestedPost? SuggestedPost = null,
     bool PaidSuggestedPostStars = false,
-    bool PaidSuggestedPostTon = false
+    bool PaidSuggestedPostTon = false,
+    bool NoForwards = false
 //int? DefaultHistoryTtl = null,
 //int? Ttl = null
 );

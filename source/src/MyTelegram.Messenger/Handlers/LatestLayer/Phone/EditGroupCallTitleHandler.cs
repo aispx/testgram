@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Edit the title of a group call or livestream
@@ -10,10 +13,39 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditGroupCallTitleHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestEditGroupCallTitle, MyTelegram.Schema.IUpdates>
+internal sealed class EditGroupCallTitleHandler(
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestEditGroupCallTitle, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestEditGroupCallTitle obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestEditGroupCallTitle obj)
     {
-        throw new NotImplementedException();
+        if (obj.Call is not MyTelegram.Schema.TInputGroupCall inputGroupCall)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
+        if (groupCall == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+        if (!groupCall.Active)
+        {
+            RpcErrors.RpcErrors403.GroupcallForbidden.ThrowRpcError();
+            return null!;
+        }
+
+        groupCall.Title = obj.Title;
+        groupCall.Version++;
+        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+
+        return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper));
     }
 }

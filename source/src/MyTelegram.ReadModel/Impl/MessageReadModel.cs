@@ -44,6 +44,7 @@ public class MessageReadModel : IMessageReadModel,
     public List<MessageReactor>? TopReactors { get; private set; }
     public int MessageId { get; private set; }
     public bool Out { get; private set; }
+    public bool NoForwards { get; private set; }
     public long OwnerPeerId { get; private set; }
     public bool Pinned { get; private set; }
     public bool Post { get; private set; }
@@ -127,6 +128,7 @@ public class MessageReadModel : IMessageReadModel,
         Media2 = messageItem.Media;
         GroupedId = messageItem.GroupId;
         Out = messageItem.IsOut;
+        NoForwards = messageItem.NoForwards;
         Views = messageItem.Views;
         Post = messageItem.Post;
         LinkedChannelId = domainEvent.AggregateEvent.LinkedChannelId;
@@ -205,6 +207,7 @@ public class MessageReadModel : IMessageReadModel,
         Media2 = messageItem.Media;
         GroupedId = messageItem.GroupId;
         Out = messageItem.IsOut;
+        NoForwards = messageItem.NoForwards;
         Views = messageItem.Views;
 
         Silent = false;

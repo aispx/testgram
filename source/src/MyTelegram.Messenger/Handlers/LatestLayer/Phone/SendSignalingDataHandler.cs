@@ -8,7 +8,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 
 internal sealed class SendSignalingDataHandler(
     IMongoDatabase mongoDatabase,
-    IObjectMessageSender objectMessageSender)
+    IObjectMessageSender objectMessageSender,
+    IAccessHashHelper2 accessHashHelper2)
     : RpcResultObjectHandler<RequestSendSignalingData, IBool>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -22,19 +23,24 @@ internal sealed class SendSignalingDataHandler(
             return new TBoolTrue();
         }
 
-        var filter = Builders<CallSessionDocument>.Filter.And(
-            Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id),
-            Builders<CallSessionDocument>.Filter.Eq(s => s.AccessHash, inputPhoneCall.AccessHash)
-        );
+        var filter = Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id);
 
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
-        if (session == null)
+        if (session == null ||
+            (session.AccessHash != inputPhoneCall.AccessHash &&
+             !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return new TBoolTrue();
         }
 
         if (session.CallerId != input.UserId && session.CalleeId != input.UserId)
+        {
+            RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
+            return new TBoolTrue();
+        }
+
+        if (session.State != "confirmed")
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return new TBoolTrue();

@@ -2,11 +2,13 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
+using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 
 internal sealed class SaveCallDebugHandler(
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IAccessHashHelper2 accessHashHelper2)
     : RpcResultObjectHandler<RequestSaveCallDebug, IBool>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -20,19 +22,19 @@ internal sealed class SaveCallDebugHandler(
             return new TBoolTrue();
         }
 
-        var filter = Builders<CallSessionDocument>.Filter.And(
-            Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id),
-            Builders<CallSessionDocument>.Filter.Eq(s => s.AccessHash, inputPhoneCall.AccessHash)
-        );
+        var filter = Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id);
 
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
-        if (session == null)
+        if (session == null ||
+            (session.AccessHash != inputPhoneCall.AccessHash &&
+             !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return new TBoolTrue();
         }
 
-        if (session.CallerId != input.UserId && session.CalleeId != input.UserId)
+        if ((session.CallerId != input.UserId && session.CalleeId != input.UserId) ||
+            session.State != "discarded")
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return new TBoolTrue();

@@ -1,3 +1,7 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Schema;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Edit information about a given group call participantNote: <a href="https://corefork.telegram.org/mtproto/TL-combinators#conditional-fields">flags</a>.N?<a href="https://corefork.telegram.org/type/Bool">Bool</a> parameters can have three possible values:
@@ -15,10 +19,56 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditGroupCallParticipantHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestEditGroupCallParticipant, MyTelegram.Schema.IUpdates>
+internal sealed class EditGroupCallParticipantHandler(
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestEditGroupCallParticipant, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestEditGroupCallParticipant obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestEditGroupCallParticipant obj)
     {
-        throw new NotImplementedException();
+        if (obj.Call is not TInputGroupCall inputGroupCall)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
+        if (groupCall == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+        if (!groupCall.Active)
+        {
+            RpcErrors.RpcErrors403.GroupcallForbidden.ThrowRpcError();
+            return null!;
+        }
+
+        var peer = peerHelper.GetPeer(obj.Participant, input.UserId);
+        var participant = peer == null
+            ? null
+            : groupCall.Participants.FirstOrDefault(p => p.PeerId == peer.PeerId && p.PeerType == (int)peer.PeerType);
+        if (participant == null)
+        {
+            RpcErrors.RpcErrors400.ParticipantJoinMissing.ThrowRpcError();
+            return null!;
+        }
+
+        if (obj.Muted.HasValue) participant.Muted = obj.Muted.Value;
+        if (obj.Volume.HasValue) participant.Volume = obj.Volume.Value;
+        if (obj.RaiseHand.HasValue) participant.RaiseHand = obj.RaiseHand.Value;
+        if (obj.VideoStopped.HasValue) participant.VideoStopped = obj.VideoStopped.Value;
+        if (obj.VideoPaused.HasValue) participant.VideoPaused = obj.VideoPaused.Value;
+        if (obj.PresentationPaused.HasValue) participant.PresentationPaused = obj.PresentationPaused.Value;
+        groupCall.Version++;
+
+        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+
+        return GroupCallStateHelper.Updates(
+            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]));
     }
 }

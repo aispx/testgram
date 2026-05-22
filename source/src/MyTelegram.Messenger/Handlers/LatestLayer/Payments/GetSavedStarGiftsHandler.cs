@@ -152,7 +152,9 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
             IStarGift giftTl;
             if (doc.IsUnique && doc.UniqueSlug != null && uniqueBySlug.TryGetValue(doc.UniqueSlug, out var uniqueDoc))
             {
-                giftTl = UniqueStarGiftHelper.ToTl(uniqueDoc);
+                giftTl = UniqueStarGiftHelper.ToTl(
+                    uniqueDoc,
+                    documentId => CollectibleEmojiStatusHelper.DocumentExists(mongoDatabase, documentId));
             }
             else
             {

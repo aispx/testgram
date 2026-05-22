@@ -20,24 +20,17 @@ internal sealed class GetCollectibleEmojiStatusesHandler(IMongoDatabase mongoDat
         var statuses = new TVector<IEmojiStatus>();
         foreach (var doc in docs)
         {
-            var model = doc.Attributes.FirstOrDefault(a => a.Type == "model");
-            var pattern = doc.Attributes.FirstOrDefault(a => a.Type == "pattern");
-            var backdrop = doc.Attributes.FirstOrDefault(a => a.Type == "backdrop");
-            var collectible = doc.Attributes.FirstOrDefault(a => a.Type == "collectible");
-            statuses.Add(new TEmojiStatusCollectible
+            var modelDocumentId = doc.Attributes.FirstOrDefault(a => a.Type == "model")?.DocumentId ?? doc.DocumentId;
+            if (!await CollectibleEmojiStatusHelper.DocumentExistsAsync(mongoDatabase, modelDocumentId))
             {
-                CollectibleId = collectible?.CollectibleId ?? doc.UniqueId,
-                DocumentId = doc.DocumentId,
-                Title = $"{doc.Title} #{doc.Num}",
-                Slug = doc.Slug,
-                PatternDocumentId = pattern?.DocumentId ?? 0,
-                CenterColor = backdrop?.CenterColor ?? 0,
-                EdgeColor = backdrop?.EdgeColor ?? 0,
-                PatternColor = backdrop?.PatternColor ?? 0,
-                TextColor = backdrop?.TextColor ?? 0,
-                Until = doc.Until,
-                Flags = doc.Until.HasValue ? 1 : 0,
-            });
+                continue;
+            }
+
+            statuses.Add(CollectibleEmojiStatusHelper.ToEmojiStatus(
+                doc,
+                modelDocumentId,
+                doc.Until,
+                patternDocumentId => CollectibleEmojiStatusHelper.DocumentExists(mongoDatabase, patternDocumentId)));
         }
 
         return new TEmojiStatuses { Statuses = statuses };

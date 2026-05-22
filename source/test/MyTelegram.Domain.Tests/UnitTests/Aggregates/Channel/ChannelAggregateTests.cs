@@ -58,6 +58,31 @@ public class ChannelAggregateTests : TestsFor<ChannelAggregate>
     }
 
     [Fact]
+    public void Toggle_NoForwards_Emits_Change()
+    {
+        var aggregateEvent = A<ChannelCreatedEvent>();
+        Sut.ApplyEvents([ADomainEvent<ChannelAggregate, ChannelId, ChannelCreatedEvent>(aggregateEvent, 1)]);
+
+        Sut.ToggleChannelNoForwards(A<RequestInfo>() with { UserId = aggregateEvent.CreatorId }, true);
+
+        var noForwardsChanged = Sut.UncommittedEvents.Single().AggregateEvent
+            .ShouldBeOfType<ChannelNoForwardsChangedEvent>();
+        noForwardsChanged.Enabled.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Toggle_NoForwards_With_Unchanged_Value_Throws_Exception()
+    {
+        var aggregateEvent = A<ChannelCreatedEvent>();
+        Sut.ApplyEvents([ADomainEvent<ChannelAggregate, ChannelId, ChannelCreatedEvent>(aggregateEvent, 1)]);
+
+        var exception = Assert.Throws<RpcException>(() =>
+            Sut.ToggleChannelNoForwards(A<RequestInfo>() with { UserId = aggregateEvent.CreatorId }, false));
+
+        exception.RpcError.ShouldBe(RpcErrors.RpcErrors400.ChatNotModified);
+    }
+
+    [Fact]
     public void CheckChannelState_For_Not_Exists_Channel_Throws_Exception()
     {
         Assert.Throws<DomainError>(() => Sut.CheckChannelState(A<RequestInfo>(),
@@ -133,7 +158,7 @@ public class ChannelAggregateTests : TestsFor<ChannelAggregate>
                 Users = []
             },
             0, false, null, null, null,
-            false, false, [], []);
+            false, false, [], [], false, false);
         var bannedWriteMessageRights = new ChatBannedRights(false,
             true,
             true,
@@ -225,7 +250,7 @@ public class ChannelAggregateTests : TestsFor<ChannelAggregate>
                 Users = []
             },
             0, false, null, null, null,
-            false, false, [], []);
+            false, false, [], [], false, false);
         Sut.ApplyEvents([ADomainEvent<ChannelAggregate, ChannelId, ChannelCreatedEvent>(aggregateEvent, 1)]);
 
         Sut.CheckChannelState(A<RequestInfo>(), senderPeerId, 1, DateTime.UtcNow.ToTimestamp(), MessageSubType.Normal);

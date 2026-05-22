@@ -1,3 +1,7 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Schema;
+
 namespace MyTelegram.Messenger.Handlers.Phone;
 /// <summary>
 /// Possible errors
@@ -8,10 +12,22 @@ namespace MyTelegram.Messenger.Handlers.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class DeleteGroupCallMessagesHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDeleteGroupCallMessages, MyTelegram.Schema.IUpdates>, IObjectHandler
+internal sealed class DeleteGroupCallMessagesHandler(
+    IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDeleteGroupCallMessages, MyTelegram.Schema.IUpdates>, IObjectHandler
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDeleteGroupCallMessages obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDeleteGroupCallMessages obj)
     {
-        throw new NotImplementedException();
+        if (obj.Call is not TInputGroupCall inputGroupCall ||
+            await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync() == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        return GroupCallStateHelper.Updates();
     }
 }

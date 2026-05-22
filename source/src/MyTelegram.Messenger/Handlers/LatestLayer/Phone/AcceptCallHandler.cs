@@ -3,6 +3,7 @@ using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
+using MyTelegram.Services.Phone;
 using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
@@ -11,7 +12,8 @@ internal sealed class AcceptCallHandler(
     IMongoDatabase mongoDatabase,
     IUserConverterService userConverterService,
     IObjectMessageSender objectMessageSender,
-    IMessageAppService messageAppService)
+    IMessageAppService messageAppService,
+    IAccessHashHelper2 accessHashHelper2)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestAcceptCall, MyTelegram.Schema.Phone.IPhoneCall>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -25,13 +27,12 @@ internal sealed class AcceptCallHandler(
             return null!;
         }
 
-        var filter = Builders<CallSessionDocument>.Filter.And(
-            Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id),
-            Builders<CallSessionDocument>.Filter.Eq(s => s.AccessHash, inputPhoneCall.AccessHash)
-        );
+        var filter = Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id);
 
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
-        if (session == null)
+        if (session == null ||
+            (session.AccessHash != inputPhoneCall.AccessHash &&
+             !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return null!;
@@ -42,6 +43,8 @@ internal sealed class AcceptCallHandler(
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return null!;
         }
+
+        ValidateHandshakeProtocol(obj.Protocol);
 
         if (session.State == "accepted" || session.State == "confirmed")
         {
@@ -57,6 +60,7 @@ internal sealed class AcceptCallHandler(
 
         var update = Builders<CallSessionDocument>.Update
             .Set(s => s.GB, obj.GB)
+            .Set(s => s.CalleeLibraryVersions, [.. PhoneCallProtocolHelper.GetLibraryVersions(obj.Protocol)])
             .Set(s => s.State, "accepted");
 
         await _callCollection.UpdateOneAsync(filter, update);
@@ -70,7 +74,7 @@ internal sealed class AcceptCallHandler(
             AdminId = session.CallerId,
             ParticipantId = session.CalleeId,
             GB = obj.GB,
-            Protocol = BuildProtocol(obj.Protocol),
+            Protocol = PhoneCallProtocolHelper.Negotiate(session.CallerLibraryVersions, obj.Protocol),
             Date = currentDate,
             Video = session.Video
         };
@@ -90,7 +94,7 @@ internal sealed class AcceptCallHandler(
                 Date = currentDate
             });
 
-        await SendCallAcceptedServiceMessageAsync(input, session.CallId, session.CallerId, session.CalleeId);
+        await SendCallAcceptedServiceMessageAsync(input, session.CallId, session.CallerId, session.Video);
 
         return new MyTelegram.Schema.Phone.TPhoneCall
         {
@@ -99,30 +103,30 @@ internal sealed class AcceptCallHandler(
         };
     }
 
-    private static TPhoneCallProtocol BuildProtocol(IPhoneCallProtocol? proto)
+    private static void ValidateHandshakeProtocol(IPhoneCallProtocol? protocol)
     {
-        var p = proto as TPhoneCallProtocol;
-        return new TPhoneCallProtocol
+        if (!PhoneCallProtocolHelper.HasValidLegacyFlags(protocol))
         {
-            UdpP2p = p?.UdpP2p ?? true,
-            UdpReflector = p?.UdpReflector ?? true,
-            MinLayer = p?.MinLayer ?? 65,
-            MaxLayer = p?.MaxLayer ?? 92,
-            LibraryVersions = new TVector<string> { "2.7.7" }
-        };
+            RpcErrors.RpcErrors400.CallProtocolFlagsInvalid.ThrowRpcError();
+        }
+
+        if (!PhoneCallProtocolHelper.HasValidLegacyLayers(protocol))
+        {
+            RpcErrors.RpcErrors400.CallProtocolLayerInvalid.ThrowRpcError();
+        }
     }
 
-    private async Task SendCallAcceptedServiceMessageAsync(IRequestInput input, long callId, long callerId, long calleeId)
+    private async Task SendCallAcceptedServiceMessageAsync(IRequestInput input, long callId, long callerId, bool video)
     {
         var action = new TMessageActionPhoneCall
         {
             CallId = callId,
-            Video = false
+            Video = video
         };
 
         var sendInput = new SendMessageInput(
             input.ToRequestInfo() with { ReqMsgId = 0 },
-            callerId,
+            input.UserId,
             new Peer(PeerType.User, callerId),
             string.Empty,
             Random.Shared.NextInt64(),

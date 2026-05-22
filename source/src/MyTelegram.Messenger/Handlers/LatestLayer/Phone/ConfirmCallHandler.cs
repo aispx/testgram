@@ -2,6 +2,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
+using MyTelegram.Services.Phone;
 using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
@@ -10,7 +11,8 @@ internal sealed class ConfirmCallHandler(
     IMongoDatabase mongoDatabase,
     IUserConverterService userConverterService,
     IObjectMessageSender objectMessageSender,
-    IOptions<MyTelegramMessengerServerOptions> optionsAccessor)
+    IOptions<MyTelegramMessengerServerOptions> optionsAccessor,
+    IAccessHashHelper2 accessHashHelper2)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestConfirmCall, MyTelegram.Schema.Phone.IPhoneCall>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -24,19 +26,18 @@ internal sealed class ConfirmCallHandler(
             return null!;
         }
 
-        var filter = Builders<CallSessionDocument>.Filter.And(
-            Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id),
-            Builders<CallSessionDocument>.Filter.Eq(s => s.AccessHash, inputPhoneCall.AccessHash)
-        );
+        var filter = Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id);
 
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
-        if (session == null)
+        if (session == null ||
+            (session.AccessHash != inputPhoneCall.AccessHash &&
+             !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return null!;
         }
 
-        if (session.CallerId != input.UserId && session.CalleeId != input.UserId)
+        if (session.CallerId != input.UserId)
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return null!;
@@ -116,10 +117,11 @@ internal sealed class ConfirmCallHandler(
             ParticipantId = session.CalleeId,
             GAOrB = obj.GA,
             KeyFingerprint = obj.KeyFingerprint,
-            Protocol = BuildProtocol(obj.Protocol),
+            Protocol = PhoneCallProtocolHelper.Normalize(obj.Protocol),
             Date = session.Date,
             StartDate = currentDate,
-            Connections = connections
+            Connections = connections,
+            Video = session.Video
         };
 
         var users = await userConverterService.GetUserListAsync(input, new List<long> { session.CallerId, session.CalleeId }, false, false, input.Layer);
@@ -145,16 +147,4 @@ internal sealed class ConfirmCallHandler(
         };
     }
 
-    private static TPhoneCallProtocol BuildProtocol(IPhoneCallProtocol? proto)
-    {
-        var p = proto as TPhoneCallProtocol;
-        return new TPhoneCallProtocol
-        {
-            UdpP2p = p?.UdpP2p ?? true,
-            UdpReflector = p?.UdpReflector ?? true,
-            MinLayer = p?.MinLayer ?? 65,
-            MaxLayer = p?.MaxLayer ?? 92,
-            LibraryVersions = new TVector<string> { "2.7.7" }
-        };
-    }
 }

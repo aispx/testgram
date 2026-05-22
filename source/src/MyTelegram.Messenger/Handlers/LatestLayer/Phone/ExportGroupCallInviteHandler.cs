@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Get an <a href="https://corefork.telegram.org/api/links#video-chat-livestream-links">invite link</a> for a group call or livestream
@@ -10,10 +13,37 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ExportGroupCallInviteHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestExportGroupCallInvite, MyTelegram.Schema.Phone.IExportedGroupCallInvite>
+internal sealed class ExportGroupCallInviteHandler(
+    IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestExportGroupCallInvite, MyTelegram.Schema.Phone.IExportedGroupCallInvite>
 {
-    protected override Task<MyTelegram.Schema.Phone.IExportedGroupCallInvite> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestExportGroupCallInvite obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<MyTelegram.Schema.Phone.IExportedGroupCallInvite> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestExportGroupCallInvite obj)
     {
-        throw new NotImplementedException();
+        if (obj.Call is not MyTelegram.Schema.TInputGroupCall inputGroupCall)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
+        if (groupCall == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (groupCall.InviteLink == null)
+        {
+            groupCall.InviteHash = GroupCallStateHelper.CreateInviteHash();
+            groupCall.InviteLink = $"https://t.me/call/{groupCall.InviteHash}";
+            groupCall.Version++;
+            await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+        }
+
+        return new MyTelegram.Schema.Phone.TExportedGroupCallInvite { Link = groupCall.InviteLink };
     }
 }

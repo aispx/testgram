@@ -18,6 +18,9 @@ internal sealed class GetMessagesReactionsHandler(
             var channel = await channelAppService.GetAsync(peer.PeerId);
             isBroadcast = channel?.Broadcast ?? false;
         }
+        var readState = await queryProcessor.ProcessAsync(
+            new GetUserConfigByKeyQuery(input.UserId, ReactionReadState.GetKey(peer)));
+        var readDate = ReactionReadState.ParseReadDate(readState?.Value);
         var updates = new List<IUpdate>();
         var allUserIds = new List<long>();
 
@@ -54,7 +57,7 @@ internal sealed class GetMessagesReactionsHandler(
                 Date = r.Date,
                 Big = r.Big,
                 My = r.SenderUserId == input.UserId,
-                Unread = r.SenderUserId != input.UserId && msg.SenderUserId == input.UserId,
+                Unread = msg.SenderUserId == input.UserId && ReactionReadState.IsUnread(r, input.UserId, readDate),
                 Reaction = r.Reaction
             }).ToList();
 

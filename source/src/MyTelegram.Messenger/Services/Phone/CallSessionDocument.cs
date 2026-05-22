@@ -15,8 +15,18 @@ public class CallSessionDocument
     public string State { get; set; } = "requested";
     public bool Video { get; set; }
     public int Date { get; set; }
+    public int? ReceivedDate { get; set; }
     public int Duration { get; set; }
     public string? DiscardReason { get; set; }
+    public List<string> CallerLibraryVersions { get; set; } = [];
+    public List<string> CalleeLibraryVersions { get; set; } = [];
     public string? ProtocolJson { get; set; }
     public string? DebugJson { get; set; }
+    public int? Rating { get; set; }
+    public string? RatingComment { get; set; }
+    public bool RatingUserInitiative { get; set; }
+    public long? LogFileId { get; set; }
+    public int? LogFileParts { get; set; }
+    public string? LogFileName { get; set; }
+    public string? LogFileMd5Checksum { get; set; }
 }

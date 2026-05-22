@@ -222,6 +222,15 @@ public class UpdatesResponseService(
             case TUpdatePhoneCall updatePhoneCall:
                 updatePhoneCall.PhoneCall =
                     phoneCallResponseService.ToLayeredData(updatePhoneCall.PhoneCall, layer);
+                if (updatePhoneCall.PhoneCall is IHasAccessHash phoneCallWithAccessHash)
+                {
+                    phoneCallWithAccessHash.AccessHash = accessHashHelper2.GenerateAccessHash(
+                        userId,
+                        accessHashKeyId,
+                        phoneCallWithAccessHash.Id,
+                        AccessHashType.Call);
+                }
+
                 break;
 
             case TUpdateQuickReplyMessage updateQuickReplyMessage:

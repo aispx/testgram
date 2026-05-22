@@ -40,6 +40,10 @@ internal sealed class GetMessageReactionsListHandler(
             };
         }
 
+        var readState = await queryProcessor.ProcessAsync(
+            new GetUserConfigByKeyQuery(input.UserId, ReactionReadState.GetKey(peer)));
+        var readDate = ReactionReadState.ParseReadDate(readState?.Value);
+
         // Pagination via offset (index-based)
         int.TryParse(obj.Offset, out var offset);
         var limit = obj.Limit > 0 && obj.Limit <= 100 ? obj.Limit : 50;
@@ -50,7 +54,7 @@ internal sealed class GetMessageReactionsListHandler(
             PeerId = new TPeerUser { UserId = r.SenderUserId },
             Date = r.Date,
             My = r.SenderUserId == input.UserId,
-            Unread = false,
+            Unread = msg?.SenderUserId == input.UserId && ReactionReadState.IsUnread(r, input.UserId, readDate),
             Reaction = r.Reaction
         }).ToList();
 

@@ -69,7 +69,7 @@ namespace MyTelegram.Schema
     }
     public partial class TInputPhoneCall : IHasAccessHash
     {
-        public AccessHashType2 AccessHashType2 => AccessHashType2.GroupCall;
+        public AccessHashType2 AccessHashType2 => AccessHashType2.Call;
     }
     public partial class TInputPhoto : IHasAccessHash
     {

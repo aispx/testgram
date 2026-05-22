@@ -1,3 +1,7 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Schema;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Create a group call or livestream
@@ -14,10 +18,55 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CreateGroupCallHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestCreateGroupCall, MyTelegram.Schema.IUpdates>
+internal sealed class CreateGroupCallHandler(
+    IIdGenerator idGenerator,
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestCreateGroupCall, MyTelegram.Schema.IUpdates>
 {
-    protected override Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestCreateGroupCall obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestCreateGroupCall obj)
     {
-        throw new NotImplementedException();
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer == null)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (obj.ScheduleDate is { } scheduleDate && scheduleDate <= GroupCallStateHelper.CurrentDate())
+        {
+            RpcErrors.RpcErrors400.ScheduleDateInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var existing = await _groupCallCollection
+            .Find(g => g.CreatorId == input.UserId && g.RandomId == obj.RandomId)
+            .FirstOrDefaultAsync();
+        if (existing != null)
+        {
+            return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(existing, input.UserId, peerHelper));
+        }
+
+        var callId = await idGenerator.NextIdAsync(IdType.MessageId, input.UserId);
+        var call = new GroupCallDocument
+        {
+            Id = callId,
+            CallId = callId,
+            AccessHash = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            RandomId = obj.RandomId,
+            PeerId = peer.PeerId,
+            PeerType = (int)peer.PeerType,
+            CreatorId = input.UserId,
+            Title = obj.Title,
+            ScheduleDate = obj.ScheduleDate,
+            RtmpStream = obj.RtmpStream,
+            Date = GroupCallStateHelper.CurrentDate()
+        };
+        await _groupCallCollection.InsertOneAsync(call);
+
+        return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(call, input.UserId, peerHelper));
     }
 }

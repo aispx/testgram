@@ -11,7 +11,8 @@ internal sealed class DiscardCallHandler(
     IMongoDatabase mongoDatabase,
     IUserConverterService userConverterService,
     IObjectMessageSender objectMessageSender,
-    IMessageAppService messageAppService)
+    IMessageAppService messageAppService,
+    IAccessHashHelper2 accessHashHelper2)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDiscardCall, IUpdates>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -25,13 +26,12 @@ internal sealed class DiscardCallHandler(
             return null!;
         }
 
-        var filter = Builders<CallSessionDocument>.Filter.And(
-            Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id),
-            Builders<CallSessionDocument>.Filter.Eq(s => s.AccessHash, inputPhoneCall.AccessHash)
-        );
+        var filter = Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id);
 
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
-        if (session == null)
+        if (session == null ||
+            (session.AccessHash != inputPhoneCall.AccessHash &&
+             !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return null!;
@@ -48,7 +48,8 @@ internal sealed class DiscardCallHandler(
         var update = Builders<CallSessionDocument>.Update
             .Set(s => s.State, "discarded")
             .Set(s => s.Duration, obj.Duration)
-            .Set(s => s.DiscardReason, reason);
+            .Set(s => s.DiscardReason, reason)
+            .Set(s => s.Video, session.Video || obj.Video);
 
         await _callCollection.UpdateOneAsync(filter, update);
 
@@ -59,9 +60,9 @@ internal sealed class DiscardCallHandler(
             Id = session.CallId,
             Reason = obj.Reason,
             Duration = obj.Duration,
-            NeedRating = true,
-            NeedDebug = false,
-            Video = session.Video
+            NeedRating = session.State == "confirmed",
+            NeedDebug = session.State == "confirmed",
+            Video = session.Video || obj.Video
         };
 
         var users = await userConverterService.GetUserListAsync(input, new List<long> { session.CallerId, session.CalleeId }, false, false, input.Layer);
@@ -80,7 +81,14 @@ internal sealed class DiscardCallHandler(
                 Date = currentDate
             });
 
-        await SendCallDiscardedServiceMessageAsync(input, session.CallId, session.CallerId, session.CalleeId, obj.Duration, obj.Reason);
+        await SendCallDiscardedServiceMessageAsync(
+            input,
+            session.CallId,
+            session.CallerId,
+            session.CalleeId,
+            obj.Duration,
+            obj.Reason,
+            session.Video || obj.Video);
 
         return new TUpdates
         {
@@ -104,7 +112,14 @@ internal sealed class DiscardCallHandler(
         };
     }
 
-    private async Task SendCallDiscardedServiceMessageAsync(IRequestInput input, long callId, long callerId, long calleeId, int? duration, IPhoneCallDiscardReason? reason)
+    private async Task SendCallDiscardedServiceMessageAsync(
+        IRequestInput input,
+        long callId,
+        long callerId,
+        long calleeId,
+        int? duration,
+        IPhoneCallDiscardReason? reason,
+        bool video)
     {
         var isCaller = input.UserId == callerId;
         var targetUserId = isCaller ? calleeId : callerId;
@@ -114,12 +129,12 @@ internal sealed class DiscardCallHandler(
             CallId = callId,
             Reason = reason,
             Duration = duration,
-            Video = false
+            Video = video
         };
 
         var sendInput = new SendMessageInput(
             input.ToRequestInfo() with { ReqMsgId = 0 },
-            targetUserId,
+            input.UserId,
             new Peer(PeerType.User, targetUserId),
             string.Empty,
             Random.Shared.NextInt64(),

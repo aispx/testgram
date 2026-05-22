@@ -687,7 +687,16 @@ public record GetUserConfigByKeyQuery(long UserId, string Key) : IQuery<IUserCon
 public record GetChannelMemberIdListQuery(long ChannelId, List<long> MemberUserIds) : IQuery<IReadOnlyCollection<long>>;
 public record GetMessageByBatchIdQuery(Guid BatchId, long ExcludePeerId) : IQuery<IMessageReadModel?>;
 public record GetFutureCreatorAfterLeaveQuery(long ChannelId, long CurrentCreatorUserId) : IQuery<long?>;
-public record GetMessagesWithUnreadReactionsQuery(long OwnerPeerId, long SenderUserId, int OffsetId, int Limit, int MaxId, int MinId) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
+public record GetMessagesWithUnreadReactionsQuery(
+    long OwnerPeerId,
+    long SenderUserId,
+    int OffsetId,
+    int Limit,
+    int MaxId,
+    int MinId,
+    int ReadDate,
+    int? TopMsgId,
+    Peer? SavedPeerId) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
 
 public record GetMessagesWithUnreadMentionsQuery(long OwnerPeerId, long UserId, int OffsetId, int Limit, int MaxId, int MinId) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
 

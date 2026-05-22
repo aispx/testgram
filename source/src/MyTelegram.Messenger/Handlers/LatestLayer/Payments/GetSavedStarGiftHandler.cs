@@ -34,7 +34,7 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
             if (doc.IsUnique && doc.UniqueSlug != null)
             {
                 var uniqueDoc = await uniqueCol.Find(d => d.Slug == doc.UniqueSlug).FirstOrDefaultAsync();
-                giftTl = uniqueDoc != null ? UniqueStarGiftHelper.ToTl(uniqueDoc) : new TStarGift { Id = doc.GiftId, Stars = doc.Stars, ConvertStars = doc.ConvertStars };
+                giftTl = uniqueDoc != null ? UniqueStarGiftHelper.ToTl(uniqueDoc, documentId => CollectibleEmojiStatusHelper.DocumentExists(mongoDatabase, documentId)) : new TStarGift { Id = doc.GiftId, Stars = doc.Stars, ConvertStars = doc.ConvertStars };
             }
             else
             {

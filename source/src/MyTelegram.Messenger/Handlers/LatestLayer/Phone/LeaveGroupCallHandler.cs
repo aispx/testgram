@@ -6,7 +6,8 @@ using MyTelegram.Schema.Phone;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 
 internal sealed class LeaveGroupCallHandler(
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper)
     : RpcResultObjectHandler<RequestLeaveGroupCall, IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -20,11 +21,7 @@ internal sealed class LeaveGroupCallHandler(
             return null!;
         }
 
-        var filter = Builders<GroupCallDocument>.Filter.And(
-            Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, inputGroupCall.Id),
-            Builders<GroupCallDocument>.Filter.Eq(g => g.AccessHash, inputGroupCall.AccessHash)
-        );
-
+        var filter = GroupCallStateHelper.Filter(inputGroupCall);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         if (groupCall == null)
         {
@@ -32,24 +29,17 @@ internal sealed class LeaveGroupCallHandler(
             return null!;
         }
 
-        var updateFilter = Builders<GroupCallDocument>.Filter.And(
-            Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, inputGroupCall.Id),
-            Builders<GroupCallDocument>.Filter.Eq(g => g.AccessHash, inputGroupCall.AccessHash)
-        );
-
-        await _groupCallCollection.UpdateOneAsync(updateFilter,
-            Builders<GroupCallDocument>.Update
-                .PullFilter(g => g.Participants, p => p.PeerId == input.UserId && p.Source == obj.Source)
-                .Inc(g => g.Version, 1));
-
-        var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-        return new TUpdates
+        var participant = groupCall.Participants.FirstOrDefault(p => p.PeerId == input.UserId && p.Source == obj.Source);
+        if (participant != null)
         {
-            Updates = new TVector<IUpdate>(),
-            Chats = new TVector<IChat>(),
-            Users = new TVector<IUser>(),
-            Date = currentDate
-        };
+            groupCall.Participants.Remove(participant);
+            groupCall.Version++;
+            await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+            participant.Muted = true;
+            return GroupCallStateHelper.Updates(
+                GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]));
+        }
+
+        return GroupCallStateHelper.Updates();
     }
 }

@@ -1,4 +1,6 @@
-﻿namespace MyTelegram.Services.Services;
+﻿using System.Collections;
+
+namespace MyTelegram.Services.Services;
 
 public class QueuedObjectMessageSender(
     IMessageQueueProcessor<ISessionMessage> sessionMessageQueueProcessor,
@@ -139,15 +141,43 @@ public class QueuedObjectMessageSender(
 
     private void UpdateAccessHashIfNeeded(RequestInfo requestInfo, IObject data)
     {
+        UpdateAccessHashIfNeeded(requestInfo, (object?)data);
+    }
+
+    private void UpdateAccessHashIfNeeded(RequestInfo requestInfo, object? data)
+    {
+        if (data == null || data is string || data is byte[])
+        {
+            return;
+        }
+
+        if (data is IHasAccessHash hasAccessHash)
+        {
+            UpdateAccessHash(requestInfo, hasAccessHash);
+        }
+
         if (data is IAccessHashOwner o)
         {
-            foreach (var hasAccessHash in o.GetAccessHashes())
+            foreach (var item in o.GetAccessHashes())
             {
-                hasAccessHash.AccessHash = accessHashHelper2.GenerateAccessHash(requestInfo.UserId,
-                    requestInfo.AccessHashKeyId, hasAccessHash.Id, (AccessHashType)hasAccessHash.AccessHashType2);
-
-                //Console.WriteLine($"Update access hash:UserId:{requestInfo.UserId} AccessHashKeyId:{requestInfo.AccessHashKeyId} Id:{hasAccessHash.Id} {hasAccessHash.AccessHashType2} {hasAccessHash.AccessHash}");
+                UpdateAccessHash(requestInfo, item);
             }
         }
+
+        if (data is IEnumerable enumerable)
+        {
+            foreach (var item in enumerable)
+            {
+                UpdateAccessHashIfNeeded(requestInfo, item);
+            }
+        }
+    }
+
+    private void UpdateAccessHash(RequestInfo requestInfo, IHasAccessHash hasAccessHash)
+    {
+        hasAccessHash.AccessHash = accessHashHelper2.GenerateAccessHash(requestInfo.UserId,
+            requestInfo.AccessHashKeyId, hasAccessHash.Id, (AccessHashType)hasAccessHash.AccessHashType2);
+
+        //Console.WriteLine($"Update access hash:UserId:{requestInfo.UserId} accessHashKeyId:{requestInfo.AccessHashKeyId} Id:{hasAccessHash.Id} {hasAccessHash.AccessHashType2} {hasAccessHash.AccessHash}");
     }
 }

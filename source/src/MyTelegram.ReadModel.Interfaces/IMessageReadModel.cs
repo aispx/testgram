@@ -18,6 +18,7 @@ public interface IMessageReadModel : IReadModel, IReactionItem
     MessageActionType MessageActionType { get; }
     MessageType MessageType { get; }
     bool Out { get; }
+    bool NoForwards { get; }
     long OwnerPeerId { get; }
     bool Pinned { get; }
     bool Post { get; }

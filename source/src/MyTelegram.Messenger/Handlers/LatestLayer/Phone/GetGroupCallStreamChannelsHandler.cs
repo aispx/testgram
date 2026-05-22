@@ -1,3 +1,7 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Schema;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Get info about RTMP streams in a group call or livestream.<br/>
@@ -12,10 +16,45 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetGroupCallStreamChannelsHandler : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestGetGroupCallStreamChannels, MyTelegram.Schema.Phone.IGroupCallStreamChannels>
+internal sealed class GetGroupCallStreamChannelsHandler(
+    IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestGetGroupCallStreamChannels, MyTelegram.Schema.Phone.IGroupCallStreamChannels>
 {
-    protected override Task<MyTelegram.Schema.Phone.IGroupCallStreamChannels> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestGetGroupCallStreamChannels obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<MyTelegram.Schema.Phone.IGroupCallStreamChannels> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestGetGroupCallStreamChannels obj)
     {
-        throw new NotImplementedException();
+        if (obj.Call is not TInputGroupCall inputGroupCall)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync();
+        if (groupCall == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+        if (!groupCall.Participants.Any(p => p.PeerId == input.UserId))
+        {
+            RpcErrors.RpcErrors400.GroupcallJoinMissing.ThrowRpcError();
+            return null!;
+        }
+
+        var channels = groupCall.RtmpStream
+            ? new TVector<IGroupCallStreamChannel>
+            {
+                new TGroupCallStreamChannel
+                {
+                    Channel = 0,
+                    Scale = 0,
+                    LastTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                }
+            }
+            : new TVector<IGroupCallStreamChannel>();
+
+        return new MyTelegram.Schema.Phone.TGroupCallStreamChannels { Channels = channels };
     }
 }

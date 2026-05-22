@@ -356,17 +356,18 @@ public class UserConverterService(
         }
 
         user.Status = userStatusCacheAppService.GetUserStatus(user.Id);
-        if (userReadModel.EmojiStatusCollectibleId.HasValue && userReadModel.EmojiStatusDocumentId.HasValue)
+        var emojiStatus = GetLatestEmojiStatusFields(userReadModel);
+        if (emojiStatus.CollectibleId.HasValue && emojiStatus.DocumentId.HasValue)
         {
             user.EmojiStatus = BuildCollectibleEmojiStatus(
-                userReadModel.EmojiStatusCollectibleId.Value,
-                userReadModel.EmojiStatusDocumentId.Value,
-                userReadModel.EmojiStatusValidUntil);
+                emojiStatus.CollectibleId.Value,
+                emojiStatus.DocumentId.Value,
+                emojiStatus.Until);
         }
-        else if (userReadModel.EmojiStatusDocumentId != null)
+        else if (emojiStatus.DocumentId != null)
         {
-            var emojiStatus = new EmojiStatus(userReadModel.EmojiStatusDocumentId.Value, userReadModel.EmojiStatusValidUntil);
-            user.EmojiStatus = emojiStatusLayeredService.GetConverter(layer).ToEmojiStatus(emojiStatus);
+            var status = new EmojiStatus(emojiStatus.DocumentId.Value, emojiStatus.Until);
+            user.EmojiStatus = emojiStatusLayeredService.GetConverter(layer).ToEmojiStatus(status);
         }
         var contactType = contactHelper.GetContactType(myContactReadModel, targetUserContactReadModel);
         var photos = photoReadModels ?? [];
@@ -381,6 +382,62 @@ public class UserConverterService(
         }
 
         return user;
+    }
+
+    private (long? DocumentId, int? Until, long? CollectibleId) GetLatestEmojiStatusFields(IUserReadModel userReadModel)
+    {
+        var userDoc = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
+            .Find(Builders<BsonDocument>.Filter.Eq("UserId", userReadModel.UserId))
+            .Project(Builders<BsonDocument>.Projection
+                .Include("EmojiStatusDocumentId")
+                .Include("EmojiStatusValidUntil")
+                .Include("EmojiStatusCollectibleId"))
+            .FirstOrDefault();
+
+        if (userDoc == null)
+        {
+            return (
+                userReadModel.EmojiStatusDocumentId,
+                userReadModel.EmojiStatusValidUntil,
+                userReadModel.EmojiStatusCollectibleId);
+        }
+
+        return (
+            GetNullableInt64(userDoc, "EmojiStatusDocumentId"),
+            GetNullableInt32(userDoc, "EmojiStatusValidUntil"),
+            GetNullableInt64(userDoc, "EmojiStatusCollectibleId"));
+    }
+
+    private static long? GetNullableInt64(BsonDocument document, string fieldName)
+    {
+        if (!document.TryGetValue(fieldName, out var value) || value.IsBsonNull)
+        {
+            return null;
+        }
+
+        return value.BsonType switch
+        {
+            BsonType.Int64 => value.AsInt64,
+            BsonType.Int32 => value.AsInt32,
+            BsonType.Double => (long)value.AsDouble,
+            _ => null
+        };
+    }
+
+    private static int? GetNullableInt32(BsonDocument document, string fieldName)
+    {
+        if (!document.TryGetValue(fieldName, out var value) || value.IsBsonNull)
+        {
+            return null;
+        }
+
+        return value.BsonType switch
+        {
+            BsonType.Int32 => value.AsInt32,
+            BsonType.Int64 => (int)value.AsInt64,
+            BsonType.Double => (int)value.AsDouble,
+            _ => null
+        };
     }
 
     private void ApplyPrivacyToUserFull(long selfUserId,
@@ -524,22 +581,11 @@ public class UserConverterService(
             return new TEmojiStatus { DocumentId = documentId, Until = until };
         }
 
-        var pattern = doc.Attributes.FirstOrDefault(a => a.Type == "pattern");
-        var backdrop = doc.Attributes.FirstOrDefault(a => a.Type == "backdrop");
-
-        return new TEmojiStatusCollectible
-        {
-            CollectibleId = doc.UniqueId,
-            DocumentId = documentId,
-            Title = $"{doc.Title} #{doc.Num}",
-            Slug = doc.Slug,
-            PatternDocumentId = pattern?.DocumentId ?? 0,
-            CenterColor = backdrop?.CenterColor ?? 0,
-            EdgeColor = backdrop?.EdgeColor ?? 0,
-            PatternColor = backdrop?.PatternColor ?? 0,
-            TextColor = backdrop?.TextColor ?? 0,
-            Until = until,
-        };
+        return CollectibleEmojiStatusHelper.ToEmojiStatus(
+            doc,
+            documentId,
+            until,
+            patternDocumentId => CollectibleEmojiStatusHelper.DocumentExists(mongoDatabase, patternDocumentId));
     }
 
     private void SetUserProfilePhoto(IUserReadModel userReadModel,

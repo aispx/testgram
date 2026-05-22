@@ -16,6 +16,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// </remarks>
 internal sealed class UpdateEmojiStatusHandler(
     IMongoDatabase mongoDatabase,
+    IUserAppService userAppService,
     MyTelegram.Services.Services.IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdateEmojiStatus, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUpdateEmojiStatus obj)
@@ -23,6 +24,7 @@ internal sealed class UpdateEmojiStatusHandler(
         long? documentId = null;
         int? until = null;
         long? collectibleId = null;
+        UniqueStarGiftDocument? collectibleDoc = null;
 
         switch (obj.EmojiStatus)
         {
@@ -39,6 +41,7 @@ internal sealed class UpdateEmojiStatusHandler(
                     .FirstOrDefaultAsync();
                 if (doc == null)
                     RpcErrors.RpcErrors400.CollectibleInvalid.ThrowRpcError();
+                collectibleDoc = doc;
                 var model = doc.Attributes.FirstOrDefault(a => a.Type == "model");
                 documentId = model?.DocumentId ?? doc.DocumentId;
                 collectibleId = collectible.CollectibleId;
@@ -62,9 +65,16 @@ internal sealed class UpdateEmojiStatusHandler(
             update = update.PushEach("RecentEmojiStatuses", [documentId.Value], slice: -10);
         }
         await col.UpdateOneAsync(Builders<BsonDocument>.Filter.Eq("UserId", input.UserId), update);
+        userAppService.InvalidateCache(input.UserId);
 
         IEmojiStatus resolvedStatus = documentId.HasValue
-            ? new TEmojiStatus { DocumentId = documentId.Value, Until = until }
+            ? collectibleDoc != null
+                ? CollectibleEmojiStatusHelper.ToEmojiStatus(
+                    collectibleDoc,
+                    documentId.Value,
+                    until,
+                    patternDocumentId => CollectibleEmojiStatusHelper.DocumentExists(mongoDatabase, patternDocumentId))
+                : new TEmojiStatus { DocumentId = documentId.Value, Until = until }
             : new TEmojiStatusEmpty();
 
         var emojiUpdate = new TUpdateUserEmojiStatus
