@@ -13,6 +13,13 @@ internal sealed class ClearSavedInfoHandler(IMongoDatabase mongoDatabase)
             var col = mongoDatabase.GetCollection<SavedPaymentCredentialDocument>("saved-payment-credentials");
             await col.DeleteManyAsync(x => x.UserId == input.UserId);
         }
+
+        if (obj.Info)
+        {
+            var col = mongoDatabase.GetCollection<SavedPaymentRequestedInfoDocument>("saved-payment-requested-info");
+            await col.DeleteOneAsync(x => x.UserId == input.UserId);
+        }
+
         return new TBoolTrue();
     }
 }
