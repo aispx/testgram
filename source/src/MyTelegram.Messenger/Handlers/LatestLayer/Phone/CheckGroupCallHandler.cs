@@ -30,7 +30,7 @@ internal sealed class CheckGroupCallHandler(
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
-        if (!groupCall.Participants.Any(p => p.PeerId == input.UserId && !p.Left))
+        if (!GroupCallStateHelper.IsJoinedByUser(groupCall, input.UserId))
         {
             RpcErrors.RpcErrors400.GroupcallJoinMissing.ThrowRpcError();
             return null!;

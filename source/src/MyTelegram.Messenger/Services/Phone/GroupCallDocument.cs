@@ -40,6 +40,7 @@ public class GroupCallDocument
 
 public class GroupCallParticipantDoc
 {
+    public long UserId { get; set; }
     public long PeerId { get; set; }
     public int PeerType { get; set; }
     public int Source { get; set; }

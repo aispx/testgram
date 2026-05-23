@@ -206,9 +206,45 @@ internal static class GroupCallStateHelper
 
     public static IEnumerable<long> GetParticipantUserIds(GroupCallDocument call)
     {
-        return call.Participants
+        var participantUserIds = call.Participants
             .Where(participant => participant.PeerType == (int)PeerType.User && !participant.Left)
             .Select(participant => participant.PeerId);
+        var joinedUserIds = call.Participants
+            .Where(participant => participant.UserId > 0 && !participant.Left)
+            .Select(participant => participant.UserId);
+
+        return participantUserIds.Concat(joinedUserIds).Distinct();
+    }
+
+    public static bool IsJoinedByUser(GroupCallDocument call, long userId)
+    {
+        return FindParticipantByUser(call, userId) != null;
+    }
+
+    public static GroupCallParticipantDoc? FindParticipantByUser(GroupCallDocument call, long userId, int? source = null)
+    {
+        if (userId <= 0)
+        {
+            return null;
+        }
+
+        return call.Participants.FirstOrDefault(participant =>
+            !participant.Left &&
+            (!source.HasValue || participant.Source == source.Value) &&
+            IsParticipantControlledByUser(call, participant, userId));
+    }
+
+    private static bool IsParticipantControlledByUser(
+        GroupCallDocument call,
+        GroupCallParticipantDoc participant,
+        long userId)
+    {
+        return participant.UserId == userId ||
+               (participant.PeerType == (int)PeerType.User && participant.PeerId == userId) ||
+               (participant.UserId == 0 &&
+                call.CreatorId == userId &&
+                participant.PeerId == call.PeerId &&
+                participant.PeerType == call.PeerType);
     }
 
     public static IEnumerable<long> GetCallUserRecipientIds(

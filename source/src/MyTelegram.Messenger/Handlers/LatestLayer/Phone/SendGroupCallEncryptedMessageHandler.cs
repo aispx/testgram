@@ -30,10 +30,7 @@ internal sealed class SendGroupCallEncryptedMessageHandler(
             return null!;
         }
 
-        var isParticipant = groupCall.Participants.Any(p =>
-            p.PeerType == (int)PeerType.User &&
-            p.PeerId == input.UserId &&
-            !p.Left);
+        var isParticipant = GroupCallStateHelper.IsJoinedByUser(groupCall, input.UserId);
         if (!isParticipant && groupCall.CreatorId != input.UserId)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();

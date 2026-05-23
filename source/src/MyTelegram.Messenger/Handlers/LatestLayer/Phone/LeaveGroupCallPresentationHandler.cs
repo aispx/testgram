@@ -31,7 +31,7 @@ internal sealed class LeaveGroupCallPresentationHandler(
             return null!;
         }
 
-        var participant = groupCall.Participants.FirstOrDefault(p => p.PeerId == input.UserId);
+        var participant = GroupCallStateHelper.FindParticipantByUser(groupCall, input.UserId);
         if (participant == null)
         {
             return GroupCallStateHelper.Updates();

@@ -34,7 +34,7 @@ internal sealed class JoinGroupCallPresentationHandler(
             return null!;
         }
 
-        var participant = groupCall.Participants.FirstOrDefault(p => p.PeerId == input.UserId);
+        var participant = GroupCallStateHelper.FindParticipantByUser(groupCall, input.UserId);
         if (participant == null)
         {
             RpcErrors.RpcErrors403.ParticipantJoinMissing.ThrowRpcError();

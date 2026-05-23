@@ -24,7 +24,7 @@ internal sealed class LeaveGroupCallHandler(
             return null!;
         }
 
-        var participant = groupCall.Participants.FirstOrDefault(p => p.PeerId == input.UserId && p.Source == obj.Source);
+        var participant = GroupCallStateHelper.FindParticipantByUser(groupCall, input.UserId, obj.Source);
         if (participant != null)
         {
             groupCall.Participants.Remove(participant);

@@ -42,6 +42,7 @@ internal sealed class JoinGroupCallHandler(
 
         var participant = new GroupCallParticipantDoc
         {
+            UserId = input.UserId,
             PeerId = joinAs.PeerId,
             PeerType = (int)joinAs.PeerType,
             Source = ssrc,
