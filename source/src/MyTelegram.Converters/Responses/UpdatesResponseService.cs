@@ -107,8 +107,30 @@ public class UpdatesResponseService(
                     .ToLayeredData(updateStarsBalance);
 
             case TUpdateGroupCall updateGroupCall:
-                return updateGroupCallLayeredService.GetConverter(layer)
+                var layeredUpdateGroupCall = updateGroupCallLayeredService.GetConverter(layer)
                     .ToLayeredData(updateGroupCall);
+                if (layeredUpdateGroupCall is TUpdateGroupCall { Call: IHasAccessHash groupCallWithAccessHash })
+                {
+                    groupCallWithAccessHash.AccessHash = accessHashHelper2.GenerateAccessHash(
+                        userId,
+                        accessHashKeyId,
+                        groupCallWithAccessHash.Id,
+                        AccessHashType.GroupCall);
+                }
+
+                return layeredUpdateGroupCall;
+
+            case TUpdateGroupCallParticipants updateGroupCallParticipants:
+                if (updateGroupCallParticipants.Call is IHasAccessHash inputGroupCallWithAccessHash)
+                {
+                    inputGroupCallWithAccessHash.AccessHash = accessHashHelper2.GenerateAccessHash(
+                        userId,
+                        accessHashKeyId,
+                        inputGroupCallWithAccessHash.Id,
+                        AccessHashType.GroupCall);
+                }
+
+                break;
 
             case TUpdateBotChatBoost updateBotChatBoost:
                 if (updateBotChatBoost.Boost is TBoost boost)

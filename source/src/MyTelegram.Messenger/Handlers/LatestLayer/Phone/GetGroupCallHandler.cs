@@ -2,12 +2,14 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
+using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 
 internal sealed class GetGroupCallHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IAccessHashHelper2 accessHashHelper2)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestGetGroupCall, MyTelegram.Schema.Phone.IGroupCall>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -42,7 +44,10 @@ internal sealed class GetGroupCallHandler(
 
         return new MyTelegram.Schema.Phone.TGroupCall
         {
-            Call = GroupCallStateHelper.ToGroupCall(groupCall, input.UserId),
+            Call = GroupCallStateHelper.ToGroupCall(
+                groupCall,
+                input.UserId,
+                accessHashHelper2.GenerateAccessHash(input.UserId, input.AccessHashKeyId, groupCall.CallId, AccessHashType.GroupCall)),
             Participants = new TVector<MyTelegram.Schema.IGroupCallParticipant>(participants),
             ParticipantsNextOffset = groupCall.Participants.Count > limit ? limit.ToString() : string.Empty,
             Chats = new TVector<IChat>(),

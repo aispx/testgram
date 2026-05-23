@@ -8,9 +8,7 @@ internal static class GroupCallStateHelper
 {
     public static FilterDefinition<GroupCallDocument> Filter(TInputGroupCall call)
     {
-        return Builders<GroupCallDocument>.Filter.And(
-            Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, call.Id),
-            Builders<GroupCallDocument>.Filter.Eq(g => g.AccessHash, call.AccessHash));
+        return Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, call.Id);
     }
 
     public static TInputGroupCall ToInputGroupCall(GroupCallDocument call)
@@ -22,12 +20,12 @@ internal static class GroupCallStateHelper
         };
     }
 
-    public static TGroupCall ToGroupCall(GroupCallDocument call, long selfUserId)
+    public static TGroupCall ToGroupCall(GroupCallDocument call, long selfUserId, long? accessHash = null)
     {
         return new TGroupCall
         {
             Id = call.CallId,
-            AccessHash = call.AccessHash,
+            AccessHash = accessHash ?? call.AccessHash,
             ParticipantsCount = call.Participants.Count,
             Title = call.Title,
             ScheduleDate = call.ScheduleDate,
