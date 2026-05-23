@@ -247,7 +247,7 @@ services:
       # App__Servers__2__CertPemFilePath: ${App__Servers__2__CertPemFilePath}
       # App__Servers__2__KeyPemFilePath: ${App__Servers__2__KeyPemFilePath}
       # App__Servers__2__EnableProxyProtocolV2: ${App__Servers__2__EnableProxyProtocolV2}
-      # App__Servers__2__MediaOnly: ${App__Servers__2__MediaOnly}
+      App__Servers__2__MediaOnly: "False"
       App__Servers__3__Enabled: ${App__Servers__3__Enabled}
       # App__Servers__3__ServerType: ${App__Servers__3__ServerType}
       # App__Servers__3__Ip: ${App__Servers__3__Ip}
@@ -257,7 +257,7 @@ services:
       # App__Servers__3__CertPemFilePath: ${App__Servers__3__CertPemFilePath}
       # App__Servers__3__KeyPemFilePath: ${App__Servers__3__KeyPemFilePath}
       # App__Servers__3__EnableProxyProtocolV2: ${App__Servers__3__EnableProxyProtocolV2}
-      # App__Servers__3__MediaOnly: ${App__Servers__3__MediaOnly}
+      App__Servers__3__MediaOnly: "False"
       #       App__Servers__4__Enabled: ${App__Servers__4__Enabled}
       # App__Servers__4__ServerType: ${App__Servers__4__ServerType}
       # App__Servers__4__Ip: ${App__Servers__4__Ip}
@@ -353,6 +353,10 @@ services:
       # App__DispatchUnknownObjectToMessengerServer: ${App__DispatchUnknownObjectToMessengerServer}
       # App__TempAuthKeyExpirationMinutes: ${App__TempAuthKeyExpirationMinutes}
       # App__CommandServerObjectIds: ${App__CommandServerObjectIds}
+      # Route RTMP/group-call stream RPCs arriving on media auth keys through the
+      # sticker/media lane; query-server converts them back to messenger queries.
+      App__StickerServerObjectIds__0: "447879488" # phone.getGroupCallStreamChannels
+      App__StickerServerObjectIds__1: "1525991226" # phone.getGroupCallStreamRtmpUrl
       RabbitMQ__Connections__Default__HostName: ${RabbitMQ__Connections__Default__HostName:-rabbitmq}
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}
@@ -516,7 +520,7 @@ services:
       # App__DcOptions__2__ThisPortOnly: ${App__DcOptions__2__ThisPortOnly}
       # App__DcOptions__2__Ipv6: ${App__DcOptions__2__Ipv6}
       # App__DcOptions__2__Cdn: ${App__DcOptions__2__Cdn}
-      # App__DcOptions__2__MediaOnly: ${App__DcOptions__2__MediaOnly}
+      App__DcOptions__2__MediaOnly: "False"
       # App__DcOptions__2__Static: ${App__DcOptions__2__Static}
 
       App__DcOptions__3__Enabled: ${App__DcOptions__3__Enabled}
@@ -527,7 +531,7 @@ services:
       # App__DcOptions__3__ThisPortOnly: ${App__DcOptions__3__ThisPortOnly}
       # App__DcOptions__3__Ipv6: ${App__DcOptions__3__Ipv6}
       # App__DcOptions__3__Cdn: ${App__DcOptions__3__Cdn}
-      # App__DcOptions__3__MediaOnly: ${App__DcOptions__3__MediaOnly}
+      App__DcOptions__3__MediaOnly: "False"
       # App__DcOptions__3__Static: ${App__DcOptions__3__Static}
       RabbitMQ__Connections__Default__HostName: ${RabbitMQ__Connections__Default__HostName:-rabbitmq}
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
@@ -619,7 +623,7 @@ services:
       # App__DcOptions__2__ThisPortOnly: ${App__DcOptions__2__ThisPortOnly}
       # App__DcOptions__2__Ipv6: ${App__DcOptions__2__Ipv6}
       # App__DcOptions__2__Cdn: ${App__DcOptions__2__Cdn}
-      # App__DcOptions__2__MediaOnly: ${App__DcOptions__2__MediaOnly}
+      App__DcOptions__2__MediaOnly: "False"
       # App__DcOptions__2__Static: ${App__DcOptions__2__Static}
 
       App__DcOptions__3__Enabled: ${App__DcOptions__3__Enabled}
@@ -630,7 +634,7 @@ services:
       # App__DcOptions__3__ThisPortOnly: ${App__DcOptions__3__ThisPortOnly}
       # App__DcOptions__3__Ipv6: ${App__DcOptions__3__Ipv6}
       # App__DcOptions__3__Cdn: ${App__DcOptions__3__Cdn}
-      # App__DcOptions__3__MediaOnly: ${App__DcOptions__3__MediaOnly}
+      App__DcOptions__3__MediaOnly: "False"
       # App__DcOptions__3__Static: ${App__DcOptions__3__Static}
       RabbitMQ__Connections__Default__HostName: ${RabbitMQ__Connections__Default__HostName:-rabbitmq}
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
