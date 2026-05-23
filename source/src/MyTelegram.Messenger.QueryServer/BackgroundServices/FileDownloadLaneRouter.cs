@@ -20,13 +20,27 @@ public sealed class FileDownloadLaneRouter(
     private const string SourceExchange = "mytelegram_exchange";
     private const string FilteredExchange = "mytelegram_file_download_exchange";
     private const string FileServerQueue = "MyTelegramFileServer";
-    private const string RoutingKey = nameof(DownloadDataReceivedEvent);
+    private static readonly string[] RoutedKeys =
+    [
+        nameof(DownloadDataReceivedEvent),
+        nameof(UploadDataReceivedEvent)
+    ];
 
     private readonly SemaphoreSlim _publishLock = new(1, 1);
     private IConnection? _connection;
     private IChannel? _channel;
 
     public async Task ForwardAsync(DownloadDataReceivedEvent eventData)
+    {
+        await ForwardAsync(eventData, nameof(DownloadDataReceivedEvent));
+    }
+
+    public async Task ForwardAsync(UploadDataReceivedEvent eventData)
+    {
+        await ForwardAsync(eventData, nameof(UploadDataReceivedEvent));
+    }
+
+    private async Task ForwardAsync(DataReceivedEvent eventData, string routingKey)
     {
         using var writer = new CommunityToolkit.HighPerformance.Buffers.ArrayPoolBufferWriter<byte>();
         rabbitMqSerializer.Serialize(writer, eventData);
@@ -37,7 +51,7 @@ public sealed class FileDownloadLaneRouter(
             await EnsureTopologyCoreAsync(CancellationToken.None);
             await _channel!.BasicPublishAsync(
                 exchange: FilteredExchange,
-                routingKey: RoutingKey,
+                routingKey: routingKey,
                 mandatory: true,
                 basicProperties: new BasicProperties { DeliveryMode = DeliveryModes.Persistent },
                 body: writer.WrittenMemory);
@@ -130,16 +144,19 @@ public sealed class FileDownloadLaneRouter(
             autoDelete: false,
             arguments: null,
             cancellationToken: cancellationToken);
-        await _channel.QueueBindAsync(
-            queue: FileServerQueue,
-            exchange: FilteredExchange,
-            routingKey: RoutingKey,
-            cancellationToken: cancellationToken);
-        await _channel.QueueUnbindAsync(
-            queue: FileServerQueue,
-            exchange: SourceExchange,
-            routingKey: RoutingKey,
-            arguments: null,
-            cancellationToken: cancellationToken);
+        foreach (var routingKey in RoutedKeys)
+        {
+            await _channel.QueueBindAsync(
+                queue: FileServerQueue,
+                exchange: FilteredExchange,
+                routingKey: routingKey,
+                cancellationToken: cancellationToken);
+            await _channel.QueueUnbindAsync(
+                queue: FileServerQueue,
+                exchange: SourceExchange,
+                routingKey: routingKey,
+                arguments: null,
+                cancellationToken: cancellationToken);
+        }
     }
 }

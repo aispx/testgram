@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
 
 namespace MyTelegram.Messenger.Messenger.Handlers.LatestLayer.Upload;
 
@@ -29,6 +30,11 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
         if (obj.Offset < 0)
         {
             RpcErrors.RpcErrors400.OffsetInvalid.ThrowRpcError();
+        }
+
+        if (obj.Location is TInputGroupCallStream groupCallStream)
+        {
+            return await HandleGroupCallStreamAsync(input, groupCallStream);
         }
 
         // Extract file ID from location
@@ -110,5 +116,45 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
 
         // Unreachable
         throw new InvalidOperationException();
+    }
+
+    private async Task<MyTelegram.Schema.Upload.IFile> HandleGroupCallStreamAsync(
+        IRequestInput input,
+        TInputGroupCallStream location)
+    {
+        if (location.Call is not TInputGroupCall inputGroupCall)
+        {
+            RpcErrors.RpcErrors400.LocationInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var groupCalls = _database.GetCollection<GroupCallDocument>("group_calls");
+        var groupCall = await groupCalls.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync();
+        if (groupCall == null || !groupCall.Active)
+        {
+            RpcErrors.RpcErrors400.LocationInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (!groupCall.Participants.Any(p => p.PeerId == input.UserId))
+        {
+            RpcErrors.RpcErrors400.GroupcallJoinMissing.ThrowRpcError();
+            return null!;
+        }
+
+        _logger.LogDebug(
+            "Returning empty group call stream chunk: CallId={CallId}, TimeMs={TimeMs}, Scale={Scale}, VideoChannel={VideoChannel}, VideoQuality={VideoQuality}",
+            inputGroupCall.Id,
+            location.TimeMs,
+            location.Scale,
+            location.VideoChannel,
+            location.VideoQuality);
+
+        return new MyTelegram.Schema.Upload.TFile
+        {
+            Type = new MyTelegram.Schema.Storage.TFilePartial(),
+            Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Bytes = ReadOnlyMemory<byte>.Empty
+        };
     }
 }

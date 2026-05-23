@@ -50,23 +50,43 @@ internal sealed class CreateGroupCallHandler(
             return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(existing, input.UserId, peerHelper));
         }
 
-        var callId = await idGenerator.NextIdAsync(IdType.MessageId, input.UserId);
-        var call = new GroupCallDocument
+        for (var attempt = 0; attempt < 8; attempt++)
         {
-            Id = callId,
-            CallId = callId,
-            AccessHash = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            RandomId = obj.RandomId,
-            PeerId = peer.PeerId,
-            PeerType = (int)peer.PeerType,
-            CreatorId = input.UserId,
-            Title = obj.Title,
-            ScheduleDate = obj.ScheduleDate,
-            RtmpStream = obj.RtmpStream,
-            Date = GroupCallStateHelper.CurrentDate()
-        };
-        await _groupCallCollection.InsertOneAsync(call);
+            var callId = await idGenerator.NextIdAsync(IdType.MessageId, input.UserId);
+            var idExists = await _groupCallCollection
+                .Find(g => g.Id == callId || g.CallId == callId)
+                .AnyAsync();
+            if (idExists)
+            {
+                continue;
+            }
 
-        return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(call, input.UserId, peerHelper));
+            var call = new GroupCallDocument
+            {
+                Id = callId,
+                CallId = callId,
+                AccessHash = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                RandomId = obj.RandomId,
+                PeerId = peer.PeerId,
+                PeerType = (int)peer.PeerType,
+                CreatorId = input.UserId,
+                Title = obj.Title,
+                ScheduleDate = obj.ScheduleDate,
+                RtmpStream = obj.RtmpStream,
+                Date = GroupCallStateHelper.CurrentDate()
+            };
+
+            try
+            {
+                await _groupCallCollection.InsertOneAsync(call);
+                return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(call, input.UserId, peerHelper));
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+            }
+        }
+
+        RpcErrors.RpcErrors400.CreateCallFailed.ThrowRpcError();
+        return null!;
     }
 }

@@ -9,6 +9,8 @@ namespace MyTelegram.Messenger.Services.Phone;
 
 internal static class GroupCallStateHelper
 {
+    private const int DefaultGroupCallStreamDcId = 1;
+
     public static FilterDefinition<GroupCallDocument> Filter(TInputGroupCall call)
     {
         return Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, call.Id);
@@ -31,6 +33,7 @@ internal static class GroupCallStateHelper
             AccessHash = accessHash ?? call.AccessHash,
             ParticipantsCount = call.Participants.Count,
             Title = call.Title,
+            StreamDcId = DefaultGroupCallStreamDcId,
             ScheduleDate = call.ScheduleDate,
             RecordStartDate = call.RecordStartDate,
             RecordVideoActive = call.RecordVideoActive,
@@ -118,8 +121,23 @@ internal static class GroupCallStateHelper
     public static TUpdateGroupCallConnection CreateConnectionUpdate(
         GroupCallDocument call,
         IReadOnlyCollection<WebRtcConnection>? webRtcConnections,
-        bool presentation = false)
+        bool presentation = false,
+        bool streamFallback = false)
     {
+        if (streamFallback)
+        {
+            var streamJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["stream"] = true
+            });
+
+            return new TUpdateGroupCallConnection
+            {
+                Presentation = presentation,
+                Params = new TDataJSON { Data = streamJson }
+            };
+        }
+
         var candidates = CreateConnectionCandidates(webRtcConnections);
         if (candidates.Count == 0)
         {

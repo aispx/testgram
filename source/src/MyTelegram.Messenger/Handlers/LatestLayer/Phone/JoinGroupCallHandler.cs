@@ -69,6 +69,9 @@ internal sealed class JoinGroupCallHandler(
 
         return GroupCallStateHelper.Updates(
             GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant], true),
-            GroupCallStateHelper.CreateConnectionUpdate(groupCall, options.CurrentValue.WebRtcConnections));
+            GroupCallStateHelper.CreateConnectionUpdate(
+                groupCall,
+                options.CurrentValue.WebRtcConnections,
+                streamFallback: true));
     }
 }

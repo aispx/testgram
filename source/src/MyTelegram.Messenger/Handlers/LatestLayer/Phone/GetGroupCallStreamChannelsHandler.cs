@@ -43,17 +43,15 @@ internal sealed class GetGroupCallStreamChannelsHandler(
             return null!;
         }
 
-        var channels = groupCall.RtmpStream
-            ? new TVector<IGroupCallStreamChannel>
+        var channels = new TVector<IGroupCallStreamChannel>
+        {
+            new TGroupCallStreamChannel
             {
-                new TGroupCallStreamChannel
-                {
-                    Channel = 0,
-                    Scale = 0,
-                    LastTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                }
+                Channel = 0,
+                Scale = 0,
+                LastTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             }
-            : new TVector<IGroupCallStreamChannel>();
+        };
 
         return new MyTelegram.Schema.Phone.TGroupCallStreamChannels { Channels = channels };
     }
