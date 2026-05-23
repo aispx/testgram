@@ -115,13 +115,26 @@ internal static class GroupCallStateHelper
 
     public static int CreateParticipantSource(string? paramsJson, IReadOnlyCollection<GroupCallParticipantDoc> participants, long peerId, int peerType)
     {
-        var source = TryReadSsrc(paramsJson) ?? Random.Shared.Next(100000, 999999);
+        var source = TryReadSsrc(paramsJson, true) ?? Random.Shared.Next(100000, 999999);
         if (participants.Any(p => p.Source == source && (p.PeerId != peerId || p.PeerType != peerType)))
         {
             RpcErrors.RpcErrors400.GroupcallSsrcDuplicateMuch.ThrowRpcError();
         }
 
         return source;
+    }
+
+    public static HashSet<int> GetForwardedSources(IEnumerable<GroupCallParticipantDoc> participants)
+    {
+        var sources = new HashSet<int>();
+        foreach (var participant in participants)
+        {
+            sources.Add(participant.Source);
+            AddSourcesFromParams(participant.ParamsJson, sources, false);
+            AddSourcesFromParams(participant.PresentationParamsJson, sources, false);
+        }
+
+        return sources;
     }
 
     public static TUpdates Updates(params IUpdate[] updates)
@@ -150,7 +163,7 @@ internal static class GroupCallStateHelper
         return Guid.NewGuid().ToString("N")[..22];
     }
 
-    private static int? TryReadSsrc(string? paramsJson)
+    private static int? TryReadSsrc(string? paramsJson, bool throwOnInvalid)
     {
         if (string.IsNullOrWhiteSpace(paramsJson))
         {
@@ -170,10 +183,71 @@ internal static class GroupCallStateHelper
         }
         catch (JsonException)
         {
-            RpcErrors.RpcErrors400.DataJsonInvalid.ThrowRpcError();
+            if (throwOnInvalid)
+            {
+                RpcErrors.RpcErrors400.DataJsonInvalid.ThrowRpcError();
+            }
         }
 
         return null;
+    }
+
+    private static void AddSourcesFromParams(string? paramsJson, ISet<int> sources, bool throwOnInvalid)
+    {
+        if (string.IsNullOrWhiteSpace(paramsJson))
+        {
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(paramsJson);
+            AddPositiveIntProperty(document.RootElement, "ssrc", sources);
+            if (!document.RootElement.TryGetProperty("ssrc-groups", out var groups) ||
+                groups.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (var group in groups.EnumerateArray())
+            {
+                if (!group.TryGetProperty("sources", out var groupSources) ||
+                    groupSources.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var source in groupSources.EnumerateArray())
+                {
+                    AddPositiveInt(source, sources);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            if (throwOnInvalid)
+            {
+                RpcErrors.RpcErrors400.DataJsonInvalid.ThrowRpcError();
+            }
+        }
+    }
+
+    private static void AddPositiveIntProperty(JsonElement element, string propertyName, ISet<int> values)
+    {
+        if (element.TryGetProperty(propertyName, out var value))
+        {
+            AddPositiveInt(value, values);
+        }
+    }
+
+    private static void AddPositiveInt(JsonElement element, ISet<int> values)
+    {
+        if (element.ValueKind == JsonValueKind.Number &&
+            element.TryGetInt32(out var value) &&
+            value > 0)
+        {
+            values.Add(value);
+        }
     }
 
     private static IPeer ToPeer(PeerType peerType, long peerId)

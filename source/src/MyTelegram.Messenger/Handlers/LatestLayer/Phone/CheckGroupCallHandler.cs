@@ -42,7 +42,7 @@ internal sealed class CheckGroupCallHandler(
             return null!;
         }
 
-        var sources = groupCall.Participants.Select(p => p.Source).ToHashSet();
+        var sources = GroupCallStateHelper.GetForwardedSources(groupCall.Participants);
         return new TVector<int>(obj.Sources.Where(sources.Contains));
     }
 }
