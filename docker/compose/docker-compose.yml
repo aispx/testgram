@@ -147,13 +147,13 @@ services:
         condition: service_healthy
     restart: "no"
 
-  xiefather-init:
+  botfather-init:
     image: mongo:8
     networks:
       - tg-net
     volumes:
-      - ./init-xiefather.sh:/init-xiefather.sh:ro
-    command: ["/bin/bash", "/init-xiefather.sh"]
+      - ./init-botfather.sh:/init-botfather.sh:ro
+    command: ["/bin/bash", "/init-botfather.sh"]
     depends_on:
       mongodb:
         condition: service_healthy
@@ -184,6 +184,8 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+      botfather-init:
+        condition: service_completed_successfully
 
   ### 1.Gateway server
   gateway-server:
@@ -425,7 +427,7 @@ services:
         condition: service_completed_successfully
       business-init:
         condition: service_completed_successfully
-      xiefather-init:
+      botfather-init:
         condition: service_completed_successfully
     environment:
       Serilog__MinimumLevel__Default: ${Serilog__MinimumLevel__Default}

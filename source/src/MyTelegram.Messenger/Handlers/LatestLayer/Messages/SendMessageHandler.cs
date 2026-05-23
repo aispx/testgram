@@ -87,7 +87,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IXieFatherBotService xieFatherBotService, IObjectMessageSender objectMessageSender, IPrivacyAppService privacyAppService, ILogger<SendMessageHandler> logger) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
+internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IBotFatherBotService botFatherBotService, IObjectMessageSender objectMessageSender, IPrivacyAppService privacyAppService, ILogger<SendMessageHandler> logger) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMessage obj)
     {
@@ -230,8 +230,8 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             _ = NotifyConnectedBusinessBotsSafelyAsync(input.UserId, toPeer.PeerId, obj.Message, obj.RandomId);
         }
 
-        if (toPeer.PeerType == PeerType.User && toPeer.PeerId == XieFatherBotService.BotUserId)
-            _ = Task.Run(() => xieFatherBotService.HandleMessageAsync(input, input.UserId, obj.Message));
+        if (toPeer.PeerType == PeerType.User && toPeer.PeerId == BotFatherBotService.BotUserId)
+            _ = Task.Run(() => botFatherBotService.HandleMessageAsync(input, input.UserId, obj.Message));
         return null !;
     }
 
@@ -381,8 +381,8 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
 
     private async Task NotifyConnectedBusinessBotsAsync(long userId, long peerId, string message, long randomId)
     {
-        // Skip if sending to XieFather bot
-        if (peerId == XieFatherBotService.BotUserId)
+        // Skip if sending to BotFather bot
+        if (peerId == BotFatherBotService.BotUserId)
             return;
 
         var collection = mongoDatabase.GetCollection<BsonDocument>("connected_business_bots");

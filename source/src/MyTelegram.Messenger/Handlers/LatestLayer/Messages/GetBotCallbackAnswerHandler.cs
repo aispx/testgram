@@ -5,7 +5,7 @@ using MyTelegram.Messenger.Services.Bots;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 
 internal sealed class GetBotCallbackAnswerHandler(
-    IXieFatherBotService xieFatherBotService,
+    IBotFatherBotService botFatherBotService,
     IPeerHelper peerHelper,
     IMongoDatabase database,
     IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetBotCallbackAnswer, MyTelegram.Schema.Messages.IBotCallbackAnswer>
@@ -33,11 +33,11 @@ internal sealed class GetBotCallbackAnswerHandler(
                 };
             }
 
-            // Handle XieFather bot callbacks
-            if (peer.PeerId == XieFatherBotService.BotUserId)
+            // Handle BotFather bot callbacks
+            if (peer.PeerId == BotFatherBotService.BotUserId)
             {
-                Console.WriteLine($"[GetBotCallbackAnswer] XieFather callback data: {data}");
-                _ = Task.Run(() => xieFatherBotService.HandleCallbackAsync(input, input.UserId, obj.MsgId, data));
+                Console.WriteLine($"[GetBotCallbackAnswer] BotFather callback data: {data}");
+                _ = Task.Run(() => botFatherBotService.HandleCallbackAsync(input, input.UserId, obj.MsgId, data));
             }
         }
 

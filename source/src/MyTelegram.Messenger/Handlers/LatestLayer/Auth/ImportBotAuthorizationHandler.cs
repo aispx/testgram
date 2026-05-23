@@ -11,7 +11,7 @@ internal sealed class ImportBotAuthorizationHandler(
     IPhotoAppService photoAppService,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestImportBotAuthorization, MyTelegram.Schema.Auth.IAuthorization>
 {
-    private const string BotCollection = "xiefather-bot-state";
+    private const string BotCollection = "botfather-bot-state";
 
     protected override async Task<MyTelegram.Schema.Auth.IAuthorization> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Auth.RequestImportBotAuthorization obj)
     {

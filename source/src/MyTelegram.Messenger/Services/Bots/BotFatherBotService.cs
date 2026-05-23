@@ -4,21 +4,21 @@ using StackExchange.Redis;
 
 namespace MyTelegram.Messenger.Services.Bots;
 
-public interface IXieFatherBotService
+public interface IBotFatherBotService
 {
     Task HandleMessageAsync(IRequestInput input, long fromUserId, string message);
     Task HandleCallbackAsync(IRequestInput input, long fromUserId, int msgId, string data);
 }
 
-public class XieFatherBotService(
+public class BotFatherBotService(
     IMessageAppService messageAppService,
     IMongoDatabase mongoDatabase,
     IConnectionMultiplexer redis,
     ICommandBus commandBus,
-    IQueryProcessor queryProcessor) : IXieFatherBotService, ISingletonDependency
+    IQueryProcessor queryProcessor) : IBotFatherBotService, ISingletonDependency
 {
     public const long BotUserId = MyTelegramConsts.BotFatherUserId;
-    private const string BotCollection = "xiefather-bot-state";
+    private const string BotCollection = "botfather-bot-state";
 
     private const string WelcomeText =
         "I can help you create and manage Xiegram bots. You can control me by sending these commands:\n\n" +
@@ -37,7 +37,7 @@ public class XieFatherBotService(
         "/revoke - revoke bot access token";
 
     // --- State keys ---
-    private string StateKey(long userId) => $"xiefather:state:{userId}";
+    private string StateKey(long userId) => $"botfather:state:{userId}";
 
     private async Task SetStateAsync(long userId, string state, int ttl = 300)
         => await redis.GetDatabase().StringSetAsync(StateKey(userId), state, TimeSpan.FromSeconds(ttl));
@@ -129,18 +129,18 @@ public class XieFatherBotService(
 
     public async Task HandleCallbackAsync(IRequestInput input, long fromUserId, int msgId, string data)
     {
-        Console.WriteLine($"[XieFather] HandleCallbackAsync called: fromUserId={fromUserId}, msgId={msgId}, data={data}");
+        Console.WriteLine($"[BotFather] HandleCallbackAsync called: fromUserId={fromUserId}, msgId={msgId}, data={data}");
 
         var parts = data.Split(':');
         if (parts.Length < 2)
         {
-            Console.WriteLine($"[XieFather] Invalid callback data format: {data}");
+            Console.WriteLine($"[BotFather] Invalid callback data format: {data}");
             return;
         }
         var action = parts[0];
         var username = parts.Length > 1 ? parts[1] : "";
 
-        Console.WriteLine($"[XieFather] Parsed action={action}, username={username}");
+        Console.WriteLine($"[BotFather] Parsed action={action}, username={username}");
 
         switch (action)
         {
@@ -679,28 +679,28 @@ public class XieFatherBotService(
     private async Task SendAsync(IRequestInput input, long toUserId, string text,
         IReplyMarkup? replyMarkup = null, TVector<IMessageEntity>? entities = null)
     {
-        Console.WriteLine($"[XieFather.SendAsync] toUserId={toUserId}, text={text}, hasReplyMarkup={replyMarkup != null}");
+        Console.WriteLine($"[BotFather.SendAsync] toUserId={toUserId}, text={text}, hasReplyMarkup={replyMarkup != null}");
         if (replyMarkup != null)
         {
-            Console.WriteLine($"[XieFather.SendAsync] ReplyMarkup type: {replyMarkup.GetType().Name}");
+            Console.WriteLine($"[BotFather.SendAsync] ReplyMarkup type: {replyMarkup.GetType().Name}");
             if (replyMarkup is TReplyInlineMarkup inlineMarkup)
             {
-                Console.WriteLine($"[XieFather.SendAsync] Inline markup rows count: {inlineMarkup.Rows?.Count ?? 0}");
+                Console.WriteLine($"[BotFather.SendAsync] Inline markup rows count: {inlineMarkup.Rows?.Count ?? 0}");
                 if (inlineMarkup.Rows != null)
                 {
                     foreach (var row in inlineMarkup.Rows)
                     {
                         if (row is TKeyboardButtonRow btnRow)
                         {
-                            Console.WriteLine($"[XieFather.SendAsync] Row buttons count: {btnRow.Buttons?.Count ?? 0}");
+                            Console.WriteLine($"[BotFather.SendAsync] Row buttons count: {btnRow.Buttons?.Count ?? 0}");
                             if (btnRow.Buttons != null)
                             {
                                 foreach (var btn in btnRow.Buttons)
                                 {
-                                    Console.WriteLine($"[XieFather.SendAsync] Button type: {btn.GetType().Name}");
+                                    Console.WriteLine($"[BotFather.SendAsync] Button type: {btn.GetType().Name}");
                                     if (btn is TKeyboardButtonCallback callbackBtn)
                                     {
-                                        Console.WriteLine($"[XieFather.SendAsync] Callback button text: {callbackBtn.Text}, data length: {callbackBtn.Data?.Length ?? 0}");
+                                        Console.WriteLine($"[BotFather.SendAsync] Callback button text: {callbackBtn.Text}, data length: {callbackBtn.Data?.Length ?? 0}");
                                     }
                                 }
                             }

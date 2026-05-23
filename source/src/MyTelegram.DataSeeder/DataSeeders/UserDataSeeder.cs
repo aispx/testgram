@@ -23,7 +23,7 @@ public class UserDataSeeder(
         await CreateOfficialUserAsync();
         await CreateDefaultSupportUserAsync();
         await CreateAnonymousUserAsync();
-        await CreateUserIfNeededAsync(MyTelegramConsts.BotFatherUserId, "0", "xiefather", null, "xiefather", true);
+        await CreateUserIfNeededAsync(MyTelegramConsts.BotFatherUserId, "0", "botfather", null, "botfather", true);
 
         if (options.CurrentValue.CreateTestUsers)
         {
@@ -86,7 +86,7 @@ public class UserDataSeeder(
         var userId = MyTelegramConsts.DefaultSupportUserId;
         var created = await CreateUserIfNeededAsync(userId,
             MyTelegramConsts.DefaultSupportUserId.ToString(),
-            "MyTelegram Support",
+            "Testgram Support",
             null,
             null,
             false);
@@ -98,7 +98,7 @@ public class UserDataSeeder(
 
             var setVerifiedCommand = new SetVerifiedCommand(UserId.Create(userId), true);
             await commandBus.PublishAsync(setVerifiedCommand);
-            logger.LogInformation("MyTelegram support user created successfully");
+            logger.LogInformation("Testgram support user created successfully");
         }
     }
 
@@ -114,7 +114,7 @@ public class UserDataSeeder(
         var userId = MyTelegramConsts.NotificationServiceUserId;
         var created = await CreateUserIfNeededAsync(userId,
             "42777",
-            "MyTelegram",
+            "Testgram",
             null,
             null,
             false);
@@ -126,7 +126,7 @@ public class UserDataSeeder(
 
             var setVerifiedCommand = new SetVerifiedCommand(UserId.Create(userId), true);
             await commandBus.PublishAsync(setVerifiedCommand);
-            logger.LogInformation("MyTelegram notification user created successfully");
+            logger.LogInformation("Testgram notification user created successfully");
         }
 
         await UpdateServiceNotificationAccountBioAsync();
