@@ -37,11 +37,11 @@ internal sealed class JoinGroupCallHandler(
         }
 
         var currentDate = GroupCallStateHelper.CurrentDate();
-        var ssrc = Random.Shared.Next(100000, 999999);
-        while (groupCall.Participants.Any(p => p.Source == ssrc))
-        {
-            ssrc = Random.Shared.Next(100000, 999999);
-        }
+        var ssrc = GroupCallStateHelper.CreateParticipantSource(
+            obj.Params?.Data,
+            groupCall.Participants,
+            joinAs.PeerId,
+            (int)joinAs.PeerType);
 
         var participant = new GroupCallParticipantDoc
         {
@@ -66,6 +66,6 @@ internal sealed class JoinGroupCallHandler(
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
         return GroupCallStateHelper.Updates(
-            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]));
+            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant], true));
     }
 }

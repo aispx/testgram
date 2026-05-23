@@ -1,6 +1,7 @@
 using MongoDB.Driver;
 using MyTelegram.Schema;
 using MyTelegram.Services.Services;
+using System.Text.Json;
 
 namespace MyTelegram.Messenger.Services.Phone;
 
@@ -64,7 +65,8 @@ internal static class GroupCallStateHelper
     public static TGroupCallParticipant ToParticipant(
         GroupCallParticipantDoc participant,
         long selfUserId,
-        IPeerHelper peerHelper)
+        IPeerHelper peerHelper,
+        bool justJoined = false)
     {
         return new TGroupCallParticipant
         {
@@ -74,6 +76,7 @@ internal static class GroupCallStateHelper
             ActiveDate = participant.Date,
             Muted = participant.Muted,
             CanSelfUnmute = true,
+            JustJoined = justJoined,
             Self = participant.PeerId == selfUserId,
             VideoJoined = !participant.VideoStopped,
             Volume = participant.Volume,
@@ -98,15 +101,27 @@ internal static class GroupCallStateHelper
         GroupCallDocument call,
         long selfUserId,
         IPeerHelper peerHelper,
-        IEnumerable<GroupCallParticipantDoc> participants)
+        IEnumerable<GroupCallParticipantDoc> participants,
+        bool justJoined = false)
     {
         return new TUpdateGroupCallParticipants
         {
             Call = ToInputGroupCall(call),
             Participants = new TVector<IGroupCallParticipant>(
-                participants.Select(p => (IGroupCallParticipant)ToParticipant(p, selfUserId, peerHelper))),
+                participants.Select(p => (IGroupCallParticipant)ToParticipant(p, selfUserId, peerHelper, justJoined))),
             Version = call.Version
         };
+    }
+
+    public static int CreateParticipantSource(string? paramsJson, IReadOnlyCollection<GroupCallParticipantDoc> participants, long peerId, int peerType)
+    {
+        var source = TryReadSsrc(paramsJson) ?? Random.Shared.Next(100000, 999999);
+        if (participants.Any(p => p.Source == source && (p.PeerId != peerId || p.PeerType != peerType)))
+        {
+            RpcErrors.RpcErrors400.GroupcallSsrcDuplicateMuch.ThrowRpcError();
+        }
+
+        return source;
     }
 
     public static TUpdates Updates(params IUpdate[] updates)
@@ -133,6 +148,32 @@ internal static class GroupCallStateHelper
     public static string CreateInviteHash()
     {
         return Guid.NewGuid().ToString("N")[..22];
+    }
+
+    private static int? TryReadSsrc(string? paramsJson)
+    {
+        if (string.IsNullOrWhiteSpace(paramsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(paramsJson);
+            if (document.RootElement.TryGetProperty("ssrc", out var ssrc) &&
+                ssrc.ValueKind == JsonValueKind.Number &&
+                ssrc.TryGetInt32(out var value) &&
+                value > 0)
+            {
+                return value;
+            }
+        }
+        catch (JsonException)
+        {
+            RpcErrors.RpcErrors400.DataJsonInvalid.ThrowRpcError();
+        }
+
+        return null;
     }
 
     private static IPeer ToPeer(PeerType peerType, long peerId)
