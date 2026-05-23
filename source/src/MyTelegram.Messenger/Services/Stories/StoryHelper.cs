@@ -18,9 +18,13 @@ public static IStoryItem ConvertToStoryItem(StoryDocument doc, long requestingUs
 
     if (doc.IsLive)
     {
-        return new TStoryItemDeleted
+        return new TStoryItemSkipped
         {
-            Id = doc.StoryId
+            Id = doc.StoryId,
+            Date = (int)doc.Date,
+            ExpireDate = (int)doc.ExpireDate,
+            Live = true,
+            CloseFriends = doc.CloseFriends
         };
     }
 
@@ -353,6 +357,17 @@ public static IStoryItem ConvertToStoryItem(StoryDocument doc, long requestingUs
         }
 
         return (peerId, peerType);
+    }
+
+    public static int ToStoryPeerType(PeerType peerType)
+    {
+        return peerType switch
+        {
+            PeerType.User or PeerType.Self => 0,
+            PeerType.Chat => 1,
+            PeerType.Channel => 2,
+            _ => -1
+        };
     }
 
     public static async Task<bool> CanViewStoryAsync(

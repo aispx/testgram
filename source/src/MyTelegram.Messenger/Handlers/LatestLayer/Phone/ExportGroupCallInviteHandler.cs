@@ -22,13 +22,7 @@ internal sealed class ExportGroupCallInviteHandler(
 
     protected override async Task<MyTelegram.Schema.Phone.IExportedGroupCallInvite> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestExportGroupCallInvite obj)
     {
-        if (obj.Call is not MyTelegram.Schema.TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         if (groupCall == null)
         {

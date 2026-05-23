@@ -22,34 +22,24 @@ internal sealed class GetGroupCallChainBlocksHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestGetGroupCallChainBlocks obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync();
+        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(obj.Call, input.UserId)).FirstOrDefaultAsync();
         if (groupCall == null || !groupCall.Conference)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
 
-        var offset = Math.Max(0, obj.Offset);
-        var limit = obj.Limit > 0 ? obj.Limit : 100;
-        var blocks = groupCall.ChainBlocks
-            .Where(block => block.SubChainId == obj.SubChainId)
-            .Skip(offset)
-            .Take(limit)
-            .Select(block => (ReadOnlyMemory<byte>)block.Block)
-            .ToList();
+        var blocks = GroupCallStateHelper.GetChainBlocksPage(
+            groupCall,
+            obj.SubChainId,
+            obj.Offset,
+            obj.Limit,
+            out var nextOffset);
 
-        return GroupCallStateHelper.Updates(new TUpdateGroupCallChainBlocks
-        {
-            Call = GroupCallStateHelper.ToInputGroupCall(groupCall),
-            Blocks = new TVector<ReadOnlyMemory<byte>>(blocks),
-            NextOffset = offset + blocks.Count,
-            SubChainId = obj.SubChainId
-        });
+        return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateChainBlocksUpdate(
+            groupCall,
+            obj.SubChainId,
+            blocks,
+            nextOffset));
     }
 }

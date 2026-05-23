@@ -21,7 +21,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// </remarks>
 internal sealed class EditGroupCallParticipantHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestEditGroupCallParticipant, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -29,13 +30,7 @@ internal sealed class EditGroupCallParticipantHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestEditGroupCallParticipant obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         if (groupCall == null)
         {
@@ -68,7 +63,13 @@ internal sealed class EditGroupCallParticipantHandler(
 
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
-        return GroupCallStateHelper.Updates(
+        var updates = GroupCallStateHelper.Updates(
             GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]));
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId);
+        return updates;
     }
 }

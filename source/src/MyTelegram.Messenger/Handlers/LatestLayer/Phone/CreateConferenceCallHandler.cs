@@ -34,7 +34,7 @@ internal sealed class CreateConferenceCallHandler(
         {
             Id = callId,
             CallId = callId,
-            AccessHash = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            AccessHash = GroupCallStateHelper.CreateAccessHash(),
             RandomId = obj.RandomId,
             PeerId = input.UserId,
             PeerType = (int)PeerType.User,
@@ -62,7 +62,7 @@ internal sealed class CreateConferenceCallHandler(
             call.Participants.Add(participant);
             if (obj.Block is { } block)
             {
-                call.ChainBlocks.Add(new GroupCallChainBlockDoc { Block = block.ToArray() });
+                call.ChainBlocks.Add(new GroupCallChainBlockDoc { SubChainId = 0, Block = block.ToArray() });
             }
         }
 
@@ -72,6 +72,10 @@ internal sealed class CreateConferenceCallHandler(
         if (participant != null)
         {
             updates.Add(GroupCallStateHelper.CreateParticipantsUpdate(call, input.UserId, peerHelper, [participant]));
+        }
+        if (obj.Join && obj.Block is { } chainBlock)
+        {
+            updates.Add(GroupCallStateHelper.CreateChainBlocksUpdate(call, 0, [chainBlock.ToArray()], call.ChainBlocks.Count(block => block.SubChainId == 0)));
         }
 
         return GroupCallStateHelper.Updates(updates.ToArray());

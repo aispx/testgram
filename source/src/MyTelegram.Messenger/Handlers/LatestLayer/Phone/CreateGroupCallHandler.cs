@@ -21,11 +21,14 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class CreateGroupCallHandler(
     IIdGenerator idGenerator,
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestCreateGroupCall, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
         mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+    private readonly IMongoCollection<GroupCallRtmpStreamDocument> _rtmpStreamCollection =
+        mongoDatabase.GetCollection<GroupCallRtmpStreamDocument>("group_call_rtmp_streams");
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestCreateGroupCall obj)
     {
@@ -61,11 +64,16 @@ internal sealed class CreateGroupCallHandler(
                 continue;
             }
 
+            var rtmpStreamId = GroupCallRtmpHelper.GetStreamId(peer.PeerId, (int)peer.PeerType);
+            var rtmpStream = obj.RtmpStream
+                ? await _rtmpStreamCollection.Find(stream => stream.Id == rtmpStreamId).FirstOrDefaultAsync()
+                : null;
+            var rtmpUrl = GroupCallRtmpHelper.GetRtmpStreamUrl(options.CurrentValue);
             var call = new GroupCallDocument
             {
                 Id = callId,
                 CallId = callId,
-                AccessHash = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                AccessHash = GroupCallStateHelper.CreateAccessHash(),
                 RandomId = obj.RandomId,
                 PeerId = peer.PeerId,
                 PeerType = (int)peer.PeerType,
@@ -73,6 +81,8 @@ internal sealed class CreateGroupCallHandler(
                 Title = obj.Title,
                 ScheduleDate = obj.ScheduleDate,
                 RtmpStream = obj.RtmpStream,
+                RtmpUrl = obj.RtmpStream ? GroupCallRtmpHelper.GetStoredOrDefault(rtmpStream?.Url, rtmpUrl) : null,
+                RtmpStreamKey = obj.RtmpStream ? rtmpStream?.Key ?? GroupCallRtmpHelper.CreateStreamKey() : null,
                 Date = GroupCallStateHelper.CurrentDate()
             };
 

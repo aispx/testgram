@@ -487,6 +487,8 @@ public class MessageAppService(
                 : MessageSubType.Normal;
         var messageActionType = input.MessageAction switch
         {
+            TMessageActionPhoneCall => MessageActionType.PhoneCall,
+            TMessageActionConferenceCall => MessageActionType.PhoneCall,
             TMessageActionPaidMessagesPrice => MessageActionType.PaidMessagesPriceUpdated,
             TMessageActionSuggestedPostApproval => MessageActionType.ToggleSuggestedPostApproval,
             TMessageActionGiftStars => MessageActionType.GiftStars,

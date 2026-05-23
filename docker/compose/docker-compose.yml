@@ -116,6 +116,18 @@ services:
       --user testgram:testgram2024
       --log-file stdout
 
+  ### RTMP server for group calls and live stories
+  rtmp-server:
+    image: bluenviron/mediamtx:latest
+    restart: always
+    networks:
+      - tg-net
+    ports:
+      - "${RTMP_PORT:-1935}:1935"
+      - "${RTMP_HLS_PORT:-8888}:8888"
+    volumes:
+      - ./data/rtmp:/recordings
+
 
   ################### MyTelegram server
 
@@ -460,6 +472,7 @@ services:
       App__WebRtcConnections__0__Stun: ${App__WebRtcConnections__0__Stun}
       App__WebRtcConnections__0__UserName: ${App__WebRtcConnections__0__UserName}
       App__WebRtcConnections__0__Password: ${App__WebRtcConnections__0__Password}
+      App__RtmpStreamUrl: ${App__RtmpStreamUrl}
       App__PasskeyRpId: ${App__PasskeyRpId}
       App__PasskeyRpName: ${App__PasskeyRpName}
       App__Stripe__PublishableKey: ${App__Stripe__PublishableKey}
@@ -562,6 +575,7 @@ services:
       App__WebRtcConnections__0__Stun: ${App__WebRtcConnections__0__Stun}
       App__WebRtcConnections__0__UserName: ${App__WebRtcConnections__0__UserName}
       App__WebRtcConnections__0__Password: ${App__WebRtcConnections__0__Password}
+      App__RtmpStreamUrl: ${App__RtmpStreamUrl}
       App__PasskeyRpId: ${App__PasskeyRpId}
       App__PasskeyRpName: ${App__PasskeyRpName}
       App__Stripe__PublishableKey: ${App__Stripe__PublishableKey}

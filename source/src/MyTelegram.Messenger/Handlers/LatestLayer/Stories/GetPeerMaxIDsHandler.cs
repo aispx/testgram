@@ -21,12 +21,6 @@ internal sealed class GetPeerMaxIDsHandler(IMongoDatabase mongoDatabase)
         {
             var (peerId, peerType) = StoryHelper.ResolvePeer(peer, input.UserId);
 
-            if (peerType != 0)
-            {
-                result.Add(new TRecentStory { });
-                continue;
-            }
-
             var filter = Builders<StoryDocument>.Filter.And(
                 Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, peerId),
                 Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, peerType),
@@ -43,7 +37,8 @@ internal sealed class GetPeerMaxIDsHandler(IMongoDatabase mongoDatabase)
             {
                 result.Add(new TRecentStory
                 {
-                    MaxId = maxStory.StoryId
+                    MaxId = maxStory.StoryId,
+                    Live = maxStory.IsLive
                 });
             }
             else

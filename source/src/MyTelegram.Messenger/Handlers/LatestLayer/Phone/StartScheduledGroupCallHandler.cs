@@ -15,7 +15,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// </remarks>
 internal sealed class StartScheduledGroupCallHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestStartScheduledGroupCall, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -23,13 +24,7 @@ internal sealed class StartScheduledGroupCallHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestStartScheduledGroupCall obj)
     {
-        if (obj.Call is not MyTelegram.Schema.TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         if (groupCall == null)
         {
@@ -42,10 +37,18 @@ internal sealed class StartScheduledGroupCallHandler(
             return null!;
         }
 
+        var subscriberIds = groupCall.ScheduleStartSubscriberIds.ToList();
         groupCall.ScheduleDate = null;
         groupCall.ScheduleStartSubscriberIds.Clear();
         groupCall.Version++;
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
-        return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper));
+        var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper));
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId,
+            subscriberIds);
+        return updates;
     }
 }

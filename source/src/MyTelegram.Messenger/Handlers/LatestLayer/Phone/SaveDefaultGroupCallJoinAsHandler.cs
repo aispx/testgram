@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Set the default peer that will be used to join a group call in a specific dialog.
@@ -11,17 +14,39 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class SaveDefaultGroupCallJoinAsHandler(
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IMongoDatabase mongoDatabase)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestSaveDefaultGroupCallJoinAs, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestSaveDefaultGroupCallJoinAs obj)
+    private readonly IMongoCollection<DefaultGroupCallJoinAsDocument> _defaultJoinAsCollection =
+        mongoDatabase.GetCollection<DefaultGroupCallJoinAsDocument>("default_group_call_join_as");
+
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestSaveDefaultGroupCallJoinAs obj)
     {
-        if (peerHelper.GetPeer(obj.Peer, input.UserId) == null || peerHelper.GetPeer(obj.JoinAs, input.UserId) == null)
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        var joinAs = peerHelper.GetPeer(obj.JoinAs, input.UserId);
+        if (peer == null || joinAs == null)
         {
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
-            return Task.FromResult<IBool>(null!);
+            return null!;
         }
 
-        return Task.FromResult<IBool>(new TBoolTrue());
+        var document = new DefaultGroupCallJoinAsDocument
+        {
+            Id = $"{input.UserId}:{(int)peer.PeerType}:{peer.PeerId}",
+            UserId = input.UserId,
+            PeerId = peer.PeerId,
+            PeerType = (int)peer.PeerType,
+            JoinAsPeerId = joinAs.PeerId,
+            JoinAsPeerType = (int)joinAs.PeerType,
+            Date = GroupCallStateHelper.CurrentDate()
+        };
+
+        await _defaultJoinAsCollection.ReplaceOneAsync(
+            saved => saved.Id == document.Id,
+            document,
+            new ReplaceOptions { IsUpsert = true });
+
+        return new TBoolTrue();
     }
 }

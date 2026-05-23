@@ -1,71 +1,98 @@
-using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
+using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 
 internal sealed class SendGroupCallMessageHandler(
     IMongoDatabase mongoDatabase,
-    IIdGenerator idGenerator)
+    IIdGenerator idGenerator,
+    IPeerHelper peerHelper,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<RequestSendGroupCallMessage, IUpdates>
 {
-    private readonly IMongoCollection<BsonDocument> _groupCallCollection =
-        mongoDatabase.GetCollection<BsonDocument>("group_calls");
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendGroupCallMessage obj)
     {
-        var call = obj.Call;
-        if (call is not TInputGroupCall inputGroupCall)
-        {
-            throw new RpcException(RpcErrors.RpcErrors400.GroupcallInvalid);
-        }
-
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("_id", inputGroupCall.Id),
-            Builders<BsonDocument>.Filter.Eq("access_hash", inputGroupCall.AccessHash)
-        );
-
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
-        if (groupCall == null)
+        if (groupCall == null || !groupCall.Active || !groupCall.MessagesEnabled)
         {
-            throw new RpcException(RpcErrors.RpcErrors400.GroupcallInvalid);
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
         }
 
-        var peerId = groupCall.GetValue("peer_id", 0L).AsInt64;
-        var peerType = groupCall.GetValue("peer_type", 0).AsInt32;
+        var fromPeer = obj.SendAs != null
+            ? peerHelper.GetPeer(obj.SendAs, input.UserId)
+            : new Peer(PeerType.User, input.UserId);
+        if (fromPeer == null)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
+        }
 
-        var messageId = await idGenerator.NextIdAsync(IdType.MessageId, input.UserId);
-        var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var existing = groupCall.Messages.FirstOrDefault(message =>
+            message.RandomId == obj.RandomId &&
+            message.FromPeerId == fromPeer.PeerId &&
+            message.FromPeerType == (int)fromPeer.PeerType);
+        if (existing != null && !existing.Deleted)
+        {
+            return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateMessageUpdate(
+                groupCall,
+                ToGroupCallMessage(existing, obj.Message)));
+        }
 
-        var fromId = new TPeerUser { UserId = input.UserId };
-
+        var messageId = (int)await idGenerator.NextIdAsync(IdType.MessageId, input.UserId);
+        var currentDate = GroupCallStateHelper.CurrentDate();
         var groupCallMessage = new TGroupCallMessage
         {
-            Id = (int)messageId,
-            FromId = fromId,
+            Id = messageId,
+            FromId = GroupCallStateHelper.ToPeer(fromPeer.PeerType, fromPeer.PeerId),
             Date = currentDate,
-            Message = obj.Message
+            Message = obj.Message,
+            PaidMessageStars = obj.AllowPaidStars,
+            FromAdmin = groupCall.CreatorId == input.UserId
         };
 
-        var outputGroupCall = new TInputGroupCall
+        groupCall.Messages.Add(new GroupCallMessageDoc
         {
-            Id = inputGroupCall.Id,
-            AccessHash = inputGroupCall.AccessHash
-        };
+            Id = messageId,
+            RandomId = obj.RandomId,
+            FromPeerId = fromPeer.PeerId,
+            FromPeerType = (int)fromPeer.PeerType,
+            Date = currentDate,
+            Text = obj.Message.Text,
+            MessageBytes = obj.Message.ToBytes(),
+            PaidMessageStars = obj.AllowPaidStars,
+            FromAdmin = groupCall.CreatorId == input.UserId
+        });
+        groupCall.Version++;
+        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
-        var update = new TUpdateGroupCallMessage
-        {
-            Call = outputGroupCall,
-            Message = groupCallMessage
-        };
+        var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateMessageUpdate(groupCall, groupCallMessage));
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId);
 
-        return new TUpdates
+        return updates;
+    }
+
+    private static TGroupCallMessage ToGroupCallMessage(GroupCallMessageDoc doc, ITextWithEntities fallbackMessage)
+    {
+        return new TGroupCallMessage
         {
-            Updates = new TVector<IUpdate> { update },
-            Chats = new TVector<IChat>(),
-            Users = new TVector<IUser>(),
-            Date = currentDate
+            Id = doc.Id,
+            FromId = GroupCallStateHelper.ToPeer((PeerType)doc.FromPeerType, doc.FromPeerId),
+            Date = doc.Date,
+            Message = fallbackMessage,
+            PaidMessageStars = doc.PaidMessageStars,
+            FromAdmin = doc.FromAdmin
         };
     }
 }

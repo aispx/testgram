@@ -3,7 +3,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 
-namespace MyTelegram.Messenger.Handlers.Phone;
+namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Possible errors
 /// Code Type Description
@@ -14,7 +14,8 @@ namespace MyTelegram.Messenger.Handlers.Phone;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendGroupCallEncryptedMessageHandler(
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestSendGroupCallEncryptedMessage, IBool>, IObjectHandler
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -22,18 +23,32 @@ internal sealed class SendGroupCallEncryptedMessageHandler(
 
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestSendGroupCallEncryptedMessage obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
+        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(obj.Call, input.UserId)).FirstOrDefaultAsync();
+        if (groupCall == null || !groupCall.Conference || !groupCall.Active)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
 
-        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync();
-        if (groupCall == null || !groupCall.Conference)
+        var isParticipant = groupCall.Participants.Any(p =>
+            p.PeerType == (int)PeerType.User &&
+            p.PeerId == input.UserId &&
+            !p.Left);
+        if (!isParticipant && groupCall.CreatorId != input.UserId)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
+
+        var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateEncryptedMessageUpdate(
+            groupCall,
+            new TPeerUser { UserId = input.UserId },
+            obj.EncryptedMessage));
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId);
 
         return new TBoolTrue();
     }

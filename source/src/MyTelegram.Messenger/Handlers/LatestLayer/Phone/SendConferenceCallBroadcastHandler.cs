@@ -14,7 +14,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendConferenceCallBroadcastHandler(
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestSendConferenceCallBroadcast, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -22,30 +23,40 @@ internal sealed class SendConferenceCallBroadcastHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestSendConferenceCallBroadcast obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
-        if (groupCall == null || !groupCall.Conference)
+        if (groupCall == null || !groupCall.Conference || !groupCall.Active)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
 
-        groupCall.ChainBlocks.Add(new GroupCallChainBlockDoc { Block = obj.Block.ToArray() });
+        var isParticipant = groupCall.Participants.Any(p =>
+            p.PeerType == (int)PeerType.User &&
+            p.PeerId == input.UserId &&
+            !p.Left);
+        if (!isParticipant && groupCall.CreatorId != input.UserId)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        groupCall.ChainBlocks.Add(new GroupCallChainBlockDoc { SubChainId = 1, Block = obj.Block.ToArray() });
         groupCall.Version++;
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
-        return GroupCallStateHelper.Updates(new TUpdateGroupCallChainBlocks
-        {
-            Call = GroupCallStateHelper.ToInputGroupCall(groupCall),
-            Blocks = new TVector<ReadOnlyMemory<byte>>([obj.Block]),
-            NextOffset = groupCall.ChainBlocks.Count,
-            SubChainId = 0
-        });
+        var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateChainBlocksUpdate(
+            groupCall,
+            1,
+            [obj.Block.ToArray()],
+            groupCall.ChainBlocks.Count(block => block.SubChainId == 1)));
+
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId);
+
+        return updates;
     }
 }

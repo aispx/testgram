@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Stories;
@@ -7,52 +8,79 @@ using MyTelegram.Schema.Stories;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 internal sealed class StartLiveHandler(
     IIdGenerator idGenerator,
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper,
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<RequestStartLive, IUpdates>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
         mongoDatabase.GetCollection<StoryDocument>("stories");
-    private readonly IMongoCollection<BsonDocument> _groupCallCollection =
-        mongoDatabase.GetCollection<BsonDocument>("group_calls");
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+    private readonly IMongoCollection<GroupCallRtmpStreamDocument> _rtmpStreamCollection =
+        mongoDatabase.GetCollection<GroupCallRtmpStreamDocument>("group_call_rtmp_streams");
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestStartLive obj)
     {
-        var (ownerPeerId, ownerPeerType) = StoryHelper.ResolvePeer(obj.Peer, input.UserId);
+        var ownerPeer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (ownerPeer == null)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var ownerPeerType = StoryHelper.ToStoryPeerType(ownerPeer.PeerType);
+        if (ownerPeerType < 0)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
+        }
 
         var currentDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var period = 86400;
         long expireDate = currentDate + period;
 
+        var existingStory = await _storyCollection.Find(s =>
+                s.OwnerPeerId == ownerPeer.PeerId &&
+                s.OwnerPeerType == ownerPeerType &&
+                s.RandomId == obj.RandomId &&
+                s.IsLive &&
+                !s.Deleted)
+            .FirstOrDefaultAsync();
+        if (existingStory != null)
+        {
+            var existingCall = await _groupCallCollection
+                .Find(call => call.CallId == existingStory.GroupCallId)
+                .FirstOrDefaultAsync();
+            if (existingCall != null)
+            {
+                return BuildUpdates(existingCall, existingStory, obj.RandomId);
+            }
+        }
+
         var storyId = await idGenerator.NextIdAsync(IdType.StoryId, input.UserId);
         var groupCallId = await idGenerator.NextIdAsync(IdType.MessageId, input.UserId);
-        var groupCallAccessHash = (long)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        var rtmpUrl = "rtmp://testgram.b2t.pro:1935/live";
-        var streamKey = Guid.NewGuid().ToString("N");
-
-        var groupCallDoc = new BsonDocument
-        {
-            { "_id", groupCallId },
-            { "access_hash", groupCallAccessHash },
-            { "peer_id", ownerPeerId },
-            { "peer_type", ownerPeerType },
-            { "is_live_story", true },
-            { "rtmp_stream", obj.RtmpStream },
-            { "messages_enabled", obj.MessagesEnabled ?? true },
-            { "rtmp_url", rtmpUrl },
-            { "rtmp_stream_key", streamKey },
-            { "creator_id", input.UserId },
-            { "participants_count", 0 },
-            { "created_at", currentDate }
-        };
-        await _groupCallCollection.InsertOneAsync(groupCallDoc);
+        var groupCallAccessHash = GroupCallStateHelper.CreateAccessHash();
+        var streamId = GroupCallRtmpHelper.GetStreamId(ownerPeer.PeerId, (int)ownerPeer.PeerType, liveStory: true);
+        var savedRtmpStream = obj.RtmpStream
+            ? await _rtmpStreamCollection.Find(stream => stream.Id == streamId).FirstOrDefaultAsync()
+            : null;
+        var rtmpUrl = obj.RtmpStream
+            ? GroupCallRtmpHelper.GetStoredOrDefault(
+                savedRtmpStream?.Url,
+                GroupCallRtmpHelper.GetRtmpStreamUrl(options.CurrentValue))
+            : null;
+        var streamKey = obj.RtmpStream
+            ? savedRtmpStream?.Key ?? GroupCallRtmpHelper.CreateStreamKey()
+            : null;
 
         var isCloseFriends = obj.PrivacyRules?.Any(p => p is TInputPrivacyValueAllowCloseFriends) ?? false;
+        var messagesEnabled = obj.MessagesEnabled ?? true;
 
         var storyDocument = new StoryDocument
         {
             Id = ObjectId.GenerateNewId(),
-            OwnerPeerId = ownerPeerId,
+            OwnerPeerId = ownerPeer.PeerId,
             OwnerPeerType = ownerPeerType,
             StoryId = storyId,
             Date = currentDate,
@@ -68,59 +96,77 @@ internal sealed class StartLiveHandler(
             IsLive = true,
             CloseFriends = isCloseFriends,
             RtmpStream = obj.RtmpStream,
-            MessagesEnabled = obj.MessagesEnabled ?? true,
+            MessagesEnabled = messagesEnabled,
             SendPaidMessagesStars = obj.SendPaidMessagesStars ?? 0,
             GroupCallId = groupCallId,
             GroupCallAccessHash = groupCallAccessHash,
             RtmpUrl = rtmpUrl,
-            RtmpStreamKey = streamKey
+            RtmpStreamKey = streamKey,
+            RandomId = obj.RandomId
         };
 
-        await _storyCollection.InsertOneAsync(storyDocument);
-
-        var peer = StoryHelper.CreatePeer(ownerPeerType, ownerPeerId);
-        
-        var groupCall = new TGroupCall
+        var groupCallDoc = new GroupCallDocument
         {
             Id = groupCallId,
+            CallId = groupCallId,
             AccessHash = groupCallAccessHash,
-            ParticipantsCount = 0,
+            RandomId = unchecked((int)obj.RandomId),
+            PeerId = ownerPeer.PeerId,
+            PeerType = (int)ownerPeer.PeerType,
+            CreatorId = input.UserId,
             RtmpStream = obj.RtmpStream,
-            MessagesEnabled = obj.MessagesEnabled ?? true,
-            Creator = true,
-            Version = 0,
-            UnmutedVideoLimit = 0
-        };
-
-        var storyItem = new TStoryItemSkipped
-        {
-            Id = storyId,
-            Date = (int)currentDate,
-            ExpireDate = (int)expireDate,
-            Live = true,
-            CloseFriends = isCloseFriends
-        };
-
-        return new TUpdates
-        {
-            Updates = new TVector<IUpdate>
-            {
-                new TUpdateGroupCall
-                {
-                    LiveStory = true,
-                    Peer = peer,
-                    Call = groupCall
-                },
-                new TUpdateStoryID { Id = storyId, RandomId = obj.RandomId },
-                new TUpdateStory
-                {
-                    Peer = peer,
-                    Story = storyItem
-                }
-            },
-            Chats = new TVector<IChat>(),
-            Users = new TVector<IUser>(),
+            RtmpUrl = rtmpUrl,
+            RtmpStreamKey = streamKey,
+            LiveStory = true,
+            StoryId = storyId,
+            MessagesEnabled = messagesEnabled,
+            SendPaidMessagesStars = obj.SendPaidMessagesStars,
+            Version = 1,
             Date = (int)currentDate
         };
+
+        await _groupCallCollection.InsertOneAsync(groupCallDoc);
+        await _storyCollection.InsertOneAsync(storyDocument);
+
+        if (obj.RtmpStream && savedRtmpStream == null)
+        {
+            await _rtmpStreamCollection.InsertOneAsync(new GroupCallRtmpStreamDocument
+            {
+                Id = streamId,
+                PeerId = ownerPeer.PeerId,
+                PeerType = (int)ownerPeer.PeerType,
+                Url = rtmpUrl!,
+                Key = streamKey!,
+                Date = (int)currentDate
+            });
+        }
+
+        return BuildUpdates(groupCallDoc, storyDocument, obj.RandomId);
+    }
+
+    private IUpdates BuildUpdates(GroupCallDocument groupCall, StoryDocument storyDocument, long randomId)
+    {
+        var storyItem = new TStoryItemSkipped
+        {
+            Id = storyDocument.StoryId,
+            Date = (int)storyDocument.Date,
+            ExpireDate = (int)storyDocument.ExpireDate,
+            Live = true,
+            CloseFriends = storyDocument.CloseFriends
+        };
+
+        return GroupCallStateHelper.Updates(
+            new TUpdateGroupCall
+            {
+                LiveStory = true,
+                Peer = StoryHelper.CreatePeer(storyDocument.OwnerPeerType, storyDocument.OwnerPeerId),
+                Call = GroupCallStateHelper.ToGroupCall(groupCall, groupCall.CreatorId)
+            },
+            new TUpdateStoryID { Id = storyDocument.StoryId, RandomId = randomId },
+            new TUpdateStory
+            {
+                Peer = StoryHelper.CreatePeer(storyDocument.OwnerPeerType, storyDocument.OwnerPeerId),
+                Story = storyItem
+            });
     }
 }

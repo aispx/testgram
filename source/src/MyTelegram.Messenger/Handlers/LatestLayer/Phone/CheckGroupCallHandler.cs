@@ -24,19 +24,13 @@ internal sealed class CheckGroupCallHandler(
 
     protected override async Task<TVector<int>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestCheckGroupCall obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync();
+        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(obj.Call, input.UserId)).FirstOrDefaultAsync();
         if (groupCall == null)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
-        if (!groupCall.Participants.Any(p => p.PeerId == input.UserId))
+        if (!groupCall.Participants.Any(p => p.PeerId == input.UserId && !p.Left))
         {
             RpcErrors.RpcErrors400.GroupcallJoinMissing.ThrowRpcError();
             return null!;

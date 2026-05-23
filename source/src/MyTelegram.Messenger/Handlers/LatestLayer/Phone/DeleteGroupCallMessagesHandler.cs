@@ -2,7 +2,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 
-namespace MyTelegram.Messenger.Handlers.Phone;
+namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Possible errors
 /// Code Type Description
@@ -13,7 +13,8 @@ namespace MyTelegram.Messenger.Handlers.Phone;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class DeleteGroupCallMessagesHandler(
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDeleteGroupCallMessages, MyTelegram.Schema.IUpdates>, IObjectHandler
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -21,13 +22,29 @@ internal sealed class DeleteGroupCallMessagesHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDeleteGroupCallMessages obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall ||
-            await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync() == null)
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
+        var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
+        if (groupCall == null)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
 
-        return GroupCallStateHelper.Updates();
+        var ids = obj.Messages.ToHashSet();
+        foreach (var message in groupCall.Messages.Where(message => ids.Contains(message.Id)))
+        {
+            message.Deleted = true;
+        }
+        groupCall.Version++;
+        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+
+        var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateDeleteMessagesUpdate(groupCall, obj.Messages));
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId);
+
+        return updates;
     }
 }

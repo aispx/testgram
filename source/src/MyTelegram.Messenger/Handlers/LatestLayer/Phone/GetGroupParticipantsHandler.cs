@@ -23,13 +23,7 @@ internal sealed class GetGroupParticipantsHandler(
 
     protected override async Task<MyTelegram.Schema.Phone.IGroupParticipants> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestGetGroupParticipants obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync();
+        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(obj.Call, input.UserId)).FirstOrDefaultAsync();
         if (groupCall == null)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();

@@ -2,7 +2,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 
-namespace MyTelegram.Messenger.Handlers.Phone;
+namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Possible errors
 /// Code Type Description
@@ -13,7 +13,9 @@ namespace MyTelegram.Messenger.Handlers.Phone;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class DeleteGroupCallParticipantMessagesHandler(
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDeleteGroupCallParticipantMessages, MyTelegram.Schema.IUpdates>, IObjectHandler
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -21,13 +23,43 @@ internal sealed class DeleteGroupCallParticipantMessagesHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDeleteGroupCallParticipantMessages obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall ||
-            await _groupCallCollection.Find(GroupCallStateHelper.Filter(inputGroupCall)).FirstOrDefaultAsync() == null)
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
+        var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
+        if (groupCall == null)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
 
-        return GroupCallStateHelper.Updates();
+        var participant = peerHelper.GetPeer(obj.Participant, input.UserId);
+        if (participant == null)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        var deletedIds = groupCall.Messages
+            .Where(message =>
+                !message.Deleted &&
+                message.FromPeerId == participant.PeerId &&
+                message.FromPeerType == (int)participant.PeerType)
+            .Select(message => message.Id)
+            .ToList();
+        foreach (var message in groupCall.Messages.Where(message => deletedIds.Contains(message.Id)))
+        {
+            message.Deleted = true;
+        }
+
+        groupCall.Version++;
+        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+
+        var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateDeleteMessagesUpdate(groupCall, deletedIds));
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId);
+
+        return updates;
     }
 }

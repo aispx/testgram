@@ -15,7 +15,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// </remarks>
 internal sealed class DeleteConferenceCallParticipantsHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDeleteConferenceCallParticipants, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -23,34 +24,65 @@ internal sealed class DeleteConferenceCallParticipantsHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDeleteConferenceCallParticipants obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
+        if (obj.OnlyLeft == obj.Kick)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
 
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
-        if (groupCall == null || !groupCall.Conference)
+        if (groupCall == null || !groupCall.Conference || !groupCall.Active)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
 
-        var removed = groupCall.Participants.Where(p => obj.Ids.Contains(p.PeerId)).ToList();
-        groupCall.Participants.RemoveAll(p => obj.Ids.Contains(p.PeerId));
-        groupCall.ChainBlocks.Add(new GroupCallChainBlockDoc { Block = obj.Block.ToArray() });
+        var ids = obj.Ids.ToHashSet();
+        var previousParticipantUserIds = GroupCallStateHelper.GetParticipantUserIds(groupCall).ToList();
+        var removed = groupCall.Participants
+            .Where(p => p.PeerType == (int)PeerType.User && ids.Contains(p.PeerId))
+            .ToList();
+        foreach (var participant in removed)
+        {
+            participant.Left = true;
+            participant.Muted = true;
+        }
+
+        var missing = ids
+            .Except(removed.Select(p => p.PeerId))
+            .Select(id => new GroupCallParticipantDoc
+            {
+                PeerId = id,
+                PeerType = (int)PeerType.User,
+                Source = 0,
+                Date = GroupCallStateHelper.CurrentDate(),
+                Left = true,
+                Muted = true
+            })
+            .ToList();
+
+        removed.AddRange(missing);
+        groupCall.Participants.RemoveAll(p => p.PeerType == (int)PeerType.User && ids.Contains(p.PeerId));
+        groupCall.ChainBlocks.Add(new GroupCallChainBlockDoc { SubChainId = 0, Block = obj.Block.ToArray() });
         groupCall.Version++;
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
-        return GroupCallStateHelper.Updates(
+        var updates = GroupCallStateHelper.Updates(
             GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, removed),
-            new TUpdateGroupCallChainBlocks
-            {
-                Call = GroupCallStateHelper.ToInputGroupCall(groupCall),
-                Blocks = new TVector<ReadOnlyMemory<byte>>([obj.Block]),
-                NextOffset = groupCall.ChainBlocks.Count,
-                SubChainId = 0
-            });
+            GroupCallStateHelper.CreateChainBlocksUpdate(
+                groupCall,
+                0,
+                [obj.Block.ToArray()],
+                groupCall.ChainBlocks.Count(block => block.SubChainId == 0)));
+
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId,
+            previousParticipantUserIds.Concat(ids));
+
+        return updates;
     }
 }

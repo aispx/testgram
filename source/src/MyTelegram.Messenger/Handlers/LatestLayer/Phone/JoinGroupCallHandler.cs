@@ -9,6 +9,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class JoinGroupCallHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IObjectMessageSender objectMessageSender,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<RequestJoinGroupCall, IUpdates>
 {
@@ -17,13 +18,7 @@ internal sealed class JoinGroupCallHandler(
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestJoinGroupCall obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         if (groupCall == null || !groupCall.Active)
         {
@@ -59,19 +54,40 @@ internal sealed class JoinGroupCallHandler(
 
         groupCall.Participants.RemoveAll(p => p.PeerId == participant.PeerId && p.PeerType == participant.PeerType);
         groupCall.Participants.Add(participant);
+        groupCall.InvitedUserIds.Remove(input.UserId);
         groupCall.Version++;
         if (obj.Block is { } block)
         {
-            groupCall.ChainBlocks.Add(new GroupCallChainBlockDoc { Block = block.ToArray() });
+            groupCall.ChainBlocks.Add(new GroupCallChainBlockDoc { SubChainId = 0, Block = block.ToArray() });
         }
 
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
-        return GroupCallStateHelper.Updates(
-            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant], true),
-            GroupCallStateHelper.CreateConnectionUpdate(
+        var updates = new List<IUpdate>
+        {
+            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant], true)
+        };
+        if (groupCall.Conference && obj.Block is { } chainBlock)
+        {
+            updates.Add(GroupCallStateHelper.CreateChainBlocksUpdate(
+                groupCall,
+                0,
+                [chainBlock.ToArray()],
+                groupCall.ChainBlocks.Count(block => block.SubChainId == 0)));
+        }
+
+        var pushUpdates = GroupCallStateHelper.Updates(updates.ToArray());
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            pushUpdates,
+            input.UserId);
+
+        updates.Add(GroupCallStateHelper.CreateConnectionUpdate(
                 groupCall,
                 options.CurrentValue.WebRtcConnections,
                 streamFallback: true));
+
+        return GroupCallStateHelper.Updates(updates.ToArray());
     }
 }

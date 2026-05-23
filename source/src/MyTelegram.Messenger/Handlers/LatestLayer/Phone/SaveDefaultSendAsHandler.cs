@@ -2,7 +2,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 
-namespace MyTelegram.Messenger.Handlers.Phone;
+namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
 /// Possible errors
 /// Code Type Description
@@ -22,13 +22,7 @@ internal sealed class SaveDefaultSendAsHandler(
 
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestSaveDefaultSendAs obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         var sendAs = peerHelper.GetPeer(obj.SendAs, input.UserId);
         if (groupCall == null || sendAs == null)

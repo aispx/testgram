@@ -1,19 +1,32 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Phone;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 
-internal sealed class GetGroupCallStarsHandler
+internal sealed class GetGroupCallStarsHandler(
+    IMongoDatabase mongoDatabase)
     : RpcResultObjectHandler<RequestGetGroupCallStars, IGroupCallStars>
 {
-    protected override Task<IGroupCallStars> HandleCoreAsync(IRequestInput input, RequestGetGroupCallStars obj)
+    private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
+        mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+
+    protected override async Task<IGroupCallStars> HandleCoreAsync(IRequestInput input, RequestGetGroupCallStars obj)
     {
-        return Task.FromResult<IGroupCallStars>(new TGroupCallStars
+        var groupCall = await _groupCallCollection.Find(GroupCallStateHelper.Filter(obj.Call, input.UserId)).FirstOrDefaultAsync();
+        if (groupCall == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        return new TGroupCallStars
         {
             TotalStars = 0,
             TopDonors = new TVector<IGroupCallDonor>(),
             Chats = new TVector<IChat>(),
             Users = new TVector<IUser>()
-        });
+        };
     }
 }

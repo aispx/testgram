@@ -17,7 +17,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// </remarks>
 internal sealed class DiscardGroupCallHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDiscardGroupCall, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -25,13 +26,7 @@ internal sealed class DiscardGroupCallHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDiscardGroupCall obj)
     {
-        if (obj.Call is not TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         if (groupCall == null)
         {
@@ -48,10 +43,17 @@ internal sealed class DiscardGroupCallHandler(
         groupCall.Version++;
         var date = GroupCallStateHelper.CurrentDate();
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
-        return GroupCallStateHelper.Updates(new TUpdateGroupCall
+        var updates = GroupCallStateHelper.Updates(new TUpdateGroupCall
         {
             Peer = peerHelper.ToPeer((PeerType)groupCall.PeerType, groupCall.PeerId),
             Call = GroupCallStateHelper.ToDiscardedGroupCall(groupCall, date)
         });
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId,
+            groupCall.InvitedUserIds);
+        return updates;
     }
 }

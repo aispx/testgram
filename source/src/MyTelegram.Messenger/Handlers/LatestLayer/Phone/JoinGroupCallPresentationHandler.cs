@@ -17,6 +17,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class JoinGroupCallPresentationHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IObjectMessageSender objectMessageSender,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestJoinGroupCallPresentation, MyTelegram.Schema.IUpdates>
 {
@@ -25,13 +26,7 @@ internal sealed class JoinGroupCallPresentationHandler(
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestJoinGroupCallPresentation obj)
     {
-        if (obj.Call is not MyTelegram.Schema.TInputGroupCall inputGroupCall)
-        {
-            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
-            return null!;
-        }
-
-        var filter = GroupCallStateHelper.Filter(inputGroupCall);
+        var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
         if (groupCall == null)
         {
@@ -51,8 +46,16 @@ internal sealed class JoinGroupCallPresentationHandler(
         groupCall.Version++;
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
+        var participantsUpdate = GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]);
+        var pushUpdates = GroupCallStateHelper.Updates(participantsUpdate);
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            pushUpdates,
+            input.UserId);
+
         return GroupCallStateHelper.Updates(
-            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]),
+            participantsUpdate,
             GroupCallStateHelper.CreateConnectionUpdate(groupCall, options.CurrentValue.WebRtcConnections, true));
     }
 }

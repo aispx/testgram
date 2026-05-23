@@ -12,6 +12,10 @@ public class GroupCallDocument
     public bool Active { get; set; } = true;
     public bool JoinMuted { get; set; }
     public bool RtmpStream { get; set; }
+    public string? RtmpUrl { get; set; }
+    public string? RtmpStreamKey { get; set; }
+    public bool LiveStory { get; set; }
+    public int? StoryId { get; set; }
     public bool Conference { get; set; }
     public bool MessagesEnabled { get; set; } = true;
     public bool RecordVideoActive { get; set; }
@@ -28,8 +32,10 @@ public class GroupCallDocument
     public int Date { get; set; }
     public List<GroupCallParticipantDoc> Participants { get; set; } = new();
     public List<long> InvitedUserIds { get; set; } = new();
+    public List<GroupCallInviteMessageDoc> InviteMessages { get; set; } = new();
     public List<long> ScheduleStartSubscriberIds { get; set; } = new();
     public List<GroupCallChainBlockDoc> ChainBlocks { get; set; } = new();
+    public List<GroupCallMessageDoc> Messages { get; set; } = new();
 }
 
 public class GroupCallParticipantDoc
@@ -44,6 +50,7 @@ public class GroupCallParticipantDoc
     public bool RaiseHand { get; set; }
     public int? Volume { get; set; }
     public int Date { get; set; }
+    public bool Left { get; set; }
     public string? ParamsJson { get; set; }
     public string? PresentationParamsJson { get; set; }
     public byte[]? PublicKey { get; set; }
@@ -53,4 +60,49 @@ public class GroupCallChainBlockDoc
 {
     public int SubChainId { get; set; }
     public byte[] Block { get; set; } = [];
+}
+
+public class GroupCallInviteMessageDoc
+{
+    public int MessageId { get; set; }
+    public long UserId { get; set; }
+    public long FromUserId { get; set; }
+    public bool Video { get; set; }
+    public int Date { get; set; }
+    public bool Declined { get; set; }
+}
+
+public class GroupCallMessageDoc
+{
+    public int Id { get; set; }
+    public long RandomId { get; set; }
+    public long FromPeerId { get; set; }
+    public int FromPeerType { get; set; }
+    public int Date { get; set; }
+    public string Text { get; set; } = string.Empty;
+    public byte[] MessageBytes { get; set; } = [];
+    public long? PaidMessageStars { get; set; }
+    public bool FromAdmin { get; set; }
+    public bool Deleted { get; set; }
+}
+
+public class DefaultGroupCallJoinAsDocument
+{
+    public string Id { get; set; } = string.Empty;
+    public long UserId { get; set; }
+    public long PeerId { get; set; }
+    public int PeerType { get; set; }
+    public long JoinAsPeerId { get; set; }
+    public int JoinAsPeerType { get; set; }
+    public int Date { get; set; }
+}
+
+public class GroupCallRtmpStreamDocument
+{
+    public string Id { get; set; } = string.Empty;
+    public long PeerId { get; set; }
+    public int PeerType { get; set; }
+    public string Url { get; set; } = string.Empty;
+    public string Key { get; set; } = string.Empty;
+    public int Date { get; set; }
 }

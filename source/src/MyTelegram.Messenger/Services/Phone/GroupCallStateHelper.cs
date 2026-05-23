@@ -16,6 +16,21 @@ internal static class GroupCallStateHelper
         return Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, call.Id);
     }
 
+    public static FilterDefinition<GroupCallDocument> Filter(IInputGroupCall call, long userId)
+    {
+        return call switch
+        {
+            TInputGroupCall inputGroupCall => Filter(inputGroupCall),
+            TInputGroupCallSlug slug => Builders<GroupCallDocument>.Filter.Or(
+                Builders<GroupCallDocument>.Filter.Eq(g => g.InviteHash, slug.Slug),
+                Builders<GroupCallDocument>.Filter.Eq(g => g.InviteLink, $"https://t.me/call/{slug.Slug}")),
+            TInputGroupCallInviteMessage inviteMessage => Builders<GroupCallDocument>.Filter.ElemMatch(
+                g => g.InviteMessages,
+                invite => invite.UserId == userId && invite.MessageId == inviteMessage.MsgId),
+            _ => Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, long.MinValue)
+        };
+    }
+
     public static TInputGroupCall ToInputGroupCall(GroupCallDocument call)
     {
         return new TInputGroupCall
@@ -83,7 +98,8 @@ internal static class GroupCallStateHelper
             CanSelfUnmute = true,
             JustJoined = justJoined,
             Self = participant.PeerId == selfUserId,
-            VideoJoined = !participant.VideoStopped,
+            Left = participant.Left,
+            VideoJoined = !participant.Left && !participant.VideoStopped,
             Volume = participant.Volume,
             RaiseHandRating = participant.RaiseHand ? participant.Date : null,
             Versioned = true
@@ -97,6 +113,7 @@ internal static class GroupCallStateHelper
     {
         return new TUpdateGroupCall
         {
+            LiveStory = call.LiveStory,
             Peer = peerHelper.ToPeer((PeerType)call.PeerType, call.PeerId),
             Call = ToGroupCall(call, selfUserId)
         };
@@ -116,6 +133,150 @@ internal static class GroupCallStateHelper
                 participants.Select(p => (IGroupCallParticipant)ToParticipant(p, selfUserId, peerHelper, justJoined))),
             Version = call.Version
         };
+    }
+
+    public static TUpdateGroupCallChainBlocks CreateChainBlocksUpdate(
+        GroupCallDocument call,
+        int subChainId,
+        IEnumerable<byte[]> blocks,
+        int nextOffset)
+    {
+        return new TUpdateGroupCallChainBlocks
+        {
+            Call = ToInputGroupCall(call),
+            SubChainId = subChainId,
+            Blocks = new TVector<ReadOnlyMemory<byte>>(blocks.Select(block => (ReadOnlyMemory<byte>)block).ToList()),
+            NextOffset = nextOffset
+        };
+    }
+
+    public static TUpdateGroupCallMessage CreateMessageUpdate(GroupCallDocument call, IGroupCallMessage message)
+    {
+        return new TUpdateGroupCallMessage
+        {
+            Call = ToInputGroupCall(call),
+            Message = message
+        };
+    }
+
+    public static TUpdateGroupCallEncryptedMessage CreateEncryptedMessageUpdate(
+        GroupCallDocument call,
+        IPeer fromId,
+        ReadOnlyMemory<byte> encryptedMessage)
+    {
+        return new TUpdateGroupCallEncryptedMessage
+        {
+            Call = ToInputGroupCall(call),
+            FromId = fromId,
+            EncryptedMessage = encryptedMessage
+        };
+    }
+
+    public static TUpdateDeleteGroupCallMessages CreateDeleteMessagesUpdate(
+        GroupCallDocument call,
+        IEnumerable<int> messageIds)
+    {
+        return new TUpdateDeleteGroupCallMessages
+        {
+            Call = ToInputGroupCall(call),
+            Messages = new TVector<int>(messageIds)
+        };
+    }
+
+    public static IReadOnlyList<byte[]> GetChainBlocksPage(
+        GroupCallDocument call,
+        int subChainId,
+        int offset,
+        int limit,
+        out int nextOffset)
+    {
+        var blocks = call.ChainBlocks
+            .Where(block => block.SubChainId == subChainId)
+            .Select(block => block.Block)
+            .ToList();
+
+        var normalizedLimit = limit > 0 ? Math.Min(limit, 100) : 100;
+        var normalizedOffset = offset < 0
+            ? Math.Max(0, blocks.Count - normalizedLimit)
+            : Math.Min(offset, blocks.Count);
+        var page = blocks.Skip(normalizedOffset).Take(normalizedLimit).ToList();
+        nextOffset = normalizedOffset + page.Count;
+        return page;
+    }
+
+    public static IEnumerable<long> GetParticipantUserIds(GroupCallDocument call)
+    {
+        return call.Participants
+            .Where(participant => participant.PeerType == (int)PeerType.User && !participant.Left)
+            .Select(participant => participant.PeerId);
+    }
+
+    public static IEnumerable<long> GetCallUserRecipientIds(
+        GroupCallDocument call,
+        IEnumerable<long>? extraUserIds = null,
+        bool includeInvited = false)
+    {
+        var ids = GetParticipantUserIds(call)
+            .Append(call.CreatorId);
+
+        if (includeInvited)
+        {
+            ids = ids.Concat(call.InvitedUserIds);
+        }
+
+        if (extraUserIds != null)
+        {
+            ids = ids.Concat(extraUserIds);
+        }
+
+        return ids.Where(id => id > 0).Distinct();
+    }
+
+    public static async Task PushUpdatesToUserIdsAsync(
+        IObjectMessageSender objectMessageSender,
+        IEnumerable<long> userIds,
+        IUpdates updates,
+        long? excludeUserId = null)
+    {
+        foreach (var userId in userIds.Where(id => id > 0).Distinct())
+        {
+            if (excludeUserId.HasValue && userId == excludeUserId.Value)
+            {
+                continue;
+            }
+
+            await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, userId), updates);
+        }
+    }
+
+    public static async Task PushUpdatesToCallSubscribersAsync(
+        IObjectMessageSender objectMessageSender,
+        GroupCallDocument call,
+        IUpdates updates,
+        long? excludeUserId = null,
+        IEnumerable<long>? extraUserIds = null)
+    {
+        await PushUpdatesToUserIdsAsync(
+            objectMessageSender,
+            GetCallUserRecipientIds(call, extraUserIds),
+            updates,
+            excludeUserId);
+
+        if (call.PeerType != (int)PeerType.User)
+        {
+            await objectMessageSender.PushMessageToPeerAsync(
+                new Peer((PeerType)call.PeerType, call.PeerId),
+                updates,
+                excludeUserId: excludeUserId);
+        }
+    }
+
+    public static long CreateAccessHash()
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(long)];
+        RandomNumberGenerator.Fill(bytes);
+        var accessHash = BitConverter.ToInt64(bytes) & long.MaxValue;
+        return accessHash == 0 ? 1 : accessHash;
     }
 
     public static TUpdateGroupCallConnection CreateConnectionUpdate(
@@ -351,7 +512,7 @@ internal static class GroupCallStateHelper
         return string.Join(':', hash.Select(value => value.ToString("X2")));
     }
 
-    private static IPeer ToPeer(PeerType peerType, long peerId)
+    public static IPeer ToPeer(PeerType peerType, long peerId)
     {
         return peerType switch
         {

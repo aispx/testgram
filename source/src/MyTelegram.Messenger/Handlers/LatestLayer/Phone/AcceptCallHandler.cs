@@ -169,7 +169,7 @@ internal sealed class AcceptCallHandler(
             string.Empty,
             Random.Shared.NextInt64(),
             sendMessageType: SendMessageType.MessageService,
-            messageType: MessageType.Text,
+            messageType: MessageType.PhoneCall,
             messageAction: action
         );
         await messageAppService.SendMessageAsync([sendInput]);
