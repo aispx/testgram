@@ -45,10 +45,17 @@ public static class PhoneCallProtocolHelper
         IEnumerable<string>? callerLibraryVersions,
         IPhoneCallProtocol? calleeProtocol)
     {
+        return Negotiate(callerLibraryVersions, GetLibraryVersions(calleeProtocol));
+    }
+
+    public static TPhoneCallProtocol Negotiate(
+        IEnumerable<string>? callerLibraryVersions,
+        IEnumerable<string>? calleeLibraryVersions)
+    {
         var callerVersions = new HashSet<string>(
             NormalizeVersions(callerLibraryVersions),
             StringComparer.Ordinal);
-        var calleeVersions = GetLibraryVersions(calleeProtocol);
+        var calleeVersions = NormalizeVersions(calleeLibraryVersions);
         var selectedVersion = calleeVersions.FirstOrDefault(callerVersions.Contains);
 
         return selectedVersion == null

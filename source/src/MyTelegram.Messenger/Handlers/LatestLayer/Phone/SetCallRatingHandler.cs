@@ -33,7 +33,7 @@ internal sealed class SetCallRatingHandler(
         var filter = Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id);
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
         if (session == null ||
-            (session.AccessHash != inputPhoneCall.AccessHash &&
+            (!session.HasAccessHashForUser(input.UserId, inputPhoneCall.AccessHash) &&
              !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)) ||
             (session.CallerId != input.UserId && session.CalleeId != input.UserId) ||
             session.State != "discarded")

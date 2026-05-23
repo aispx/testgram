@@ -10,6 +10,26 @@ public class ExceptionProcessor(
 {
     public Task HandleExceptionAsync(Exception ex, IRequestInput input, IObject? requestData, string? handlerName)
     {
+        LogException(ex, input, requestData, handlerName);
+        return ProcessExceptionCoreAsync(ex, input.UserId, input);
+    }
+
+    private void LogException(Exception ex, IRequestInput input, IObject? requestData, string? handlerName)
+    {
+        if (ex is RpcException { RpcError.ErrorCode: < MyTelegramConsts.InternalErrorCode } rpcException)
+        {
+            logger.LogWarning(
+                "Process request returned RPC error, handler: {HandlerName}, userId: {UserId}, errorCode: {ErrorCode}, errorMessage: {ErrorMessage}, requestInput: {@RequestInput}, requestData: {@RequestData}",
+                handlerName,
+                input.UserId,
+                rpcException.RpcError.ErrorCode,
+                rpcException.RpcError.Message,
+                input,
+                requestData
+            );
+            return;
+        }
+
         logger.LogError(ex,
             "Process request failed, handler: {HandlerName}, userId: {UserId}, requestInput: {@RequestInput}, requestData: {@RequestData}",
             handlerName,
@@ -17,7 +37,6 @@ public class ExceptionProcessor(
             input,
             requestData
         );
-        return ProcessExceptionCoreAsync(ex, input.UserId, input);
     }
 
     private async Task ProcessExceptionCoreAsync(Exception ex, long userId, IRequestInput input)

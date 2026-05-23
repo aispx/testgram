@@ -37,7 +37,7 @@ internal sealed class ReceivedCallHandler(
         var filter = Builders<CallSessionDocument>.Filter.Eq(s => s.CallId, inputPhoneCall.Id);
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
         if (session == null ||
-            (session.AccessHash != inputPhoneCall.AccessHash &&
+            (!session.HasAccessHashForUser(input.UserId, inputPhoneCall.AccessHash) &&
              !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)) ||
             session.CalleeId != input.UserId)
         {
@@ -65,7 +65,7 @@ internal sealed class ReceivedCallHandler(
         var waitingCall = new TPhoneCallWaiting
         {
             Id = session.CallId,
-            AccessHash = session.AccessHash,
+            AccessHash = session.GetAccessHashForUser(session.CallerId),
             AdminId = session.CallerId,
             ParticipantId = session.CalleeId,
             Date = session.Date,

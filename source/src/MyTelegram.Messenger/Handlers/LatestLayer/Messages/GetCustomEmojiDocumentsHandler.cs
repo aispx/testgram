@@ -19,8 +19,6 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
             return [];
         }
 
-        Console.WriteLine($"[GetCustomEmojiDocuments] documentIds=[{string.Join(",", obj.DocumentId)}]");
-
         var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
         var filter = Builders<BsonDocument>.Filter.In("DocumentId", obj.DocumentId.Select(x => (BsonValue)new BsonInt64(x)));
         var docs = await docCol.Find(filter).ToListAsync();
@@ -39,10 +37,9 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
             {
                 result.Add(BuildDocument(d, collectibleModelDocumentIds.Contains(documentId)));
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                // Skip malformed documents instead of crashing
-                Console.WriteLine($"[GetCustomEmojiDocuments] Failed to build document {documentId}: {ex.Message}");
+                // Skip malformed documents instead of crashing.
             }
         }
 

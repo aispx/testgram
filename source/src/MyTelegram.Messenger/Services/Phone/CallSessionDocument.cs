@@ -5,6 +5,8 @@ public class CallSessionDocument
     public long Id { get; set; }
     public long CallId { get; set; }
     public long AccessHash { get; set; }
+    public long CallerAccessHash { get; set; }
+    public long CalleeAccessHash { get; set; }
     public long CallerId { get; set; }
     public long CalleeId { get; set; }
     public int RandomId { get; set; }
@@ -29,4 +31,35 @@ public class CallSessionDocument
     public int? LogFileParts { get; set; }
     public string? LogFileName { get; set; }
     public string? LogFileMd5Checksum { get; set; }
+
+    public bool IsParticipant(long userId)
+    {
+        return CallerId == userId || CalleeId == userId;
+    }
+
+    public long GetAccessHashForUser(long userId)
+    {
+        if (CallerId == userId)
+        {
+            return CallerAccessHash != 0 ? CallerAccessHash : AccessHash;
+        }
+
+        if (CalleeId == userId)
+        {
+            return CalleeAccessHash != 0 ? CalleeAccessHash : AccessHash;
+        }
+
+        return 0;
+    }
+
+    public bool HasAccessHashForUser(long userId, long accessHash)
+    {
+        if (!IsParticipant(userId))
+        {
+            return false;
+        }
+
+        return accessHash != 0 &&
+               (AccessHash == accessHash || GetAccessHashForUser(userId) == accessHash);
+    }
 }

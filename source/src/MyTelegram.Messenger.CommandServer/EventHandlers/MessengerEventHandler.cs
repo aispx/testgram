@@ -1,4 +1,5 @@
 ﻿using MyTelegram.Domain.Aggregates.Device;
+using MyTelegram.Messenger.Services.Phone;
 
 namespace MyTelegram.Messenger.CommandServer.EventHandlers;
 
@@ -6,7 +7,8 @@ public class MessengerEventHandler(
     ICommandBus commandBus,
     IMessageQueueProcessor<MessengerCommandDataReceivedEvent> processor,
     IObjectMessageSender objectMessageSender,
-    IMessageQueueProcessor<NewDeviceCreatedEvent> newDeviceCreatedProcessor)
+    IMessageQueueProcessor<NewDeviceCreatedEvent> newDeviceCreatedProcessor,
+    IUserAccessHashKeyCache userAccessHashKeyCache)
     :
         IEventHandler<MessengerCommandDataReceivedEvent>,
         IEventHandler<NewDeviceCreatedEvent>,
@@ -29,10 +31,10 @@ public class MessengerEventHandler(
         return commandBus.PublishAsync(command);
     }
 
-    public Task HandleEventAsync(MessengerCommandDataReceivedEvent eventData)
+    public async Task HandleEventAsync(MessengerCommandDataReceivedEvent eventData)
     {
+        await userAccessHashKeyCache.RememberAsync(eventData.UserId, eventData.AccessHashKeyId);
         processor.Enqueue(eventData, eventData.PermAuthKeyId);
-        return Task.CompletedTask;
     }
 
     public Task HandleEventAsync(NewDeviceCreatedEvent eventData)

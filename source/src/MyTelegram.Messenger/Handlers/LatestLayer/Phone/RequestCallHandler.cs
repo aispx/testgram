@@ -1,4 +1,4 @@
-using MongoDB.Driver;
+﻿using MongoDB.Driver;
 using MyTelegram.Domain.Shared;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services;
@@ -13,7 +13,9 @@ internal sealed class RequestCallHandler(
     IMongoDatabase mongoDatabase,
     IUserConverterService userConverterService,
     IObjectMessageSender objectMessageSender,
-    IMessageAppService messageAppService)
+    IMessageAppService messageAppService,
+    IUserAccessHashKeyCache userAccessHashKeyCache,
+    IAccessHashHelper2 accessHashHelper2)
     : RpcResultObjectHandler<RequestRequestCall, MyTelegram.Schema.Phone.IPhoneCall>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -66,9 +68,10 @@ internal sealed class RequestCallHandler(
         callId = Math.Abs(callId);
         if (callId == 0) callId = 1;
 
-        var accessHash = Random.Shared.NextInt64();
-        accessHash = Math.Abs(accessHash);
-        if (accessHash == 0) accessHash = 1;
+        await userAccessHashKeyCache.RememberAsync(input.UserId, input.AccessHashKeyId);
+
+        var callerAccessHash = accessHashHelper2.GenerateAccessHash(input.UserId, input.AccessHashKeyId, callId, AccessHashType.Call);
+        var calleeAccessHash = await CreateCallAccessHashForUserAsync(calleeId, callId);
 
         var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
@@ -76,7 +79,9 @@ internal sealed class RequestCallHandler(
         {
             Id = callId,
             CallId = callId,
-            AccessHash = accessHash,
+            AccessHash = callerAccessHash,
+            CallerAccessHash = callerAccessHash,
+            CalleeAccessHash = calleeAccessHash,
             CallerId = input.UserId,
             CalleeId = calleeId,
             RandomId = obj.RandomId,
@@ -91,7 +96,7 @@ internal sealed class RequestCallHandler(
         var phoneCallWaiting = new MyTelegram.Schema.TPhoneCallWaiting
         {
             Id = callId,
-            AccessHash = accessHash,
+            AccessHash = callerAccessHash,
             AdminId = input.UserId,
             ParticipantId = calleeId,
             Date = currentDate,
@@ -102,7 +107,7 @@ internal sealed class RequestCallHandler(
         var phoneCallRequested = new MyTelegram.Schema.TPhoneCallRequested
         {
             Id = callId,
-            AccessHash = accessHash,
+            AccessHash = calleeAccessHash,
             AdminId = input.UserId,
             ParticipantId = calleeId,
             GAHash = obj.GAHash,
@@ -127,7 +132,7 @@ internal sealed class RequestCallHandler(
         await objectMessageSender.PushMessageToPeerAsync(
             calleePeer,
             incomingCallUpdates,
-            pushData: CreateIncomingCallPushData(input.UserId, calleeId, callId, accessHash, incomingCallUpdates, users));
+            pushData: CreateIncomingCallPushData(input.UserId, calleeId, callId, calleeAccessHash, incomingCallUpdates, users));
 
         await SendIncomingCallServiceMessageAsync(input, callId, calleeId, obj.Video);
 
@@ -136,6 +141,19 @@ internal sealed class RequestCallHandler(
             PhoneCall = phoneCallWaiting,
             Users = usersVector
         };
+    }
+
+    private async Task<long> CreateCallAccessHashForUserAsync(long userId, long callId)
+    {
+        var accessHashKeyId = await userAccessHashKeyCache.GetAsync(userId);
+        if (accessHashKeyId.HasValue)
+        {
+            return accessHashHelper2.GenerateAccessHash(userId, accessHashKeyId.Value, callId, AccessHashType.Call);
+        }
+
+        var fallbackAccessHash = Random.Shared.NextInt64();
+        fallbackAccessHash = Math.Abs(fallbackAccessHash);
+        return fallbackAccessHash == 0 ? 1 : fallbackAccessHash;
     }
 
     private static void ValidateHandshakeProtocol(IPhoneCallProtocol? protocol)

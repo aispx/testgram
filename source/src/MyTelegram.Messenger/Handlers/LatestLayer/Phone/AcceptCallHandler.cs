@@ -31,7 +31,7 @@ internal sealed class AcceptCallHandler(
 
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
         if (session == null ||
-            (session.AccessHash != inputPhoneCall.AccessHash &&
+            (!session.HasAccessHashForUser(input.UserId, inputPhoneCall.AccessHash) &&
              !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
@@ -67,22 +67,22 @@ internal sealed class AcceptCallHandler(
 
         var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        var phoneCallAccepted = new Schema.TPhoneCallAccepted
-        {
-            Id = session.CallId,
-            AccessHash = session.AccessHash,
-            AdminId = session.CallerId,
-            ParticipantId = session.CalleeId,
-            GB = obj.GB,
-            Protocol = PhoneCallProtocolHelper.Negotiate(session.CallerLibraryVersions, obj.Protocol),
-            Date = currentDate,
-            Video = session.Video
-        };
+        var phoneCallAcceptedForCaller = CreatePhoneCallAccepted(
+            session,
+            session.GetAccessHashForUser(session.CallerId),
+            obj.GB,
+            obj.Protocol,
+            currentDate);
+        var phoneCallWaitingForCallee = CreatePhoneCallWaiting(
+            session,
+            session.GetAccessHashForUser(session.CalleeId),
+            obj.Protocol,
+            currentDate);
 
         var users = await userConverterService.GetUserListAsync(input, new List<long> { session.CallerId, session.CalleeId }, false, false, input.Layer);
         var usersVector = new TVector<MyTelegram.Schema.IUser>(users);
 
-        var updatePhoneCall = new MyTelegram.Schema.TUpdatePhoneCall { PhoneCall = phoneCallAccepted };
+        var updatePhoneCall = new MyTelegram.Schema.TUpdatePhoneCall { PhoneCall = phoneCallAcceptedForCaller };
 
         var callerPeer = new Peer(PeerType.User, session.CallerId);
         await objectMessageSender.PushMessageToPeerAsync(callerPeer,
@@ -98,8 +98,46 @@ internal sealed class AcceptCallHandler(
 
         return new MyTelegram.Schema.Phone.TPhoneCall
         {
-            PhoneCall = phoneCallAccepted,
+            PhoneCall = phoneCallWaitingForCallee,
             Users = usersVector
+        };
+    }
+
+    private static Schema.TPhoneCallAccepted CreatePhoneCallAccepted(
+        CallSessionDocument session,
+        long accessHash,
+        byte[] gb,
+        IPhoneCallProtocol? protocol,
+        int currentDate)
+    {
+        return new Schema.TPhoneCallAccepted
+        {
+            Id = session.CallId,
+            AccessHash = accessHash,
+            AdminId = session.CallerId,
+            ParticipantId = session.CalleeId,
+            GB = gb,
+            Protocol = PhoneCallProtocolHelper.Negotiate(session.CallerLibraryVersions, protocol),
+            Date = currentDate,
+            Video = session.Video
+        };
+    }
+
+    private static Schema.TPhoneCallWaiting CreatePhoneCallWaiting(
+        CallSessionDocument session,
+        long accessHash,
+        IPhoneCallProtocol? protocol,
+        int currentDate)
+    {
+        return new Schema.TPhoneCallWaiting
+        {
+            Id = session.CallId,
+            AccessHash = accessHash,
+            AdminId = session.CallerId,
+            ParticipantId = session.CalleeId,
+            Protocol = PhoneCallProtocolHelper.Negotiate(session.CallerLibraryVersions, protocol),
+            Date = currentDate,
+            Video = session.Video
         };
     }
 

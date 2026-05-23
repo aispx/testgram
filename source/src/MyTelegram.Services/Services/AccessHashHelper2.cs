@@ -174,6 +174,8 @@ public sealed class AccessHashHelper2(
 
     public long GenerateAccessHash(long currentUserId, long accessHashKeyId, long targetId, AccessHashType accessHashType)
     {
+        accessHashType = NormalizeAccessHashType(accessHashType);
+
         // accessHashType:1 + currentUserId:8 + targetId:8 + hash:32 + keyForUser:32 + accessHashKeyForUser:8 = 89 bytes
         Span<byte> bytes = stackalloc byte[89];
         bytes[0] = (byte)accessHashType;
@@ -188,5 +190,13 @@ public sealed class AccessHashHelper2(
         HMACSHA256.HashData(accessHashSecretKey, bytes[..17], dest);
 
         return BitConverter.ToInt64(dest);
+    }
+
+    private static AccessHashType NormalizeAccessHashType(AccessHashType accessHashType)
+    {
+        // The deployed closed-source session-server image treats inputPhoneCall as GroupCall
+        // during pre-handler access-hash validation. Generate phone call hashes in that
+        // legacy-compatible lane so phone.acceptCall/phone.discardCall reach messenger.
+        return accessHashType == AccessHashType.Call ? AccessHashType.GroupCall : accessHashType;
     }
 }

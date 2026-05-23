@@ -30,7 +30,7 @@ internal sealed class ConfirmCallHandler(
 
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
         if (session == null ||
-            (session.AccessHash != inputPhoneCall.AccessHash &&
+            (!session.HasAccessHashForUser(input.UserId, inputPhoneCall.AccessHash) &&
              !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
@@ -50,6 +50,12 @@ internal sealed class ConfirmCallHandler(
         }
 
         if (session.State != "accepted")
+        {
+            RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (session.GB == null || session.GB.Length == 0)
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return null!;
@@ -109,25 +115,28 @@ internal sealed class ConfirmCallHandler(
             throw new InvalidOperationException("WebRTC connections not configured. Please configure App__WebRtcConnections in .env file.");
         }
 
-        var phoneCall = new Schema.TPhoneCall
-        {
-            Id = session.CallId,
-            AccessHash = session.AccessHash,
-            AdminId = session.CallerId,
-            ParticipantId = session.CalleeId,
-            GAOrB = obj.GA,
-            KeyFingerprint = obj.KeyFingerprint,
-            Protocol = PhoneCallProtocolHelper.Normalize(obj.Protocol),
-            Date = session.Date,
-            StartDate = currentDate,
-            Connections = connections,
-            Video = session.Video
-        };
+        var protocol = PhoneCallProtocolHelper.Negotiate(session.CallerLibraryVersions, session.CalleeLibraryVersions);
+        var phoneCallForCaller = CreatePhoneCall(
+            session,
+            session.GetAccessHashForUser(session.CallerId),
+            session.GB,
+            obj.KeyFingerprint,
+            protocol,
+            currentDate,
+            connections);
+        var phoneCallForCallee = CreatePhoneCall(
+            session,
+            session.GetAccessHashForUser(session.CalleeId),
+            obj.GA,
+            obj.KeyFingerprint,
+            protocol,
+            currentDate,
+            connections);
 
         var users = await userConverterService.GetUserListAsync(input, new List<long> { session.CallerId, session.CalleeId }, false, false, input.Layer);
         var usersVector = new TVector<MyTelegram.Schema.IUser>(users);
 
-        var updatePhoneCall = new MyTelegram.Schema.TUpdatePhoneCall { PhoneCall = phoneCall };
+        var updatePhoneCall = new MyTelegram.Schema.TUpdatePhoneCall { PhoneCall = phoneCallForCallee };
 
         var otherUserId = input.UserId == session.CallerId ? session.CalleeId : session.CallerId;
         var otherPeer = new Peer(PeerType.User, otherUserId);
@@ -142,9 +151,34 @@ internal sealed class ConfirmCallHandler(
 
         return new MyTelegram.Schema.Phone.TPhoneCall
         {
-            PhoneCall = phoneCall,
+            PhoneCall = phoneCallForCaller,
             Users = usersVector
         };
     }
 
+    private static Schema.TPhoneCall CreatePhoneCall(
+        CallSessionDocument session,
+        long accessHash,
+        byte[] ga,
+        long keyFingerprint,
+        IPhoneCallProtocol protocol,
+        int currentDate,
+        TVector<MyTelegram.Schema.IPhoneConnection> connections)
+    {
+        return new Schema.TPhoneCall
+        {
+            Id = session.CallId,
+            AccessHash = accessHash,
+            AdminId = session.CallerId,
+            ParticipantId = session.CalleeId,
+            GAOrB = ga,
+            KeyFingerprint = keyFingerprint,
+            P2pAllowed = protocol.UdpP2p,
+            Protocol = protocol,
+            Date = session.Date,
+            StartDate = currentDate,
+            Connections = connections,
+            Video = session.Video
+        };
+    }
 }

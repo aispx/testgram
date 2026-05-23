@@ -27,7 +27,7 @@ internal sealed class SendSignalingDataHandler(
 
         var session = await _callCollection.Find(filter).FirstOrDefaultAsync();
         if (session == null ||
-            (session.AccessHash != inputPhoneCall.AccessHash &&
+            (!session.HasAccessHashForUser(input.UserId, inputPhoneCall.AccessHash) &&
              !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
@@ -40,7 +40,12 @@ internal sealed class SendSignalingDataHandler(
             return new TBoolTrue();
         }
 
-        if (session.State != "confirmed")
+        if (session.State == "discarded")
+        {
+            return new TBoolTrue();
+        }
+
+        if (session.State is not ("accepted" or "confirmed"))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return new TBoolTrue();
