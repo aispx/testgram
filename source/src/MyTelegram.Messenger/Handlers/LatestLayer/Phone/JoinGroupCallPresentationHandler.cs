@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 
@@ -15,7 +16,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// </remarks>
 internal sealed class JoinGroupCallPresentationHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestJoinGroupCallPresentation, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -50,6 +52,7 @@ internal sealed class JoinGroupCallPresentationHandler(
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
         return GroupCallStateHelper.Updates(
-            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]));
+            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]),
+            GroupCallStateHelper.CreateConnectionUpdate(groupCall, options.CurrentValue.WebRtcConnections, true));
     }
 }

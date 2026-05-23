@@ -1,6 +1,8 @@
 using MongoDB.Driver;
 using MyTelegram.Schema;
 using MyTelegram.Services.Services;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace MyTelegram.Messenger.Services.Phone;
@@ -110,6 +112,44 @@ internal static class GroupCallStateHelper
             Participants = new TVector<IGroupCallParticipant>(
                 participants.Select(p => (IGroupCallParticipant)ToParticipant(p, selfUserId, peerHelper, justJoined))),
             Version = call.Version
+        };
+    }
+
+    public static TUpdateGroupCallConnection CreateConnectionUpdate(
+        GroupCallDocument call,
+        IReadOnlyCollection<WebRtcConnection>? webRtcConnections,
+        bool presentation = false)
+    {
+        var candidates = CreateConnectionCandidates(webRtcConnections);
+        if (candidates.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Group call WebRTC candidates are not configured. Please configure App__WebRtcConnections in .env file.");
+        }
+
+        var json = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["transport"] = new Dictionary<string, object?>
+            {
+                ["ufrag"] = CreateIceToken(call.CallId, "ufrag", 8),
+                ["pwd"] = CreateIceToken(call.CallId, "pwd", 24),
+                ["fingerprints"] = new[]
+                {
+                    new Dictionary<string, string>
+                    {
+                        ["hash"] = "sha-256",
+                        ["fingerprint"] = CreateFingerprint(call.CallId),
+                        ["setup"] = "active"
+                    }
+                },
+                ["candidates"] = candidates
+            }
+        });
+
+        return new TUpdateGroupCallConnection
+        {
+            Presentation = presentation,
+            Params = new TDataJSON { Data = json }
         };
     }
 
@@ -248,6 +288,49 @@ internal static class GroupCallStateHelper
         {
             values.Add(value);
         }
+    }
+
+    private static List<Dictionary<string, string>> CreateConnectionCandidates(IReadOnlyCollection<WebRtcConnection>? webRtcConnections)
+    {
+        var candidates = new List<Dictionary<string, string>>();
+        if (webRtcConnections == null)
+        {
+            return candidates;
+        }
+
+        var id = 1;
+        foreach (var connection in webRtcConnections.Where(c => c.Port > 0 && !string.IsNullOrWhiteSpace(c.Ip)))
+        {
+            var candidateId = id.ToString();
+            candidates.Add(new Dictionary<string, string>
+            {
+                ["port"] = connection.Port.ToString(),
+                ["protocol"] = "udp",
+                ["network"] = candidateId,
+                ["generation"] = "0",
+                ["id"] = candidateId,
+                ["component"] = "1",
+                ["foundation"] = candidateId,
+                ["priority"] = Math.Max(1, 2130706431 - id).ToString(),
+                ["ip"] = connection.Ip,
+                ["type"] = "host"
+            });
+            id++;
+        }
+
+        return candidates;
+    }
+
+    private static string CreateIceToken(long callId, string purpose, int length)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"testgram-group-call:{callId}:{purpose}"));
+        return Convert.ToHexString(hash)[..length].ToLowerInvariant();
+    }
+
+    private static string CreateFingerprint(long callId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"testgram-group-call:{callId}:fingerprint"));
+        return string.Join(':', hash.Select(value => value.ToString("X2")));
     }
 
     private static IPeer ToPeer(PeerType peerType, long peerId)
