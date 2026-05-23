@@ -1,25 +1,36 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.QueryServer.Services;
+using MyTelegram.Schema;
+using MyTelegram.Schema.Extensions;
+using MyTelegram.Schema.Upload;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
 
 namespace MyTelegram.Messenger.QueryServer.BackgroundServices;
 
 /// <summary>
-/// Keeps legacy download-lane RPCs away from the closed-source file-server binary when
-/// they actually belong to messenger. The legacy session-server image publishes
-/// messages.getCustomEmojiDocuments as DownloadDataReceivedEvent, while file-server
-/// still binds that whole event family and crashes when it tries to deserialize it.
+/// Keeps file/download-lane RPCs away from the closed-source file-server binary when
+/// they actually belong to messenger. Some session-server paths publish directly to
+/// the file-server queue, so query-server owns the legacy ingress and forwards only
+/// real file operations to a private file-server queue.
 /// </summary>
 public sealed class FileDownloadLaneRouter(
     ILogger<FileDownloadLaneRouter> logger,
     IOptionsMonitor<RabbitMqOptions> rabbitMqOptions,
-    IRabbitMqSerializer rabbitMqSerializer)
+    IRabbitMqSerializer rabbitMqSerializer,
+    IMessageQueueProcessor<MessengerQueryDataReceivedEvent> processor,
+    IUserAccessHashKeyCache userAccessHashKeyCache)
     : BackgroundService, IFileDownloadLaneRouter, IDisposable
 {
     private const string SourceExchange = "mytelegram_exchange";
-    private const string FilteredExchange = "mytelegram_file_download_exchange";
-    private const string FileServerQueue = "MyTelegramFileServer";
+    private const string FileDownloadIngressExchange = "mytelegram_file_download_exchange";
+    private const string FileServerExchange = "mytelegram_file_server_exchange";
+    private const string QueryServerQueue = "MyTelegramMessengerQueryServer";
+    private const string DirectFileServerQueue = "MyTelegramFileServer";
+    private const string FileServerQueue = "MyTelegramFileServerRaw";
+    private const uint InputGroupCallStreamConstructorId = 0x0598a92a;
     private static readonly string[] RoutedKeys =
     [
         nameof(DownloadDataReceivedEvent),
@@ -29,6 +40,7 @@ public sealed class FileDownloadLaneRouter(
     private readonly SemaphoreSlim _publishLock = new(1, 1);
     private IConnection? _connection;
     private IChannel? _channel;
+    private IChannel? _directConsumerChannel;
 
     public async Task ForwardAsync(DownloadDataReceivedEvent eventData)
     {
@@ -44,17 +56,21 @@ public sealed class FileDownloadLaneRouter(
     {
         using var writer = new CommunityToolkit.HighPerformance.Buffers.ArrayPoolBufferWriter<byte>();
         rabbitMqSerializer.Serialize(writer, eventData);
+        await ForwardRawAsync(writer.WrittenMemory, routingKey);
+    }
 
+    private async Task ForwardRawAsync(ReadOnlyMemory<byte> body, string routingKey)
+    {
         await _publishLock.WaitAsync();
         try
         {
             await EnsureTopologyCoreAsync(CancellationToken.None);
             await _channel!.BasicPublishAsync(
-                exchange: FilteredExchange,
+                exchange: FileServerExchange,
                 routingKey: routingKey,
                 mandatory: true,
                 basicProperties: new BasicProperties { DeliveryMode = DeliveryModes.Persistent },
-                body: writer.WrittenMemory);
+                body: body);
         }
         finally
         {
@@ -64,6 +80,7 @@ public sealed class FileDownloadLaneRouter(
 
     public override void Dispose()
     {
+        _directConsumerChannel?.Dispose();
         _channel?.Dispose();
         _connection?.Dispose();
         _publishLock.Dispose();
@@ -77,6 +94,7 @@ public sealed class FileDownloadLaneRouter(
             try
             {
                 await EnsureTopologyAsync(stoppingToken);
+                await EnsureDirectFileServerConsumerAsync(stoppingToken);
                 await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -89,6 +107,178 @@ public sealed class FileDownloadLaneRouter(
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
         }
+    }
+
+    private async Task EnsureDirectFileServerConsumerAsync(CancellationToken cancellationToken)
+    {
+        if (_connection is null || !_connection.IsOpen)
+        {
+            return;
+        }
+
+        if (_directConsumerChannel is { IsOpen: true })
+        {
+            return;
+        }
+
+        _directConsumerChannel?.Dispose();
+        _directConsumerChannel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+        _directConsumerChannel.CallbackExceptionAsync += (_, ea) =>
+        {
+            logger.LogWarning(ea.Exception, "Error with direct file-server queue consumer channel");
+            return Task.CompletedTask;
+        };
+
+        await _directConsumerChannel.QueueDeclareAsync(
+            queue: DirectFileServerQueue,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: null,
+            cancellationToken: cancellationToken);
+        await _directConsumerChannel.BasicQosAsync(0, 32, false, cancellationToken);
+
+        var consumer = new AsyncEventingBasicConsumer(_directConsumerChannel);
+        consumer.ReceivedAsync += OnDirectFileServerMessageReceived;
+
+        await _directConsumerChannel.BasicConsumeAsync(
+            queue: DirectFileServerQueue,
+            autoAck: false,
+            consumer: consumer,
+            cancellationToken: cancellationToken);
+
+        logger.LogInformation("Direct file-server queue interceptor started on {Queue}", DirectFileServerQueue);
+    }
+
+    private async Task OnDirectFileServerMessageReceived(object sender, BasicDeliverEventArgs eventArgs)
+    {
+        try
+        {
+            await ProcessDirectFileServerMessageAsync(eventArgs.RoutingKey, eventArgs.Body);
+            await _directConsumerChannel!.BasicAckAsync(eventArgs.DeliveryTag, multiple: false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to process direct file-server queue message, routingKey: {RoutingKey}", eventArgs.RoutingKey);
+            await _directConsumerChannel!.BasicNackAsync(eventArgs.DeliveryTag, multiple: false, requeue: true);
+        }
+    }
+
+    private async Task ProcessDirectFileServerMessageAsync(string routingKey, ReadOnlyMemory<byte> body)
+    {
+        switch (routingKey)
+        {
+            case nameof(UploadDataReceivedEvent):
+            {
+                var eventData = rabbitMqSerializer.Deserialize<UploadDataReceivedEvent>(body);
+                if (await TryRerouteGroupCallStreamFileAsync(eventData))
+                {
+                    return;
+                }
+
+                await ForwardRawAsync(body, nameof(UploadDataReceivedEvent));
+                return;
+            }
+            case nameof(DownloadDataReceivedEvent):
+                await ForwardRawAsync(body, nameof(DownloadDataReceivedEvent));
+                return;
+        }
+
+        var uploadEvent = TryDeserialize<UploadDataReceivedEvent>(body);
+        if (uploadEvent is not null && await TryRerouteGroupCallStreamFileAsync(uploadEvent))
+        {
+            return;
+        }
+
+        if (uploadEvent is not null)
+        {
+            await ForwardRawAsync(body, nameof(UploadDataReceivedEvent));
+            return;
+        }
+
+        if (TryDeserialize<DownloadDataReceivedEvent>(body) is not null)
+        {
+            await ForwardRawAsync(body, nameof(DownloadDataReceivedEvent));
+            return;
+        }
+
+        logger.LogWarning(
+            "Forwarding unknown direct file-server queue message without reroute, routingKey: {RoutingKey}, bodyLength: {BodyLength}",
+            routingKey,
+            body.Length);
+        await ForwardRawAsync(body, routingKey);
+    }
+
+    private TEventData? TryDeserialize<TEventData>(ReadOnlyMemory<byte> body)
+        where TEventData : class
+    {
+        try
+        {
+            return rabbitMqSerializer.Deserialize<TEventData>(body);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to deserialize direct file-server queue message as {Type}", typeof(TEventData).Name);
+            return null;
+        }
+    }
+
+    private async Task<bool> TryRerouteGroupCallStreamFileAsync(DataReceivedEvent eventData)
+    {
+        if (!IsGetFileObjectId(eventData.ObjectId) || !IsGroupCallStreamGetFile(eventData))
+        {
+            return false;
+        }
+
+        await userAccessHashKeyCache.RememberAsync(eventData.UserId, eventData.AccessHashKeyId);
+        logger.LogInformation(
+            "Rerouting upload.getFile inputGroupCallStream from direct file-server queue to messenger query lane, reqMsgId: {ReqMsgId}",
+            eventData.ReqMsgId);
+        processor.Enqueue(
+            new MessengerQueryDataReceivedEvent(eventData.ConnectionId, eventData.ConnectionType, eventData.RequestId, eventData.ObjectId,
+                eventData.UserId, eventData.ReqMsgId, eventData.SeqNumber, eventData.AuthKeyId, eventData.PermAuthKeyId,
+                eventData.Data, eventData.Layer, eventData.Date, eventData.DeviceType, eventData.ClientIp, eventData.SessionId, eventData.AccessHashKeyId),
+            eventData.AuthKeyId);
+        return true;
+    }
+
+    private bool IsGroupCallStreamGetFile(DataReceivedEvent eventData)
+    {
+        try
+        {
+            if (eventData.Data.ToTObject<IObject>() is RequestGetFile { Location: TInputGroupCallStream })
+            {
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(
+                ex,
+                "Failed to parse upload.getFile while checking direct file-server queue reroute, reqMsgId: {ReqMsgId}",
+                eventData.ReqMsgId);
+        }
+
+        return ContainsConstructorId(eventData.Data.Span, InputGroupCallStreamConstructorId);
+    }
+
+    private static bool IsGetFileObjectId(uint objectId)
+    {
+        return objectId is ObjectIdConsts.GetFileObjectId or ObjectIdConsts.GetFileObjectIdLayer143;
+    }
+
+    private static bool ContainsConstructorId(ReadOnlySpan<byte> data, uint constructorId)
+    {
+        var bytes = BitConverter.GetBytes(constructorId);
+        for (var i = 0; i <= data.Length - bytes.Length; i++)
+        {
+            if (data.Slice(i, bytes.Length).SequenceEqual(bytes))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task EnsureTopologyAsync(CancellationToken cancellationToken)
@@ -133,9 +323,28 @@ public sealed class FileDownloadLaneRouter(
             type: "direct",
             cancellationToken: cancellationToken);
         await _channel.ExchangeDeclareAsync(
-            exchange: FilteredExchange,
+            exchange: FileDownloadIngressExchange,
             type: "direct",
             durable: true,
+            cancellationToken: cancellationToken);
+        await _channel.ExchangeDeclareAsync(
+            exchange: FileServerExchange,
+            type: "direct",
+            durable: true,
+            cancellationToken: cancellationToken);
+        await _channel.QueueDeclareAsync(
+            queue: QueryServerQueue,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: null,
+            cancellationToken: cancellationToken);
+        await _channel.QueueDeclareAsync(
+            queue: DirectFileServerQueue,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: null,
             cancellationToken: cancellationToken);
         await _channel.QueueDeclareAsync(
             queue: FileServerQueue,
@@ -147,9 +356,26 @@ public sealed class FileDownloadLaneRouter(
         foreach (var routingKey in RoutedKeys)
         {
             await _channel.QueueBindAsync(
-                queue: FileServerQueue,
-                exchange: FilteredExchange,
+                queue: QueryServerQueue,
+                exchange: FileDownloadIngressExchange,
                 routingKey: routingKey,
+                cancellationToken: cancellationToken);
+            await _channel.QueueBindAsync(
+                queue: FileServerQueue,
+                exchange: FileServerExchange,
+                routingKey: routingKey,
+                cancellationToken: cancellationToken);
+            await _channel.QueueUnbindAsync(
+                queue: DirectFileServerQueue,
+                exchange: FileServerExchange,
+                routingKey: routingKey,
+                arguments: null,
+                cancellationToken: cancellationToken);
+            await _channel.QueueUnbindAsync(
+                queue: FileServerQueue,
+                exchange: FileDownloadIngressExchange,
+                routingKey: routingKey,
+                arguments: null,
                 cancellationToken: cancellationToken);
             await _channel.QueueUnbindAsync(
                 queue: FileServerQueue,

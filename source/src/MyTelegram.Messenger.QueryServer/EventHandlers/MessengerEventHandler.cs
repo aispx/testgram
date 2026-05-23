@@ -17,6 +17,8 @@ public class MessengerEventHandler(
         IEventHandler<UploadDataReceivedEvent>,
         ITransientDependency
 {
+    private const uint InputGroupCallStreamConstructorId = 0x0598a92a;
+
     public async Task HandleEventAsync(MessengerQueryDataReceivedEvent eventData)
     {
         await userAccessHashKeyCache.RememberAsync(eventData.UserId, eventData.AccessHashKeyId);
@@ -26,6 +28,11 @@ public class MessengerEventHandler(
     public async Task HandleEventAsync(StickerDataReceivedEvent eventData)
     {
         await userAccessHashKeyCache.RememberAsync(eventData.UserId, eventData.AccessHashKeyId);
+        if (await TryHandleStickerLaneGetFileAsync(eventData))
+        {
+            return;
+        }
+
         processor.Enqueue(
             new MessengerQueryDataReceivedEvent(eventData.ConnectionId, eventData.ConnectionType, eventData.RequestId, eventData.ObjectId,
                 eventData.UserId, eventData.ReqMsgId, eventData.SeqNumber, eventData.AuthKeyId, eventData.PermAuthKeyId,
@@ -81,12 +88,12 @@ public class MessengerEventHandler(
     {
         await userAccessHashKeyCache.RememberAsync(eventData.UserId, eventData.AccessHashKeyId);
 
-        if (eventData.ObjectId is not (ObjectIdConsts.GetFileObjectId or ObjectIdConsts.GetFileObjectIdLayer143))
+        if (!IsGetFileObjectId(eventData.ObjectId))
         {
             return false;
         }
 
-        if (eventData.Data.ToTObject<IObject>() is not RequestGetFile { Location: TInputGroupCallStream })
+        if (!IsGroupCallStreamGetFile(eventData))
         {
             return false;
         }
@@ -100,5 +107,85 @@ public class MessengerEventHandler(
                 eventData.Data, eventData.Layer, eventData.Date, eventData.DeviceType, eventData.ClientIp, eventData.SessionId, eventData.AccessHashKeyId),
             eventData.AuthKeyId);
         return true;
+    }
+
+    private async Task<bool> TryHandleStickerLaneGetFileAsync(StickerDataReceivedEvent eventData)
+    {
+        if (!IsGetFileObjectId(eventData.ObjectId))
+        {
+            return false;
+        }
+
+        if (IsGroupCallStreamGetFile(eventData))
+        {
+            logger.LogInformation(
+                "Rerouting upload.getFile inputGroupCallStream from sticker lane to messenger query lane, reqMsgId: {ReqMsgId}",
+                eventData.ReqMsgId);
+            processor.Enqueue(
+                new MessengerQueryDataReceivedEvent(eventData.ConnectionId, eventData.ConnectionType, eventData.RequestId, eventData.ObjectId,
+                    eventData.UserId, eventData.ReqMsgId, eventData.SeqNumber, eventData.AuthKeyId, eventData.PermAuthKeyId,
+                    eventData.Data, eventData.Layer, eventData.Date, eventData.DeviceType, eventData.ClientIp, eventData.SessionId,
+                    eventData.AccessHashKeyId),
+                eventData.AuthKeyId);
+            return true;
+        }
+
+        await fileDownloadLaneRouter.ForwardAsync(new UploadDataReceivedEvent(
+            eventData.ConnectionId,
+            eventData.ConnectionType,
+            eventData.RequestId,
+            eventData.ObjectId,
+            eventData.UserId,
+            eventData.ReqMsgId,
+            eventData.SeqNumber,
+            eventData.AuthKeyId,
+            eventData.PermAuthKeyId,
+            eventData.Data,
+            eventData.Layer,
+            eventData.Date,
+            eventData.DeviceType,
+            eventData.ClientIp,
+            eventData.SessionId,
+            eventData.AccessHashKeyId));
+        return true;
+    }
+
+    private bool IsGroupCallStreamGetFile(DataReceivedEvent eventData)
+    {
+        try
+        {
+            if (eventData.Data.ToTObject<IObject>() is RequestGetFile { Location: TInputGroupCallStream })
+            {
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(
+                ex,
+                "Failed to parse upload.getFile while checking group-call stream reroute, reqMsgId: {ReqMsgId}",
+                eventData.ReqMsgId);
+        }
+
+        return ContainsConstructorId(eventData.Data.Span, InputGroupCallStreamConstructorId);
+    }
+
+    private static bool IsGetFileObjectId(uint objectId)
+    {
+        return objectId is ObjectIdConsts.GetFileObjectId or ObjectIdConsts.GetFileObjectIdLayer143;
+    }
+
+    private static bool ContainsConstructorId(ReadOnlySpan<byte> data, uint constructorId)
+    {
+        var bytes = BitConverter.GetBytes(constructorId);
+        for (var i = 0; i <= data.Length - bytes.Length; i++)
+        {
+            if (data.Slice(i, bytes.Length).SequenceEqual(bytes))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -357,6 +357,7 @@ services:
       # sticker/media lane; query-server converts them back to messenger queries.
       App__StickerServerObjectIds__0: "447879488" # phone.getGroupCallStreamChannels
       App__StickerServerObjectIds__1: "1525991226" # phone.getGroupCallStreamRtmpUrl
+      App__StickerServerObjectIds__2: "3193124286" # upload.getFile inputGroupCallStream
       RabbitMQ__Connections__Default__HostName: ${RabbitMQ__Connections__Default__HostName:-rabbitmq}
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}
@@ -393,6 +394,8 @@ services:
   ### 4.File server
   file-server:
     image: ${MyTelegramRegistry}/mytelegram-file-server:${MyTelegramVersion}
+    user: "1654"
+    entrypoint: ["/app/MyTelegram.FileServer"]
     restart: always
     networks:
       - tg-net
@@ -417,7 +420,7 @@ services:
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}
       RabbitMQ__Connections__Default__Password: ${RabbitMQ__Connections__Default__Password}
-      #RabbitMQ__EventBus__ClientName: ${RabbitMQ__EventBus__ClientName}
+      RabbitMQ__EventBus__ClientName: MyTelegramFileServerRaw
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
       Redis__Configuration: ${Redis__Configuration}
     depends_on:
