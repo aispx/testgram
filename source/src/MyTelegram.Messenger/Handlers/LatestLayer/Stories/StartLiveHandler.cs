@@ -65,13 +65,27 @@ internal sealed class StartLiveHandler(
         var savedRtmpStream = obj.RtmpStream
             ? await _rtmpStreamCollection.Find(stream => stream.Id == streamId).FirstOrDefaultAsync()
             : null;
+        if (obj.RtmpStream && savedRtmpStream == null)
+        {
+            savedRtmpStream = GroupCallRtmpHelper.CreateStreamDocument(
+                streamId,
+                ownerPeer.PeerId,
+                (int)ownerPeer.PeerType,
+                GroupCallRtmpHelper.GetRtmpStreamUrl(options.CurrentValue),
+                date: (int)currentDate);
+            await _rtmpStreamCollection.ReplaceOneAsync(
+                stream => stream.Id == streamId,
+                savedRtmpStream,
+                new ReplaceOptions { IsUpsert = true });
+        }
+
         var rtmpUrl = obj.RtmpStream
             ? GroupCallRtmpHelper.GetStoredOrDefault(
                 savedRtmpStream?.Url,
                 GroupCallRtmpHelper.GetRtmpStreamUrl(options.CurrentValue))
             : null;
         var streamKey = obj.RtmpStream
-            ? savedRtmpStream?.Key ?? GroupCallRtmpHelper.CreateStreamKey()
+            ? savedRtmpStream?.Key
             : null;
 
         var isCloseFriends = obj.PrivacyRules?.Any(p => p is TInputPrivacyValueAllowCloseFriends) ?? false;
@@ -127,19 +141,6 @@ internal sealed class StartLiveHandler(
 
         await _groupCallCollection.InsertOneAsync(groupCallDoc);
         await _storyCollection.InsertOneAsync(storyDocument);
-
-        if (obj.RtmpStream && savedRtmpStream == null)
-        {
-            await _rtmpStreamCollection.InsertOneAsync(new GroupCallRtmpStreamDocument
-            {
-                Id = streamId,
-                PeerId = ownerPeer.PeerId,
-                PeerType = (int)ownerPeer.PeerType,
-                Url = rtmpUrl!,
-                Key = streamKey!,
-                Date = (int)currentDate
-            });
-        }
 
         return BuildUpdates(groupCallDoc, storyDocument, obj.RandomId);
     }

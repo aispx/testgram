@@ -37,55 +37,39 @@ internal sealed class GetGroupCallStreamRtmpUrlHandler(
         var filter = Builders<GroupCallDocument>.Filter.And(
             Builders<GroupCallDocument>.Filter.Eq(call => call.PeerId, peer.PeerId),
             Builders<GroupCallDocument>.Filter.Eq(call => call.PeerType, (int)peer.PeerType),
-            Builders<GroupCallDocument>.Filter.Eq(call => call.RtmpStream, true));
+            Builders<GroupCallDocument>.Filter.Eq(call => call.RtmpStream, true),
+            Builders<GroupCallDocument>.Filter.Eq(call => call.Active, true));
 
         var groupCall = await _groupCallCollection.Find(filter)
             .SortByDescending(call => call.Date)
             .FirstOrDefaultAsync();
-        if (groupCall == null)
-        {
-            var id = GroupCallRtmpHelper.GetStreamId(peer.PeerId, (int)peer.PeerType);
-            var saved = await _rtmpStreamCollection.Find(stream => stream.Id == id).FirstOrDefaultAsync();
-            if (saved == null || obj.Revoke)
-            {
-                saved = new GroupCallRtmpStreamDocument
-                {
-                    Id = id,
-                    PeerId = peer.PeerId,
-                    PeerType = (int)peer.PeerType,
-                    Url = defaultRtmpUrl,
-                    Key = GroupCallRtmpHelper.CreateStreamKey(),
-                    Date = GroupCallStateHelper.CurrentDate()
-                };
-                await _rtmpStreamCollection.ReplaceOneAsync(
-                    stream => stream.Id == id,
-                    saved,
-                    new ReplaceOptions { IsUpsert = true });
-            }
 
-            return new TGroupCallStreamRtmpUrl
-            {
-                Url = GroupCallRtmpHelper.GetStoredOrDefault(saved.Url, defaultRtmpUrl),
-                Key = saved.Key
-            };
-        }
+        var streamId = GroupCallRtmpHelper.GetStreamId(peer.PeerId, (int)peer.PeerType);
+        var saved = await GetOrCreateSavedStreamAsync(
+            streamId,
+            peer.PeerId,
+            (int)peer.PeerType,
+            defaultRtmpUrl,
+            obj.Revoke,
+            groupCall?.RtmpStreamKey);
 
-        var rtmpUrl = GroupCallRtmpHelper.GetStoredOrDefault(groupCall.RtmpUrl, defaultRtmpUrl);
-        var streamKey = groupCall.RtmpStreamKey;
-        if (obj.Revoke || string.IsNullOrWhiteSpace(streamKey))
+        if (groupCall != null &&
+            (groupCall.RtmpUrl != saved.Url ||
+             groupCall.RtmpStreamKey != saved.Key ||
+             !groupCall.RtmpStream))
         {
-            streamKey = GroupCallRtmpHelper.CreateStreamKey();
             var update = Builders<GroupCallDocument>.Update
-                .Set(call => call.RtmpUrl, rtmpUrl)
-                .Set(call => call.RtmpStreamKey, streamKey)
+                .Set(call => call.RtmpStream, true)
+                .Set(call => call.RtmpUrl, saved.Url)
+                .Set(call => call.RtmpStreamKey, saved.Key)
                 .Inc(call => call.Version, 1);
             await _groupCallCollection.UpdateOneAsync(call => call.CallId == groupCall.CallId, update);
         }
 
         return new TGroupCallStreamRtmpUrl
         {
-            Url = rtmpUrl,
-            Key = streamKey
+            Url = saved.Url,
+            Key = saved.Key
         };
     }
 
@@ -110,59 +94,83 @@ internal sealed class GetGroupCallStreamRtmpUrlHandler(
                 story.ExpireDate >= currentDate)
             .SortByDescending(story => story.StoryId)
             .FirstOrDefaultAsync();
+        var streamId = GroupCallRtmpHelper.GetStreamId(peer.PeerId, (int)peer.PeerType, liveStory: true);
         if (liveStory != null)
         {
-            var rtmpUrl = GroupCallRtmpHelper.GetStoredOrDefault(liveStory.RtmpUrl, defaultRtmpUrl);
-            var streamKey = liveStory.RtmpStreamKey;
-            if (revoke || string.IsNullOrWhiteSpace(streamKey))
+            var saved = await GetOrCreateSavedStreamAsync(
+                streamId,
+                peer.PeerId,
+                (int)peer.PeerType,
+                defaultRtmpUrl,
+                revoke,
+                liveStory.RtmpStreamKey,
+                currentDate);
+
+            if (liveStory.RtmpUrl != saved.Url ||
+                liveStory.RtmpStreamKey != saved.Key ||
+                !liveStory.RtmpStream)
             {
-                streamKey = GroupCallRtmpHelper.CreateStreamKey();
                 await _storyCollection.UpdateOneAsync(
                     story => story.Id == liveStory.Id,
                     Builders<StoryDocument>.Update
-                        .Set(story => story.RtmpUrl, rtmpUrl)
-                        .Set(story => story.RtmpStreamKey, streamKey)
+                        .Set(story => story.RtmpUrl, saved.Url)
+                        .Set(story => story.RtmpStreamKey, saved.Key)
                         .Set(story => story.RtmpStream, true));
 
                 await _groupCallCollection.UpdateOneAsync(
                     call => call.CallId == liveStory.GroupCallId,
                     Builders<GroupCallDocument>.Update
                         .Set(call => call.RtmpStream, true)
-                        .Set(call => call.RtmpUrl, rtmpUrl)
-                        .Set(call => call.RtmpStreamKey, streamKey)
+                        .Set(call => call.RtmpUrl, saved.Url)
+                        .Set(call => call.RtmpStreamKey, saved.Key)
                         .Inc(call => call.Version, 1));
             }
 
             return new TGroupCallStreamRtmpUrl
             {
-                Url = rtmpUrl,
-                Key = streamKey!
+                Url = saved.Url,
+                Key = saved.Key
             };
         }
 
-        var id = GroupCallRtmpHelper.GetStreamId(peer.PeerId, (int)peer.PeerType, liveStory: true);
-        var saved = await _rtmpStreamCollection.Find(stream => stream.Id == id).FirstOrDefaultAsync();
-        if (saved == null || revoke)
-        {
-            saved = new GroupCallRtmpStreamDocument
-            {
-                Id = id,
-                PeerId = peer.PeerId,
-                PeerType = (int)peer.PeerType,
-                Url = defaultRtmpUrl,
-                Key = GroupCallRtmpHelper.CreateStreamKey(),
-                Date = currentDate
-            };
-            await _rtmpStreamCollection.ReplaceOneAsync(
-                stream => stream.Id == id,
-                saved,
-                new ReplaceOptions { IsUpsert = true });
-        }
+        var newSaved = await GetOrCreateSavedStreamAsync(
+            streamId,
+            peer.PeerId,
+            (int)peer.PeerType,
+            defaultRtmpUrl,
+            revoke,
+            date: currentDate);
 
         return new TGroupCallStreamRtmpUrl
         {
-            Url = GroupCallRtmpHelper.GetStoredOrDefault(saved.Url, defaultRtmpUrl),
-            Key = saved.Key
+            Url = newSaved.Url,
+            Key = newSaved.Key
         };
+    }
+
+    private async Task<GroupCallRtmpStreamDocument> GetOrCreateSavedStreamAsync(
+        string id,
+        long peerId,
+        int peerType,
+        string defaultRtmpUrl,
+        bool revoke,
+        string? preferredKey = null,
+        int? date = null)
+    {
+        var saved = await _rtmpStreamCollection.Find(stream => stream.Id == id).FirstOrDefaultAsync();
+        if (saved != null && !revoke)
+        {
+            return saved;
+        }
+
+        var rtmpUrl = GroupCallRtmpHelper.GetStoredOrDefault(saved?.Url, defaultRtmpUrl);
+        var key = revoke ? null : preferredKey;
+        var stream = GroupCallRtmpHelper.CreateStreamDocument(id, peerId, peerType, rtmpUrl, key, date);
+        await _rtmpStreamCollection.ReplaceOneAsync(
+            existing => existing.Id == id,
+            stream,
+            new ReplaceOptions { IsUpsert = true });
+
+        return stream;
     }
 }

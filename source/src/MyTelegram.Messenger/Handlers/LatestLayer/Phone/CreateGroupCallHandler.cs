@@ -69,6 +69,19 @@ internal sealed class CreateGroupCallHandler(
                 ? await _rtmpStreamCollection.Find(stream => stream.Id == rtmpStreamId).FirstOrDefaultAsync()
                 : null;
             var rtmpUrl = GroupCallRtmpHelper.GetRtmpStreamUrl(options.CurrentValue);
+            if (obj.RtmpStream && rtmpStream == null)
+            {
+                rtmpStream = GroupCallRtmpHelper.CreateStreamDocument(
+                    rtmpStreamId,
+                    peer.PeerId,
+                    (int)peer.PeerType,
+                    rtmpUrl);
+                await _rtmpStreamCollection.ReplaceOneAsync(
+                    stream => stream.Id == rtmpStreamId,
+                    rtmpStream,
+                    new ReplaceOptions { IsUpsert = true });
+            }
+
             var call = new GroupCallDocument
             {
                 Id = callId,
@@ -82,7 +95,7 @@ internal sealed class CreateGroupCallHandler(
                 ScheduleDate = obj.ScheduleDate,
                 RtmpStream = obj.RtmpStream,
                 RtmpUrl = obj.RtmpStream ? GroupCallRtmpHelper.GetStoredOrDefault(rtmpStream?.Url, rtmpUrl) : null,
-                RtmpStreamKey = obj.RtmpStream ? rtmpStream?.Key ?? GroupCallRtmpHelper.CreateStreamKey() : null,
+                RtmpStreamKey = obj.RtmpStream ? rtmpStream?.Key : null,
                 Date = GroupCallStateHelper.CurrentDate()
             };
 

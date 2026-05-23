@@ -29,4 +29,23 @@ internal static class GroupCallRtmpHelper
     {
         return Guid.NewGuid().ToString("N");
     }
+
+    public static GroupCallRtmpStreamDocument CreateStreamDocument(
+        string id,
+        long peerId,
+        int peerType,
+        string url,
+        string? key = null,
+        int? date = null)
+    {
+        return new GroupCallRtmpStreamDocument
+        {
+            Id = id,
+            PeerId = peerId,
+            PeerType = peerType,
+            Url = url,
+            Key = string.IsNullOrWhiteSpace(key) ? CreateStreamKey() : key,
+            Date = date ?? GroupCallStateHelper.CurrentDate()
+        };
+    }
 }
