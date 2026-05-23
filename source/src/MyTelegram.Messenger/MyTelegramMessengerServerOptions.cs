@@ -47,6 +47,7 @@ public class MyTelegramMessengerServerOptions
     public bool EnableSearchNonContacts { get; set; }
     public int RpcResultExpirationMinutes { get; set; }
     public string RtmpStreamUrl { get; set; } = "rtmp://testgram.xie.su:1935/live";
+    public string RtmpHlsUrl { get; set; } = "http://rtmp-server:8888/live";
     public EncryptionConfig EncryptionConfig { get; set; }
     public StripeConfig Stripe { get; set; } = new();
 }

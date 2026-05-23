@@ -480,6 +480,7 @@ services:
       App__WebRtcConnections__0__UserName: ${App__WebRtcConnections__0__UserName}
       App__WebRtcConnections__0__Password: ${App__WebRtcConnections__0__Password}
       App__RtmpStreamUrl: ${App__RtmpStreamUrl}
+      App__RtmpHlsUrl: ${App__RtmpHlsUrl}
       App__PasskeyRpId: ${App__PasskeyRpId}
       App__PasskeyRpName: ${App__PasskeyRpName}
       App__Stripe__PublishableKey: ${App__Stripe__PublishableKey}
@@ -583,6 +584,7 @@ services:
       App__WebRtcConnections__0__UserName: ${App__WebRtcConnections__0__UserName}
       App__WebRtcConnections__0__Password: ${App__WebRtcConnections__0__Password}
       App__RtmpStreamUrl: ${App__RtmpStreamUrl}
+      App__RtmpHlsUrl: ${App__RtmpHlsUrl}
       App__PasskeyRpId: ${App__PasskeyRpId}
       App__PasskeyRpName: ${App__PasskeyRpName}
       App__Stripe__PublishableKey: ${App__Stripe__PublishableKey}
