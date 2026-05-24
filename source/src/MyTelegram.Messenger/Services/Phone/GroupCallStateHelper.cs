@@ -154,8 +154,13 @@ internal static class GroupCallStateHelper
         {
             Id = call.CallId,
             AccessHash = call.AccessHash,
-            Duration = Math.Max(0, date - call.Date)
+            Duration = GetCallDuration(call, date)
         };
+    }
+
+    public static int GetCallDuration(GroupCallDocument call, int date)
+    {
+        return Math.Max(1, date - call.Date);
     }
 
     public static TGroupCallParticipant ToParticipant(

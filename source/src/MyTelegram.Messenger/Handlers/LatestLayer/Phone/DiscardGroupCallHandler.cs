@@ -53,7 +53,7 @@ internal sealed class DiscardGroupCallHandler(
             new TMessageActionGroupCall
             {
                 Call = GroupCallStateHelper.ToInputGroupCall(groupCall),
-                Duration = Math.Max(0, date - groupCall.Date)
+                Duration = GroupCallStateHelper.GetCallDuration(groupCall, date)
             });
         await AdminLogHelper.LogDiscardGroupCall(mongoDatabase, groupCall, input.UserId);
         var updates = GroupCallStateHelper.Updates(new TUpdateGroupCall
