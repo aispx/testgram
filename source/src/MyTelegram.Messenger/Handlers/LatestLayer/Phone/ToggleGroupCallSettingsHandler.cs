@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.Phone;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
@@ -33,9 +34,11 @@ internal sealed class ToggleGroupCallSettingsHandler(
         }
 
         var modified = false;
+        var joinMutedChanged = false;
         if (obj.JoinMuted.HasValue && groupCall.JoinMuted != obj.JoinMuted.Value)
         {
             groupCall.JoinMuted = obj.JoinMuted.Value;
+            joinMutedChanged = true;
             modified = true;
         }
         if (obj.MessagesEnabled.HasValue && groupCall.MessagesEnabled != obj.MessagesEnabled.Value)
@@ -62,6 +65,11 @@ internal sealed class ToggleGroupCallSettingsHandler(
 
         groupCall.Version++;
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+        if (joinMutedChanged)
+        {
+            await AdminLogHelper.LogToggleGroupCallSetting(mongoDatabase, groupCall, input.UserId, groupCall.JoinMuted);
+        }
+
         var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper));
         await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
             objectMessageSender,

@@ -1,4 +1,6 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services;
+using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Schema;
 using MyTelegram.Services.Services;
 using System.Security.Cryptography;
@@ -70,6 +72,80 @@ internal static class GroupCallStateHelper
                 ? ToPeer((PeerType)call.DefaultSendAsPeerType.Value, call.DefaultSendAsPeerId.Value)
                 : null
         };
+    }
+
+    public static async Task<GroupCallDocument?> FindActivePeerCallAsync(
+        IMongoDatabase database,
+        long peerId,
+        PeerType peerType)
+    {
+        var collection = database.GetCollection<GroupCallDocument>("group_calls");
+        var filter = Builders<GroupCallDocument>.Filter.And(
+            Builders<GroupCallDocument>.Filter.Eq(call => call.PeerId, peerId),
+            Builders<GroupCallDocument>.Filter.Eq(call => call.PeerType, (int)peerType),
+            Builders<GroupCallDocument>.Filter.Eq(call => call.Active, true),
+            Builders<GroupCallDocument>.Filter.Eq(call => call.LiveStory, false));
+
+        return await collection
+            .Find(filter)
+            .SortByDescending(call => call.Date)
+            .FirstOrDefaultAsync();
+    }
+
+    public static void ApplyActiveCallToChatFull(
+        MyTelegram.Schema.Messages.IChatFull chatFull,
+        GroupCallDocument call,
+        long selfUserId)
+    {
+        var inputCall = ToInputGroupCall(call);
+        var defaultJoinAs = new TPeerUser { UserId = selfUserId };
+
+        switch (chatFull.FullChat)
+        {
+            case TChannelFull channelFull:
+                channelFull.Call = inputCall;
+                channelFull.GroupcallDefaultJoinAs = defaultJoinAs;
+                break;
+            case MyTelegram.Schema.TChatFull basicChatFull:
+                basicChatFull.Call = inputCall;
+                basicChatFull.GroupcallDefaultJoinAs = defaultJoinAs;
+                break;
+        }
+
+        var hasMedia = call.RtmpStream || call.Participants.Any(participant => !participant.Left);
+        foreach (var chat in chatFull.Chats)
+        {
+            switch (chat)
+            {
+                case TChannel channel when call.PeerType == (int)PeerType.Channel && channel.Id == call.PeerId:
+                    channel.CallActive = true;
+                    channel.CallNotEmpty = hasMedia;
+                    break;
+                case TChat basicChat when call.PeerType == (int)PeerType.Chat && basicChat.Id == call.PeerId:
+                    basicChat.CallActive = true;
+                    basicChat.CallNotEmpty = hasMedia;
+                    break;
+            }
+        }
+    }
+
+    public static async Task SendGroupCallServiceMessageAsync(
+        IMessageAppService messageAppService,
+        IRequestInput input,
+        GroupCallDocument call,
+        IMessageAction action)
+    {
+        var sendInput = new SendMessageInput(
+            input.ToRequestInfo() with { ReqMsgId = 0 },
+            input.UserId,
+            new Peer((PeerType)call.PeerType, call.PeerId),
+            string.Empty,
+            Random.Shared.NextInt64(),
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            messageAction: action);
+
+        await messageAppService.SendMessageAsync([sendInput]);
     }
 
     public static TGroupCallDiscarded ToDiscardedGroupCall(GroupCallDocument call, int date)

@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Get full info about a <a href="https://corefork.telegram.org/api/channel#basic-groups">basic group</a>.
@@ -10,7 +13,14 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetFullChatHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChatConverterService chatConverterService, IPhotoAppService photoAppService, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetFullChat, MyTelegram.Schema.Messages.IChatFull>
+internal sealed class GetFullChatHandler(
+    IQueryProcessor queryProcessor,
+    IPeerHelper peerHelper,
+    IChatConverterService chatConverterService,
+    IPhotoAppService photoAppService,
+    IChannelAppService channelAppService,
+    IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetFullChat, MyTelegram.Schema.Messages.IChatFull>
 {
     protected override async Task<MyTelegram.Schema.Messages.IChatFull> HandleCoreAsync(IRequestInput input, RequestGetFullChat obj)
     {
@@ -24,7 +34,17 @@ internal sealed class GetFullChatHandler(IQueryProcessor queryProcessor, IPeerHe
                 var channelMember = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(obj.ChatId, input.UserId));
                 var peerNotifySettings = await queryProcessor.ProcessAsync(new GetPeerNotifySettingsByIdQuery(PeerNotifySettingsId.Create(input.UserId, PeerType.Channel, obj.ChatId).Value), CancellationToken.None);
                 var photoReadModel = await photoAppService.GetAsync(channel.PhotoId);
-                return chatConverterService.ToChannelFull(input, channel, photoReadModel, channelFull!, channelMember, peerNotifySettings, null, input.Layer);
+                var chatFull = chatConverterService.ToChannelFull(input, channel, photoReadModel, channelFull!, channelMember, peerNotifySettings, null, input.Layer);
+                var activeCall = await GroupCallStateHelper.FindActivePeerCallAsync(
+                    mongoDatabase,
+                    obj.ChatId,
+                    PeerType.Channel);
+                if (activeCall != null)
+                {
+                    GroupCallStateHelper.ApplyActiveCallToChatFull(chatFull, activeCall, input.UserId);
+                }
+
+                return chatFull;
             }
         }
 

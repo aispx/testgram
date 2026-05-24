@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services.StarGifts;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
@@ -70,6 +71,7 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
             }
 
             var chatFull = chatConverterService.ToChannelFull(input, channelReadModel, photoReadModel, channelFullReadModel!, channelMemberReadModel, peerNotifySettings, chatInviteReadModel, input.Layer);
+            await SetActiveGroupCallAsync(input, channelId, chatFull);
             var fullChat = chatFull.FullChat;
             if (fullChat is ILayeredChannelFull layeredChannelFull)
             {
@@ -123,6 +125,21 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
         }
 
         throw new NotImplementedException();
+    }
+
+    private async Task SetActiveGroupCallAsync(
+        IRequestInput input,
+        long channelId,
+        MyTelegram.Schema.Messages.IChatFull chatFull)
+    {
+        var activeCall = await GroupCallStateHelper.FindActivePeerCallAsync(
+            mongoDatabase,
+            channelId,
+            PeerType.Channel);
+        if (activeCall != null)
+        {
+            GroupCallStateHelper.ApplyActiveCallToChatFull(chatFull, activeCall, input.UserId);
+        }
     }
 
     private async Task SetStarGiftsInfoAsync(long channelId, ILayeredChannelFull channelFull)

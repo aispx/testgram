@@ -110,6 +110,12 @@ internal sealed class GetAdminLogHandler(
             if (filter.Pinned) eventTypes.Add("TChannelAdminLogEventActionUpdatePinned");
             if (filter.Edit) eventTypes.Add("TChannelAdminLogEventActionEditMessage");
             if (filter.Delete) eventTypes.Add("TChannelAdminLogEventActionDeleteMessage");
+            if (filter.GroupCall)
+            {
+                eventTypes.Add("TChannelAdminLogEventActionStartGroupCall");
+                eventTypes.Add("TChannelAdminLogEventActionDiscardGroupCall");
+                eventTypes.Add("TChannelAdminLogEventActionToggleGroupCallSetting");
+            }
 
             if (eventTypes.Count > 0)
                 filters.Add(filterBuilder.In("action.type", eventTypes));

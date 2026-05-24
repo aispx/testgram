@@ -1,4 +1,6 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 
@@ -18,7 +20,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class DiscardGroupCallHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IObjectMessageSender objectMessageSender)
+    IObjectMessageSender objectMessageSender,
+    IMessageAppService messageAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDiscardGroupCall, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -43,6 +46,16 @@ internal sealed class DiscardGroupCallHandler(
         groupCall.Version++;
         var date = GroupCallStateHelper.CurrentDate();
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+        await GroupCallStateHelper.SendGroupCallServiceMessageAsync(
+            messageAppService,
+            input,
+            groupCall,
+            new TMessageActionGroupCall
+            {
+                Call = GroupCallStateHelper.ToInputGroupCall(groupCall),
+                Duration = Math.Max(0, date - groupCall.Date)
+            });
+        await AdminLogHelper.LogDiscardGroupCall(mongoDatabase, groupCall, input.UserId);
         var updates = GroupCallStateHelper.Updates(new TUpdateGroupCall
         {
             Peer = peerHelper.ToPeer((PeerType)groupCall.PeerType, groupCall.PeerId),

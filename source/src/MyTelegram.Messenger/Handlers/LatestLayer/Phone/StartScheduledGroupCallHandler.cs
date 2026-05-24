@@ -1,5 +1,8 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Schema;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// <summary>
@@ -16,7 +19,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class StartScheduledGroupCallHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IObjectMessageSender objectMessageSender)
+    IObjectMessageSender objectMessageSender,
+    IMessageAppService messageAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestStartScheduledGroupCall, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -42,6 +46,15 @@ internal sealed class StartScheduledGroupCallHandler(
         groupCall.ScheduleStartSubscriberIds.Clear();
         groupCall.Version++;
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+        await GroupCallStateHelper.SendGroupCallServiceMessageAsync(
+            messageAppService,
+            input,
+            groupCall,
+            new TMessageActionGroupCall
+            {
+                Call = GroupCallStateHelper.ToInputGroupCall(groupCall)
+            });
+        await AdminLogHelper.LogStartGroupCall(mongoDatabase, groupCall, input.UserId);
         var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper));
         await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
             objectMessageSender,

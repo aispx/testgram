@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using MongoDB.Bson;
+using MyTelegram.Messenger.Services.Phone;
 
 namespace MyTelegram.Messenger.Helpers;
 
@@ -380,6 +381,58 @@ public static class AdminLogHelper
             NewTopic = newTopic
         };
         await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogStartGroupCall(
+        IMongoDatabase database,
+        GroupCallDocument call,
+        long adminUserId)
+    {
+        if (call.PeerType != (int)PeerType.Channel)
+        {
+            return;
+        }
+
+        var action = new TChannelAdminLogEventActionStartGroupCall
+        {
+            Call = GroupCallStateHelper.ToInputGroupCall(call)
+        };
+        await LogEventAsync(database, call.PeerId, adminUserId, action);
+    }
+
+    public static async Task LogDiscardGroupCall(
+        IMongoDatabase database,
+        GroupCallDocument call,
+        long adminUserId)
+    {
+        if (call.PeerType != (int)PeerType.Channel)
+        {
+            return;
+        }
+
+        var action = new TChannelAdminLogEventActionDiscardGroupCall
+        {
+            Call = GroupCallStateHelper.ToInputGroupCall(call)
+        };
+        await LogEventAsync(database, call.PeerId, adminUserId, action);
+    }
+
+    public static async Task LogToggleGroupCallSetting(
+        IMongoDatabase database,
+        GroupCallDocument call,
+        long adminUserId,
+        bool joinMuted)
+    {
+        if (call.PeerType != (int)PeerType.Channel)
+        {
+            return;
+        }
+
+        var action = new TChannelAdminLogEventActionToggleGroupCallSetting
+        {
+            JoinMuted = joinMuted
+        };
+        await LogEventAsync(database, call.PeerId, adminUserId, action);
     }
 
     private static async Task LogEventAsync(

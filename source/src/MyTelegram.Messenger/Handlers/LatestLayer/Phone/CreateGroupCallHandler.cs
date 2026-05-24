@@ -1,4 +1,6 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 
@@ -22,6 +24,7 @@ internal sealed class CreateGroupCallHandler(
     IIdGenerator idGenerator,
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IMessageAppService messageAppService,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestCreateGroupCall, MyTelegram.Schema.IUpdates>
 {
@@ -102,6 +105,12 @@ internal sealed class CreateGroupCallHandler(
             try
             {
                 await _groupCallCollection.InsertOneAsync(call);
+                await SendServiceMessageAsync(input, call);
+                if (!call.ScheduleDate.HasValue)
+                {
+                    await AdminLogHelper.LogStartGroupCall(mongoDatabase, call, input.UserId);
+                }
+
                 return GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(call, input.UserId, peerHelper));
             }
             catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
@@ -111,5 +120,21 @@ internal sealed class CreateGroupCallHandler(
 
         RpcErrors.RpcErrors400.CreateCallFailed.ThrowRpcError();
         return null!;
+    }
+
+    private async Task SendServiceMessageAsync(IRequestInput input, GroupCallDocument call)
+    {
+        IMessageAction action = call.ScheduleDate.HasValue
+            ? new TMessageActionGroupCallScheduled
+            {
+                Call = GroupCallStateHelper.ToInputGroupCall(call),
+                ScheduleDate = call.ScheduleDate.Value
+            }
+            : new TMessageActionGroupCall
+            {
+                Call = GroupCallStateHelper.ToInputGroupCall(call)
+            };
+
+        await GroupCallStateHelper.SendGroupCallServiceMessageAsync(messageAppService, input, call, action);
     }
 }
