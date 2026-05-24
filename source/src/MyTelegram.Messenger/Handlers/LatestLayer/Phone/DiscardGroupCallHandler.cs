@@ -46,6 +46,21 @@ internal sealed class DiscardGroupCallHandler(
         groupCall.Version++;
         var date = GroupCallStateHelper.CurrentDate();
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
+        var updateGroupCall = new TUpdateGroupCall
+        {
+            LiveStory = groupCall.LiveStory,
+            Peer = peerHelper.ToPeer((PeerType)groupCall.PeerType, groupCall.PeerId),
+            Call = GroupCallStateHelper.ToDiscardedGroupCall(groupCall, date)
+        };
+        var updates = GroupCallStateHelper.Updates(
+            GroupCallStateHelper.CreatePeerChangedUpdate(groupCall),
+            updateGroupCall);
+        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+            objectMessageSender,
+            groupCall,
+            updates,
+            input.UserId,
+            groupCall.InvitedUserIds);
         await GroupCallStateHelper.SendGroupCallServiceMessageAsync(
             messageAppService,
             input,
@@ -56,17 +71,6 @@ internal sealed class DiscardGroupCallHandler(
                 Duration = GroupCallStateHelper.GetCallDuration(groupCall, date)
             });
         await AdminLogHelper.LogDiscardGroupCall(mongoDatabase, groupCall, input.UserId);
-        var updates = GroupCallStateHelper.Updates(new TUpdateGroupCall
-        {
-            Peer = peerHelper.ToPeer((PeerType)groupCall.PeerType, groupCall.PeerId),
-            Call = GroupCallStateHelper.ToDiscardedGroupCall(groupCall, date)
-        });
-        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
-            objectMessageSender,
-            groupCall,
-            updates,
-            input.UserId,
-            groupCall.InvitedUserIds);
         return updates;
     }
 }

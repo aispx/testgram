@@ -200,6 +200,16 @@ internal static class GroupCallStateHelper
         };
     }
 
+    public static IUpdate CreatePeerChangedUpdate(GroupCallDocument call)
+    {
+        return (PeerType)call.PeerType switch
+        {
+            PeerType.Channel => new TUpdateChannel { ChannelId = call.PeerId },
+            PeerType.Chat => new TUpdateChat { ChatId = call.PeerId },
+            _ => new TUpdateUser { UserId = call.PeerId }
+        };
+    }
+
     public static TUpdateGroupCallParticipants CreateParticipantsUpdate(
         GroupCallDocument call,
         long selfUserId,
