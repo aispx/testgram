@@ -21,7 +21,6 @@ Log.Information(
 
 Log.Information("MyTelegram authentication server starting...");
 
-//Console.ReadLine();
 var builder = Host.CreateDefaultBuilder(args);
 builder.ConfigureAppConfiguration(options =>
 {
@@ -56,36 +55,11 @@ builder.ConfigureServices(
         });
 
         services.AddMyTelegramRabbitMqEventBus();
-
-        //services.AddRebusEventBus(options =>
-        //{
-        //    var eventBusOptions = context
-        //        .Configuration.GetRequiredSection("RabbitMQ:EventBus")
-        //        .Get<EventBusRabbitMqOptions>();
-        //    var rabbitMqOptions = context
-        //        .Configuration.GetRequiredSection("RabbitMQ:Connections:Default")
-        //        .Get<RabbitMqOptions>();
-
-        //    options.Transport(t =>
-        //    {
-        //        t.UseRabbitMq(
-        //                $"amqp://{rabbitMqOptions!.UserName}:{rabbitMqOptions.Password}@{rabbitMqOptions.HostName}:{rabbitMqOptions.Port}",
-        //                eventBusOptions!.ClientName
-        //            )
-        //            .ExchangeNames(
-        //                eventBusOptions.ExchangeName,
-        //                eventBusOptions.TopicExchangeName ?? "RebusTopics"
-        //            );
-        //    });
-        //    options.AddSystemTextJson(jsonOptions =>
-        //    {
-        //        jsonOptions.TypeInfoResolverChain.Add(MyJsonSerializeContext.Default);
-        //    });
-        //});
     }
 );
 
 var app = builder.Build();
 
-
-await app.RunAsync();
+_ = app.RunAsync();
+Log.Information("Auth server running, waiting...");
+Thread.Sleep(Timeout.Infinite);

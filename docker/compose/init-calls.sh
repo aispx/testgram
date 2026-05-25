@@ -17,6 +17,11 @@ echo "✓ MongoDB is ready"
 echo "Setting up call_sessions indexes..."
 mongosh "$ConnectionStrings__Default/$App__DatabaseName" --quiet <<'EOF'
 try {
+    db.getCollectionNames().forEach(function(name) { if (name == "call_sessions") found = true; });
+    if (typeof found === 'undefined') {
+        db.createCollection("call_sessions");
+        print("✓ call_sessions collection created");
+    }
     var indexes = db.call_sessions.getIndexes();
     var hasCallIdIndex = indexes.some(idx => idx.name === "idx_callid_accesshash");
 

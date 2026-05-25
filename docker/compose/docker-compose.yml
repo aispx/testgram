@@ -316,12 +316,20 @@ services:
       - tg-net
     environment:
       Serilog__MinimumLevel__Default: ${Serilog__MinimumLevel__Default}
-      #App__PrivateKeyFilePath: ${App__PrivateKeyFilePath}
+      App__DatabaseName: ${App__DatabaseName}
+      App__ReadModelDatabaseName: ${App__ReadModelDatabaseName}
+      App__AccessHashSecretKey: ${App__AccessHashSecretKey}
+      App__DcOptions__0__IpAddress: ${App__DcOptions__0__IpAddress}
+      App__DcOptions__0__Port: ${App__DcOptions__0__Port}
+      App__EncryptionConfig__Enabled: ${App__EncryptionConfig__Enabled}
+      App__EncryptionConfig__MessageKeys__0__Id: ${App__EncryptionConfig__MessageKeys__0__Id}
+      App__EncryptionConfig__MessageKeys__0__Key: ${App__EncryptionConfig__MessageKeys__0__Key}
+      App__EncryptionConfig__IndexKeys__0__Id: ${App__EncryptionConfig__IndexKeys__0__Id}
+      App__EncryptionConfig__IndexKeys__0__Key: ${App__EncryptionConfig__IndexKeys__0__Key}
       RabbitMQ__Connections__Default__HostName: ${RabbitMQ__Connections__Default__HostName:-rabbitmq}
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}
       RabbitMQ__Connections__Default__Password: ${RabbitMQ__Connections__Default__Password}
-      #RabbitMQ__EventBus__ClientName: ${RabbitMQ__EventBus__ClientName}
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
       Redis__Configuration: ${Redis__Configuration}
     volumes:
@@ -669,11 +677,11 @@ services:
       - tg-net
     environment:
       Serilog__MinimumLevel__Default: ${Serilog__MinimumLevel__Default}
-      # TwilioSms__Enabled: ${TwilioSms__Enabled}
-      # TwilioSms__AccountSId: ${TwilioSms__AccountSId}
-      # TwilioSms__AuthToken: ${TwilioSms__AuthToken}
-      # TwilioSms__FromNumber: ${TwilioSms__FromNumber}
-      # TwilioSms__MessagingServiceSId: ${TwilioSms__MessagingServiceSId}
+      TwilioSms__Enabled: ${TwilioSms__Enabled}
+      TwilioSms__AccountSId: ${TwilioSms__AccountSId}
+      TwilioSms__AuthToken: ${TwilioSms__AuthToken}
+      TwilioSms__FromNumber: ${TwilioSms__FromNumber}
+      TwilioSms__MessagingServiceSId: ${TwilioSms__MessagingServiceSId}
       # VonageSms__Enabled: ${VonageSms__Enabled}
       # VonageSms__BrandName: ${VonageSms__BrandName}
       # VonageSms__ApiKey: ${VonageSms__ApiKey}
