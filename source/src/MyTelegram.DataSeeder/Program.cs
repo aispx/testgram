@@ -42,4 +42,6 @@ builder.ConfigureServices((context,
 
 var app = builder.Build();
 
-await app.RunAsync();
+_ = app.RunAsync();
+Log.Information("Data seeder running, waiting...");
+Thread.Sleep(Timeout.Infinite);
