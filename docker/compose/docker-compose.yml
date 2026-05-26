@@ -215,10 +215,10 @@ services:
     volumes:
       - ./data/mytelegram/gateway/logs:/app/Logs
     environment:
-      Serilog__MinimumLevel__Default: ${Serilog__MinimumLevel__Default}
+      Serilog__MinimumLevel__Default: Debug
       # App__ThisDcId: ${App__ThisDcId}
       # App__MediaOnly: ${App__MediaOnly}
-      # App__Servers__0__Enabled: ${App__Servers__0__Enabled}
+      App__Servers__0__Enabled: ${App__Servers__0__Enabled}
       # App__Servers__0__ServerType: ${App__Servers__0__ServerType}
       # App__Servers__0__Ip: ${App__Servers__0__Ip}
       # App__Servers__0__Ipv6: ${App__Servers__0__Ipv6}
@@ -258,7 +258,7 @@ services:
       # App__Servers__3__KeyPemFilePath: ${App__Servers__3__KeyPemFilePath}
       # App__Servers__3__EnableProxyProtocolV2: ${App__Servers__3__EnableProxyProtocolV2}
       App__Servers__3__MediaOnly: "False"
-      #       App__Servers__4__Enabled: ${App__Servers__4__Enabled}
+      App__Servers__4__Enabled: ${App__Servers__4__Enabled}
       # App__Servers__4__ServerType: ${App__Servers__4__ServerType}
       # App__Servers__4__Ip: ${App__Servers__4__Ip}
       # App__Servers__4__Ipv6: ${App__Servers__4__Ipv6}
@@ -268,7 +268,7 @@ services:
       # App__Servers__4__KeyPemFilePath: ${App__Servers__4__KeyPemFilePath}
       # App__Servers__4__EnableProxyProtocolV2: ${App__Servers__4__EnableProxyProtocolV2}
       # App__Servers__4__MediaOnly: ${App__Servers__4__MediaOnly}
-      #       App__Servers__5__Enabled: ${App__Servers__5__Enabled}
+      App__Servers__5__Enabled: ${App__Servers__5__Enabled}
       # App__Servers__5__ServerType: ${App__Servers__5__ServerType}
       # App__Servers__5__Ip: ${App__Servers__5__Ip}
       # App__Servers__5__Ipv6: ${App__Servers__5__Ipv6}
@@ -284,6 +284,7 @@ services:
       RabbitMQ__Connections__Default__Password: ${RabbitMQ__Connections__Default__Password}
       #RabbitMQ__EventBus__ClientName: ${RabbitMQ__EventBus__ClientName}
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
+      Redis__Configuration: ${Redis__Configuration}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -331,6 +332,7 @@ services:
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}
       RabbitMQ__Connections__Default__Password: ${RabbitMQ__Connections__Default__Password}
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
+      App__PrivateKeyFilePath: private.pkcs8.key
       Redis__Configuration: ${Redis__Configuration}
     volumes:
       - ./data/mytelegram/auth/logs:/app/Logs
@@ -549,7 +551,7 @@ services:
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}
       RabbitMQ__Connections__Default__Password: ${RabbitMQ__Connections__Default__Password}
-      #RabbitMQ__EventBus__ClientName: ${RabbitMQ__EventBus__ClientName}
+      RabbitMQ__EventBus__ClientName: MyTelegramMessengerCommandServer
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
       Redis__Configuration: ${Redis__Configuration}
     volumes:
@@ -653,7 +655,7 @@ services:
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}
       RabbitMQ__Connections__Default__Password: ${RabbitMQ__Connections__Default__Password}
-      #RabbitMQ__EventBus__ClientName: ${RabbitMQ__EventBus__ClientName}
+      RabbitMQ__EventBus__ClientName: MyTelegramMessengerQueryServer
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
       Redis__Configuration: ${Redis__Configuration}
       MYTELEGRAM_GEOIP_COUNTRY_DB: ${MYTELEGRAM_GEOIP_COUNTRY_DB:-/geoip/GeoLite2-City.mmdb}

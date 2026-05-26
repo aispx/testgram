@@ -29,7 +29,13 @@ builder.ConfigureAppConfiguration(options =>
 });
 
 builder.UseSerilog(
-    (context, configuration) => { configuration.ReadFrom.Configuration(context.Configuration); }
+    (context, configuration) =>
+    {
+        configuration.ReadFrom.Configuration(context.Configuration)
+            .WriteTo.Async(c => c.Console(theme: AnsiConsoleTheme.Code))
+            .WriteTo.Async(c => c.File("Logs/log-.txt", rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 7));
+    }
 );
 builder.ConfigureServices(
     (context, services) =>
