@@ -46,7 +46,6 @@ builder.UseSerilog((context,
 });
 builder.ConfigureHostOptions(options =>
 {
-    options.ServicesStartConcurrently = true;
     options.ServicesStopConcurrently = true;
 });
 
@@ -109,6 +108,7 @@ builder.ConfigureServices((ctx,
     services.AddHostedService<MyTelegramInvokeAfterMsgProcessorBackgroundService>();
     services.AddHostedService<QueuedCommandExecutorBackgroundService>();
     services.AddHostedService<AuctionRoundBackgroundService>();
+    services.AddHostedService<MyTelegramQueryServerHandlerBackgroundService>();
 
     services.Configure<HostOptions>(options =>
     {
@@ -118,7 +118,7 @@ builder.ConfigureServices((ctx,
 
 var app = builder.Build();
 
-var handlerHelper = app.Services.GetRequiredService<IHandlerHelper>();
-handlerHelper.InitAllHandlers();
-
-await app.RunAsync();
+Log.Information("Messenger query server starting RunAsync...");
+_ = app.RunAsync();
+Log.Information("Messenger query server running, waiting...");
+Thread.Sleep(Timeout.Infinite);

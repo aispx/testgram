@@ -49,7 +49,6 @@ builder.UseSerilog((context,
 
 builder.ConfigureHostOptions(options =>
 {
-    options.ServicesStartConcurrently = true;
     options.ServicesStopConcurrently = true;
 });
 
@@ -138,4 +137,7 @@ builder.ConfigureServices((ctx,
 
 var app = builder.Build();
 
-await app.RunAsync();
+Log.Information("Messenger command server starting RunAsync...");
+_ = app.RunAsync();
+Log.Information("Messenger command server running, waiting...");
+Thread.Sleep(Timeout.Infinite);

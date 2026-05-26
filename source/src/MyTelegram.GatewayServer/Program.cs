@@ -199,4 +199,6 @@ app.UseCors();
 app.MapGet("/", () => "Only websocket requests are supported.");
 
 
-await app.RunAsync();
+_ = app.RunAsync();
+Log.Information("Gateway server running, waiting...");
+Thread.Sleep(Timeout.Infinite);

@@ -20,4 +20,5 @@ global using System.IO.Pipelines;
 global using System.Net;
 global using System.Net.WebSockets;
 global using System.Security.Cryptography.X509Certificates;
+global using System.Threading;
 global using System.Threading.Channels;
