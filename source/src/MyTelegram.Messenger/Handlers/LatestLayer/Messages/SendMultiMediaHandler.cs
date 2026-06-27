@@ -47,14 +47,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService, IMediaHelper mediaHelper, //IRequestCacheAppService requestCacheAppService,
- IPeerHelper peerHelper, IRandomHelper randomHelper, IAccessHashHelper accessHashHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
+ IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
 {
     //private readonly IRequestCacheAppService _requestCacheAppService;
     //_requestCacheAppService = requestCacheAppService;
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMultiMedia obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
         var toPeerForPaid = peerHelper.GetPeer(obj.Peer, input.UserId);
         // Item 22: enforce blocklist for album/multimedia sends too. Without this guard
         // a blocked user could spam media albums while their text messages 403'd.

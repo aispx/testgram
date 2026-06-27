@@ -14,14 +14,11 @@ using MyTelegram.Domain.Aggregates.UserConfig;
 internal sealed class ReadReactionsHandler(
     IPtsHelper ptsHelper,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     ICommandBus commandBus) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadReactions, MyTelegram.Schema.Messages.IAffectedHistory>
 {
     protected override async Task<MyTelegram.Schema.Messages.IAffectedHistory> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReadReactions obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
         var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, input.UserId);
         var key = ReactionReadState.GetKey(peer, obj.TopMsgId, savedPeer);
         var command = new UpdateUserConfigCommand(

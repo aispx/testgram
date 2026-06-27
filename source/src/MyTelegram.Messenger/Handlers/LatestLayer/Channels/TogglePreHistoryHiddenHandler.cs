@@ -21,14 +21,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class TogglePreHistoryHiddenHandler(
     ICommandBus commandBus,
     IChannelAdminRightsChecker channelAdminRightsChecker,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestTogglePreHistoryHidden, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestTogglePreHistoryHidden obj)
     {
         if (obj.Channel is TInputChannel inputChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
             var command = new TogglePreHistoryHiddenCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), obj.Enabled, input.UserId);
             await commandBus.PublishAsync(command);

@@ -121,16 +121,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IAccessHashHelper accessHashHelper, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
+internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMedia obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
-        if (obj.ReplyTo is TInputReplyToMonoForum monoForumReplyTo)
-            await accessHashHelper.CheckAccessHashAsync(input, monoForumReplyTo.MonoforumPeerId);
-        if (obj.ReplyTo is TInputReplyToMessage { MonoforumPeerId: not null } monoForumMessageReply)
-            await accessHashHelper.CheckAccessHashAsync(input, monoForumMessageReply.MonoforumPeerId);
         var needCheckAudioMessagePrivacy = false;
         switch (obj.Media)
         {

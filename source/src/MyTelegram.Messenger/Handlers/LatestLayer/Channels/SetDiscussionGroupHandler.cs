@@ -19,13 +19,12 @@ using MyTelegram.Messenger.Helpers;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetDiscussionGroupHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetDiscussionGroup, IBool>
+internal sealed class SetDiscussionGroupHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetDiscussionGroup, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestSetDiscussionGroup obj)
     {
         if (obj.Broadcast is TInputChannel broadcastChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, broadcastChannel.ChannelId, broadcastChannel.AccessHash, AccessHashType.Channel);
         }
         else
         {
@@ -37,7 +36,6 @@ internal sealed class SetDiscussionGroupHandler(ICommandBus commandBus, IChannel
         long? groupId = null;
         if (obj.Group is TInputChannel groupChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, groupChannel.ChannelId, groupChannel.AccessHash, AccessHashType.Channel);
         }
 
         switch (obj.Group)

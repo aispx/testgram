@@ -24,13 +24,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Updates;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetChannelDifferenceHandler(IMessageAppService messageAppService, IQueryProcessor queryProcessor, IAckCacheService ackCacheService, //ILayeredService<IDifferenceConverter> layeredService,
- IDifferenceConverterService differenceConverterService, IAccessHashHelper accessHashHelper, ILogger<GetChannelDifferenceHandler> logger, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Updates.RequestGetChannelDifference, MyTelegram.Schema.Updates.IChannelDifference>
+ IDifferenceConverterService differenceConverterService, ILogger<GetChannelDifferenceHandler> logger, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Updates.RequestGetChannelDifference, MyTelegram.Schema.Updates.IChannelDifference>
 {
     //private readonly IRpcResultProcessor _rpcResultProcessor;
     private readonly ILogger<GetChannelDifferenceHandler> _logger = logger;
     protected override async Task<MyTelegram.Schema.Updates.IChannelDifference> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Updates.RequestGetChannelDifference obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Channel);
         var channelId = obj.Channel switch
         {
             TInputChannel inputChannel => inputChannel.ChannelId,
@@ -39,7 +38,6 @@ internal sealed class GetChannelDifferenceHandler(IMessageAppService messageAppS
         };
         if (obj.Channel is TInputChannelFromMessage channelFromMessage)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, channelFromMessage.Peer);
             await ValidateSourceMessageAsync(input, channelFromMessage.Peer, channelFromMessage.MsgId);
         }
 

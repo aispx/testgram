@@ -19,7 +19,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class ToggleSlowModeHandler(
     ICommandBus commandBus,
     IChannelAdminRightsChecker channelAdminRightsChecker,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase,
     IQueryProcessor queryProcessor)
     : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleSlowMode, MyTelegram.Schema.IUpdates>
@@ -28,7 +27,6 @@ internal sealed class ToggleSlowModeHandler(
     {
         if (obj.Channel is TInputChannel inputChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, p => p.ChangeInfo);
 
             // Get previous value for admin log

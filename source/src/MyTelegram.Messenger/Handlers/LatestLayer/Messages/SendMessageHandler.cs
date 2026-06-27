@@ -87,7 +87,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IBotFatherBotService botFatherBotService, IObjectMessageSender objectMessageSender, IPrivacyAppService privacyAppService, ILogger<SendMessageHandler> logger) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
+internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IBotFatherBotService botFatherBotService, IObjectMessageSender objectMessageSender, IPrivacyAppService privacyAppService, ILogger<SendMessageHandler> logger) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMessage obj)
     {
@@ -101,12 +101,6 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             When.NotExists);
         if (!isNewRandomId) return null!;
 
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
-        if (obj.ReplyTo is TInputReplyToMonoForum monoForumReplyTo)
-            await accessHashHelper.CheckAccessHashAsync(input, monoForumReplyTo.MonoforumPeerId);
-        if (obj.ReplyTo is TInputReplyToMessage { MonoforumPeerId: not null } monoForumMessageReply)
-            await accessHashHelper.CheckAccessHashAsync(input, monoForumMessageReply.MonoforumPeerId);
         var media = await ProcessJoinChatUrlAsync(obj);
         if (obj.Message.StartsWith("/"))
         {

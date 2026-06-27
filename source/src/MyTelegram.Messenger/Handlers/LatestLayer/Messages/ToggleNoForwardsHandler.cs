@@ -15,7 +15,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class ToggleNoForwardsHandler(
     ICommandBus commandBus,
-    IAccessHashHelper accessHashHelper,
     IPeerHelper peerHelper,
     IMessageAppService messageAppService,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestToggleNoForwards, IUpdates>
@@ -25,7 +24,6 @@ internal sealed class ToggleNoForwardsHandler(
         switch (obj.Peer)
         {
             case TInputPeerChannel inputPeerChannel:
-                await accessHashHelper.CheckAccessHashAsync(input, inputPeerChannel.ChannelId, inputPeerChannel.AccessHash, AccessHashType.Channel);
             {
                 var command = new ToggleChannelNoForwardsCommand(ChannelId.Create(inputPeerChannel.ChannelId), input.ToRequestInfo(), obj.Enabled);
                 await commandBus.PublishAsync(command);
@@ -39,7 +37,6 @@ internal sealed class ToggleNoForwardsHandler(
                 return null!;
             }
             case TInputPeerUser inputPeerUser:
-                await accessHashHelper.CheckAccessHashAsync(input, inputPeerUser.UserId, inputPeerUser.AccessHash, AccessHashType.User);
                 return await TogglePrivateChatNoForwardsAsync(input, inputPeerUser, obj.Enabled);
         }
 

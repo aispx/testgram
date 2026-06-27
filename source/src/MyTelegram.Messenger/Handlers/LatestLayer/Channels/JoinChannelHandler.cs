@@ -30,7 +30,6 @@ internal sealed class JoinChannelHandler(
     ICommandBus commandBus,
     IChannelAppService channelAppService,
     IQueryProcessor queryProcessor,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase)
     : RpcResultObjectHandler<RequestJoinChannel, IUpdates>
 {
@@ -38,7 +37,6 @@ internal sealed class JoinChannelHandler(
     {
         if (obj.Channel is TInputChannel inputChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             var channelReadModel = await channelAppService.GetAsync(inputChannel.ChannelId);
             channelReadModel.ThrowExceptionIfChannelDeleted();
             var channelMemberReadModel = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channelReadModel.ChannelId, input.UserId));

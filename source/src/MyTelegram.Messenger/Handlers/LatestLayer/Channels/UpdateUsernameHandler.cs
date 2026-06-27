@@ -22,7 +22,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class UpdateUsernameHandler(ICommandBus commandBus, IQueryProcessor queryProcessor, IChannelAppService channelAppService, IUsernameHelper usernameHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestUpdateUsername, IBool>
+internal sealed class UpdateUsernameHandler(ICommandBus commandBus, IQueryProcessor queryProcessor, IChannelAppService channelAppService, IUsernameHelper usernameHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestUpdateUsername, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestUpdateUsername obj)
     {
@@ -36,7 +36,6 @@ internal sealed class UpdateUsernameHandler(ICommandBus commandBus, IQueryProces
                 }
             }
 
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
             var channelReadModel = await channelAppService.GetAsync(inputChannel.ChannelId);
             var oldUserName = channelReadModel.UserName;

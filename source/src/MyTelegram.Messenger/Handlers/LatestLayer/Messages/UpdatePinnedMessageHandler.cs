@@ -26,11 +26,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class UpdatePinnedMessageHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase, IMessageConverterService messageConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUpdatePinnedMessage, MyTelegram.Schema.IUpdates>
+internal sealed class UpdatePinnedMessageHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase, IMessageConverterService messageConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUpdatePinnedMessage, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestUpdatePinnedMessage obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer.PeerType == PeerType.Channel)
         {

@@ -21,7 +21,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class DeleteMessagesHandler(
     ICommandBus commandBus,
     IPtsHelper ptsHelper,
-    IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor,
     IChannelAppService channelAppService,
     IChannelAdminRightsChecker channelAdminRightsChecker,
@@ -35,7 +34,6 @@ internal sealed class DeleteMessagesHandler(
     {
         if (obj.Channel is TInputChannel inputChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             if (obj.Id.Count > 0)
             {
                 var ids = obj.Id.ToList();

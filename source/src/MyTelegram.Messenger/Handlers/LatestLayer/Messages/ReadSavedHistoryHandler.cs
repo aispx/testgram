@@ -15,15 +15,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class ReadSavedHistoryHandler(
     ICommandBus commandBus,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor,
     IMongoDatabase mongoDatabase,
     IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadSavedHistory, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReadSavedHistory obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.ParentPeer);
         if (obj.MaxId > 0)
         {
             var parentPeer = peerHelper.GetPeer(obj.ParentPeer);

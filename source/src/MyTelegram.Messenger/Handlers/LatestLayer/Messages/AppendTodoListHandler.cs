@@ -12,7 +12,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class AppendTodoListHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IAccessHashHelper accessHashHelper, IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAppendTodoList, MyTelegram.Schema.IUpdates>
+internal sealed class AppendTodoListHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAppendTodoList, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestAppendTodoList obj)
     {
@@ -24,7 +24,6 @@ internal sealed class AppendTodoListHandler(IQueryProcessor queryProcessor, ICom
             RpcErrors.RpcErrors400.TodoNotModified.ThrowRpcError();
         }
 
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = obj.Peer.ToPeer(input.UserId);
         var ownerPeerId = peer.PeerId;
         if (peer.PeerType != PeerType.Channel)

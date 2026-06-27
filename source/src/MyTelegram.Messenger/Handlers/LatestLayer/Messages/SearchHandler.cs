@@ -21,16 +21,13 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SearchHandler(IMessageAppService messageAppService, ITokenizer tokenizer, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSearch, IMessages>
+internal sealed class SearchHandler(IMessageAppService messageAppService, ITokenizer tokenizer, IPeerHelper peerHelper, IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSearch, IMessages>
 {
     private const int MinTextSearchLength = 2;
     private const int MaxSearchLimit = 100;
 
     protected override async Task<IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSearch obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.FromId);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
         var q = NormalizeQuery(obj.Q);
         var messageType = GetMessageType(obj.Filter);
         if (q.Length == 0 && messageType == MessageType.Unknown)

@@ -19,14 +19,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class ToggleSignaturesHandler(
     ICommandBus commandBus,
     IChannelAdminRightsChecker channelAdminRightsChecker,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestToggleSignatures, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestToggleSignatures obj)
     {
         if (obj.Channel is TInputChannel inputChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel);
             await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
             await commandBus.PublishAsync(new ToggleSignatureCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), obj.SignaturesEnabled, obj.ProfilesEnabled));
 

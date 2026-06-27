@@ -38,13 +38,12 @@ using MyTelegram.Messenger.Helpers;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppService channelAppService, IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditAdmin, MyTelegram.Schema.IUpdates>
+internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppService channelAppService, IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditAdmin, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestEditAdmin obj)
     {
         if (obj.Channel is TInputChannel inputChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             var channelReadModel = await channelAppService.GetAsync(inputChannel.ChannelId);
             await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, p =>
             {

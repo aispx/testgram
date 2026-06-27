@@ -12,7 +12,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Contacts;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class AddContactHandler(ICommandBus commandBus, IAccessHashHelper accessHashHelper, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestAddContact, MyTelegram.Schema.IUpdates>
+internal sealed class AddContactHandler(ICommandBus commandBus, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestAddContact, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestAddContact obj)
     {
@@ -20,10 +20,8 @@ internal sealed class AddContactHandler(ICommandBus commandBus, IAccessHashHelpe
         switch (obj.Id)
         {
             case TInputUser inputUser:
-                await accessHashHelper.CheckAccessHashAsync(input, inputUser.UserId, inputUser.AccessHash, AccessHashType.User);
                 break;
             case TInputUserFromMessage inputUserFromMessage:
-                await accessHashHelper.CheckAccessHashAsync(input, inputUserFromMessage.Peer);
                 await ValidateSourceMessageAsync(input, inputUserFromMessage.Peer, inputUserFromMessage.MsgId);
                 break;
             case TInputUserSelf:

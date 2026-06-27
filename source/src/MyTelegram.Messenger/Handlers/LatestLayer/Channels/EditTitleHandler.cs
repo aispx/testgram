@@ -22,7 +22,6 @@ internal sealed class EditTitleHandler(
     ICommandBus commandBus,
     IRandomHelper randomHelper,
     IChannelAdminRightsChecker channelAdminRightsChecker,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase,
     IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditTitle, MyTelegram.Schema.IUpdates>
 {
@@ -31,7 +30,6 @@ internal sealed class EditTitleHandler(
         if (obj.Channel is TInputChannel inputChannel)
         {
             await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, adminRights => adminRights.ChangeInfo);
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
 
             // Get current title for admin log
             var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(inputChannel.ChannelId));

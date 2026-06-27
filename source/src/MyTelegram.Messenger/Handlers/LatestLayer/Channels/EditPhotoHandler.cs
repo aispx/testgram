@@ -26,7 +26,7 @@ using MyTelegram.Messenger.Helpers;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IRandomHelper randomHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditPhoto, MyTelegram.Schema.IUpdates>
+internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IRandomHelper randomHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditPhoto, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestEditPhoto obj)
     {
@@ -34,7 +34,6 @@ internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus com
         if (obj.Channel is TInputChannel inputChannel)
         {
             channelId = inputChannel.ChannelId;
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
         }
         else
         {

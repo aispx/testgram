@@ -18,7 +18,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditExportedChatInviteHandler(IQueryProcessor queryProcessor, IChannelAppService channelAppService, IAccessHashHelper accessHashHelper, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<Schema.Messages.RequestEditExportedChatInvite, IExportedChatInvite>
+internal sealed class EditExportedChatInviteHandler(IQueryProcessor queryProcessor, IChannelAppService channelAppService, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<Schema.Messages.RequestEditExportedChatInvite, IExportedChatInvite>
 {
     protected override async Task<IExportedChatInvite> HandleCoreAsync(IRequestInput input, RequestEditExportedChatInvite obj)
     {
@@ -27,7 +27,6 @@ internal sealed class EditExportedChatInviteHandler(IQueryProcessor queryProcess
             case TInputPeerChannel inputPeerChannel:
             {
                 var link = chatInviteLinkHelper.GetHashFromLink(obj.Link);
-                await accessHashHelper.CheckAccessHashAsync(input, inputPeerChannel);
                 var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteQuery(inputPeerChannel.ChannelId, link));
                 if (chatInviteReadModel == null)
                 {

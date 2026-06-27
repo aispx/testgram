@@ -11,11 +11,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetAdminsWithInvitesHandler(IQueryProcessor queryProcessor, IAccessHashHelper accessHashHelper, IUserConverterService userConverterService, IPeerHelper peerHelper, IChannelAppService channelAppService) : RpcResultObjectHandler<RequestGetAdminsWithInvites, IChatAdminsWithInvites>
+internal sealed class GetAdminsWithInvitesHandler(IQueryProcessor queryProcessor, IUserConverterService userConverterService, IPeerHelper peerHelper, IChannelAppService channelAppService) : RpcResultObjectHandler<RequestGetAdminsWithInvites, IChatAdminsWithInvites>
 {
     protected override async Task<IChatAdminsWithInvites> HandleCoreAsync(IRequestInput input, RequestGetAdminsWithInvites obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer.PeerType != PeerType.Channel)
         {

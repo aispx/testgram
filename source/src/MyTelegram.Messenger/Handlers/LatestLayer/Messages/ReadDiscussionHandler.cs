@@ -17,13 +17,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class ReadDiscussionHandler(
     ICommandBus commandBus,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadDiscussion, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestReadDiscussion obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         var selfDialogId = DialogId.Create(input.UserId, peer);
         var messageReadModel = await queryProcessor.ProcessAsync(new GetMessageByIdQuery(MessageId.Create(peer.PeerId, obj.MsgId).Value));

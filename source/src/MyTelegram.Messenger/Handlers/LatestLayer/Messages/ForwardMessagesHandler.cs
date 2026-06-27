@@ -71,7 +71,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
+public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
 {
     public async Task<IUpdates> HandleAsync(IRequestInput input, RequestForwardMessages obj)
     {
@@ -80,13 +80,6 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestForwardMessages obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.FromPeer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.ToPeer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SendAs);
-        if (obj.ReplyTo is TInputReplyToMonoForum monoForumReplyTo)
-            await accessHashHelper.CheckAccessHashAsync(input, monoForumReplyTo.MonoforumPeerId);
-        if (obj.ReplyTo is TInputReplyToMessage { MonoforumPeerId: not null } monoForumMessageReply)
-            await accessHashHelper.CheckAccessHashAsync(input, monoForumMessageReply.MonoforumPeerId);
 
         var fromPeer = peerHelper.GetPeer(obj.FromPeer, input.UserId);
         var toPeer = peerHelper.GetPeer(obj.ToPeer, input.UserId);

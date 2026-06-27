@@ -22,7 +22,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class LeaveChannelHandler(
     IPeerHelper peerHelper,
     ICommandBus commandBus,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase)
     : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestLeaveChannel, MyTelegram.Schema.IUpdates>
 {
@@ -30,7 +29,6 @@ internal sealed class LeaveChannelHandler(
     {
         if (obj.Channel is TInputChannel inputChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
             var channel = peerHelper.GetChannel(obj.Channel);
             var command = new LeaveChannelCommand(ChannelMemberId.Create(channel.PeerId, input.UserId), input.ToRequestInfo(), channel.PeerId, input.UserId, false);
             await commandBus.PublishAsync(command);

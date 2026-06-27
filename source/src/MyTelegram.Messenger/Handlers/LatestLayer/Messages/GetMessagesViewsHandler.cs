@@ -18,12 +18,10 @@ internal sealed class GetMessagesViewsHandler(
     IPeerHelper peerHelper,
     IChannelMessageViewsAppService channelMessageViewsAppService,
     IChannelAppService channelAppService,
-    IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetMessagesViews, MyTelegram.Schema.Messages.IMessageViews>
 {
     protected override async Task<MyTelegram.Schema.Messages.IMessageViews> HandleCoreAsync(IRequestInput input, RequestGetMessagesViews obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer.PeerType == PeerType.Channel)
         {
