@@ -29,12 +29,19 @@ public class ChatConverterService(
         mongoDatabase.GetCollection<BotVerificationDocument>("bot-verifications");
 
     public async Task<IChat> GetChannelAsync(IRequestWithAccessHashKeyId request, long channelId,
-        bool checkChannelMember, bool? channelMemberIsLeft, int layer = 0)
+        bool checkChannelMember, bool? channelMemberIsLeft, int layer = 0, bool throwIfNotFound = true)
     {
-        var channelReadModel = await channelAppService.GetAsync(channelId);
+        var channelReadModel = throwIfNotFound
+            ? await channelAppService.GetAsync(channelId)
+            : await channelAppService.GetAsync((long?)channelId);
         if (channelReadModel == null)
         {
-            throw new RpcException(RpcErrors.RpcErrors400.ChannelInvalid);
+            if (throwIfNotFound)
+            {
+                throw new RpcException(RpcErrors.RpcErrors400.ChannelInvalid);
+            }
+
+            return null!;
         }
 
         IChannelMemberReadModel? channelMemberReadModel = null;
