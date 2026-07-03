@@ -424,8 +424,8 @@ services:
       Minio__Endpoint: ${Minio__Endpoint}
       Minio__AccessKey: ${Minio__AccessKey}
       Minio__SecretKey: ${Minio__SecretKey}
-      Minio__BucketName: ${Minio__BucketName}
-      Minio__CreateBucketIfNotExists: ${Minio__CreateBucketIfNotExists}
+      Minio__BucketName: ${Minio__BucketName:-tg-files}
+      Minio__CreateBucketIfNotExists: ${Minio__CreateBucketIfNotExists:-True}
       RabbitMQ__Connections__Default__HostName: ${RabbitMQ__Connections__Default__HostName:-rabbitmq}
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}

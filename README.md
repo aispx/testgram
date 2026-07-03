@@ -136,6 +136,32 @@ docker compose up -d --force-recreate gateway-server
 docker compose logs gateway-server | grep 20443   # expect: "Tcp server started at ...:20443"
 ```
 
+### file-server spams `Bucket name cannot be empty` / media and verification icons don't load
+
+If `file-server` logs are spammed with:
+
+```
+Minio.Exceptions.InvalidBucketNameException: MinIO API responded with message=Bucket name cannot be empty.
+```
+
+and avatars, stickers, or custom verification icons fail to load in clients, `Minio__BucketName`
+is unset/commented in `.env`. docker-compose always passes this variable to file-server, so an
+unset value becomes an empty string, and every file request fails.
+
+Fix: make sure `.env` contains active lines (not commented, not empty):
+
+```bash
+Minio__BucketName=tg-files
+Minio__CreateBucketIfNotExists=True
+```
+
+Then recreate file-server:
+
+```bash
+cd docker/compose
+docker compose up -d --force-recreate file-server
+```
+
 ## Building Docker Images
 
 ```bash
