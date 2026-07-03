@@ -40,7 +40,10 @@ internal sealed class ConfigConverter(IObjectMapper objectMapper) : IConfigConve
             ChatSizeMax = 200, // _options.ChatSizeMax, //200
             MegagroupSizeMax = 200000, // _options.MegagroupSizeMax, //200000
             ForwardedCountMax = 100, // _options.ForwardedCountMax, //100
-            OnlineUpdatePeriodMs = 210000,
+            // Must stay below UserStatusCacheAppService.OnlineWindowSeconds (90s) so
+            // clients that honour this hint (WebA/Desktop) re-affirm their online status
+            // before the server-side online window elapses and never flicker offline.
+            OnlineUpdatePeriodMs = 60000,
             OfflineBlurTimeoutMs = 5000,
             OfflineIdleTimeoutMs = 30000,
             OnlineCloudTimeoutMs = 300000,
