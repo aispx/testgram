@@ -89,6 +89,22 @@ services:
       timeout: 5s
       retries: 5
 
+  ### MinIO proxy (neutralises 416 Range-Not-Satisfiable for the file-server SDK)
+  # The upstream file-server bundles a MinIO .NET SDK that throws
+  # NullReferenceException on 416 responses (byte-range requests past EOF, i.e. the
+  # last chunk of a download). This tiny nginx proxy rewrites those 416s into a clean
+  # empty 200 so the SDK stops crashing. All other traffic passes through untouched.
+  minio-proxy:
+    image: nginx:alpine
+    restart: always
+    networks:
+      - tg-net
+    volumes:
+      - ./minio-proxy.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+
   ### Coturn (STUN/TURN server for WebRTC calls)
   coturn:
     image: coturn/coturn:latest
@@ -421,7 +437,9 @@ services:
       # App__ThisDcId: ${App__ThisDcId}
       # App__MediaDcId: ${App__MediaDcId}
       # App__UploadRootPath: ${App__UploadRootPath}
-      Minio__Endpoint: ${Minio__Endpoint}
+      # Route file-server through the 416-neutralising proxy (see minio-proxy service)
+      # to work around the NullReferenceException bug in its bundled MinIO SDK.
+      Minio__Endpoint: ${Minio__FileServerEndpoint:-minio-proxy:9000}
       Minio__AccessKey: ${Minio__AccessKey}
       Minio__SecretKey: ${Minio__SecretKey}
       Minio__BucketName: ${Minio__BucketName:-tg-files}
@@ -438,6 +456,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      minio-proxy:
+        condition: service_started
 
   ### 5.Messenger command server
   messenger-command-server:

@@ -163,6 +163,38 @@ cd docker/compose
 docker compose up -d --force-recreate file-server
 ```
 
+### file-server спамит `NullReferenceException` в `MinioStoringHelper.GetAsync` / зависают загрузки
+
+Если логи `file-server` завалены ошибками вида:
+
+```
+[ERR] Get file failed, input: FileId: "..." Offset: ... Limit: 32768
+System.NullReferenceException: Object reference not set to an instance of an object.
+   at Minio.MinioClient.ParseWellKnownErrorNoContent(ResponseResult response)
+   ...
+   at MyTelegram.FileServer.Services.MinioStoringHelper.GetAsync(...)
+```
+
+это регрессия в MinIO .NET SDK, встроенном в сторонний образ `mytelegram-file-server`
+(Minio 6.0.6-local). Когда MinIO отвечает на запрос диапазона байт кодом
+`416 Range Not Satisfiable` (без тела) — а клиенты Telegram делают такой запрос для
+последнего чанка загрузки (offset на/за концом файла) — SDK не обрабатывает 416,
+оставляет объект ошибки null, и `throw error;` превращается в NullReferenceException.
+
+Так как file-server собирается и публикуется отдельно, пропатчить его из этого репозитория
+нельзя. Вместо этого file-server ходит в MinIO через сервис **minio-proxy** (небольшой
+прокси на nginx), который превращает такие ответы 416 в чистый пустой 200, понятный SDK.
+Весь остальной трафик проходит без изменений.
+
+Это включено по умолчанию (`Minio__FileServerEndpoint` = `minio-proxy:9000`). Если видите
+эту ошибку — убедитесь, что прокси запущен, а file-server ходит через него:
+
+```bash
+cd docker/compose
+docker compose up -d minio-proxy
+docker compose up -d --force-recreate file-server
+```
+
 ## Сборка Docker-образов
 
 ```bash
