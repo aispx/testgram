@@ -104,6 +104,38 @@ cd scripts && ./setup_call_indexes.sh  # Optional: manual setup
 
 See [docs/CALLS_SETUP.md](docs/CALLS_SETUP.md) for complete setup instructions.
 
+## Troubleshooting
+
+### Clients get `ConnectionRefusedError` (connection to server fails)
+
+If clients fail to connect with an error like:
+
+```
+Attempt 1 at connecting failed: ConnectionRefusedError: [WinError 1225] The remote computer refused the network connection
+```
+
+but the VDS/host itself is reachable, the gateway is most likely not listening on the
+main port **20443** (DC1, the first port clients connect to — see `App__DcOptions__0__Port`).
+
+Cause: `App__Servers__0__Enabled` is unset/commented in `.env`. docker-compose always
+passes this variable to the gateway container, so an unset value becomes an **empty
+string**. An empty value makes .NET drop server 0 from the config entirely, so the
+gateway never opens the 20443 listener and every connection is refused.
+
+Fix: make sure `.env` contains an active line (not commented, not empty):
+
+```bash
+App__Servers__0__Enabled=True
+```
+
+Then recreate the gateway and verify it listens on 20443:
+
+```bash
+cd docker/compose
+docker compose up -d --force-recreate gateway-server
+docker compose logs gateway-server | grep 20443   # expect: "Tcp server started at ...:20443"
+```
+
 ## Building Docker Images
 
 ```bash

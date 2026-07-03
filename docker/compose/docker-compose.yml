@@ -218,7 +218,7 @@ services:
       Serilog__MinimumLevel__Default: Debug
       # App__ThisDcId: ${App__ThisDcId}
       # App__MediaOnly: ${App__MediaOnly}
-      App__Servers__0__Enabled: ${App__Servers__0__Enabled}
+      App__Servers__0__Enabled: ${App__Servers__0__Enabled:-True}
       # App__Servers__0__ServerType: ${App__Servers__0__ServerType}
       # App__Servers__0__Ip: ${App__Servers__0__Ip}
       # App__Servers__0__Ipv6: ${App__Servers__0__Ipv6}
@@ -504,49 +504,38 @@ services:
       EmailSenderOptions__SmtpEmailOptions__Password: ${EmailSenderOptions__SmtpEmailOptions__Password}
       EmailSenderOptions__SmtpEmailOptions__EnableSsl: ${EmailSenderOptions__SmtpEmailOptions__EnableSsl}
       # App__ThisDcId: ${App__ThisDcId}
-      # App__DcOptions__0__Enabled: ${App__DcOptions__0__Enabled}
-      # App__DcOptions__0__Id: ${App__DcOptions__0__Id}
+      # Full datacenter list (see messenger-query-server for the rationale): DC1-5 must all
+      # resolve to THIS server so clients never fall back to a built-in foreign DC address.
+      # Ports must be live TCP MTProto listeners (20543/20643/20644).
+      App__DcOptions__0__Enabled: "True"
+      App__DcOptions__0__Id: "1"
       App__DcOptions__0__IpAddress: ${App__DcOptions__0__IpAddress}
-      # App__DcOptions__0__Port: ${App__DcOptions__0__Port}
-      # App__DcOptions__0__TcpoOnly: ${App__DcOptions__0__TcpoOnly}
-      # App__DcOptions__0__ThisPortOnly: ${App__DcOptions__0__ThisPortOnly}
-      # App__DcOptions__0__Ipv6: ${App__DcOptions__0__Ipv6}
-      # App__DcOptions__0__Cdn: ${App__DcOptions__0__Cdn}
-      # App__DcOptions__0__MediaOnly: ${App__DcOptions__0__MediaOnly}
-      # App__DcOptions__0__Static: ${App__DcOptions__0__Static}
+      App__DcOptions__0__Port: "20543"
+      App__DcOptions__0__MediaOnly: "False"
 
-      App__DcOptions__1__Enabled: ${App__DcOptions__1__Enabled}
-      # App__DcOptions__1__Id: ${App__DcOptions__1__Id}
+      App__DcOptions__1__Enabled: "True"
+      App__DcOptions__1__Id: "2"
       App__DcOptions__1__IpAddress: ${App__DcOptions__1__IpAddress}
-      App__DcOptions__1__Port: ${App__DcOptions__1__Port}
-      # App__DcOptions__1__TcpoOnly: ${App__DcOptions__1__TcpoOnly}
-      # App__DcOptions__1__ThisPortOnly: ${App__DcOptions__1__ThisPortOnly}
-      # App__DcOptions__1__Ipv6: ${App__DcOptions__1__Ipv6}
-      # App__DcOptions__1__Cdn: ${App__DcOptions__1__Cdn}
-      # App__DcOptions__1__MediaOnly: ${App__DcOptions__1__MediaOnly}
-      # App__DcOptions__1__Static: ${App__DcOptions__1__Static}
+      App__DcOptions__1__Port: "20644"
+      App__DcOptions__1__MediaOnly: "False"
 
-      App__DcOptions__2__Enabled: ${App__DcOptions__2__Enabled}
-      # App__DcOptions__2__Id: ${App__DcOptions__2__Id}
+      App__DcOptions__2__Enabled: "True"
+      App__DcOptions__2__Id: "3"
       App__DcOptions__2__IpAddress: ${App__DcOptions__2__IpAddress}
-      # App__DcOptions__2__Port: ${App__DcOptions__2__Port}
-      # App__DcOptions__2__TcpoOnly: ${App__DcOptions__2__TcpoOnly}
-      # App__DcOptions__2__ThisPortOnly: ${App__DcOptions__2__ThisPortOnly}
-      # App__DcOptions__2__Ipv6: ${App__DcOptions__2__Ipv6}
-      # App__DcOptions__2__Cdn: ${App__DcOptions__2__Cdn}
+      App__DcOptions__2__Port: "20643"
       App__DcOptions__2__MediaOnly: "False"
-      # App__DcOptions__2__Static: ${App__DcOptions__2__Static}
 
-      App__DcOptions__3__Enabled: ${App__DcOptions__3__Enabled}
-      # App__DcOptions__3__Id: ${App__DcOptions__3__Id}
+      App__DcOptions__3__Enabled: "True"
+      App__DcOptions__3__Id: "4"
       App__DcOptions__3__IpAddress: ${App__DcOptions__3__IpAddress}
-      # App__DcOptions__3__Port: ${App__DcOptions__3__Port}
-      # App__DcOptions__3__TcpoOnly: ${App__DcOptions__3__TcpoOnly}
-      # App__DcOptions__3__ThisPortOnly: ${App__DcOptions__3__ThisPortOnly}
-      # App__DcOptions__3__Ipv6: ${App__DcOptions__3__Ipv6}
-      # App__DcOptions__3__Cdn: ${App__DcOptions__3__Cdn}
+      App__DcOptions__3__Port: "20644"
       App__DcOptions__3__MediaOnly: "False"
-      # App__DcOptions__3__Static: ${App__DcOptions__3__Static}
+
+      App__DcOptions__4__Enabled: "True"
+      App__DcOptions__4__Id: "5"
+      App__DcOptions__4__IpAddress: ${App__DcOptions__0__IpAddress}
+      App__DcOptions__4__Port: "20543"
+      App__DcOptions__4__MediaOnly: "False"
       RabbitMQ__Connections__Default__HostName: ${RabbitMQ__Connections__Default__HostName:-rabbitmq}
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}
@@ -608,49 +597,41 @@ services:
       EmailSenderOptions__SmtpEmailOptions__Password: ${EmailSenderOptions__SmtpEmailOptions__Password}
       EmailSenderOptions__SmtpEmailOptions__EnableSsl: ${EmailSenderOptions__SmtpEmailOptions__EnableSsl}
       # App__ThisDcId: ${App__ThisDcId}
-      # App__DcOptions__0__Enabled: ${App__DcOptions__0__Enabled}
-      # App__DcOptions__0__Id: ${App__DcOptions__0__Id}
+      # Full datacenter list advertised to clients via help.getConfig. Every DC the official
+      # client knows about (1-5) MUST be listed here and point at THIS server, otherwise the
+      # client falls back to its built-in (foreign) address for any missing DC - e.g. DC4 ->
+      # 194.221.250.50 - whose RSA key it doesn't have ("could not choose public RSA key").
+      # Ports must be live TCP MTProto listeners on the gateway (20543/20643/20644);
+      # 20443 is not listened and 30443/30444 are HTTPS (web) endpoints.
+      App__DcOptions__0__Enabled: "True"
+      App__DcOptions__0__Id: "1"
       App__DcOptions__0__IpAddress: ${App__DcOptions__0__IpAddress}
-      App__DcOptions__0__Port: ${App__DcOptions__0__Port}
-      # App__DcOptions__0__TcpoOnly: ${App__DcOptions__0__TcpoOnly}
-      # App__DcOptions__0__ThisPortOnly: ${App__DcOptions__0__ThisPortOnly}
-      # App__DcOptions__0__Ipv6: ${App__DcOptions__0__Ipv6}
-      # App__DcOptions__0__Cdn: ${App__DcOptions__0__Cdn}
-      # App__DcOptions__0__MediaOnly: ${App__DcOptions__0__MediaOnly}
-      # App__DcOptions__0__Static: ${App__DcOptions__0__Static}
+      App__DcOptions__0__Port: "20543"
+      App__DcOptions__0__MediaOnly: "False"
 
-      App__DcOptions__1__Enabled: ${App__DcOptions__1__Enabled}
-      # App__DcOptions__1__Id: ${App__DcOptions__1__Id}
+      App__DcOptions__1__Enabled: "True"
+      App__DcOptions__1__Id: "2"
       App__DcOptions__1__IpAddress: ${App__DcOptions__1__IpAddress}
-      App__DcOptions__1__Port: ${App__DcOptions__1__Port}
-      # App__DcOptions__1__TcpoOnly: ${App__DcOptions__1__TcpoOnly}
-      # App__DcOptions__1__ThisPortOnly: ${App__DcOptions__1__ThisPortOnly}
-      # App__DcOptions__1__Ipv6: ${App__DcOptions__1__Ipv6}
-      # App__DcOptions__1__Cdn: ${App__DcOptions__1__Cdn}
-      # App__DcOptions__1__MediaOnly: ${App__DcOptions__1__MediaOnly}
-      # App__DcOptions__1__Static: ${App__DcOptions__1__Static}
+      App__DcOptions__1__Port: "20644"
+      App__DcOptions__1__MediaOnly: "False"
 
-      App__DcOptions__2__Enabled: ${App__DcOptions__2__Enabled}
-      # App__DcOptions__2__Id: ${App__DcOptions__2__Id}
+      App__DcOptions__2__Enabled: "True"
+      App__DcOptions__2__Id: "3"
       App__DcOptions__2__IpAddress: ${App__DcOptions__2__IpAddress}
-      App__DcOptions__2__Port: ${App__DcOptions__2__Port}
-      # App__DcOptions__2__TcpoOnly: ${App__DcOptions__2__TcpoOnly}
-      # App__DcOptions__2__ThisPortOnly: ${App__DcOptions__2__ThisPortOnly}
-      # App__DcOptions__2__Ipv6: ${App__DcOptions__2__Ipv6}
-      # App__DcOptions__2__Cdn: ${App__DcOptions__2__Cdn}
+      App__DcOptions__2__Port: "20643"
       App__DcOptions__2__MediaOnly: "False"
-      # App__DcOptions__2__Static: ${App__DcOptions__2__Static}
 
-      App__DcOptions__3__Enabled: ${App__DcOptions__3__Enabled}
-      # App__DcOptions__3__Id: ${App__DcOptions__3__Id}
+      App__DcOptions__3__Enabled: "True"
+      App__DcOptions__3__Id: "4"
       App__DcOptions__3__IpAddress: ${App__DcOptions__3__IpAddress}
-      # App__DcOptions__3__Port: ${App__DcOptions__3__Port}
-      # App__DcOptions__3__TcpoOnly: ${App__DcOptions__3__TcpoOnly}
-      # App__DcOptions__3__ThisPortOnly: ${App__DcOptions__3__ThisPortOnly}
-      # App__DcOptions__3__Ipv6: ${App__DcOptions__3__Ipv6}
-      # App__DcOptions__3__Cdn: ${App__DcOptions__3__Cdn}
+      App__DcOptions__3__Port: "20644"
       App__DcOptions__3__MediaOnly: "False"
-      # App__DcOptions__3__Static: ${App__DcOptions__3__Static}
+
+      App__DcOptions__4__Enabled: "True"
+      App__DcOptions__4__Id: "5"
+      App__DcOptions__4__IpAddress: ${App__DcOptions__0__IpAddress}
+      App__DcOptions__4__Port: "20543"
+      App__DcOptions__4__MediaOnly: "False"
       RabbitMQ__Connections__Default__HostName: ${RabbitMQ__Connections__Default__HostName:-rabbitmq}
       RabbitMQ__Connections__Default__Port: ${RabbitMQ__Connections__Default__Port:-5672}
       RabbitMQ__Connections__Default__UserName: ${RabbitMQ__Connections__Default__UserName:-test}

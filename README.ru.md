@@ -103,6 +103,39 @@ cd scripts && ./setup_call_indexes.sh  # Опционально: ручная н
 
 См. [docs/CALLS_SETUP.md](docs/CALLS_SETUP.md) для полной инструкции по настройке.
 
+## Устранение неполадок
+
+### У клиентов `ConnectionRefusedError` (не удаётся подключиться к серверу)
+
+Если клиент не подключается с ошибкой вида:
+
+```
+Attempt 1 at connecting failed: ConnectionRefusedError: [WinError 1225] The remote computer refused the network connection
+```
+
+но при этом сам VDS/хост доступен — скорее всего, шлюз (gateway) не слушает главный
+порт **20443** (DC1, первый порт, к которому подключаются клиенты — см. `App__DcOptions__0__Port`).
+
+Причина: параметр `App__Servers__0__Enabled` не задан/закомментирован в `.env`.
+docker-compose всё равно передаёт эту переменную в контейнер шлюза, поэтому незаданное
+значение превращается в **пустую строку**. Из-за пустого значения .NET полностью
+выбрасывает server 0 из конфигурации, шлюз не открывает слушатель на 20443, и все
+подключения отклоняются.
+
+Решение: убедитесь, что в `.env` есть активная строка (не закомментирована и не пустая):
+
+```bash
+App__Servers__0__Enabled=True
+```
+
+Затем пересоздайте шлюз и проверьте, что он слушает 20443:
+
+```bash
+cd docker/compose
+docker compose up -d --force-recreate gateway-server
+docker compose logs gateway-server | grep 20443   # ожидается: "Tcp server started at ...:20443"
+```
+
 ## Сборка Docker-образов
 
 ```bash
