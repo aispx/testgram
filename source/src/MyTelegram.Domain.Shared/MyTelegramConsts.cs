@@ -25,6 +25,8 @@ public class MyTelegramConsts
 
     public const string VideoMimeType = "video";
     public const int MediaDcId = 2;
+
+    public const int MainDcId = 1;
     public const int QrCodeExpireSeconds = 30;
     public const int ChatAboutMaxLength = 255;
 

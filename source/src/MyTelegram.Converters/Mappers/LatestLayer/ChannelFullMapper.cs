@@ -26,6 +26,7 @@ internal sealed class ChannelFullMapper
         destination.CanSetStickers = source.CanSetStickers;
         destination.HiddenPrehistory = source.HiddenPreHistory;
         destination.CanViewStats = source.CanViewStats;
+        destination.StatsDc = MyTelegramConsts.MainDcId;
         destination.CanSetLocation = source.CanSetLocation;
         destination.AdminsCount = source.AdminsCount;
         destination.KickedCount = source.KickedCount;
