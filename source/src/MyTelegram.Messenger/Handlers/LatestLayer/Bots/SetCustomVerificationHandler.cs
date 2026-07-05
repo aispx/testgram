@@ -1,10 +1,11 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services;
+using MyTelegram.Messenger.Services.Interfaces;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 
-internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase, IUserAppService userAppService, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetCustomVerification, IBool>
+internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase, IUserAppService userAppService, IChannelAppService channelAppService, IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetCustomVerification, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSetCustomVerification obj)
     {
@@ -60,6 +61,146 @@ internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase,
         };
 
         await col.ReplaceOneAsync(filter, doc, new ReplaceOptions { IsUpsert = true });
+        await NotifyVerificationGrantedAsync(botReadModel, targetUserId, targetChannelId, icon, description);
         return new TBoolTrue();
+    }
+
+    private async Task NotifyVerificationGrantedAsync(
+        IUserReadModel botReadModel,
+        long targetUserId,
+        long targetChannelId,
+        long iconDocumentId,
+        string description)
+    {
+        var recipients = await GetNotificationRecipientsAsync(targetUserId, targetChannelId);
+        if (recipients.Count == 0)
+        {
+            return;
+        }
+
+        var botName = string.IsNullOrWhiteSpace(botReadModel.UserName)
+            ? $"bot {botReadModel.UserId}"
+            : $"@{botReadModel.UserName}";
+        var company = string.IsNullOrWhiteSpace(description) ? botName : description;
+        var iconText = await GetCustomEmojiAltAsync(iconDocumentId) ?? "⭐";
+        var message = $"Бот {botName} выдал вам верификацию.\nПредложенный статус:\n{iconText} Аккаунт верифицирован организацией «{company}».";
+        var entities = BuildCustomEmojiEntities(message, iconText, iconDocumentId);
+        var now = DateTime.UtcNow.ToTimestamp();
+
+        var sendInputs = recipients.Select(recipientId => new SendMessageInput(
+            RequestInfo.Empty with
+            {
+                UserId = MyTelegramConsts.NotificationServiceUserId,
+                Layer = MyTelegramConsts.Layer,
+                Date = now,
+                RequestId = Guid.NewGuid(),
+                DeviceType = DeviceType.Android
+            },
+            MyTelegramConsts.NotificationServiceUserId,
+            new Peer(PeerType.User, recipientId),
+            message,
+            Random.Shared.NextInt64(),
+            entities: entities,
+            sendMessageType: SendMessageType.Text,
+            messageType: MessageType.Text
+        )).ToList();
+
+        await messageAppService.SendMessageAsync(sendInputs);
+    }
+
+    private async Task<List<long>> GetNotificationRecipientsAsync(long targetUserId, long targetChannelId)
+    {
+        var recipients = new HashSet<long>();
+        if (targetUserId != 0)
+        {
+            var botOwnerDoc = await mongoDatabase.GetCollection<BsonDocument>("bot-owners")
+                .Find(Builders<BsonDocument>.Filter.Eq("BotId", targetUserId))
+                .FirstOrDefaultAsync();
+            recipients.Add(botOwnerDoc != null ? botOwnerDoc["OwnerId"].ToInt64() : targetUserId);
+        }
+        else if (targetChannelId != 0)
+        {
+            var channelDoc = await mongoDatabase.GetCollection<BsonDocument>("eventflow-channelreadmodel")
+                .Find(Builders<BsonDocument>.Filter.Eq("ChannelId", targetChannelId))
+                .FirstOrDefaultAsync();
+            if (channelDoc != null)
+            {
+                if (channelDoc.Contains("CreatorId") && !channelDoc["CreatorId"].IsBsonNull)
+                {
+                    recipients.Add(channelDoc["CreatorId"].ToInt64());
+                }
+
+                if (channelDoc.Contains("AdminList") && channelDoc["AdminList"].IsBsonArray)
+                {
+                    foreach (var admin in channelDoc["AdminList"].AsBsonArray.Where(x => x.IsBsonDocument))
+                    {
+                        var adminDoc = admin.AsBsonDocument;
+                        if (adminDoc.Contains("UserId") && !adminDoc["UserId"].IsBsonNull)
+                        {
+                            recipients.Add(adminDoc["UserId"].ToInt64());
+                        }
+                    }
+                }
+            }
+        }
+
+        recipients.RemoveWhere(x => x <= 0 || x == MyTelegramConsts.NotificationServiceUserId);
+        return recipients.ToList();
+    }
+
+    private async Task<string?> GetCustomEmojiAltAsync(long iconDocumentId)
+    {
+        if (iconDocumentId == 0)
+        {
+            return null;
+        }
+
+        var doc = await mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel")
+            .Find(Builders<BsonDocument>.Filter.Eq("DocumentId", iconDocumentId))
+            .FirstOrDefaultAsync();
+        if (doc == null || !doc.Contains("Attributes2") || !doc["Attributes2"].IsBsonArray)
+        {
+            return null;
+        }
+
+        foreach (var attribute in doc["Attributes2"].AsBsonArray.Where(x => x.IsBsonDocument))
+        {
+            var attributeDoc = attribute.AsBsonDocument;
+            if (attributeDoc.TryGetValue("_t", out var typeValue) &&
+                typeValue.IsString &&
+                typeValue.AsString == "TDocumentAttributeCustomEmoji" &&
+                attributeDoc.TryGetValue("Alt", out var altValue) &&
+                altValue.IsString &&
+                !string.IsNullOrWhiteSpace(altValue.AsString))
+            {
+                return altValue.AsString;
+            }
+        }
+
+        return null;
+    }
+
+    private static TVector<IMessageEntity>? BuildCustomEmojiEntities(string message, string iconText, long iconDocumentId)
+    {
+        if (iconDocumentId == 0)
+        {
+            return null;
+        }
+
+        var offset = message.IndexOf(iconText, StringComparison.Ordinal);
+        if (offset < 0)
+        {
+            return null;
+        }
+
+        return new TVector<IMessageEntity>
+        {
+            new TMessageEntityCustomEmoji
+            {
+                Offset = offset,
+                Length = iconText.Length,
+                DocumentId = iconDocumentId
+            }
+        };
     }
 }

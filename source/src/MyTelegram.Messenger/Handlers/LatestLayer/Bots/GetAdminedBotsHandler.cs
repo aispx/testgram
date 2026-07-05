@@ -9,7 +9,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// </summary>
 internal sealed class GetAdminedBotsHandler(
     IMongoDatabase database,
-    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestGetAdminedBots, TVector<IUser>>
+    IQueryProcessor queryProcessor,
+    IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestGetAdminedBots, TVector<IUser>>
 {
     protected override async Task<TVector<IUser>> HandleCoreAsync(
         IRequestInput input,
@@ -40,23 +41,13 @@ internal sealed class GetAdminedBotsHandler(
         var result = new TVector<IUser>();
         foreach (var user in users)
         {
-            result.Add(new TUser
+            var converted = userConverterService.ToUser(input, user, layer: input.Layer);
+            if (converted is TUser tUser)
             {
-                Id = user.UserId,
-                AccessHash = user.AccessHash,
-                FirstName = user.FirstName,
-                LastName = user.LastName,
-                Username = user.UserName,
-                Phone = user.PhoneNumber,
-                Photo = new TUserProfilePhotoEmpty(),
-                Status = new TUserStatusEmpty(),
-                Bot = true,
-                BotCanEdit = true, // User owns this bot
-                BotInfoVersion = user.BotInfoVersion,
-                RestrictionReason = new TVector<IRestrictionReason>(),
-                Verified = user.Verified,
-                Premium = user.Premium
-            });
+                tUser.BotCanEdit = true;
+            }
+
+            result.Add(converted);
         }
 
         return result;
