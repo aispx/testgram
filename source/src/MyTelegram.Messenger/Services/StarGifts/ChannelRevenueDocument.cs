@@ -38,4 +38,6 @@ public class ChannelRevenueTransactionDocument
     public long? SourceChannelId { get; set; }
     public string? Title { get; set; }
     public string? Description { get; set; }
+    public int? MsgId { get; set; }
+    public List<byte[]>? ExtendedMedia { get; set; }
 }

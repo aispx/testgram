@@ -39,12 +39,16 @@ internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMes
             throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_BURNED"));
 
         // Check transfer cooldown (21 days after purchase/upgrade, or 7 days after new login)
+        var savedDoc = await savedCol.Find(d => d.IsUnique && d.UniqueSlug == doc.Slug).FirstOrDefaultAsync();
         var currentTime = DateTime.UtcNow.ToTimestamp();
-        if (doc!.TransferLockedUntil.HasValue && doc.TransferLockedUntil.Value > currentTime)
+        var lockedUntil = LaterTimestamp(doc!.TransferLockedUntil, savedDoc?.CanTransferAt, savedDoc?.CanResellAt, savedDoc?.CanCraftAt);
+        if (lockedUntil.HasValue && lockedUntil.Value > currentTime)
         {
-            var secondsToWait = doc.TransferLockedUntil.Value - currentTime;
+            var secondsToWait = lockedUntil.Value - currentTime;
             throw new RpcException(new RpcError(400, $"STARGIFT_TRANSFER_TOO_EARLY_{secondsToWait}"));
         }
+        if (lockedUntil.HasValue && lockedUntil.Value <= currentTime)
+            lockedUntil = null;
 
         var toPeer = peerHelper.GetPeer(obj.ToId, input.UserId)!;
         var newOwnerUserId = toPeer.PeerType == PeerType.User ? toPeer.PeerId : 0L;
@@ -81,6 +85,9 @@ internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMes
             RandomId = doc.UniqueId,
             Saved = true,
             Date = DateTime.UtcNow.ToTimestamp(),
+            CanTransferAt = lockedUntil,
+            CanResellAt = lockedUntil,
+            CanCraftAt = lockedUntil,
             DocumentId = doc.DocumentId,
             DocumentAccessHash = doc.DocumentAccessHash,
             FileReference = doc.FileReference,
@@ -134,5 +141,17 @@ internal sealed class TransferStarGiftHandler(IMongoDatabase mongoDatabase, IMes
         }
 
         return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = now, Seq = 0 };
+    }
+
+    private static int? LaterTimestamp(params int?[] values)
+    {
+        int? result = null;
+        foreach (var value in values)
+        {
+            if (value.HasValue && (!result.HasValue || value.Value > result.Value))
+                result = value.Value;
+        }
+
+        return result;
     }
 }

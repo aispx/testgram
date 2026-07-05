@@ -19,37 +19,18 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestCraftStarGift obj)
     {
-        if (obj.Stargift == null || obj.Stargift.Count < 1 || obj.Stargift.Count > 4)
+        var inputGifts = obj.Stargift ?? [];
+        if (inputGifts.Count < 1 || inputGifts.Count > 4)
             RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
 
         var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
         var uniqueCol = mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts");
 
-        // Check craft cooldown on first gift
         var currentTime = DateTime.UtcNow.ToTimestamp();
-        SavedStarGiftDocument? firstSaved = null;
-        if (obj.Stargift[0] is TInputSavedStarGiftUser firstUser)
-        {
-            firstSaved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.IsUnique && (d.MessageId == firstUser.MsgId || d.RandomId == firstUser.MsgId)).FirstOrDefaultAsync();
-        }
-        else if (obj.Stargift[0] is TInputSavedStarGiftSlug firstSlug)
-        {
-            firstSaved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.IsUnique && d.UniqueSlug == firstSlug.Slug).FirstOrDefaultAsync();
-        }
-        else if (obj.Stargift[0] is TInputSavedStarGiftChat firstChat)
-        {
-            firstSaved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.IsUnique && d.RandomId == firstChat.SavedId).FirstOrDefaultAsync();
-        }
-
-        if (firstSaved?.CanCraftAt.HasValue == true && firstSaved.CanCraftAt.Value > currentTime)
-        {
-            var secondsToWait = firstSaved.CanCraftAt.Value - currentTime;
-            throw new RpcException(new RpcError(400, $"STARGIFT_CRAFT_TOO_EARLY_{secondsToWait}"));
-        }
 
         // Load all gifts to craft
         var gifts = new List<UniqueStarGiftDocument>();
-        foreach (var input_gift in obj.Stargift)
+        foreach (var input_gift in inputGifts)
         {
             UniqueStarGiftDocument? unique = null;
 
@@ -72,6 +53,13 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
             {
                 // Check if gift was already burned (used in previous craft)
                 throw new RpcException(new RpcError(400, "STARGIFT_ALREADY_BURNED"));
+            }
+            var savedLock = await savedCol.Find(d => d.IsUnique && d.UniqueSlug == unique.Slug).FirstOrDefaultAsync();
+            var lockedUntil = LaterTimestamp(unique.TransferLockedUntil, savedLock?.CanCraftAt, savedLock?.CanTransferAt, savedLock?.CanResellAt);
+            if (lockedUntil.HasValue && lockedUntil.Value > currentTime)
+            {
+                var secondsToWait = lockedUntil.Value - currentTime;
+                throw new RpcException(new RpcError(400, $"STARGIFT_CRAFT_TOO_EARLY_{secondsToWait}"));
             }
             gifts.Add(unique);
         }
@@ -97,7 +85,7 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
 
         // Calculate success chance (more gifts = better chance)
         // From madrik1337: craft can fail, gifts burn without result
-        var successChance = obj.Stargift.Count switch
+        var successChance = inputGifts.Count switch
         {
             4 => 0.85,  // 85% for 4 gifts
             3 => 0.60,  // 60% for 3 gifts
@@ -121,7 +109,7 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
         await mongoDatabase.GetCollection<StarGiftDocument>("star-gifts")
             .UpdateOneAsync(
                 d => d.GiftId == firstGiftId,
-                Builders<StarGiftDocument>.Update.Inc(d => d.AvailabilityRemains, -obj.Stargift.Count)
+                Builders<StarGiftDocument>.Update.Inc(d => d.AvailabilityRemains, -inputGifts.Count)
             );
 
         var now = DateTime.UtcNow.ToTimestamp();
@@ -166,6 +154,9 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
             Saved = true,
             Date = now,
             GiftNum = firstGift.Num, // Number from FIRST slot
+            CanTransferAt = firstGift.TransferLockedUntil,
+            CanResellAt = firstGift.TransferLockedUntil,
+            CanCraftAt = firstGift.TransferLockedUntil,
             DocumentId = firstGift.DocumentId,
             DocumentAccessHash = firstGift.DocumentAccessHash,
             FileReference = firstGift.FileReference,
@@ -176,5 +167,17 @@ internal sealed class CraftStarGiftHandler(IMongoDatabase mongoDatabase, IMessag
         });
 
         return new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = now, Seq = 0 };
+    }
+
+    private static int? LaterTimestamp(params int?[] values)
+    {
+        int? result = null;
+        foreach (var value in values)
+        {
+            if (value.HasValue && (!result.HasValue || value.Value > result.Value))
+                result = value.Value;
+        }
+
+        return result;
     }
 }

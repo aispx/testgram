@@ -14,7 +14,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckGiftCodeHandler(IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor)
+internal sealed class CheckGiftCodeHandler(
+    IMongoDatabase mongoDatabase,
+    IQueryProcessor queryProcessor,
+    IChatConverterService chatConverterService,
+    IUserConverterService userConverterService)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestCheckGiftCode, MyTelegram.Schema.Payments.ICheckedGiftCode>
 {
     protected override async Task<MyTelegram.Schema.Payments.ICheckedGiftCode> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestCheckGiftCode obj)
@@ -50,26 +54,7 @@ internal sealed class CheckGiftCodeHandler(IMongoDatabase mongoDatabase, IQueryP
         // Load channel for giveaways
         if (channelId > 0)
         {
-            var channelCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-channelreadmodel");
-            var channel = await channelCol.Find(
-                Builders<BsonDocument>.Filter.Eq("ChannelId", channelId)
-            ).FirstOrDefaultAsync();
-
-            if (channel != null)
-            {
-                chats.Add(new TChannel
-                {
-                    Id = channel["ChannelId"].AsInt64,
-                    AccessHash = channel.Contains("AccessHash") && !channel["AccessHash"].IsBsonNull ? channel["AccessHash"].AsInt64 : 0,
-                    Title = channel.Contains("Title") && !channel["Title"].IsBsonNull ? channel["Title"].AsString : "",
-                    Username = channel.Contains("UserName") && !channel["UserName"].IsBsonNull ? channel["UserName"].AsString : null,
-                    Photo = new TChatPhotoEmpty(),
-                    Date = channel.Contains("Date") && !channel["Date"].IsBsonNull ? channel["Date"].AsInt32 : 0,
-                    RestrictionReason = new TVector<IRestrictionReason>(),
-                    Broadcast = channel.Contains("Broadcast") && !channel["Broadcast"].IsBsonNull && channel["Broadcast"].AsBoolean,
-                    Megagroup = channel.Contains("Megagroup") && !channel["Megagroup"].IsBsonNull && channel["Megagroup"].AsBoolean
-                });
-            }
+            chats.Add(await chatConverterService.GetChannelAsync(input, channelId, false, false, input.Layer));
         }
 
         // Load to user if ToId is set
@@ -78,18 +63,7 @@ internal sealed class CheckGiftCodeHandler(IMongoDatabase mongoDatabase, IQueryP
             var userReadModel = await queryProcessor.ProcessAsync(new GetUserByIdQuery(toId.Value));
             if (userReadModel != null)
             {
-                users.Add(new TUser
-                {
-                    Id = userReadModel.UserId,
-                    AccessHash = userReadModel.AccessHash,
-                    FirstName = userReadModel.FirstName ?? "",
-                    LastName = userReadModel.LastName,
-                    Username = userReadModel.UserName,
-                    Phone = userReadModel.PhoneNumber,
-                    Photo = new TUserProfilePhotoEmpty(),
-                    Status = new TUserStatusEmpty(),
-                    RestrictionReason = new TVector<IRestrictionReason>()
-                });
+                users.Add(userConverterService.ToUser(input, userReadModel, layer: input.Layer));
             }
         }
 

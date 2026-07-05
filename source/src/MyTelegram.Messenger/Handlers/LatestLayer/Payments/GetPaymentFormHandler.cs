@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Schema.Payments;
 using MyTelegram.Schema;
+using MyTelegram.Messenger.Services.PaidMedia;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
@@ -482,6 +483,29 @@ internal sealed class GetPaymentFormHandler(
     {
         // Get invoice from message
         var peer = peerHelper.GetPeer(invoiceMessage.Peer, input.UserId);
+
+        // Paid-media invoices use the message the user clicked. For forwards this
+        // is the forwarded message (for example inputPeerSelf/msg_id in Saved
+        // Messages), while the sellable media and revenue destination live on the
+        // original channel/bot post referenced by SavedFromPeer/SavedFromMsgId.
+        var paidMediaContext = await PaidMediaHelper.ResolveInvoiceAsync(mongoDatabase, peerHelper, input, invoiceMessage);
+        if (paidMediaContext != null)
+        {
+            return new TPaymentFormStars
+            {
+                FormId = Random.Shared.NextInt64(),
+                BotId = MyTelegramConsts.NotificationServiceUserId,
+                Title = "Paid media",
+                Description = $"Unlock paid media for {paidMediaContext.Document.StarsAmount} Telegram Stars",
+                Invoice = new TInvoice
+                {
+                    Currency = "XTR",
+                    Prices = [new TLabeledPrice { Label = "Paid media", Amount = paidMediaContext.Document.StarsAmount }],
+                },
+                Users = new TVector<IUser>(),
+            };
+        }
+
         var messagesCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-messagereadmodel");
         var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.And(
             MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("MessageId", invoiceMessage.MsgId),
@@ -500,6 +524,27 @@ internal sealed class GetPaymentFormHandler(
         var mediaBytes = messageDoc["Media"].AsByteArray;
         var mediaBuffer = new ReadOnlyMemory<byte>(mediaBytes);
         var media = mediaBuffer.Read<IMessageMedia>();
+
+        if (media is TMessageMediaPaidMedia paidMedia)
+        {
+            var doc = await PaidMediaHelper.FindAsync(mongoDatabase, peer.PeerId, invoiceMessage.MsgId);
+            if (doc == null)
+                RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
+
+            return new TPaymentFormStars
+            {
+                FormId = Random.Shared.NextInt64(),
+                BotId = MyTelegramConsts.NotificationServiceUserId,
+                Title = "Paid media",
+                Description = $"Unlock paid media for {paidMedia.StarsAmount} Telegram Stars",
+                Invoice = new TInvoice
+                {
+                    Currency = "XTR",
+                    Prices = [new TLabeledPrice { Label = "Paid media", Amount = paidMedia.StarsAmount }],
+                },
+                Users = new TVector<IUser>(),
+            };
+        }
 
         if (media is not TMessageMediaInvoice)
             RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();

@@ -19,7 +19,7 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
         {
             SavedStarGiftDocument? doc = null;
             if (stargift is TInputSavedStarGiftUser u)
-                doc = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.MessageId == u.MsgId).FirstOrDefaultAsync();
+                doc = await savedCol.Find(d => d.OwnerUserId == input.UserId && (d.MessageId == u.MsgId || d.RandomId == u.MsgId)).FirstOrDefaultAsync();
             else if (stargift is TInputSavedStarGiftChat c)
             {
                 var channelId = (c.Peer as TInputPeerChannel)?.ChannelId ?? 0;
@@ -67,6 +67,16 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
             // Item 14: restore preserved entities (custom emoji, bold, etc.) instead of stripping.
             ITextWithEntities? message = !string.IsNullOrEmpty(doc.MessageText)
                 ? new TTextWithEntities { Text = doc.MessageText, Entities = doc.MessageEntities ?? new TVector<IMessageEntity>() } : null;
+            int? uniqueTransferLockedUntil = null;
+            if (doc.IsUnique && doc.UniqueSlug != null)
+                uniqueTransferLockedUntil = (await uniqueCol.Find(d => d.Slug == doc.UniqueSlug).FirstOrDefaultAsync())?.TransferLockedUntil;
+            var cooldownAt = LaterTimestamp(doc.CanTransferAt, uniqueTransferLockedUntil);
+            var nowForCooldown = DateTime.UtcNow.ToTimestamp();
+            if (cooldownAt.HasValue && cooldownAt.Value <= nowForCooldown) cooldownAt = null;
+            var canResellAt = LaterTimestamp(doc.CanResellAt, cooldownAt);
+            if (canResellAt.HasValue && canResellAt.Value <= nowForCooldown) canResellAt = null;
+            var canCraftAt = LaterTimestamp(doc.CanCraftAt, cooldownAt);
+            if (canCraftAt.HasValue && canCraftAt.Value <= nowForCooldown) canCraftAt = null;
 
             gifts.Add(new TSavedStarGift
             {
@@ -74,17 +84,32 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
                 FromId = fromId,
                 Date = doc.Date,
                 Message = message,
-                MsgId = (!doc.IsUnique && doc.MessageId > 0) ? doc.MessageId : null,
-                SavedId = (doc.IsUnique || doc.MessageId == 0) ? doc.RandomId : null,
+                MsgId = doc.OwnerUserId > 0 ? (doc.MessageId > 0 ? doc.MessageId : (int?)doc.RandomId) : null,
+                SavedId = doc.OwnerChannelId > 0 ? doc.RandomId : null,
                 ConvertStars = doc.IsUnique || doc.IsAuction ? null : (doc.ConvertStars > 0 ? doc.ConvertStars : null),
                 UpgradeStars = !doc.IsUnique && doc.PrepaidUpgrade ? doc.UpgradeStars : null,
                 CanUpgrade = !doc.IsUnique && doc.UpgradeStars.HasValue,
                 Unsaved = !doc.Saved,
                 NameHidden = doc.NameHidden,
                 GiftNum = doc.GiftNum,
+                CanTransferAt = cooldownAt,
+                CanResellAt = canResellAt,
+                CanCraftAt = canCraftAt,
             });
         }
 
         return new TSavedStarGifts { Count = gifts.Count, Gifts = gifts, NextOffset = null, Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
+    }
+
+    private static int? LaterTimestamp(params int?[] values)
+    {
+        int? result = null;
+        foreach (var value in values)
+        {
+            if (value.HasValue && (!result.HasValue || value.Value > result.Value))
+                result = value.Value;
+        }
+
+        return result;
     }
 }

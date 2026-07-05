@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.StarGifts;
+using MyTelegram.Schema;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
@@ -26,7 +27,8 @@ public static class ChannelRevenueHelper
     }
 
     public static async Task<ChannelRevenueDocument> CreditAsync(IMongoDatabase db, long peerId, string currency, long amount,
-        long? sourceUserId = null, long? sourceChannelId = null, string? title = null, string? description = null)
+        long? sourceUserId = null, long? sourceChannelId = null, string? title = null, string? description = null,
+        int? msgId = null, TVector<IMessageMedia>? extendedMedia = null)
     {
         if (amount <= 0)
             throw new ArgumentOutOfRangeException(nameof(amount), "Credit must be positive.");
@@ -43,7 +45,7 @@ public static class ChannelRevenueHelper
             IsUpsert = true
         });
 
-        await LogTransactionAsync(db, peerId, currency, amount, sourceUserId, sourceChannelId, refund: false, title, description);
+        await LogTransactionAsync(db, peerId, currency, amount, sourceUserId, sourceChannelId, refund: false, title, description, msgId, extendedMedia);
         return result;
     }
 
@@ -77,7 +79,8 @@ public static class ChannelRevenueHelper
     }
 
     private static async Task LogTransactionAsync(IMongoDatabase db, long peerId, string currency, long amount,
-        long? sourceUserId, long? sourceChannelId, bool refund, string? title, string? description)
+        long? sourceUserId, long? sourceChannelId, bool refund, string? title, string? description,
+        int? msgId = null, TVector<IMessageMedia>? extendedMedia = null)
     {
         var transactionId = Guid.NewGuid().ToString("N");
         await db.GetCollection<ChannelRevenueTransactionDocument>(TransactionCollection).InsertOneAsync(new ChannelRevenueTransactionDocument
@@ -93,6 +96,8 @@ public static class ChannelRevenueHelper
             SourceChannelId = sourceChannelId,
             Title = title,
             Description = description,
+            MsgId = msgId,
+            ExtendedMedia = extendedMedia?.Select(x => x.ToBytes()).ToList(),
         });
     }
 
@@ -118,6 +123,14 @@ public static class ChannelRevenueHelper
             Refund = doc.Refund,
             Title = doc.Title,
             Description = doc.Description,
+            MsgId = doc.MsgId,
+            ExtendedMedia = doc.ExtendedMedia?.Count > 0
+                ? new TVector<IMessageMedia>(doc.ExtendedMedia.Select(x =>
+                {
+                    var memory = new ReadOnlyMemory<byte>(x);
+                    return memory.Read<IMessageMedia>();
+                }).ToList())
+                : null,
         };
     }
 }

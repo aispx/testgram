@@ -6,7 +6,10 @@ using MyTelegram.Schema.Payments;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
-internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestGetSavedStarGifts, ISavedStarGifts>
+internal sealed class GetSavedStarGiftsHandler(
+    IMongoDatabase mongoDatabase,
+    IUserAppService userAppService,
+    IUserConverterService userConverterService) : RpcResultObjectHandler<RequestGetSavedStarGifts, ISavedStarGifts>
 {
     protected override async Task<ISavedStarGifts> HandleCoreAsync(IRequestInput input, RequestGetSavedStarGifts obj)
     {
@@ -103,22 +106,10 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
 
         // Collect user IDs to resolve into Users list
         var userIds = docs.Where(d => !d.NameHidden && d.FromUserId != 0).Select(d => d.FromUserId).Distinct().ToList();
-        var userDocs = userIds.Count > 0
-            ? await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
-                .Find(Builders<BsonDocument>.Filter.In("UserId.low", userIds.Select(id => (int)id)))
-                .ToListAsync()
-            : [];
-
-        var usersById = userDocs.ToDictionary(
-            u => (long)u["UserId"]["low"].AsInt32,
-            u => (IUser)new TUser
-            {
-                Id = (long)u["UserId"]["low"].AsInt32,
-                FirstName = u.Contains("FirstName") && !u["FirstName"].IsBsonNull ? u["FirstName"].AsString : null,
-                LastName = u.Contains("LastName") && !u["LastName"].IsBsonNull ? u["LastName"].AsString : null,
-                Username = u.Contains("UserName") && !u["UserName"].IsBsonNull ? u["UserName"].AsString : null,
-                AccessHash = u.Contains("AccessHash") ? (long)u["AccessHash"]["low"].AsInt32 | ((long)u["AccessHash"]["high"].AsInt32 << 32) : 0,
-            });
+        var userReadModels = userIds.Count > 0 ? await userAppService.GetListAsync(userIds) : [];
+        var usersById = userReadModels.ToDictionary(
+            u => u.UserId,
+            u => (IUser)userConverterService.ToUser(input, u, layer: input.Layer));
 
         var gifts = new TVector<ISavedStarGift>();
 
@@ -130,6 +121,7 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
                 .ToListAsync()).ToDictionary(d => d.Slug)
             : new Dictionary<string, UniqueStarGiftDocument>();
 
+        var nowForCooldown = DateTime.UtcNow.ToTimestamp();
         foreach (var doc in docs)
         {
             giftMetaById.TryGetValue(doc.GiftId, out var meta);
@@ -185,14 +177,28 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
                 };
             }
 
+            int? uniqueTransferLockedUntil = null;
+            if (doc.IsUnique && doc.UniqueSlug != null && uniqueBySlug.TryGetValue(doc.UniqueSlug, out var cooldownUniqueDoc))
+                uniqueTransferLockedUntil = cooldownUniqueDoc.TransferLockedUntil;
+            var cooldownAt = LaterTimestamp(doc.CanTransferAt, uniqueTransferLockedUntil);
+            if (cooldownAt.HasValue && cooldownAt.Value <= nowForCooldown) cooldownAt = null;
+            var canResellAt = LaterTimestamp(doc.CanResellAt, cooldownAt);
+            if (canResellAt.HasValue && canResellAt.Value <= nowForCooldown) canResellAt = null;
+            var canCraftAt = LaterTimestamp(doc.CanCraftAt, cooldownAt);
+            if (canCraftAt.HasValue && canCraftAt.Value <= nowForCooldown) canCraftAt = null;
+
             gifts.Add(new TSavedStarGift
             {
                 Gift = giftTl,
                 FromId = fromId,
                 Date = doc.Date,
                 Message = message,
-                MsgId = (!isChannel && !doc.IsUnique && doc.MessageId > 0) ? doc.MessageId : (!isChannel && doc.IsUnique ? (int?)doc.RandomId : null),
-                SavedId = (isChannel || doc.IsUnique || doc.MessageId == 0) ? doc.RandomId : null,
+                // Layer 223: user-owned gifts are addressed by inputSavedStarGiftUser.msg_id;
+                // channel-owned gifts are addressed by inputSavedStarGiftChat.saved_id.
+                // Older unique user gifts in this DB store the unique id in RandomId
+                // and MessageId=0, so expose RandomId as msg_id for users.
+                MsgId = !isChannel ? (doc.MessageId > 0 ? doc.MessageId : (int?)doc.RandomId) : null,
+                SavedId = isChannel ? doc.RandomId : null,
                 ConvertStars = doc.IsUnique || doc.IsAuction ? null : (doc.ConvertStars > 0 ? doc.ConvertStars : null),
                 UpgradeStars = !doc.IsUnique && doc.PrepaidUpgrade ? doc.UpgradeStars : null,
                 CanUpgrade = !doc.IsUnique && doc.UpgradeStars.HasValue,
@@ -201,8 +207,9 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
                 PinnedToTop = doc.PinnedToTop,
                 GiftNum = doc.GiftNum,
                 PrepaidUpgradeHash = doc.PrepaidUpgradeHash,
-                CanResellAt = doc.CanResellAt,
-                CanCraftAt = doc.CanCraftAt, // Layer 223+ craft cooldown
+                CanTransferAt = cooldownAt,
+                CanResellAt = canResellAt,
+                CanCraftAt = canCraftAt, // Layer 223+ craft cooldown
             });
         }
 
@@ -217,5 +224,17 @@ internal sealed class GetSavedStarGiftsHandler(IMongoDatabase mongoDatabase) : R
             Chats = new TVector<IChat>(),
             Users = users,
         };
+    }
+
+    private static int? LaterTimestamp(params int?[] values)
+    {
+        int? result = null;
+        foreach (var value in values)
+        {
+            if (value.HasValue && (!result.HasValue || value.Value > result.Value))
+                result = value.Value;
+        }
+
+        return result;
     }
 }

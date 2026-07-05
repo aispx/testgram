@@ -35,7 +35,8 @@ public static class StarsBalanceHelper
         bool businessTransfer = false, bool stargiftResale = false, bool postsSearch = false,
         bool stargiftPrepaidUpgrade = false, bool stargiftDropOriginalDetails = false,
         bool phonegroupMessage = false, int? paidMessages = null, int? msgId = null,
-        int? transactionDate = null, string? transactionUrl = null, string? description = null)
+        int? transactionDate = null, string? transactionUrl = null, string? description = null,
+        TVector<IMessageMedia>? extendedMedia = null)
     {
         var transactionId = Guid.NewGuid().ToString("N");
         await db.GetCollection<StarsTransactionDocument>("star-transactions").InsertOneAsync(new StarsTransactionDocument
@@ -73,6 +74,7 @@ public static class StarsBalanceHelper
             MsgId = msgId,
             TransactionDate = transactionDate,
             TransactionUrl = transactionUrl,
+            ExtendedMedia = extendedMedia?.Select(x => x.ToBytes()).ToList(),
         });
     }
 
@@ -162,6 +164,13 @@ public static class StarsBalanceHelper
             PhonegroupMessage = BoolField("PhonegroupMessage"),
             PaidMessages = IntField("PaidMessages"),
             MsgId = IntField("MsgId"),
+            ExtendedMedia = doc.Contains("ExtendedMedia") && doc["ExtendedMedia"].IsBsonArray
+                ? new TVector<IMessageMedia>(doc["ExtendedMedia"].AsBsonArray.Select(x =>
+                {
+                    var memory = new ReadOnlyMemory<byte>(x.AsByteArray);
+                    return memory.Read<IMessageMedia>();
+                }).ToList())
+                : null,
             TransactionDate = IntField("TransactionDate"),
             TransactionUrl = StrField("TransactionUrl"),
         };
@@ -243,6 +252,13 @@ public static class StarsBalanceHelper
             PhonegroupMessage = doc.PhonegroupMessage,
             PaidMessages = doc.PaidMessages,
             MsgId = doc.MsgId,
+            ExtendedMedia = doc.ExtendedMedia?.Count > 0
+                ? new TVector<IMessageMedia>(doc.ExtendedMedia.Select(x =>
+                {
+                    var memory = new ReadOnlyMemory<byte>(x);
+                    return memory.Read<IMessageMedia>();
+                }).ToList())
+                : null,
             TransactionDate = doc.TransactionDate,
             TransactionUrl = doc.TransactionUrl,
         };

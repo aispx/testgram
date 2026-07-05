@@ -5,21 +5,14 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// </summary>
 internal static class StarRefBotUserHelper
 {
-    public static IUser BuildBotUser(IUserReadModel user)
+    public static IUser BuildBotUser(IUserConverterService userConverterService, IRequestInput input, IUserReadModel user)
     {
-        return new TUser
+        var converted = userConverterService.ToUser(input, user, layer: input.Layer);
+        if (converted is TUser tUser)
         {
-            Id = user.UserId,
-            AccessHash = user.AccessHash,
-            FirstName = user.FirstName,
-            LastName = user.LastName,
-            Username = user.UserName,
-            Phone = user.PhoneNumber,
-            Photo = new TUserProfilePhotoEmpty(),
-            Status = new TUserStatusEmpty(),
-            Bot = true,
-            BotInfoVersion = user.BotInfoVersion,
-            RestrictionReason = new TVector<IRestrictionReason>()
-        };
+            tUser.Bot = true;
+        }
+
+        return converted;
     }
 }

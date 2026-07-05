@@ -13,7 +13,7 @@ internal sealed class GetStarGiftUpgradePreviewHandler(IMongoDatabase mongoDatab
             .Find(d => d.GiftId == obj.GiftId).FirstOrDefaultAsync();
 
         var attrs = gift != null
-            ? await UpgradeAttributeHelper.GetAllAsync(mongoDatabase, gift)
+            ? await UpgradeAttributeHelper.GetSampleAsync(mongoDatabase, gift)
             : new TVector<IStarGiftAttribute>();
 
         var prices = new TVector<IStarGiftUpgradePrice>();

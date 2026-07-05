@@ -51,4 +51,5 @@ public class StarsTransactionDocument
     public int? MsgId { get; set; }
     public int? TransactionDate { get; set; }
     public string? TransactionUrl { get; set; }
+    public List<byte[]>? ExtendedMedia { get; set; }
 }

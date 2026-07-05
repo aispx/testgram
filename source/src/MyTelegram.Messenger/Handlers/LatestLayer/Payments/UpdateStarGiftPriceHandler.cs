@@ -39,6 +39,21 @@ internal sealed class UpdateStarGiftPriceHandler(IMongoDatabase mongoDatabase) :
 
         if (doc!.OwnerUserId != input.UserId && doc.OwnerChannelId == 0) RpcErrors.RpcErrors400.StargiftOwnerInvalid.ThrowRpcError();
 
+        var savedDoc = await savedCol.Find(d => d.IsUnique && d.UniqueSlug == doc.Slug).FirstOrDefaultAsync();
+        var currentTime = DateTime.UtcNow.ToTimestamp();
+        var lockedUntil = LaterTimestamp(doc.TransferLockedUntil, savedDoc?.CanResellAt, savedDoc?.CanTransferAt, savedDoc?.CanCraftAt);
+        var listingRequested = obj.ResellAmount switch
+        {
+            TStarsAmount starsAmount => starsAmount.Amount > 0,
+            TStarsTonAmount tonAmount => tonAmount.Amount > 0,
+            _ => false
+        };
+        if (listingRequested && lockedUntil.HasValue && lockedUntil.Value > currentTime)
+        {
+            var secondsToWait = lockedUntil.Value - currentTime;
+            throw new RpcException(new RpcError(400, $"STARGIFT_RESELL_TOO_EARLY_{secondsToWait}"));
+        }
+
         // Layer 206: obj.ResellAmount may be a TStarsAmount (Stars pricing) or
         // a TStarsTonAmount (TON pricing). Zero/absent means "delist". We only
         // touch the column corresponding to the submitted currency so the
@@ -82,14 +97,29 @@ internal sealed class UpdateStarGiftPriceHandler(IMongoDatabase mongoDatabase) :
                 break;
         }
 
-        // Refresh CanResellAt on the saved-star-gift record based on the new combined state.
-        var refreshed = await uniqueCol.Find(d => d.UniqueId == doc.UniqueId).FirstOrDefaultAsync();
-        var anyListing = (refreshed?.ResellStars ?? 0) > 0 || (refreshed?.ResellTon ?? 0) > 0;
+        // The cooldown field means "can't resell before this date"; keep it aligned
+        // with the unique gift transfer lock instead of using listing state.
+        var activeCooldownAt = lockedUntil.HasValue && lockedUntil.Value > currentTime ? lockedUntil : null;
         await savedCol.UpdateOneAsync(
             d => d.IsUnique && d.UniqueSlug == doc.Slug,
-            Builders<SavedStarGiftDocument>.Update.Set(d => d.CanResellAt, anyListing ? 0 : (int?)null)
+            Builders<SavedStarGiftDocument>.Update
+                .Set(d => d.CanTransferAt, activeCooldownAt)
+                .Set(d => d.CanResellAt, activeCooldownAt)
+                .Set(d => d.CanCraftAt, activeCooldownAt)
         );
 
         return new TUpdates { Chats = new TVector<IChat>(), Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Date = CurrentDate };
+    }
+
+    private static int? LaterTimestamp(params int?[] values)
+    {
+        int? result = null;
+        foreach (var value in values)
+        {
+            if (value.HasValue && (!result.HasValue || value.Value > result.Value))
+                result = value.Value;
+        }
+
+        return result;
     }
 }

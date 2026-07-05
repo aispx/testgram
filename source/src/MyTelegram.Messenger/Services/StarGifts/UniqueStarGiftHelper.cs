@@ -7,16 +7,14 @@ public static class UniqueStarGiftHelper
     public static TStarGiftUnique ToTl(UniqueStarGiftDocument doc, Func<long, bool>? documentExists = null)
     {
         var attrs = new TVector<IStarGiftAttribute>();
-        foreach (var a in doc.Attributes)
+        var sourceAttributes = EnsureRenderableAttributeSet(doc.Attributes);
+        foreach (var a in sourceAttributes)
         {
-            if ((a.Type == "model" || a.Type == "pattern")
-                && a.DocumentId.HasValue
-                && documentExists != null
-                && !documentExists(a.DocumentId.Value))
-            {
-                continue;
-            }
-
+            // Do not drop model/pattern just because the document read model is
+            // missing: clients need the complete collectible attribute tuple
+            // (model + pattern + backdrop).  Some seeded/test gifts have valid
+            // document ids that are not present in eventflow-documentreadmodel;
+            // filtering them made NFTs render as background-only.
             IStarGiftAttribute attr = a.Type switch
             {
                 "backdrop" => new TStarGiftAttributeBackdrop
@@ -99,6 +97,57 @@ public static class UniqueStarGiftHelper
         };
     }
 
+
+    private static UniqueGiftAttribute[] EnsureRenderableAttributeSet(UniqueGiftAttribute[] attributes)
+    {
+        var result = attributes.ToList();
+
+        var hasModel = result.Any(a => a.Type == "model");
+        var hasPattern = result.Any(a => a.Type == "pattern");
+        var hasBackdrop = result.Any(a => a.Type == "backdrop");
+        var docSource = result.FirstOrDefault(a =>
+            (a.Type == "model" || a.Type == "pattern") && a.DocumentId.HasValue);
+
+        if (!hasModel && docSource != null)
+            result.Insert(0, CopyDocumentAttribute(docSource, "model", docSource.Name));
+
+        if (!hasPattern && docSource != null)
+            result.Add(CopyDocumentAttribute(docSource, "pattern", docSource.Name));
+
+        if (!hasBackdrop)
+        {
+            result.Add(new UniqueGiftAttribute
+            {
+                Type = "backdrop",
+                Name = "Default",
+                RarityPermille = 100,
+                BackdropId = 1,
+                CenterColor = 0x2980B9,
+                EdgeColor = 0x1A5276,
+                PatternColor = 0x3498DB,
+                TextColor = 0xFFFFFF,
+            });
+        }
+
+        return result.ToArray();
+    }
+
+    private static UniqueGiftAttribute CopyDocumentAttribute(UniqueGiftAttribute source, string type, string name) => new()
+    {
+        Type = type,
+        Name = name,
+        RarityPermille = source.RarityPermille > 0 ? source.RarityPermille : 100,
+        Crafted = source.Crafted,
+        RarityTier = source.RarityTier,
+        DocumentId = source.DocumentId,
+        DocumentAccessHash = source.DocumentAccessHash,
+        FileReference = source.FileReference,
+        DocumentDate = source.DocumentDate,
+        MimeType = source.MimeType,
+        DocumentSize = source.DocumentSize,
+        DcId = source.DcId,
+    };
+
     private static IDocument MakeDoc(UniqueGiftAttribute a) => new TDocument
     {
         Id = a.DocumentId ?? 0,
@@ -136,19 +185,28 @@ public static class UniqueStarGiftHelper
     // Generate random attributes from DB config, fallback to gift sticker if no config
     public static async Task<UniqueGiftAttribute[]> GenerateAttributesAsync(IMongoDatabase db, StarGiftDocument gift, bool crafted = false)
     {
-        // Use craft config for crafted gifts, upgrade config for regular upgrades
-        var collectionName = crafted ? "star-gift-craft-config" : "star-gift-upgrade-config";
-        var col = db.GetCollection<UpgradeConfigEntry>(collectionName);
-        // Match seeded PascalCase BSON layout: pull gift-specific entries
-        // (GiftId == this gift) plus the global pool (GiftId == 0 or absent).
-        // Previously this used snake_case "gift_id", which never matched any
-        // document, so every upgrade silently fell back to the gift's own
-        // sticker for model/pattern and a hard-coded "Default" backdrop.
-        var filter = Builders<UpgradeConfigEntry>.Filter.Or(
-            Builders<UpgradeConfigEntry>.Filter.Eq(e => e.GiftId, gift.GiftId),
-            Builders<UpgradeConfigEntry>.Filter.Eq(e => e.GiftId, 0L),
-            Builders<UpgradeConfigEntry>.Filter.Exists("GiftId", false));
-        var all = await col.Find(filter).ToListAsync();
+        // Upgrade config is seeded with PascalCase fields, craft config with
+        // snake_case fields; read them through their matching DTOs and normalize
+        // to UpgradeConfigEntry for the random picker.
+        List<UpgradeConfigEntry> all;
+        if (crafted)
+        {
+            var craftCol = db.GetCollection<CraftAttributeConfigEntry>("star-gift-craft-config");
+            var craftFilter = Builders<CraftAttributeConfigEntry>.Filter.Or(
+                Builders<CraftAttributeConfigEntry>.Filter.Eq(e => e.GiftId, gift.GiftId),
+                Builders<CraftAttributeConfigEntry>.Filter.Eq(e => e.GiftId, 0L),
+                Builders<CraftAttributeConfigEntry>.Filter.Exists("gift_id", false));
+            all = (await craftCol.Find(craftFilter).ToListAsync()).Select(ToUpgradeConfigEntry).ToList();
+        }
+        else
+        {
+            var col = db.GetCollection<UpgradeConfigEntry>("star-gift-upgrade-config");
+            var filter = Builders<UpgradeConfigEntry>.Filter.Or(
+                Builders<UpgradeConfigEntry>.Filter.Eq(e => e.GiftId, gift.GiftId),
+                Builders<UpgradeConfigEntry>.Filter.Eq(e => e.GiftId, 0L),
+                Builders<UpgradeConfigEntry>.Filter.Exists("GiftId", false));
+            all = await col.Find(filter).ToListAsync();
+        }
 
         var models    = all.Where(e => e.Type == "model"   && e.GiftId == gift.GiftId).ToList();
         if (models.Count == 0) models = all.Where(e => e.Type == "model" && e.GiftId == 0).ToList();
@@ -195,6 +253,27 @@ public static class UniqueStarGiftHelper
 
         return [Pick(models, "model"), Pick(patterns, "pattern"), PickBackdrop()];
     }
+
+
+    private static UpgradeConfigEntry ToUpgradeConfigEntry(CraftAttributeConfigEntry e) => new()
+    {
+        Type = e.Type,
+        GiftId = e.GiftId,
+        Name = e.Name,
+        RarityPermille = e.RarityPermille,
+        DocumentId = e.DocumentId,
+        DocumentAccessHash = e.DocumentAccessHash,
+        FileReference = e.FileReference,
+        DocumentDate = e.DocumentDate,
+        MimeType = e.MimeType,
+        DocumentSize = e.DocumentSize,
+        DcId = e.DcId,
+        BackdropId = e.BackdropId,
+        CenterColor = e.CenterColor,
+        EdgeColor = e.EdgeColor,
+        PatternColor = e.PatternColor,
+        TextColor = e.TextColor,
+    };
 
     private static T WeightedRandom<T>(List<T> items) where T : UpgradeConfigEntry
     {

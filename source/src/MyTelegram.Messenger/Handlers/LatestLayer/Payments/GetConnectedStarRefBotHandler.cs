@@ -9,7 +9,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 internal sealed class GetConnectedStarRefBotHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetConnectedStarRefBot, MyTelegram.Schema.Payments.IConnectedStarRefBots>
+    IQueryProcessor queryProcessor,
+    IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetConnectedStarRefBot, MyTelegram.Schema.Payments.IConnectedStarRefBots>
 {
     protected override async Task<MyTelegram.Schema.Payments.IConnectedStarRefBots> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetConnectedStarRefBot obj)
     {
@@ -59,7 +60,7 @@ internal sealed class GetConnectedStarRefBotHandler(
                     Revoked = connection.Contains("revoked") && connection["revoked"].AsBoolean
                 }
             },
-            Users = new TVector<IUser>(users.Select(u => StarRefBotUserHelper.BuildBotUser(u)))
+            Users = new TVector<IUser>(users.Select(u => StarRefBotUserHelper.BuildBotUser(userConverterService, input, u)))
         };
     }
 }

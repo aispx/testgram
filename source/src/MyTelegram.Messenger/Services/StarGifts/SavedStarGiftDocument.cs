@@ -35,6 +35,7 @@ public class SavedStarGiftDocument
     public int? GiftNum { get; set; }
     public bool PrepaidUpgrade { get; set; }
     public string? PrepaidUpgradeHash { get; set; }
+    public int? CanTransferAt { get; set; } // Unix timestamp - can't transfer before this date
     public int? CanResellAt { get; set; }  // won from auction — cannot be resold
 
     // Layer 223+ craft field

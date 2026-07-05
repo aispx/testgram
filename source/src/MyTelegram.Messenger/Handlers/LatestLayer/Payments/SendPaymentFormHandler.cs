@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using MongoDB.Bson;
 using MyTelegram.Messenger.Services.StarGifts;
+using MyTelegram.Messenger.Services.PaidMedia;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
@@ -21,7 +22,7 @@ internal sealed class SendPaymentFormHandler(
 {
     protected override async Task<MyTelegram.Schema.Payments.IPaymentResult> HandleCoreAsync(
         IRequestInput input, MyTelegram.Schema.Payments.RequestSendPaymentForm obj)
-    { // Force rebuild 407
+    {
         // Bot invoice payment (inputInvoiceMessage or inputInvoiceSlug)
         if (obj.Invoice is TInputInvoiceMessage or TInputInvoiceSlug)
             return await HandleBotInvoicePaymentAsync(input, obj);
@@ -924,6 +925,111 @@ internal sealed class SendPaymentFormHandler(
         logger.LogWarning("Bot precheckout timeout: queryId={QueryId} botId={BotId}", queryId, botId);
 
         return (false, "BOT_PRECHECKOUT_TIMEOUT");
+    }
+
+    private async Task<bool> IsPaidMediaInvoiceAsync(IRequestInput input, TInputInvoiceMessage invoiceMessage)
+    {
+        return await PaidMediaHelper.ResolveInvoiceAsync(mongoDatabase, peerHelper, input, invoiceMessage) != null;
+    }
+
+    private async Task<IPaymentResult> HandlePaidMediaPaymentAsync(IRequestInput input, TInputInvoiceMessage invoiceMessage)
+    {
+        var context = await PaidMediaHelper.ResolveInvoiceAsync(mongoDatabase, peerHelper, input, invoiceMessage);
+        if (context == null)
+            RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+
+        var doc = context.Document;
+        var revealed = PaidMediaHelper.ToRevealedExtendedMedia(doc.ExtendedMedia);
+        if (!PaidMediaHelper.IsPurchasedBy(doc, input.UserId))
+        {
+            var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+            if (balance < doc.StarsAmount)
+                RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
+
+            await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -doc.StarsAmount);
+            await PaidMediaHelper.MarkPurchasedAsync(mongoDatabase, doc, input.UserId);
+
+            var txMedia = PaidMediaHelper.ToTransactionExtendedMedia(doc.ExtendedMedia);
+            await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -doc.StarsAmount,
+                peerChannelId: doc.ChannelId, title: "Paid media", msgId: doc.MsgId, extendedMedia: txMedia);
+
+            var sender = await queryProcessor.ProcessAsync(new GetUserByIdQuery(doc.SenderUserId));
+            if (sender?.Bot == true)
+            {
+                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, doc.SenderUserId, doc.StarsAmount);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, doc.SenderUserId, doc.StarsAmount,
+                    peerChannelId: doc.ChannelId, title: "Paid media", msgId: doc.MsgId, extendedMedia: txMedia);
+                await BalancePushHelper.PushStarsBalanceAsync(objectMessageSender, mongoDatabase, doc.SenderUserId);
+            }
+            else
+            {
+                await ChannelRevenueHelper.CreditAsync(mongoDatabase, doc.ChannelId, ChannelRevenueHelper.StarsCurrency,
+                    doc.StarsAmount, sourceUserId: input.UserId, title: "Paid media");
+
+                var channel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(doc.ChannelId));
+                if (channel != null)
+                {
+                    await BalancePushHelper.PushChannelRevenueStatusAsync(objectMessageSender, mongoDatabase,
+                        doc.ChannelId, PeerType.Channel, channel.CreatorId, ChannelRevenueHelper.StarsCurrency);
+                }
+            }
+            await BalancePushHelper.PushStarsBalanceAsync(objectMessageSender, mongoDatabase, input.UserId);
+
+            var update = new TUpdateMessageExtendedMedia
+            {
+                Peer = context.DisplayPeer.ToPeer(),
+                MsgId = context.DisplayMsgId,
+                ExtendedMedia = revealed
+            };
+            var updates = new TUpdates
+            {
+                Updates = new TVector<IUpdate> { update },
+                Users = new TVector<IUser>(),
+                Chats = new TVector<IChat>(),
+                Date = DateTime.UtcNow.ToTimestamp(),
+                Seq = 0
+            };
+            await objectMessageSender.PushMessageToPeerAsync(input.UserId.ToUserPeer(), updates, pts: 0);
+
+            if (!string.IsNullOrEmpty(doc.Payload))
+            {
+                if (sender?.Bot == true)
+                {
+                    var qts = await PaidMediaHelper.NextQtsAsync(mongoDatabase, doc.SenderUserId);
+                    await objectMessageSender.PushMessageToPeerAsync(doc.SenderUserId.ToUserPeer(), new TUpdates
+                    {
+                        Updates = new TVector<IUpdate>
+                        {
+                            new TUpdateBotPurchasedPaidMedia { UserId = input.UserId, Payload = doc.Payload!, Qts = qts }
+                        },
+                        Users = new TVector<IUser>(),
+                        Chats = new TVector<IChat>(),
+                        Date = DateTime.UtcNow.ToTimestamp(),
+                        Seq = 0
+                    }, pts: 0);
+                }
+            }
+        }
+
+        return new TPaymentResult
+        {
+            Updates = new TUpdates
+            {
+                Updates = new TVector<IUpdate>
+                {
+                    new TUpdateMessageExtendedMedia
+                    {
+                        Peer = context.DisplayPeer.ToPeer(),
+                        MsgId = context.DisplayMsgId,
+                        ExtendedMedia = revealed
+                    }
+                },
+                Users = new TVector<IUser>(),
+                Chats = new TVector<IChat>(),
+                Date = DateTime.UtcNow.ToTimestamp(),
+                Seq = 0
+            }
+        };
     }
 
     private async Task<IPaymentResult> HandleBotInvoicePaymentAsync(IRequestInput input, RequestSendPaymentForm obj)

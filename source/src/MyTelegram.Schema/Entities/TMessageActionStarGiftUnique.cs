@@ -116,6 +116,7 @@ public sealed partial class TMessageActionStarGiftUnique : IMessageAction
 
     public void ComputeFlag()
     {
+        Flags = 0;
         if (Upgrade) { Flags = Flags.SetBit(0); }
         if (Transferred) { Flags = Flags.SetBit(1); }
         if (Saved) { Flags = Flags.SetBit(2); }
@@ -128,7 +129,6 @@ public sealed partial class TMessageActionStarGiftUnique : IMessageAction
         if (/*TransferStars != 0 &&*/ TransferStars.HasValue) { Flags = Flags.SetBit(4); }
         if (FromId != null) { Flags = Flags.SetBit(6); }
         if (Peer != null) { Flags = Flags.SetBit(7); }
-        if (/*SavedId != 0 &&*/ SavedId.HasValue) { Flags = Flags.SetBit(7); }
         if (ResaleAmount != null) { Flags = Flags.SetBit(8); }
         if (/*CanTransferAt != 0 && */CanTransferAt.HasValue) { Flags = Flags.SetBit(9); }
         if (/*CanResellAt != 0 && */CanResellAt.HasValue) { Flags = Flags.SetBit(10); }
@@ -146,7 +146,7 @@ public sealed partial class TMessageActionStarGiftUnique : IMessageAction
         if (Flags.IsBitSet(4) && TransferStars.HasValue) { writer.Write(TransferStars.Value); }
         if (Flags.IsBitSet(6)) { writer.Write(FromId); }
         if (Flags.IsBitSet(7)) { writer.Write(Peer); }
-        if (Flags.IsBitSet(7) && SavedId.HasValue) { writer.Write(SavedId.Value); }
+        if (Flags.IsBitSet(7)) { writer.Write(SavedId.GetValueOrDefault()); }
         if (Flags.IsBitSet(8)) { writer.Write(ResaleAmount); }
         if (Flags.IsBitSet(9) && CanTransferAt.HasValue) { writer.Write(CanTransferAt.Value); }
         if (Flags.IsBitSet(10) && CanResellAt.HasValue) { writer.Write(CanResellAt.Value); }

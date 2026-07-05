@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace MyTelegram.Messenger.Services.StarGifts;
@@ -30,8 +31,16 @@ public class CraftAttributeConfigEntry
     [BsonElement("document_access_hash")]
     public long? DocumentAccessHash { get; set; }
 
-    [BsonElement("file_reference")]
+    [BsonIgnore]
     public byte[]? FileReference { get; set; }
+
+    [BsonElement("file_reference")]
+    [BsonIgnoreIfNull]
+    public BsonArray? FileReferenceBson
+    {
+        get => FileReference == null ? null : new BsonArray(FileReference.Select(b => new BsonInt32(b)));
+        set => FileReference = value?.Select(v => (byte)v.AsInt32).ToArray();
+    }
 
     [BsonElement("document_date")]
     public int? DocumentDate { get; set; }
