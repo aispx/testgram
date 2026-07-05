@@ -89,6 +89,12 @@ builder.ConfigureServices((ctx,
     //});
 
     services.AddMyTelegramMessengerQueryServer();
+    services.AddTransient<MessengerQueryDataProcessor>();
+    services.AddTransient<IDataProcessor<MessengerQueryDataReceivedEvent>, MessengerQueryDataProcessor>();
+    services.AddSingleton<IMessageQueueProcessor<MessengerQueryDataReceivedEvent>>(sp =>
+        new MessageQueueProcessor<MessengerQueryDataReceivedEvent>(
+            sp.GetRequiredService<MessengerQueryDataProcessor>(),
+            sp.GetRequiredService<ILogger<MessageQueueProcessor<MessengerQueryDataReceivedEvent>>>()));
 
     services.AddMyTelegramStackExchangeRedisCache(options =>
     {

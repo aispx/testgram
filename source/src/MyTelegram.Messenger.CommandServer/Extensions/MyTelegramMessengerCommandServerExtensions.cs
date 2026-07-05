@@ -17,6 +17,7 @@ public static class MyTelegramMessengerCommandServerExtensions
         services.AddSubscription<NewDeviceCreatedEvent, MessengerEventHandler>();
         services.AddSubscription<BindUserIdToAuthKeyIntegrationEvent, MessengerEventHandler>();
         services.AddSubscription<AuthKeyUnRegisteredIntegrationEvent, MessengerEventHandler>();
+        services.AddSubscription<UserIsOnlineEvent, MessengerEventHandler>();
 
         services.AddSubscription<NewPtsMessageHasSentEvent, PtsEventHandler>();
         services.AddSubscription<RpcMessageHasSentEvent, PtsEventHandler>();

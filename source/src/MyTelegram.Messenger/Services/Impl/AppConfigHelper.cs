@@ -25,6 +25,7 @@ public partial class AppConfigHelper : IAppConfigHelper, ISingletonDependency
         SetConfig("giveaway_gifts_purchase_available", new TJsonBool { Value = true });
         SetConfig("settings_display_passkeys", new TJsonBool { Value = true });
         SetConfig("passkeys_account_passkeys_max", new TJsonNumber { Value = 20 });
+        SetConfig("factcheck_length_limit", new TJsonNumber { Value = 1024 });
 
         // Affiliate Programs configuration
         SetConfig("starref_program_allowed", new TJsonBool { Value = true });

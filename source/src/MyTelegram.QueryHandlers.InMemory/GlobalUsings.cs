@@ -31,6 +31,7 @@ global using PollAnswerVoterReadModel = MyTelegram.ReadModel.InMemory.PollAnswer
 global using PollReadModel = MyTelegram.ReadModel.InMemory.PollReadModel;
 global using PtsForAuthKeyIdReadModel = MyTelegram.ReadModel.InMemory.PtsForAuthKeyIdReadModel;
 global using PtsReadModel = MyTelegram.ReadModel.InMemory.PtsReadModel;
+global using PushDeviceReadModel = MyTelegram.ReadModel.InMemory.PushDeviceReadModel;
 global using ReadingHistoryReadModel = MyTelegram.ReadModel.InMemory.ReadingHistoryReadModel;
 global using ReplyReadModel = MyTelegram.ReadModel.InMemory.ReplyReadModel;
 global using RpcResultReadModel = MyTelegram.ReadModel.InMemory.RpcResultReadModel;

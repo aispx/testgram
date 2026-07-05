@@ -7,8 +7,10 @@ namespace MyTelegram.Messenger.QueryServer.EventHandlers;
 
 public class MessengerEventHandler(
     IMessageQueueProcessor<MessengerQueryDataReceivedEvent> processor,
+    MessengerQueryDataProcessor queryDataProcessor,
     IFileDownloadLaneRouter fileDownloadLaneRouter,
     IUserAccessHashKeyCache userAccessHashKeyCache,
+    IPushOnlineFilter pushOnlineFilter,
     ILogger<MessengerEventHandler> logger)
     :
         IEventHandler<MessengerQueryDataReceivedEvent>,
@@ -22,6 +24,10 @@ public class MessengerEventHandler(
     public async Task HandleEventAsync(MessengerQueryDataReceivedEvent eventData)
     {
         await userAccessHashKeyCache.RememberAsync(eventData.UserId, eventData.AccessHashKeyId);
+        if (eventData.UserId != 0 && eventData.PermAuthKeyId != 0)
+        {
+            try { await pushOnlineFilter.MarkOnlineAsync(eventData.PermAuthKeyId); } catch { }
+        }
         processor.Enqueue(eventData, eventData.PermAuthKeyId);
     }
 
@@ -47,7 +53,7 @@ public class MessengerEventHandler(
             return;
         }
 
-        if (await TryRerouteGroupCallStreamFileAsync(eventData))
+        if (await TryRerouteGroupCallStreamFileAsync(eventData, "upload lane"))
         {
             return;
         }
@@ -58,6 +64,11 @@ public class MessengerEventHandler(
     public async Task HandleEventAsync(DownloadDataReceivedEvent eventData)
     {
         if (await TryRerouteGetCustomEmojiDocumentsAsync(eventData))
+        {
+            return;
+        }
+
+        if (await TryRerouteGroupCallStreamFileAsync(eventData, "download lane"))
         {
             return;
         }
@@ -84,7 +95,7 @@ public class MessengerEventHandler(
         return true;
     }
 
-    private async Task<bool> TryRerouteGroupCallStreamFileAsync(DataReceivedEvent eventData)
+    private async Task<bool> TryRerouteGroupCallStreamFileAsync(DataReceivedEvent eventData, string sourceLane)
     {
         await userAccessHashKeyCache.RememberAsync(eventData.UserId, eventData.AccessHashKeyId);
 
@@ -99,13 +110,10 @@ public class MessengerEventHandler(
         }
 
         logger.LogInformation(
-            "Rerouting upload.getFile inputGroupCallStream from file lane to messenger query lane, reqMsgId: {ReqMsgId}",
+            "Rerouting upload.getFile inputGroupCallStream from {SourceLane} to messenger query lane, reqMsgId: {ReqMsgId}",
+            sourceLane,
             eventData.ReqMsgId);
-        processor.Enqueue(
-            new MessengerQueryDataReceivedEvent(eventData.ConnectionId, eventData.ConnectionType, eventData.RequestId, eventData.ObjectId,
-                eventData.UserId, eventData.ReqMsgId, eventData.SeqNumber, eventData.AuthKeyId, eventData.PermAuthKeyId,
-                eventData.Data, eventData.Layer, eventData.Date, eventData.DeviceType, eventData.ClientIp, eventData.SessionId, eventData.AccessHashKeyId),
-            eventData.AuthKeyId);
+        await ProcessGroupCallStreamGetFileAsync(eventData);
         return true;
     }
 
@@ -121,12 +129,7 @@ public class MessengerEventHandler(
             logger.LogInformation(
                 "Rerouting upload.getFile inputGroupCallStream from sticker lane to messenger query lane, reqMsgId: {ReqMsgId}",
                 eventData.ReqMsgId);
-            processor.Enqueue(
-                new MessengerQueryDataReceivedEvent(eventData.ConnectionId, eventData.ConnectionType, eventData.RequestId, eventData.ObjectId,
-                    eventData.UserId, eventData.ReqMsgId, eventData.SeqNumber, eventData.AuthKeyId, eventData.PermAuthKeyId,
-                    eventData.Data, eventData.Layer, eventData.Date, eventData.DeviceType, eventData.ClientIp, eventData.SessionId,
-                    eventData.AccessHashKeyId),
-                eventData.AuthKeyId);
+            await ProcessGroupCallStreamGetFileAsync(eventData);
             return true;
         }
 
@@ -148,6 +151,14 @@ public class MessengerEventHandler(
             eventData.SessionId,
             eventData.AccessHashKeyId));
         return true;
+    }
+
+    private Task ProcessGroupCallStreamGetFileAsync(DataReceivedEvent eventData)
+    {
+        return queryDataProcessor.ProcessAsync(
+            new MessengerQueryDataReceivedEvent(eventData.ConnectionId, eventData.ConnectionType, eventData.RequestId, eventData.ObjectId,
+                eventData.UserId, eventData.ReqMsgId, eventData.SeqNumber, eventData.AuthKeyId, eventData.PermAuthKeyId,
+                eventData.Data, eventData.Layer, eventData.Date, eventData.DeviceType, eventData.ClientIp, eventData.SessionId, eventData.AccessHashKeyId));
     }
 
     private bool IsGroupCallStreamGetFile(DataReceivedEvent eventData)

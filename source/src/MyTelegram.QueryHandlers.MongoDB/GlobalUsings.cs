@@ -33,6 +33,7 @@ global using PollAnswerVoterReadModel = MyTelegram.ReadModel.MongoDB.PollAnswerV
 global using PollReadModel = MyTelegram.ReadModel.MongoDB.PollReadModel;
 global using PtsForAuthKeyIdReadModel = MyTelegram.ReadModel.MongoDB.PtsForAuthKeyIdReadModel;
 global using PtsReadModel = MyTelegram.ReadModel.MongoDB.PtsReadModel;
+global using PushDeviceReadModel = MyTelegram.ReadModel.MongoDB.PushDeviceReadModel;
 //global using PushUpdatesReadModel = MyTelegram.ReadModel.MongoDB.PushUpdatesReadModel;
 global using ReadingHistoryReadModel = MyTelegram.ReadModel.MongoDB.ReadingHistoryReadModel;
 global using ReplyReadModel = MyTelegram.ReadModel.MongoDB.ReplyReadModel;

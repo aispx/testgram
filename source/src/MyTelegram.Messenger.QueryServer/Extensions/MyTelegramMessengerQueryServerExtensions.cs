@@ -28,6 +28,11 @@ public static class MyTelegramMessengerQueryServerExtensions
 
         services.AddSubscription<DomainEventMessage, DistributedDomainEventHandler>();
         services.AddSubscription<DuplicateCommandEvent, DuplicateOperationExceptionHandler>();
+
+        // PUSH notification delivery: consume the LayeredPushMessageCreatedIntegrationEvent that
+        // DomainEventHandlerBase already publishes with a PushData payload, and dispatch it to
+        // FCM/APNS/Web-Push. See https://corefork.telegram.org/api/push-updates
+        services.AddSubscription<LayeredPushMessageCreatedIntegrationEvent, PushNotificationEventHandler>();
     }
 
     public static void AddMyTelegramMessengerQueryServer(this IServiceCollection services, Action<IEventFlowOptions>? configure = null)

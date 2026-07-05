@@ -101,6 +101,8 @@ public record GetContactUserIdListByTargetUserIdListQuery(long SelfUserId, List<
 public record GetContactsByPhonesQuery(long SelfUserId, List<string> Phones)
     : IQuery<IReadOnlyCollection<IContactReadModel>>;
 
+public record GetImportedContactsByUserIdQuery(long UserId) : IQuery<IReadOnlyCollection<IImportedContactReadModel>>;
+
 //public record GetDeviceByAuthKeyIdQuery(long AuthKeyId) : IQuery<IDeviceReadModel?>;
 
 //public record GetDeviceByHashQuery(long UserId, long Hash) : IQuery<IDeviceReadModel?>;
@@ -304,7 +306,8 @@ public record MessageView
 
 public record SearchContactQuery(
     long SelfUserId,
-    string Keyword) : IQuery<IReadOnlyCollection<IContactReadModel>>;
+    string Keyword,
+    int Limit) : IQuery<IReadOnlyCollection<IContactReadModel>>;
 
 public record SearchUserByKeywordQuery(
     string Keyword,
@@ -500,6 +503,8 @@ public record GetBotListQuery(List<long> BotUserIds) : IQuery<IReadOnlyCollectio
 
 public record GetPushDevicesQuery(long UserId) : IQuery<IReadOnlyCollection<IPushDeviceReadModel>>;
 
+public record GetPushDevicesForRecipientQuery(long RecipientUserId) : IQuery<IReadOnlyCollection<IPushDeviceReadModel>>;
+
 public record GetThemeByIdQuery(long Id) : IQuery<IThemeReadModel?>;
 
 public record GetThemeBySlugQuery(string Slug) : IQuery<IThemeReadModel?>;
@@ -663,7 +668,7 @@ public record GetMaxFolderIdQuery(long UserId) : IQuery<int>;
 public record GetAllDialogFiltersQuery(int Skip, int Limit) : IQuery<IReadOnlyCollection<IDialogFilterReadModel>>;
 public record GetImportedDialogFolderQuery(long UserId, string Slug) : IQuery<IDialogFilterReadModel?>;
 public record SearchPostsQuery(string Hashtag, string? Query, List<long>? Tokens, int OffsetRate, long OffsetPeerId, int OffsetId, int Limit) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
-public record GetPostsCountQuery(string Hashtag, int OffsetRate, int OffsetId) : IQuery<int>;
+public record GetPostsCountQuery(string Hashtag, string? Query, List<long>? Tokens, int OffsetRate, long OffsetPeerId, int OffsetId) : IQuery<int>;
 
 public record GetFilesQuery(List<long> FileIds) : IQuery<IReadOnlyCollection<IFileReadModel>>;
 public record GetAuthKeyByAuthKeyIdQuery(long AuthKeyId) : IQuery<IAuthKeyReadModel?>;
