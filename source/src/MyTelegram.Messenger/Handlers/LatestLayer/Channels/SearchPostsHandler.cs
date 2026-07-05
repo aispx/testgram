@@ -12,6 +12,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// </remarks>
 internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokenizer tokenizer, IChatConverterService chatConverterService, IUserConverterService userConverterService, IMessageConverterService messageConverterService, IPeerHelper peerHelper, IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSearchPosts, MyTelegram.Schema.Messages.IMessages>
 {
+    private const int MinTextSearchLength = 2;
+    private const int MaxSearchLimit = 100;
+
     protected override async Task<MyTelegram.Schema.Messages.IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestSearchPosts obj)
     {
         //if (string.IsNullOrEmpty(obj.Hashtag))
@@ -19,18 +22,31 @@ internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokeni
         //    RpcErrors.RpcErrors400.HashtagInvalid.ThrowRpcError();
         //}
         var peer = peerHelper.GetPeer(obj.OffsetPeer);
-        var tokens = tokenizer.BuildSearchTokens(obj.Query);
-        var messageReadModels = await queryProcessor.ProcessAsync(new SearchPostsQuery(obj.Hashtag, obj.Query, tokens, obj.OffsetRate, peer.PeerId, obj.OffsetId, obj.Limit));
+        var query = NormalizeQuery(obj.Query);
+        var hashtag = NormalizeQuery(obj.Hashtag);
+        if (query.Length is > 0 and < MinTextSearchLength)
+        {
+            RpcErrors.RpcErrors400.QueryTooShort.ThrowRpcError();
+        }
+
+        if (query.Length == 0 && hashtag.Length == 0)
+        {
+            RpcErrors.RpcErrors400.SearchQueryEmpty.ThrowRpcError();
+        }
+
+        var limit = NormalizeLimit(obj.Limit);
+        var tokens = tokenizer.BuildSearchTokens(query);
+        var messageReadModels = await queryProcessor.ProcessAsync(new SearchPostsQuery(hashtag, query, tokens, obj.OffsetRate, peer.PeerId, obj.OffsetId, limit));
         var messages = messageConverterService.ToMessageList(input.UserId, messageReadModels, [], [], [], input.Layer);
         var(userIds, channelIds) = messageAppService.GetExtraPeerIds(messageReadModels);
         var channelIdList = channelIds.ToList();
         var channelMemberReadModels = await queryProcessor.ProcessAsync(new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIdList));
         var channels = await chatConverterService.GetChannelListAsync(input, channelIdList, channelMemberReadModels, input.Layer);
         var users = await userConverterService.GetUserListAsync(input, userIds.ToList(), false, false, input.Layer);
-        if (messageReadModels.Count == obj.Limit && messageReadModels.Count > 0)
+        if (messageReadModels.Count == limit && messageReadModels.Count > 0)
         {
             var nextRate = messageReadModels.Max(p => p.Date);
-            var totalCount = await queryProcessor.ProcessAsync(new GetPostsCountQuery(obj.Hashtag, obj.OffsetRate, obj.OffsetId));
+            var totalCount = await queryProcessor.ProcessAsync(new GetPostsCountQuery(hashtag, query, tokens, obj.OffsetRate, peer.PeerId, obj.OffsetId));
             return new TMessagesSlice
             {
                 Count = totalCount,
@@ -49,5 +65,15 @@ internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokeni
             Users = [..users],
             Topics = new TVector<IForumTopic>()
         };
+    }
+
+    private static int NormalizeLimit(int limit)
+    {
+        return limit <= 0 ? 20 : Math.Min(limit, MaxSearchLimit);
+    }
+
+    private static string NormalizeQuery(string? query)
+    {
+        return query?.Trim() ?? string.Empty;
     }
 }

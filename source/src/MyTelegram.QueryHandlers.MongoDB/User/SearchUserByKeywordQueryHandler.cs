@@ -3,6 +3,10 @@
 public class SearchUserByKeywordQueryHandler(IQueryOnlyReadModelStore<UserReadModel> store) :
     IQueryHandler<SearchUserByKeywordQuery, IReadOnlyCollection<IUserReadModel>>
 {
+    private const int MinKeywordLength = 3;
+    private const int MaxLimit = 50;
+    private const int MaxCandidateLimit = MaxLimit * 5;
+
     public async Task<IReadOnlyCollection<IUserReadModel>> ExecuteQueryAsync(SearchUserByKeywordQuery query,
         CancellationToken cancellationToken)
     {
@@ -15,8 +19,15 @@ public class SearchUserByKeywordQueryHandler(IQueryOnlyReadModelStore<UserReadMo
         // Remove @ prefix if present
         if (q.StartsWith('@'))
         {
-            q = q[1..];
+            q = q[1..].Trim();
         }
+
+        if (q.Length < MinKeywordLength)
+        {
+            return Array.Empty<IUserReadModel>();
+        }
+
+        var limit = query.Limit <= 0 ? 20 : Math.Min(query.Limit, MaxLimit);
 
         var qLower = q.ToLowerInvariant();
         var qUpper = q.ToUpperInvariant();
@@ -32,7 +43,8 @@ public class SearchUserByKeywordQueryHandler(IQueryOnlyReadModelStore<UserReadMo
             // Phone contains query
             (p.PhoneNumber != null && p.PhoneNumber.Contains(q));
 
-        var results = await store.FindAsync(predicate, 0, 200,
+        var candidateLimit = Math.Min(Math.Max(limit * 5, limit), MaxCandidateLimit);
+        var results = await store.FindAsync(predicate, 0, candidateLimit,
             new SortOptions<UserReadModel>(p => p.FirstName, SortType.Ascending),
             cancellationToken);
 
@@ -47,7 +59,7 @@ public class SearchUserByKeywordQueryHandler(IQueryOnlyReadModelStore<UserReadMo
             .ThenByDescending(u => u.UserName?.StartsWith(qLower, StringComparison.OrdinalIgnoreCase) == true ? 2 : 0)
             .ThenByDescending(u => u.FirstName.StartsWith(qLower, StringComparison.OrdinalIgnoreCase) ? 1 : 0)
             .ThenBy(u => u.FirstName)
-            .Take(50)
+            .Take(limit)
             .ToList();
     }
 }

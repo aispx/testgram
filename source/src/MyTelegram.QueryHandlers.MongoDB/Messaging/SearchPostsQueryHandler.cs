@@ -6,8 +6,11 @@ public class SearchPostsQueryHandler(IQueryOnlyReadModelStore<MessageReadModel> 
     IQueryOnlyReadModelStore<MessageTokenReadModel> messageTokenStore)
     : IQueryHandler<SearchPostsQuery, IReadOnlyCollection<IMessageReadModel>>
 {
+    private const int MinTextSearchLength = 2;
+
     public async Task<IReadOnlyCollection<IMessageReadModel>> ExecuteQueryAsync(SearchPostsQuery query, CancellationToken cancellationToken)
     {
+        var q = query.Query?.Trim() ?? string.Empty;
         if (query.Tokens?.Count > 0)
         {
             return await SearchByTokensAsync(query, cancellationToken);
@@ -15,7 +18,8 @@ public class SearchPostsQueryHandler(IQueryOnlyReadModelStore<MessageReadModel> 
 
         Expression<Func<MessageReadModel, bool>> predicate = p => p.PublicPosts && p.Date > query.OffsetRate && p.MessageId > query.OffsetId;
         predicate = predicate.WhereIf(!string.IsNullOrEmpty(query.Hashtag), p => p.Hashtags.Contains(query.Hashtag!))
-            .WhereIf(!string.IsNullOrEmpty(query.Query), p => p.Message.Contains(query.Query));
+            .WhereIf(q.Length >= MinTextSearchLength, p => p.Message.Contains(q))
+            .WhereIf(query.OffsetPeerId != 0, p => p.ToPeerId == query.OffsetPeerId || p.OwnerPeerId == query.OffsetPeerId);
 
         return await store.FindAsync(predicate,
             limit: query.Limit,
@@ -26,7 +30,8 @@ public class SearchPostsQueryHandler(IQueryOnlyReadModelStore<MessageReadModel> 
     {
         Expression<Func<MessageTokenReadModel, bool>> predicate = p => p.PublicPosts && p.Date > query.OffsetRate && p.MessageId > query.OffsetId;
         predicate = predicate.WhereIf(!string.IsNullOrEmpty(query.Hashtag), p => p.Hashtags.Contains(query.Hashtag!))
-            .WhereIf(query.Tokens?.Count > 0, p => query.Tokens!.Any(x => p.Tokens.Contains(x)));
+            .WhereIf(query.Tokens?.Count > 0, p => query.Tokens!.Any(x => p.Tokens.Contains(x)))
+            .WhereIf(query.OffsetPeerId != 0, p => p.OwnerPeerId == query.OffsetPeerId);
 
         var sortOptions = new SortOptions<MessageTokenReadModel>(p => p.MessageId, SortType.Descending);
         var result = await messageTokenStore.FindAsync(predicate,

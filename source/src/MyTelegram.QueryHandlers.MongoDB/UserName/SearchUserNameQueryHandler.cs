@@ -2,6 +2,9 @@
 
 public class SearchUserNameQueryHandler(IQueryOnlyReadModelStore<UserNameReadModel> store) : IQueryHandler<SearchUserNameQuery, IReadOnlyCollection<IUserNameReadModel>>
 {
+    private const int MinKeywordLength = 2;
+    private const int MaxLimit = 50;
+
     public async Task<IReadOnlyCollection<IUserNameReadModel>> ExecuteQueryAsync(SearchUserNameQuery query,
         CancellationToken cancellationToken)
     {
@@ -14,7 +17,12 @@ public class SearchUserNameQueryHandler(IQueryOnlyReadModelStore<UserNameReadMod
         // Remove @ prefix if present
         if (q.StartsWith('@'))
         {
-            q = q[1..];
+            q = q[1..].Trim();
+        }
+
+        if (q.Length < MinKeywordLength)
+        {
+            return Array.Empty<IUserNameReadModel>();
         }
 
         var qLower = q.ToLowerInvariant();
@@ -27,7 +35,7 @@ public class SearchUserNameQueryHandler(IQueryOnlyReadModelStore<UserNameReadMod
                  p.UserName.StartsWith(qLower) ||
                  p.UserName.Contains(q) ||
                  p.UserName.Contains(qLower),
-            limit: 200,
+            limit: MaxLimit,
             cancellationToken: cancellationToken);
 
         // Filter and sort by relevance in memory with case-insensitive comparison
@@ -38,7 +46,7 @@ public class SearchUserNameQueryHandler(IQueryOnlyReadModelStore<UserNameReadMod
             .ThenByDescending(u => u.UserName.StartsWith(q, StringComparison.OrdinalIgnoreCase) ? 1 : 0)
             .ThenBy(u => u.UserName.Length)
             .ThenBy(u => u.UserName)
-            .Take(50)
+            .Take(MaxLimit)
             .ToList();
     }
 }

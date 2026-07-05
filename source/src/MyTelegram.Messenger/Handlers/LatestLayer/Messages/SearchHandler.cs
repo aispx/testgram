@@ -23,24 +23,44 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class SearchHandler(IMessageAppService messageAppService, ITokenizer tokenizer, IPeerHelper peerHelper, IAccessHashHelper accessHashHelper, IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSearch, IMessages>
 {
+    private const int MinTextSearchLength = 2;
+    private const int MaxSearchLimit = 100;
+
     protected override async Task<IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSearch obj)
     {
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         await accessHashHelper.CheckAccessHashAsync(input, obj.FromId);
         await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
+        var q = NormalizeQuery(obj.Q);
+        var messageType = GetMessageType(obj.Filter);
+        if (q.Length == 0 && messageType == MessageType.Unknown)
+        {
+            RpcErrors.RpcErrors400.SearchQueryEmpty.ThrowRpcError();
+        }
+
+        if (q.Length is > 0 and < MinTextSearchLength && messageType == MessageType.Unknown)
+        {
+            RpcErrors.RpcErrors400.QueryTooShort.ThrowRpcError();
+        }
+
+        if (q.Length is > 0 and < MinTextSearchLength)
+        {
+            q = string.Empty;
+        }
+
         var userId = input.UserId;
         var peer = peerHelper.GetPeer(obj.Peer, userId);
         var fromPeer = obj.FromId == null ? null : peerHelper.GetPeer(obj.FromId, userId);
         var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, userId);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : userId;
-        var tokens = tokenizer.BuildSearchTokens(obj.Q);
-        Console.WriteLine($"[SearchHandler] userId={userId} peer={peer} filter={obj.Filter?.GetType().Name} q={obj.Q}");
+        var tokens = tokenizer.BuildSearchTokens(q);
+        var limit = NormalizeLimit(obj.Limit);
         var getMessageOutput = await messageAppService.SearchAsync(new SearchInput
         {
             OwnerPeerId = ownerPeerId,
             SelfUserId = userId,
-            Limit = obj.Limit,
-            Q = obj.Q,
+            Limit = limit,
+            Q = q,
             OffsetId = obj.OffsetId,
             AddOffset = obj.AddOffset,
             Peer = peer,
@@ -48,13 +68,23 @@ internal sealed class SearchHandler(IMessageAppService messageAppService, IToken
             MaxId = obj.MaxId,
             MinDate = obj.MinDate,
             MinId = obj.MinId,
-            MessageType = GetMessageType(obj.Filter),
+            MessageType = messageType,
             Tokens = tokens,
             FilterSenderUserId = fromPeer?.PeerType == PeerType.User ? fromPeer.PeerId : 0,
             SavedPeerId = savedPeer,
             TopMsgId = obj.TopMsgId ?? 0
         });
         return getHistoryConverterService.ToMessages(input, getMessageOutput, input.Layer);
+    }
+
+    private static int NormalizeLimit(int limit)
+    {
+        return limit <= 0 ? 20 : Math.Min(limit, MaxSearchLimit);
+    }
+
+    private static string NormalizeQuery(string? query)
+    {
+        return query?.Trim() ?? string.Empty;
     }
 
     private static MessageType GetMessageType(IMessagesFilter? filter)
