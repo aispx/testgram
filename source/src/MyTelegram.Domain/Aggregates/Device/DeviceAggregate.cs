@@ -94,6 +94,14 @@ public class DeviceAggregate : SnapshotAggregateRoot<DeviceAggregate, DeviceId, 
         Emit(new DeviceAuthKeyUnRegisteredEvent(permAuthKeyId, tempAuthKeyId));
     }
 
+    public void BindTempAuthKey(long permAuthKeyId,
+        long tempAuthKeyId,
+        int expiresAt)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new DeviceTempAuthKeyBoundEvent(permAuthKeyId, tempAuthKeyId, expiresAt));
+    }
+
     protected override Task<DeviceSnapshot> CreateSnapshotAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult(new DeviceSnapshot(_state.PermAuthKeyId,
@@ -115,7 +123,8 @@ public class DeviceAggregate : SnapshotAggregateRoot<DeviceAggregate, DeviceId, 
             _state.DateCreated,
             _state.IsActive,
             _state.Parameters,
-            _state.Hash));
+            _state.Hash,
+            _state.TempAuthKeyExpiresAt));
     }
 
     protected override Task LoadSnapshotAsync(DeviceSnapshot snapshot, ISnapshotMetadata metadata, CancellationToken cancellationToken)

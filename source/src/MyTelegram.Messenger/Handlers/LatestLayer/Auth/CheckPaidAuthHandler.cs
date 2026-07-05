@@ -9,10 +9,17 @@ namespace MyTelegram.Messenger.Handlers.Auth;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✔]
 /// </remarks>
-internal sealed class CheckPaidAuthHandler : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestCheckPaidAuth, MyTelegram.Schema.Auth.ISentCode>, IObjectHandler
+internal sealed class CheckPaidAuthHandler(
+    IQueryProcessor queryProcessor,
+    ICommandBus commandBus,
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
+    : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestCheckPaidAuth, MyTelegram.Schema.Auth.ISentCode>, IObjectHandler
 {
     protected override Task<MyTelegram.Schema.Auth.ISentCode> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Auth.RequestCheckPaidAuth obj)
     {
+        // TODO: implement checkPaidAuth later — paid-auth state/purchase handling is in place
+        //       (AppCodeState.PaidAuthRequired/PaidAuthFormId/PaidAuthCompleted are populated by the
+        //       payment-completion handling). This handler body is intentionally deferred.
         throw new NotImplementedException();
     }
 }

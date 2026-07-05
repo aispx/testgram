@@ -16,15 +16,19 @@ public class UserSignInSagaTests : TestsFor<SignInSaga>
     }
 
     [Fact]
-    public async Task SignIn_With_Invalid_PhoneCode_Throws_Exception()
+    public async Task SignIn_With_Invalid_PhoneCode_Completes_Without_SignInStarted()
     {
+        // An invalid phone code no longer throws from the saga: raising the PHONE_CODE_INVALID RPC
+        // error is the responsibility of the sign-in handler/aggregate (AppCodeAggregate.CheckCodeCore),
+        // not this asynchronous saga which reacts to an already-persisted event. On an invalid code
+        // the saga simply completes and starts no sign-in flow (no SignInStartedSagaEvent emitted).
         var aggregateEvent = new CheckSignInCodeCompletedEvent(A<RequestInfo>(), false, 1);
         var domainEvent =
             ADomainEvent<AppCodeAggregate, AppCodeId, CheckSignInCodeCompletedEvent>(aggregateEvent, A<AppCodeId>(), 1);
 
-        var exception = await Assert.ThrowsAsync<RpcException>(async () => await Sut.HandleAsync(domainEvent, _sagaContext.Object, CancellationToken.None));
+        await Sut.HandleAsync(domainEvent, _sagaContext.Object, CancellationToken.None);
 
-        exception.RpcError.ShouldBe(RpcErrors.RpcErrors400.PhoneCodeInvalid);
+        Sut.UncommittedEvents.ShouldNotContain(e => e.AggregateEvent is SignInStartedSagaEvent);
     }
 
     [Fact]

@@ -22,6 +22,37 @@ public class AppCodeAggregate : SnapshotAggregateRoot<AppCodeAggregate, AppCodeI
         Emit(new AppCodeCanceledEvent(requestInfo, phoneNumber, phoneCodeHash));
     }
 
+    public void ResendCode(RequestInfo requestInfo,
+        string code,
+        AppCodeType sentCodeType,
+        long creationTime)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new AppCodeResendEvent(requestInfo, code, sentCodeType, creationTime));
+    }
+
+    public void ResetLoginEmail(RequestInfo requestInfo,
+        string code,
+        long creationTime)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new AppCodeLoginEmailResetEvent(requestInfo, code, creationTime));
+    }
+
+    public void RequirePaidAuth(RequestInfo requestInfo,
+        long formId)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new AppCodePaidAuthRequiredEvent(requestInfo, formId));
+    }
+
+    public void CompletePaidAuth(RequestInfo requestInfo,
+        long formId)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new AppCodePaidAuthCompletedEvent(requestInfo, formId));
+    }
+
     public void CheckSignInCode(RequestInfo requestInfo,
         string code,
         long userId)
@@ -86,7 +117,8 @@ public class AppCodeAggregate : SnapshotAggregateRoot<AppCodeAggregate, AppCodeI
     {
         return Task.FromResult(new AppCodeSnapshot(_state.UserId, _state.Expire, _state.FailedCount, _state.PhoneNumber, _state.PhoneCodeHash, _state.Code,
             _state.Email, _state.LastSmsCodeSendDate, _state.LastEmailCodeSendDate, _state.TotalSentCount,
-            _state.TodaySentCount, _state.AppCodeType));
+            _state.TodaySentCount, _state.AppCodeType, _state.LoginEmailResetRequested,
+            _state.PaidAuthRequired, _state.PaidAuthFormId, _state.PaidAuthCompleted));
     }
 
     protected override Task LoadSnapshotAsync(AppCodeSnapshot snapshot, ISnapshotMetadata metadata,

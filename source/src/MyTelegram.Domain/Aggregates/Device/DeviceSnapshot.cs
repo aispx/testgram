@@ -18,5 +18,6 @@ public record DeviceSnapshot(long PermAuthKeyId, long TempAuthKeyId,
     int Date,
     bool IsActive,
     Dictionary<string, string>? Parameters,
-    long Hash
+    long Hash,
+    int TempAuthKeyExpiresAt = 0
 ) : ISnapshot;

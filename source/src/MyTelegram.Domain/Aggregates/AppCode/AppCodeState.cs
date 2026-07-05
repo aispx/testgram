@@ -3,6 +3,10 @@
 public class AppCodeState : AggregateState<AppCodeAggregate, AppCodeId, AppCodeState>,
     IApply<AppCodeCreatedEvent>,
     IApply<AppCodeCanceledEvent>,
+    IApply<AppCodeResendEvent>,
+    IApply<AppCodeLoginEmailResetEvent>,
+    IApply<AppCodePaidAuthRequiredEvent>,
+    IApply<AppCodePaidAuthCompletedEvent>,
     IApply<SignUpRequiredSagaEvent>,
     //IApply<AppCodeCheckFailedEvent>,
     IApply<CheckSignUpCodeCompletedEvent>,
@@ -23,9 +27,76 @@ public class AppCodeState : AggregateState<AppCodeAggregate, AppCodeId, AppCodeS
     public int TotalSentCount { get; private set; }
     public AppCodeType AppCodeType { get; private set; }
     public long UserId { get; private set; }
+    public bool LoginEmailResetRequested { get; private set; }
+    public bool PaidAuthRequired { get; private set; }
+    public long PaidAuthFormId { get; private set; }
+    public bool PaidAuthCompleted { get; private set; }
     public void Apply(AppCodeCanceledEvent aggregateEvent)
     {
         Canceled = true;
+    }
+
+    public void Apply(AppCodeResendEvent aggregateEvent)
+    {
+        // Keep the same phone_code_hash / AppCodeId; refresh the pending code value,
+        // the recorded delivery medium and the send counters/timestamps.
+        Code = aggregateEvent.Code;
+        AppCodeType = aggregateEvent.SentCodeType;
+        FailedCount = 0;
+
+        TotalSentCount++;
+        TodaySentCount++;
+
+        var sendDate = DateTimeOffset.FromUnixTimeSeconds(aggregateEvent.CreationTime).UtcDateTime;
+        var isEmailMedium = aggregateEvent.SentCodeType is AppCodeType.SignInEmailCode
+            or AppCodeType.PasswordConfirmEmailCode
+            or AppCodeType.RecoverPasswordEmailCode
+            or AppCodeType.SetupEmailCode
+            or AppCodeType.ChangeEmailCode
+            or AppCodeType.PassportEmailCode;
+
+        if (isEmailMedium)
+        {
+            LastEmailCodeSendDate = sendDate;
+        }
+        else
+        {
+            LastSmsCodeSendDate = sendDate;
+        }
+    }
+
+    public void Apply(AppCodeLoginEmailResetEvent aggregateEvent)
+    {
+        // Mark that a login-email reset has been requested (semantically equivalent to
+        // reset_pending_date being set) and switch delivery back to the SMS medium, refreshing
+        // the pending code value.
+        LoginEmailResetRequested = true;
+        Code = aggregateEvent.Code;
+        AppCodeType = AppCodeType.SignInSmsCode;
+
+        var sendDate = DateTimeOffset.FromUnixTimeSeconds(aggregateEvent.CreationTime).UtcDateTime;
+        LastSmsCodeSendDate = sendDate;
+    }
+
+    public void Apply(AppCodePaidAuthRequiredEvent aggregateEvent)
+    {
+        // A code delivery requires payment: record the pending payment form and mark the
+        // authorization as payment-required, resetting any previous completion flag.
+        PaidAuthRequired = true;
+        PaidAuthFormId = aggregateEvent.FormId;
+        PaidAuthCompleted = false;
+    }
+
+    public void Apply(AppCodePaidAuthCompletedEvent aggregateEvent)
+    {
+        // Only clear the payment requirement when the completing form id matches the pending
+        // PaidAuthFormId (and a payment was actually required). A mismatched form id leaves the
+        // paid-auth state unchanged (still payment-required).
+        if (PaidAuthRequired && PaidAuthFormId == aggregateEvent.FormId)
+        {
+            PaidAuthCompleted = true;
+            PaidAuthRequired = false;
+        }
     }
 
     //public void Apply(AppCodeCheckFailedEvent aggregateEvent)
@@ -84,5 +155,9 @@ public class AppCodeState : AggregateState<AppCodeAggregate, AppCodeId, AppCodeS
         TotalSentCount = snapshot.TotalSentCount;
         TodaySentCount = snapshot.TodaySentCount;
         AppCodeType = snapshot.AppCodeType;
+        LoginEmailResetRequested = snapshot.LoginEmailResetRequested;
+        PaidAuthRequired = snapshot.PaidAuthRequired;
+        PaidAuthFormId = snapshot.PaidAuthFormId;
+        PaidAuthCompleted = snapshot.PaidAuthCompleted;
     }
 }

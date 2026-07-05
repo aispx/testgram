@@ -28,6 +28,7 @@ public static class MyTelegramMessengerServerExtensions
 
         services.AddTransient<IChatInviteLinkHelper, ChatInviteLinkHelper>();
         services.AddSingleton(typeof(IDomainEventCacheHelper<>), typeof(DomainEventCacheHelper<>));
+        services.AddSingleton<IWebTokenAuthCacheHelper, WebTokenAuthCacheHelper>();
         //services.AddSingleton(typeof(IReadModelCacheHelper<>), typeof(ReadModelCacheHelper<>));
         services.AddSingleton(typeof(IInMemoryRepository<,>), typeof(InMemoryRepository<,>));
 

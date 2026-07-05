@@ -5,10 +5,12 @@ namespace MyTelegram.Domain.Aggregates.Device;
 public class DeviceState : AggregateState<DeviceAggregate, DeviceId, DeviceState>,
     IApply<DeviceCreatedEvent>,
     IApply<BindUidToDeviceEvent>,
-    IApply<DeviceAuthKeyUnRegisteredEvent>
+    IApply<DeviceAuthKeyUnRegisteredEvent>,
+    IApply<DeviceTempAuthKeyBoundEvent>
 {
     public long PermAuthKeyId { get; private set; }
     public long TempAuthKeyId { get; private set; }
+    public int TempAuthKeyExpiresAt { get; private set; }
     public long UserId { get; private set; }
     public Dictionary<string, string>? Parameters { get; private set; } = [];
     public int ApiId { get; private set; }
@@ -37,10 +39,19 @@ public class DeviceState : AggregateState<DeviceAggregate, DeviceId, DeviceState
     {
     }
 
+    public void Apply(DeviceTempAuthKeyBoundEvent aggregateEvent)
+    {
+        // Overwrite any prior temp key binding with the new one and record its expiry
+        // (Requirement 3.2, 3.3).
+        TempAuthKeyId = aggregateEvent.TempAuthKeyId;
+        TempAuthKeyExpiresAt = aggregateEvent.ExpiresAt;
+    }
+
     public void LoadSnapshot(DeviceSnapshot snapshot)
     {
         PermAuthKeyId = snapshot.PermAuthKeyId;
         TempAuthKeyId = snapshot.TempAuthKeyId;
+        TempAuthKeyExpiresAt = snapshot.TempAuthKeyExpiresAt;
         UserId = snapshot.UserId;
         ApiId = snapshot.ApiId;
         AppName = snapshot.AppName;

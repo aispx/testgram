@@ -12,6 +12,10 @@ public record AppCodeSnapshot(
     DateTime LastEmailCodeSendDate,
     int TotalSentCount,
     int TodaySentCount,
-    AppCodeType AppCodeType
+    AppCodeType AppCodeType,
+    bool LoginEmailResetRequested = false,
+    bool PaidAuthRequired = false,
+    long PaidAuthFormId = 0,
+    bool PaidAuthCompleted = false
     )
     : ISnapshot;
