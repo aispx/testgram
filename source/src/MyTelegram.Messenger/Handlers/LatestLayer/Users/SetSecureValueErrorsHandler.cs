@@ -13,14 +13,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// Access: [User ✖] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class SetSecureValueErrorsHandler(
-    IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestSetSecureValueErrors, IBool>
+    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestSetSecureValueErrors, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestSetSecureValueErrors obj)
     {
         // This method can only be called by bots
         // Validate access hash
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Id);
 
         var targetPeer = peerHelper.GetPeer(obj.Id, input.UserId);
         var targetUserId = targetPeer.PeerId;

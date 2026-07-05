@@ -15,14 +15,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 internal sealed class SuggestBirthdayHandler(
     IPeerHelper peerHelper,
     IUserAppService userAppService,
-    IAccessHashHelper accessHashHelper,
     IMessageAppService messageAppService,
     IPtsHelper ptsHelper) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestSuggestBirthday, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestSuggestBirthday obj)
     {
         // Validate access hash
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Id);
 
         // Get target user
         var targetPeer = peerHelper.GetPeer(obj.Id, input.UserId);

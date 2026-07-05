@@ -5,7 +5,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class GetSavedDialogsHandler(
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IMessageAppService messageAppService,
     IGetHistoryConverterService getHistoryConverterService,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSavedDialogs, MyTelegram.Schema.Messages.ISavedDialogs>
@@ -14,7 +13,6 @@ internal sealed class GetSavedDialogsHandler(
     {
         if (obj.ParentPeer != null)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, obj.ParentPeer);
             var monoforumPeer = peerHelper.GetPeer(obj.ParentPeer);
             var monoforumReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(monoforumPeer.PeerId));
             if (monoforumReadModel == null || !monoforumReadModel.IsMonoforum)

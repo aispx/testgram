@@ -16,14 +16,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// </remarks>
 internal sealed class GetSavedMusicByIDHandler(
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IUserAppService userAppService,
     IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetSavedMusicByID, MyTelegram.Schema.Users.ISavedMusic>, IObjectHandler
 {
     protected override async Task<MyTelegram.Schema.Users.ISavedMusic> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetSavedMusicByID obj)
     {
         // Validate access hash
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Id);
 
         // Get target user
         var targetPeer = peerHelper.GetPeer(obj.Id, input.UserId);

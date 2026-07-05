@@ -8,15 +8,13 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class SendReactionHandler(
     ICommandBus commandBus,
     IQueryProcessor queryProcessor,
-    IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper)
+    IPeerHelper peerHelper)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendReaction, MyTelegram.Schema.IUpdates>
 {
     private const string RecentKey = "recent_reactions";
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSendReaction obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
 
         // For private chats, OwnerPeerId is the current user

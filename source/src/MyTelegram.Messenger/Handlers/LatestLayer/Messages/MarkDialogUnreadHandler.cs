@@ -15,13 +15,11 @@ internal sealed class MarkDialogUnreadHandler(
     ICommandBus commandBus,
     IPeerHelper peerHelper,
     IQueryProcessor queryProcessor,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase,
     IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestMarkDialogUnread, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestMarkDialogUnread obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.ParentPeer);
         switch (obj.Peer)
         {
             case TInputDialogPeer inputDialogPeer:

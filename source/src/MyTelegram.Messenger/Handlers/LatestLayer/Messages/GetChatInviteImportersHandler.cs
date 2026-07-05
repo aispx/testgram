@@ -17,13 +17,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetChatInviteImportersHandler(IQueryProcessor queryProcessor, IAccessHashHelper accessHashHelper, IPeerHelper peerHelper, IUserConverterService userConverterService) : RpcResultObjectHandler<RequestGetChatInviteImporters, IChatInviteImporters>
+internal sealed class GetChatInviteImportersHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IUserConverterService userConverterService) : RpcResultObjectHandler<RequestGetChatInviteImporters, IChatInviteImporters>
 {
     protected override async Task<IChatInviteImporters> HandleCoreAsync(IRequestInput input, RequestGetChatInviteImporters obj)
     {
         if (obj.Peer is TInputPeerChannel inputPeerChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, inputPeerChannel);
             var userPeer = peerHelper.GetPeer(obj.OffsetUser);
             var channelAdminReadModel = await queryProcessor.ProcessAsync(new GetChatAdminQuery(inputPeerChannel.ChannelId, input.UserId));
             if (channelAdminReadModel == null)

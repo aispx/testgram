@@ -13,13 +13,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class GetFactCheckHandler(
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetFactCheck, TVector<MyTelegram.Schema.IFactCheck>>
 {
     protected override async Task<TVector<MyTelegram.Schema.IFactCheck>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetFactCheck obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer == null)
         {

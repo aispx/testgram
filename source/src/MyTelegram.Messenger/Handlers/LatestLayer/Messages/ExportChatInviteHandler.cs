@@ -21,13 +21,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class ExportChatInviteHandler(ICommandBus commandBus, IIdGenerator idGenerator, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IChatInviteLinkHelper chatInviteLinkHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestExportChatInvite, MyTelegram.Schema.IExportedChatInvite>
+internal sealed class ExportChatInviteHandler(ICommandBus commandBus, IIdGenerator idGenerator, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IChatInviteLinkHelper chatInviteLinkHelper, IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestExportChatInvite, MyTelegram.Schema.IExportedChatInvite>
 {
     protected override async Task<MyTelegram.Schema.IExportedChatInvite> HandleCoreAsync(IRequestInput input, RequestExportChatInvite obj)
     {
         if (obj.Peer is TInputPeerChannel inputPeerChannel)
         {
-            await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
             var chatInviteId = await idGenerator.NextLongIdAsync(IdType.InviteId, inputPeerChannel.ChannelId);
             var inviteHash = chatInviteLinkHelper.GenerateInviteLink();
             var channelReadModel = await channelAppService.GetAsync(inputPeerChannel.ChannelId);

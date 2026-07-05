@@ -4,12 +4,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class SetChatAvailableReactionsHandler(
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSetChatAvailableReactions, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSetChatAvailableReactions obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
 
         if (obj.PaidEnabled.HasValue && peer.PeerType == PeerType.Channel)

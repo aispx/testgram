@@ -15,11 +15,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class ToggleSuggestedPostApprovalHandler(IAccessHashHelper accessHashHelper, IPeerHelper peerHelper, IQueryProcessor queryProcessor, IMessageAppService messageAppService, IChannelAppService channelAppService, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestToggleSuggestedPostApproval, MyTelegram.Schema.IUpdates>
+internal sealed class ToggleSuggestedPostApprovalHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IMessageAppService messageAppService, IChannelAppService channelAppService, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestToggleSuggestedPostApproval, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestToggleSuggestedPostApproval obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
 
         var monoforumPeer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (monoforumPeer.PeerType != PeerType.Channel)

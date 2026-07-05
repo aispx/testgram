@@ -10,13 +10,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class GetDialogUnreadMarksHandler(
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetDialogUnreadMarks, TVector<MyTelegram.Schema.IDialogPeer>>
 {
     protected override async Task<TVector<MyTelegram.Schema.IDialogPeer>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetDialogUnreadMarks obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.ParentPeer);
         if (obj.ParentPeer == null)
         {
             return [];

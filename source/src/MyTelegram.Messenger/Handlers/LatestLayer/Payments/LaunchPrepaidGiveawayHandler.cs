@@ -15,8 +15,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 internal sealed class LaunchPrepaidGiveawayHandler(
     IMongoDatabase mongoDatabase,
     IMessageAppService messageAppService,
-    IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper)
+    IPeerHelper peerHelper)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestLaunchPrepaidGiveaway, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(
@@ -24,7 +23,6 @@ internal sealed class LaunchPrepaidGiveawayHandler(
         MyTelegram.Schema.Payments.RequestLaunchPrepaidGiveaway obj)
     {
         // Validate peer
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var targetPeer = peerHelper.GetPeer(obj.Peer, input.UserId);
 
         if (targetPeer.PeerType != PeerType.Channel)

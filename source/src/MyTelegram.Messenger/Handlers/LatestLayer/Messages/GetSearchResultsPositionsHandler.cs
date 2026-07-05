@@ -7,13 +7,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </summary>
 internal sealed class GetSearchResultsPositionsHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchResultsPositions, MyTelegram.Schema.Messages.ISearchResultsPositions>
+    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchResultsPositions, MyTelegram.Schema.Messages.ISearchResultsPositions>
 {
     protected override async Task<MyTelegram.Schema.Messages.ISearchResultsPositions> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSearchResultsPositions obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
         var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
         var filter = MessageSearchMongoHelper.BuildFilter(input, peerHelper, obj.Peer, obj.SavedPeerId, null, obj.Filter, obj.OffsetId);
         var count = (int)await collection.CountDocumentsAsync(filter);

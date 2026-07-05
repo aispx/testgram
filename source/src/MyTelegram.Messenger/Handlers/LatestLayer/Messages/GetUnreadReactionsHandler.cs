@@ -1,14 +1,11 @@
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class GetUnreadReactionsHandler(
     IQueryProcessor queryProcessor,
-    IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper)
+    IPeerHelper peerHelper)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetUnreadReactions, MyTelegram.Schema.Messages.IMessages>
 {
     protected override async Task<MyTelegram.Schema.Messages.IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetUnreadReactions obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, input.UserId);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;

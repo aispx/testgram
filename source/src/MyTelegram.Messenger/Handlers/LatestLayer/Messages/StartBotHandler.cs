@@ -21,8 +21,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class StartBotHandler(
     IQueryProcessor queryProcessor,
     IMessageAppService messageAppService,
-    IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestStartBot, MyTelegram.Schema.IUpdates>
+    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestStartBot, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestStartBot obj)
     {
@@ -38,7 +37,6 @@ internal sealed class StartBotHandler(
             RpcErrors.RpcErrors400.StartParamInvalid.ThrowRpcError();
 
         // Validate bot
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Bot);
 
         long botUserId = obj.Bot switch
         {
@@ -58,7 +56,6 @@ internal sealed class StartBotHandler(
             RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
 
         // Validate peer
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
 
         // Build /start command message

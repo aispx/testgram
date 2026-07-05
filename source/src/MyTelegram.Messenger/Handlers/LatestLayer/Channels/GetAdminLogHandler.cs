@@ -10,7 +10,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class GetAdminLogHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IUserConverterService userConverterService,
     IQueryProcessor queryProcessor,
     IChatConverterService chatConverterService)
@@ -27,7 +26,6 @@ internal sealed class GetAdminLogHandler(
             return null!;
         }
 
-        await accessHashHelper.CheckAccessHashAsync(input, inputChannel.ChannelId, inputChannel.AccessHash, AccessHashType.Channel);
         var peer = peerHelper.GetPeer(inputChannel.ChannelId);
 
         if (peer.PeerType != PeerType.Channel)

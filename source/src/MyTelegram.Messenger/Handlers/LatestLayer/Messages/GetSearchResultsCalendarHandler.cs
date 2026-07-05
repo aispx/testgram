@@ -8,14 +8,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class GetSearchResultsCalendarHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IMessageAppService messageAppService,
     IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchResultsCalendar, MyTelegram.Schema.Messages.ISearchResultsCalendar>
 {
     protected override async Task<MyTelegram.Schema.Messages.ISearchResultsCalendar> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSearchResultsCalendar obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
-        await accessHashHelper.CheckAccessHashAsync(input, obj.SavedPeerId);
         var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
         var filter = MessageSearchMongoHelper.BuildFilter(input, peerHelper, obj.Peer, obj.SavedPeerId, null, obj.Filter, obj.OffsetId, obj.OffsetDate);
         var count = (int)await collection.CountDocumentsAsync(filter);

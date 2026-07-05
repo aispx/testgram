@@ -18,7 +18,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class GetExportedChatInviteHandler(
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor,
     IChannelAppService channelAppService,
     IUserConverterService userConverterService,
@@ -27,7 +26,6 @@ internal sealed class GetExportedChatInviteHandler(
 {
     protected override async Task<MyTelegram.Schema.Messages.IExportedChatInvite> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetExportedChatInvite obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer.PeerType != PeerType.Channel)
         {

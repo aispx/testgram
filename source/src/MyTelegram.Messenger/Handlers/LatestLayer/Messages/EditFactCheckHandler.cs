@@ -15,7 +15,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class EditFactCheckHandler(
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor,
     IMessageConverterService messageConverterService,
     IMongoDatabase mongoDatabase)
@@ -36,7 +35,6 @@ internal sealed class EditFactCheckHandler(
             RpcErrors.RpcErrors400.InputTextTooLong.ThrowRpcError();
         }
 
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var (ownerPeerId, messageReadModel) = await GetMessageAsync(input, obj.Peer, obj.MsgId);
         var doc = await FactCheckHelper.UpsertAsync(mongoDatabase, ownerPeerId, obj.MsgId, obj.Text, input.UserId, CurrentDate);
         return ToUpdates(input, messageReadModel, FactCheckHelper.ToFactCheck(doc, needCheck: false));

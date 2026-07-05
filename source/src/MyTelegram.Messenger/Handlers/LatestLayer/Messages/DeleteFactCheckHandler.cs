@@ -14,7 +14,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class DeleteFactCheckHandler(
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor,
     IMessageConverterService messageConverterService,
     IMongoDatabase mongoDatabase)
@@ -27,7 +26,6 @@ internal sealed class DeleteFactCheckHandler(
             RpcErrors.RpcErrors403.ChatActionForbidden.ThrowRpcError();
         }
 
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer == null)
         {

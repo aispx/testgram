@@ -5,12 +5,10 @@ internal sealed class SendPaidReactionHandler(
     ICommandBus commandBus,
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendPaidReaction, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSendPaidReaction obj)
     {
-        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
 
         if (peer.PeerType != PeerType.Channel)

@@ -11,7 +11,6 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// </remarks>
 internal sealed class GetRequirementsToContactHandler(
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
     IUserAppService userAppService) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetRequirementsToContact, TVector<MyTelegram.Schema.IRequirementToContact>>
 {
     protected override async Task<TVector<MyTelegram.Schema.IRequirementToContact>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetRequirementsToContact obj)
@@ -23,7 +22,6 @@ internal sealed class GetRequirementsToContactHandler(
             try
             {
                 // Validate access hash
-                await accessHashHelper.CheckAccessHashAsync(input, inputUser);
 
                 // Get target user
                 var targetPeer = peerHelper.GetPeer(inputUser, input.UserId);
