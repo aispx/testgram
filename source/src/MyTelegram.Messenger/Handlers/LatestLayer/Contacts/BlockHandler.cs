@@ -26,7 +26,7 @@ internal sealed class BlockHandler(IPeerHelper peerHelper, IBlockCacheAppService
         // Item 22: actually persist the block so SendMessage / SetTyping can refuse the
         // sender, and notify the blocker's other sessions via updatePeerBlocked so all
         // devices show the user as blocked immediately.
-        await blockCacheAppService.BlockAsync(input.UserId, target.PeerId);
+        await blockCacheAppService.BlockAsync(input.UserId, target.PeerId, target.PeerType, obj.MyStoriesFrom);
 
         IPeer targetPeer = target.PeerType switch
         {

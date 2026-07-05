@@ -24,7 +24,7 @@ internal sealed class UnblockHandler(IPeerHelper peerHelper, IBlockCacheAppServi
 
         // Item 22: undo the persisted block and push the matching updatePeerBlocked so
         // other sessions of the blocker re-enable the chat UI immediately.
-        await blockCacheAppService.UnblockAsync(input.UserId, target.PeerId);
+        await blockCacheAppService.UnblockAsync(input.UserId, target.PeerId, target.PeerType, obj.MyStoriesFrom);
 
         IPeer targetPeer = target.PeerType switch
         {

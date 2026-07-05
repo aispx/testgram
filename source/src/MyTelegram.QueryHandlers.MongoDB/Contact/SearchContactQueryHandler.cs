@@ -2,14 +2,19 @@
 
 public class SearchContactQueryHandler(IQueryOnlyReadModelStore<ContactReadModel> store) : IQueryHandler<SearchContactQuery, IReadOnlyCollection<IContactReadModel>>
 {
+    private const int MinKeywordLength = 2;
+    private const int MaxLimit = 50;
+
     public async Task<IReadOnlyCollection<IContactReadModel>> ExecuteQueryAsync(SearchContactQuery query,
         CancellationToken cancellationToken)
     {
         var q = query.Keyword?.Trim();
-        if (string.IsNullOrEmpty(q))
+        if (string.IsNullOrEmpty(q) || q.Length < MinKeywordLength)
         {
             return Array.Empty<IContactReadModel>();
         }
+
+        var limit = query.Limit <= 0 ? 20 : Math.Min(query.Limit, MaxLimit);
 
         var qLower = q.ToLowerInvariant();
         var qUpper = q.ToUpperInvariant();
@@ -24,6 +29,7 @@ public class SearchContactQueryHandler(IQueryOnlyReadModelStore<ContactReadModel
                 // Phone contains query
                 (p.Phone != null && p.Phone.Contains(q))
             ),
+            limit: limit,
             cancellationToken: cancellationToken);
 
         // Sort by relevance in memory with case-insensitive comparison
@@ -34,6 +40,7 @@ public class SearchContactQueryHandler(IQueryOnlyReadModelStore<ContactReadModel
                 (c.Phone != null && c.Phone.Contains(q)))
             .OrderByDescending(c => c.FirstName.StartsWith(qLower, StringComparison.OrdinalIgnoreCase) ? 1 : 0)
             .ThenBy(c => c.FirstName)
+            .Take(limit)
             .ToList();
     }
 }

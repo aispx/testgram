@@ -57,9 +57,14 @@ public class ContactAppService(
     IChannelAppService channelAppService,
     IUserAppService userAppService,
     IPeerHelper peerHelper,
+    ILogger<ContactAppService> logger,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : BaseAppService, IContactAppService, ITransientDependency
 {
+    private const int MinSearchKeywordLength = 2;
+    private const int MinNonContactSearchKeywordLength = 3;
+    private const int MaxSearchResultLimit = 50;
+
     public ContactType GetContactType(long selfUserId, long targetUserId,
         IReadOnlyCollection<IContactReadModel> contactReadModels)
     {
@@ -93,23 +98,13 @@ public class ContactAppService(
     public async Task<SearchContactOutput> SearchAsync(long selfUserId,
         string keyword, int limit)
     {
-        // Changed from > 4 to >= 1 to allow shorter searches like "chat"
-        if (keyword?.Length >= 1)
+        var searchKeyword = NormalizeSearchKeyword(keyword);
+        if (searchKeyword.Length >= MinSearchKeywordLength)
         {
-            var searchKeyword = keyword;
-            if (searchKeyword.StartsWith("@"))
-            {
-                searchKeyword = keyword[1..];
-            }
-
-            var defaultLimit = limit;
-            if (defaultLimit <= 0 || defaultLimit > 1000)
-            {
-                defaultLimit = 20;
-            }
+            var defaultLimit = NormalizeLimit(limit);
 
             var contactReadModels = await queryProcessor
-                .ProcessAsync(new SearchContactQuery(selfUserId, searchKeyword));
+                .ProcessAsync(new SearchContactQuery(selfUserId, searchKeyword, defaultLimit));
             var userNameReadModels = await queryProcessor
                 .ProcessAsync(new SearchUserNameQuery(searchKeyword));
 
@@ -117,7 +112,7 @@ public class ContactAppService(
             var channelIdList = userNameReadModels.Where(p => p.PeerType == PeerType.Channel).Select(p => p.PeerId)
                 .ToList();
             var channelIds2 =
-                await queryProcessor.ProcessAsync(new GetChannelIdsByKeywordQuery(selfUserId, keyword, defaultLimit));
+                await queryProcessor.ProcessAsync(new GetChannelIdsByKeywordQuery(selfUserId, searchKeyword, defaultLimit));
             channelIdList.AddRange(channelIds2);
             channelIdList = channelIdList.Distinct().ToList();
 
@@ -128,10 +123,11 @@ public class ContactAppService(
             var userReadModels = await userAppService.GetListAsync(userIdList);
             var allUserReadModels = userReadModels.ToList();
 
-            if (options.CurrentValue.EnableSearchNonContacts)
+            if (options.CurrentValue.EnableSearchNonContacts &&
+                searchKeyword.Length >= MinNonContactSearchKeywordLength)
             {
                 var userReadModels2 =
-                    await queryProcessor.ProcessAsync(new SearchUserByKeywordQuery(keyword, defaultLimit));
+                    await queryProcessor.ProcessAsync(new SearchUserByKeywordQuery(searchKeyword, defaultLimit));
                 allUserReadModels.AddRange(userReadModels2);
                 allUserReadModels = allUserReadModels.DistinctBy(p => p.UserId).ToList();
             }
@@ -142,16 +138,16 @@ public class ContactAppService(
             var chatReadModels = new List<IChannelReadModel>();
             try
             {
-                var chatIds = await queryProcessor.ProcessAsync(new GetChannelIdsByKeywordQuery(selfUserId, keyword, defaultLimit));
+                var chatIds = await queryProcessor.ProcessAsync(new GetChannelIdsByKeywordQuery(selfUserId, searchKeyword, defaultLimit));
                 if (chatIds.Any())
                 {
                     var chats = await channelAppService.GetListAsync(chatIds);
                     chatReadModels = chats.Where(c => !c.Broadcast).ToList(); // Groups are non-broadcast channels
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore errors in chat search
+                logger.LogWarning(ex, "Chat search failed while resolving contacts search results");
             }
 
             var photoReadModels =
@@ -176,5 +172,16 @@ public class ContactAppService(
             new List<IChannelReadModel>(),
             new List<IPrivacyReadModel>(),
             new List<IChannelMemberReadModel>());
+    }
+
+    private static int NormalizeLimit(int limit)
+    {
+        return limit <= 0 ? 20 : Math.Min(limit, MaxSearchResultLimit);
+    }
+
+    private static string NormalizeSearchKeyword(string? keyword)
+    {
+        var q = keyword?.Trim() ?? string.Empty;
+        return q.StartsWith("@") ? q[1..].Trim() : q;
     }
 }
