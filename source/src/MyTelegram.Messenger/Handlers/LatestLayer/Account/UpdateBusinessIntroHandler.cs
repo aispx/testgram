@@ -38,7 +38,9 @@ internal sealed class UpdateBusinessIntroHandler : RpcResultObjectHandler<Reques
                     Date = 0,
                     MimeType = string.Empty,
                     Size = 0,
-                    DcId = 0,
+                    // Never advertise dc_id=0: the client would try to fetch the sticker
+                    // from a non-existent datacenter and spam help.getConfig.
+                    DcId = MyTelegramConsts.MediaDcId,
                     Attributes = new TVector<IDocumentAttribute>()
                 };
             }

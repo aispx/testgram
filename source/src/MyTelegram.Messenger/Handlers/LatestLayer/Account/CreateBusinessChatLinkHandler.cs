@@ -48,7 +48,7 @@ internal sealed class CreateBusinessChatLinkHandler : RpcResultObjectHandler<Req
 
         return new TBusinessChatLink
         {
-            Link = $"t.me/biz/{slug}",
+            Link = TelegramDeepLinkHelper.GetBusinessChatLink(slug),
             Title = title,
             Message = message,
             Views = views
