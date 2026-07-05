@@ -258,7 +258,7 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
             Entities: item.Entities,
             Media: item.Media,
             FwdHeader: fwd,
-            Views: IsForwardedChannelPost(fwd) ? 0 : null,
+            Views: MessageForwardViewsHelper.ResolveForwardedViews(_state.Post, fwd),
             PollId: item.PollId,
             EditHide: _state.ForwardFromLinkedChannel,
             Reply: _state.ForwardFromLinkedChannel ? item.Reply : null,
@@ -299,11 +299,5 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
         Publish(command);
 
         return outMessageId;
-    }
-
-    private static bool IsForwardedChannelPost(MessageFwdHeader? fwdHeader)
-    {
-        return fwdHeader?.FromId?.PeerType == PeerType.Channel &&
-               fwdHeader.ChannelPost.HasValue;
     }
 }

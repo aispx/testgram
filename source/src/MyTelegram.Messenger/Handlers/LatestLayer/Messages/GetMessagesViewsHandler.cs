@@ -17,6 +17,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class GetMessagesViewsHandler(
     IPeerHelper peerHelper,
     IChannelMessageViewsAppService channelMessageViewsAppService,
+    IChannelAppService channelAppService,
     IAccessHashHelper accessHashHelper,
     IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetMessagesViews, MyTelegram.Schema.Messages.IMessageViews>
 {
@@ -26,6 +27,17 @@ internal sealed class GetMessagesViewsHandler(
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer.PeerType == PeerType.Channel)
         {
+            var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
+            if (channelReadModel is { Broadcast: false })
+            {
+                return new MyTelegram.Schema.Messages.TMessageViews
+                {
+                    Views = [..obj.Id.Select(_ => (MyTelegram.Schema.IMessageViews)new Schema.TMessageViews()).ToList()],
+                    Chats = new TVector<IChat>(),
+                    Users = new TVector<IUser>()
+                };
+            }
+
             if (obj.Id.Max() < 0)
             {
                 return new MyTelegram.Schema.Messages.TMessageViews

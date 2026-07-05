@@ -293,7 +293,7 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                 fwdHeader: fwdHeader,
                 messageSubType: MessageSubType.ForwardMessage,
                 postAuthor: sourceMessage.PostAuthor,
-                views: IsForwardedChannelPost(fwdHeader) ? 0 : null,
+                views: MessageForwardViewsHelper.ResolveForwardedViews(post, fwdHeader),
                 pollId: sourceMessage.PollId,
                 invertMedia: sourceMessage.InvertMedia,
                 noForwards: obj.Noforwards
@@ -426,12 +426,6 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
             PsaType = null,
             ForwardFromLinkedChannel = false
         };
-    }
-
-    private static bool IsForwardedChannelPost(MessageFwdHeader? fwdHeader)
-    {
-        return fwdHeader?.FromId?.PeerType == PeerType.Channel &&
-               fwdHeader.ChannelPost.HasValue;
     }
 
     private static MessageFwdHeader CloneForwardHeader(MessageFwdHeader source)
