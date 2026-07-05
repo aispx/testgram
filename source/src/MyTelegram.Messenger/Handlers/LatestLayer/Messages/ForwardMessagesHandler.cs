@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Domain.Shared;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 using MyTelegram.ReadModel.Interfaces;
 using MyTelegram.Schema;
@@ -70,7 +71,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
+public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IAccessHashHelper accessHashHelper, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
 {
     public async Task<IUpdates> HandleAsync(IRequestInput input, RequestForwardMessages obj)
     {
@@ -253,6 +254,16 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
             var media = sourceMessage.Media2 ?? sourceMessage.Media?.ToTObject<IMessageMedia>();
             var messageText = obj.DropMediaCaptions ? string.Empty : sourceMessage.Message;
+            if (!obj.DropMediaCaptions &&
+                string.IsNullOrEmpty(messageText) &&
+                sourceMessage.EncryptedData?.Length > 0)
+            {
+                messageText = messageEncryptionHelper.Decrypt(
+                    sourceMessage.OwnerPeerId,
+                    sourceMessage.MessageId,
+                    sourceMessage.EncryptedData.Value);
+            }
+
             if (string.IsNullOrEmpty(messageText) && media == null)
             {
                 continue;
@@ -282,7 +293,7 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                 fwdHeader: fwdHeader,
                 messageSubType: MessageSubType.ForwardMessage,
                 postAuthor: sourceMessage.PostAuthor,
-                views: sourceMessage.Views,
+                views: IsForwardedChannelPost(fwdHeader) ? 0 : null,
                 pollId: sourceMessage.PollId,
                 invertMedia: sourceMessage.InvertMedia,
                 noForwards: obj.Noforwards
@@ -415,6 +426,12 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
             PsaType = null,
             ForwardFromLinkedChannel = false
         };
+    }
+
+    private static bool IsForwardedChannelPost(MessageFwdHeader? fwdHeader)
+    {
+        return fwdHeader?.FromId?.PeerType == PeerType.Channel &&
+               fwdHeader.ChannelPost.HasValue;
     }
 
     private static MessageFwdHeader CloneForwardHeader(MessageFwdHeader source)

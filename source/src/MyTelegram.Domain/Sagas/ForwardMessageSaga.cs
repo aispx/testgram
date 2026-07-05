@@ -1,5 +1,6 @@
 using MyTelegram.Domain.Shared;
-﻿namespace MyTelegram.Domain.Sagas;
+
+namespace MyTelegram.Domain.Sagas;
 
 public class MessageReplyCreatedSagaEvent(long postChannelId, int postMessageId, long channelId, int messageId)
     : AggregateEvent<ForwardMessageSaga, ForwardMessageSagaId>
@@ -98,11 +99,10 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
     private async Task<int> SendMessageToTargetPeerAsync(MessageForwardedEvent aggregateEvent)
     {
         var item = aggregateEvent.OriginalMessageItem;
-        Console.WriteLine($"[FwdSaga] item: ownerPeer={item.OwnerPeer}, senderPeer={item.SenderPeer}, out={item.IsOut}, msgId={item.MessageId}");
         var isForwardToSavedMessages = _state.ToPeer.PeerId == _state.RequestInfo.UserId;
         long? postChannelId = null;
         int? postMessageId = null;
-        Peer? savedPeerId;
+        Peer? savedPeerId = null;
         Peer? sendAs = _state.SendAs;
         var isOut = true;
         string? fromName = null;
@@ -188,15 +188,17 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
                 fwd.SavedFromPeer = _state.FromPeer;
 
                 sendAs = aggregateEvent.OriginalMessageItem.SendAs;
+                savedPeerId = _state.FromPeer;
+            }
+            else
+            {
+                fwd.SavedFromPeer = null;
+                fwd.SavedFromMsgId = null;
             }
             if (!string.IsNullOrEmpty(fwd.FromName))
             {
                 fwd.FromId = null;
                 savedPeerId = MyTelegramConsts.AnonymousUserId.ToUserPeer();
-            }
-            else
-            {
-                savedPeerId = null;
             }
         }
 
@@ -256,7 +258,7 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
             Entities: item.Entities,
             Media: item.Media,
             FwdHeader: fwd,
-            Views: item.Views,
+            Views: IsForwardedChannelPost(fwd) ? 0 : null,
             PollId: item.PollId,
             EditHide: _state.ForwardFromLinkedChannel,
             Reply: _state.ForwardFromLinkedChannel ? item.Reply : null,
@@ -297,5 +299,11 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
         Publish(command);
 
         return outMessageId;
+    }
+
+    private static bool IsForwardedChannelPost(MessageFwdHeader? fwdHeader)
+    {
+        return fwdHeader?.FromId?.PeerType == PeerType.Channel &&
+               fwdHeader.ChannelPost.HasValue;
     }
 }
