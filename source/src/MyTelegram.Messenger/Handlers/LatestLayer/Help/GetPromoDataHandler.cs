@@ -12,10 +12,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Help;
 internal sealed class GetPromoDataHandler : RpcResultObjectHandler<MyTelegram.Schema.Help.RequestGetPromoData, MyTelegram.Schema.Help.IPromoData>
 {
     private readonly IMongoDatabase _database;
+    private readonly IChatConverterService _chatConverterService;
 
-    public GetPromoDataHandler(IMongoDatabase database)
+    public GetPromoDataHandler(IMongoDatabase database, IChatConverterService chatConverterService)
     {
         _database = database;
+        _chatConverterService = chatConverterService;
     }
 
     protected override async Task<IPromoData> HandleCoreAsync(IRequestInput input, RequestGetPromoData obj)
@@ -34,36 +36,15 @@ internal sealed class GetPromoDataHandler : RpcResultObjectHandler<MyTelegram.Sc
             };
         }
 
-        // Extract channel data
         var channelId = channelDoc["ChannelId"].AsInt64;
-        var accessHash = channelDoc["AccessHash"].AsInt64;
-        var title = channelDoc["Title"].AsString;
-        var username = channelDoc["UserName"].AsString;
-
-        // Return promo data with xiegram channel (PSA style - shows banner at top)
-        var channelObj = new TChannel
-        {
-            Id = channelId,
-            AccessHash = accessHash,
-            Title = title,
-            Username = username,
-            Broadcast = channelDoc.GetValue("Broadcast", false).AsBoolean,
-            Megagroup = channelDoc.GetValue("MegaGroup", false).AsBoolean,
-            Verified = channelDoc.GetValue("Verified", false).AsBoolean,
-            Scam = channelDoc.GetValue("Scam", false).AsBoolean,
-            Fake = channelDoc.GetValue("Fake", false).AsBoolean,
-            Date = channelDoc.GetValue("Date", 0).AsInt32,
-            ParticipantsCount = channelDoc.GetValue("ParticipantsCount", 0).AsInt32,
-            // Add required fields to prevent NullReferenceException
-            Photo = new TChatPhotoEmpty(),
-            RestrictionReason = new TVector<IRestrictionReason>()
-        };
+        var channelObj = await _chatConverterService.GetChannelAsync(input, channelId, false, false, input.Layer);
 
         return new TPromoData
         {
-            Expires = int.MaxValue, // Never expires
+            Expires = DateTime.UtcNow.AddHours(1).ToTimestamp(),
             Peer = new TPeerChannel { ChannelId = channelId },
-            // No PsaType/PsaMessage = PROMO_TYPE_OTHER (shows below folders, not as banner)
+            PsaType = "premium_last_day",
+            PsaMessage = "Сегодня — последняя возможность оплатить Telegram Premium.",
             Chats = new TVector<IChat> { channelObj },
             Users = new TVector<IUser>(),
             PendingSuggestions = new TVector<string>(),

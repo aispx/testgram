@@ -104,7 +104,9 @@ internal sealed class GetPremiumPromoHandler(
             Size = d.Contains("Size") ? GetInt64(d["Size"]) : 0,
             Thumbs = new TVector<IPhotoSize>(),
             VideoThumbs = new TVector<IVideoSize>(),
-            DcId = d.Contains("DcId") ? GetInt32(d["DcId"]) : 0,
+            // dc_id=0 points the client at a non-existent datacenter and makes it spam
+            // help.getConfig; fall back to the media DC like the other document builders.
+            DcId = d.Contains("DcId") && GetInt32(d["DcId"]) > 0 ? GetInt32(d["DcId"]) : MyTelegramConsts.MediaDcId,
             Attributes = attributes
         };
     }

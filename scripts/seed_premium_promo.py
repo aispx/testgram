@@ -14,6 +14,7 @@ Usage:
        python3 seed_premium_promo.py --import
 """
 import asyncio
+import argparse
 import io
 import json
 import os
@@ -115,7 +116,8 @@ async def cmd_download():
     from telethon import TelegramClient
     from telethon.tl import functions, types
 
-    assert TG_API_ID and TG_API_HASH and TG_PHONE, "Set TG_API_ID, TG_API_HASH, TG_PHONE env vars"
+    if not TG_API_ID or not TG_API_HASH or not TG_PHONE:
+        raise RuntimeError("Set TG_API_ID, TG_API_HASH, TG_PHONE env vars")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     client = TelegramClient("premium_promo_seeder", TG_API_ID, TG_API_HASH)
@@ -223,14 +225,16 @@ async def cmd_download():
     await client.disconnect()
 
 
-def cmd_import():
+def cmd_import() -> int:
     import pymongo
     from minio import Minio
 
-    assert MINIO_ACCESS_KEY and MINIO_SECRET_KEY, "Set MINIO_ACCESS_KEY and MINIO_SECRET_KEY env vars"
+    if not MINIO_ACCESS_KEY or not MINIO_SECRET_KEY:
+        print("ERROR: Set MINIO_ACCESS_KEY and MINIO_SECRET_KEY env vars.")
+        return 2
     if not MANIFEST_FILE.exists():
         print(f"ERROR: Manifest file {MANIFEST_FILE} not found. Run --download first.")
-        return
+        return 2
 
     manifest = json.loads(MANIFEST_FILE.read_text())
     minio = Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=False)
@@ -320,13 +324,31 @@ def cmd_import():
     if promo_docs:
         promo_col.insert_many(promo_docs)
     print(f"Imported premium promo mappings: {len(promo_docs)}")
+    return 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Download/import Telegram Premium promo media for MyTelegram.")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--download", action="store_true", help="Download promo metadata/media from Telegram via Telethon.")
+    mode.add_argument("--import", dest="import_", action="store_true", help="Import downloaded media into MongoDB/MinIO.")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.download:
+        if not TG_API_ID or not TG_API_HASH or not TG_PHONE:
+            print("ERROR: Set TG_API_ID, TG_API_HASH, TG_PHONE env vars.")
+            return 2
+        asyncio.run(cmd_download())
+        return 0
+
+    if args.import_:
+        return cmd_import()
+
+    return 2
 
 
 if __name__ == "__main__":
-    import sys
-    if "--download" in sys.argv:
-        asyncio.run(cmd_download())
-    elif "--import" in sys.argv:
-        cmd_import()
-    else:
-        print(__doc__)
+    raise SystemExit(main())
