@@ -6,30 +6,60 @@ namespace MyTelegram.Messenger.Services.Stories;
 
 public static class StoryHelper
 {
-public static IStoryItem ConvertToStoryItem(StoryDocument doc, long requestingUserId = 0)
-{
-    if (doc.Deleted || doc.ExpireDate < DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+    public static IStoryItem ConvertToStoryItem(StoryDocument doc, long requestingUserId = 0)
     {
-        return new TStoryItemDeleted
+        if (doc.Deleted || doc.ExpireDate < DateTimeOffset.UtcNow.ToUnixTimeSeconds())
         {
-            Id = doc.StoryId
-        };
+            return new TStoryItemDeleted
+            {
+                Id = doc.StoryId
+            };
+        }
+
+        if (doc.IsLive)
+        {
+            return ConvertToLiveStoryItem(doc, requestingUserId);
+        }
+
+        return ConvertToStoryItemInternal(doc, requestingUserId);
     }
 
-    if (doc.IsLive)
+    private static IStoryItem ConvertToLiveStoryItem(StoryDocument doc, long requestingUserId = 0)
     {
-        return new TStoryItemSkipped
+        if (doc.GroupCallId == 0 || doc.GroupCallAccessHash == 0)
+        {
+            return new TStoryItemSkipped
+            {
+                Id = doc.StoryId,
+                Date = (int)doc.Date,
+                ExpireDate = (int)doc.ExpireDate,
+                Live = true,
+                CloseFriends = doc.CloseFriends
+            };
+        }
+
+        return new TStoryItem
         {
             Id = doc.StoryId,
             Date = (int)doc.Date,
             ExpireDate = (int)doc.ExpireDate,
-            Live = true,
-            CloseFriends = doc.CloseFriends
+            Caption = doc.Caption,
+            Pinned = doc.Pinned,
+            Noforwards = doc.NoForwards,
+            Out = doc.OwnerPeerId == requestingUserId,
+            Edited = doc.Edited,
+            CloseFriends = doc.CloseFriends,
+            Media = new TMessageMediaVideoStream
+            {
+                RtmpStream = doc.RtmpStream,
+                Call = new TInputGroupCall
+                {
+                    Id = doc.GroupCallId,
+                    AccessHash = doc.GroupCallAccessHash
+                }
+            }
         };
     }
-
-    return ConvertToStoryItemInternal(doc, requestingUserId);
-}
 
     private static IStoryItem ConvertToStoryItemInternal(StoryDocument doc, long requestingUserId = 0)
     {
@@ -129,19 +159,7 @@ public static IStoryItem ConvertToStoryItem(StoryDocument doc, long requestingUs
             };
         }
 
-        IPeer? fromId = null;
-        if (doc.OwnerPeerType == 0)
-        {
-            fromId = new TPeerUser { UserId = doc.OwnerPeerId };
-        }
-        else if (doc.OwnerPeerType == 1)
-        {
-            fromId = new TPeerChat { ChatId = doc.OwnerPeerId };
-        }
-        else if (doc.OwnerPeerType == 2)
-        {
-            fromId = new TPeerChannel { ChannelId = doc.OwnerPeerId };
-        }
+        var fromId = CreateFromPeer(doc);
 
         return new TStoryItem
         {
@@ -164,6 +182,17 @@ public static IStoryItem ConvertToStoryItem(StoryDocument doc, long requestingUs
                 ForwardsCount = doc.ForwardsCount,
                 ReactionsCount = doc.ReactionsCount
             }
+        };
+    }
+
+    private static IPeer? CreateFromPeer(StoryDocument doc)
+    {
+        return doc.OwnerPeerType switch
+        {
+            0 => new TPeerUser { UserId = doc.OwnerPeerId },
+            1 => new TPeerChat { ChatId = doc.OwnerPeerId },
+            2 => new TPeerChannel { ChannelId = doc.OwnerPeerId },
+            _ => null
         };
     }
 

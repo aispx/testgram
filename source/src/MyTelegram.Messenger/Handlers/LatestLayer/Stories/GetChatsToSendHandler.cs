@@ -5,7 +5,10 @@ using MyTelegram.Schema.Messages;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 
-internal sealed class GetChatsToSendHandler(IMongoDatabase mongoDatabase)
+internal sealed class GetChatsToSendHandler(
+    IMongoDatabase mongoDatabase,
+    IQueryProcessor queryProcessor,
+    IChatConverterService chatConverterService)
     : RpcResultObjectHandler<MyTelegram.Schema.Stories.RequestGetChatsToSend, IChats>
 {
     private readonly IMongoCollection<BsonDocument> _channelMembersCollection =
@@ -26,18 +29,14 @@ internal sealed class GetChatsToSendHandler(IMongoDatabase mongoDatabase)
             return new TChats { Chats = new TVector<IChat>() };
         }
         
-        var chats = new TVector<IChat>();
-        foreach (var channelId in channelIds)
-        {
-            chats.Add(new TChannel
-            {
-                Id = channelId,
-                Title = "Channel",
-                Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                AccessHash = 0
-            });
-        }
+        var channelMemberReadModels = await queryProcessor.ProcessAsync(
+            new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIds));
+        var chats = await chatConverterService.GetChannelListAsync(
+            input,
+            channelIds,
+            channelMemberReadModels,
+            input.Layer);
         
-        return new TChats { Chats = chats };
+        return new TChats { Chats = new TVector<IChat>(chats) };
     }
 }

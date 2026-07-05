@@ -147,22 +147,9 @@ internal sealed class StartLiveHandler(
 
     private IUpdates BuildUpdates(GroupCallDocument groupCall, StoryDocument storyDocument, long randomId)
     {
-        var storyItem = new TStoryItemSkipped
-        {
-            Id = storyDocument.StoryId,
-            Date = (int)storyDocument.Date,
-            ExpireDate = (int)storyDocument.ExpireDate,
-            Live = true,
-            CloseFriends = storyDocument.CloseFriends
-        };
+        var storyItem = StoryHelper.ConvertToStoryItem(storyDocument, groupCall.CreatorId);
 
         return GroupCallStateHelper.Updates(
-            new TUpdateGroupCall
-            {
-                LiveStory = true,
-                Peer = StoryHelper.CreatePeer(storyDocument.OwnerPeerType, storyDocument.OwnerPeerId),
-                Call = GroupCallStateHelper.ToGroupCall(groupCall, groupCall.CreatorId)
-            },
             new TUpdateStoryID { Id = storyDocument.StoryId, RandomId = randomId },
             new TUpdateStory
             {
