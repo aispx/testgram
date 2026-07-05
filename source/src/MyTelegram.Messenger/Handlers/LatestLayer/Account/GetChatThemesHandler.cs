@@ -92,11 +92,32 @@ internal sealed class GetChatThemesHandler(IMongoDatabase database) : RpcResultO
             themes = GetFallbackThemes();
         }
 
+        var hash = ComputeHash(themes);
+        if (obj.Hash == hash)
+        {
+            return new MyTelegram.Schema.Account.TThemesNotModified();
+        }
+
         return new MyTelegram.Schema.Account.TThemes
         {
-            Hash = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Hash = hash,
             Themes = themes
         };
+    }
+
+    private static long ComputeHash(IEnumerable<MyTelegram.Schema.ITheme> themes)
+    {
+        var hash = new HashCode();
+        foreach (var theme in themes.OfType<MyTelegram.Schema.TTheme>().OrderBy(x => x.Id))
+        {
+            hash.Add(theme.Id);
+            hash.Add(theme.AccessHash);
+            hash.Add(theme.Slug);
+            hash.Add(theme.Title);
+            hash.Add(theme.Emoticon);
+        }
+
+        return hash.ToHashCode();
     }
 
     /// <summary>

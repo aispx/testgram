@@ -21,6 +21,12 @@ internal sealed class GetWallPapersHandler(IMongoDatabase database) : RpcResultO
             return new MyTelegram.Schema.Account.TWallPapersNotModified();
         }
 
+        var hash = ComputeHash(wallpaperDocs);
+        if (obj.Hash == hash)
+        {
+            return new MyTelegram.Schema.Account.TWallPapersNotModified();
+        }
+
         var wallpapers = new TVector<MyTelegram.Schema.IWallPaper>();
         
         foreach (var doc in wallpaperDocs)
@@ -64,9 +70,23 @@ internal sealed class GetWallPapersHandler(IMongoDatabase database) : RpcResultO
 
         return new MyTelegram.Schema.Account.TWallPapers
         {
-            Hash = 0,
+            Hash = hash,
             Wallpapers = wallpapers
         };
+    }
+
+    private static long ComputeHash(IEnumerable<BsonDocument> docs)
+    {
+        var hash = new HashCode();
+        foreach (var doc in docs.OrderBy(x => x["WallpaperId"].ToInt64()))
+        {
+            hash.Add(doc["WallpaperId"].ToInt64());
+            hash.Add(doc.Contains("AccessHash") ? doc["AccessHash"].ToInt64() : 0);
+            hash.Add(doc.Contains("DocumentId") ? doc["DocumentId"].ToInt64() : 0);
+            hash.Add(doc.Contains("Slug") ? doc["Slug"].AsString : string.Empty);
+        }
+
+        return hash.ToHashCode();
     }
 
     private static MyTelegram.Schema.IWallPaperSettings? ConvertSettings(BsonDocument doc)
