@@ -11,12 +11,14 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Auth;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✔]
 /// </remarks>
-internal sealed class ExportLoginTokenHandler(ICacheHelper<long, long> cacheHelper, ICommandBus commandBus, IRandomHelper randomHelper, IEventBus eventBus, IUserAppService userAppService, ILayeredService<IAuthorizationConverter> layeredService, IUserConverterService userConverterService, IPhotoAppService photoAppService) : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestExportLoginToken, MyTelegram.Schema.Auth.ILoginToken>
+internal sealed class ExportLoginTokenHandler(ICacheHelper<long, CacheLoginToken> authKeyCacheHelper, ICacheHelper<string, CacheLoginToken> tokenCacheHelper, ICommandBus commandBus, IRandomHelper randomHelper, IEventBus eventBus, IUserAppService userAppService, ILayeredService<IAuthorizationConverter> layeredService, IUserConverterService userConverterService, IPhotoAppService photoAppService) : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestExportLoginToken, MyTelegram.Schema.Auth.ILoginToken>
 {
     protected override async Task<ILoginToken> HandleCoreAsync(IRequestInput input, RequestExportLoginToken obj)
     {
-        if (cacheHelper.TryRemove(input.AuthKeyId, out var userId))
+        if (authKeyCacheHelper.TryRemove(input.AuthKeyId, out var loginToken) && loginToken != null)
         {
+            tokenCacheHelper.TryRemove(CacheLoginToken.GetTokenKey(loginToken.Token), out _);
+            var userId = loginToken.UserId;
             await eventBus.PublishAsync(new BindUserIdToSessionEvent(userId, input.AuthKeyId, input.PermAuthKeyId, input.AccessHashKeyId));
             var userReadModel = await userAppService.GetAsync(userId);
             var photos = await photoAppService.GetPhotosAsync(userReadModel);
@@ -33,6 +35,6 @@ internal sealed class ExportLoginTokenHandler(ICacheHelper<long, long> cacheHelp
         var qrCodeId = QrCodeId.Create(BitConverter.ToString(token));
         var command = new ExportLoginTokenCommand(qrCodeId, input.ToRequestInfo(), input.AuthKeyId, input.PermAuthKeyId, token, expireDate, obj.ExceptIds.ToList());
         await commandBus.PublishAsync(command);
-        return null !;
+        return null!;
     }
 }

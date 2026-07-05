@@ -12,10 +12,40 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Auth;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✔]
 /// </remarks>
-internal sealed class ImportLoginTokenHandler : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestImportLoginToken, MyTelegram.Schema.Auth.ILoginToken>
+internal sealed class ImportLoginTokenHandler(ICacheHelper<long, CacheLoginToken> authKeyCacheHelper,
+    ICacheHelper<string, CacheLoginToken> tokenCacheHelper,
+    IEventBus eventBus,
+    IUserAppService userAppService,
+    ILayeredService<IAuthorizationConverter> layeredService,
+    IUserConverterService userConverterService,
+    IPhotoAppService photoAppService) : RpcResultObjectHandler<MyTelegram.Schema.Auth.RequestImportLoginToken, MyTelegram.Schema.Auth.ILoginToken>
 {
-    protected override Task<MyTelegram.Schema.Auth.ILoginToken> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Auth.RequestImportLoginToken obj)
+    protected override async Task<MyTelegram.Schema.Auth.ILoginToken> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Auth.RequestImportLoginToken obj)
     {
-        throw new NotImplementedException();
+        var tokenKey = CacheLoginToken.GetTokenKey(obj.Token);
+        if (!tokenCacheHelper.TryGetValue(tokenKey, out var loginToken) ||
+            loginToken == null ||
+            !loginToken.Token.AsSpan().SequenceEqual(obj.Token.Span))
+        {
+            RpcErrors.RpcErrors400.AuthTokenInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (!tokenCacheHelper.TryRemove(tokenKey, out loginToken) || loginToken == null)
+        {
+            RpcErrors.RpcErrors400.AuthTokenAlreadyAccepted.ThrowRpcError();
+            return null!;
+        }
+
+        authKeyCacheHelper.TryRemove(loginToken.AuthKeyId, out _);
+        var userId = loginToken.UserId;
+        await eventBus.PublishAsync(new BindUserIdToSessionEvent(userId, input.AuthKeyId, input.PermAuthKeyId, input.AccessHashKeyId));
+        var userReadModel = await userAppService.GetAsync(userId);
+        var photos = await photoAppService.GetPhotosAsync(userReadModel);
+        ILayeredUser? user = userReadModel == null ? null : userConverterService.ToUser(input, userReadModel, photos);
+        return new TLoginTokenSuccess
+        {
+            Authorization = layeredService.GetConverter(input.Layer).CreateAuthorization(user)
+        };
     }
 }

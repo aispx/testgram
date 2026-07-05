@@ -3,20 +3,30 @@
 public class CacheAppService
 {
     private readonly HashSet<Int128> _caches = [];
+    private readonly object _syncRoot = new();
 
     public Task<bool> IsExistsAsync(long selfUserId, long targetUserId)
     {
-        return Task.FromResult(_caches.Contains(GetKey(selfUserId, targetUserId)));
+        lock (_syncRoot)
+        {
+            return Task.FromResult(_caches.Contains(GetKey(selfUserId, targetUserId)));
+        }
     }
 
     public void Add(long selfUserId, long targetUserId)
     {
-        _caches.Add(GetKey(selfUserId, targetUserId));
+        lock (_syncRoot)
+        {
+            _caches.Add(GetKey(selfUserId, targetUserId));
+        }
     }
 
     public void Remove(long selfUserId, long targetUserId)
     {
-        _caches.Add(GetKey(selfUserId, targetUserId));
+        lock (_syncRoot)
+        {
+            _caches.Remove(GetKey(selfUserId, targetUserId));
+        }
     }
 
     private Int128 GetKey(long selfUserId, long targetUserId)
