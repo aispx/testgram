@@ -20,15 +20,18 @@ internal sealed class GetBoostsListHandler : RpcResultObjectHandler<MyTelegram.S
     private readonly IMongoDatabase _mongoDatabase;
     private readonly IPeerHelper _peerHelper;
     private readonly IUserAppService _userAppService;
+    private readonly IUserConverterService _userConverterService;
 
     public GetBoostsListHandler(
         IMongoDatabase mongoDatabase,
         IPeerHelper peerHelper,
-        IUserAppService userAppService)
+        IUserAppService userAppService,
+        IUserConverterService userConverterService)
     {
         _mongoDatabase = mongoDatabase;
         _peerHelper = peerHelper;
         _userAppService = userAppService;
+        _userConverterService = userConverterService;
     }
 
     protected override async Task<IBoostsList> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Premium.RequestGetBoostsList obj)
@@ -86,20 +89,9 @@ internal sealed class GetBoostsListHandler : RpcResultObjectHandler<MyTelegram.S
         }
 
         var userReadModels = await _userAppService.GetListAsync(userIds.ToList());
-        var users = new List<IUser>();
-        foreach (var userReadModel in userReadModels)
-        {
-            users.Add(new TUser
-            {
-                Id = userReadModel.UserId,
-                AccessHash = userReadModel.AccessHash,
-                FirstName = userReadModel.FirstName ?? string.Empty,
-                LastName = userReadModel.LastName,
-                Username = userReadModel.UserName,
-                Phone = userReadModel.PhoneNumber,
-                Photo = new TUserProfilePhotoEmpty()
-            });
-        }
+        var users = userReadModels
+            .Select(userReadModel => (IUser)_userConverterService.ToUser(input, userReadModel, layer: input.Layer))
+            .ToList();
 
         return new TBoostsList
         {

@@ -93,7 +93,7 @@ internal sealed class GetBoostsStatusHandler : RpcResultObjectHandler<MyTelegram
             }
         }
 
-        var boostUrl = username != null ? $"https://t.me/boost/{username}" : $"https://t.me/boost/{channelId}";
+        var boostUrl = TelegramDeepLinkHelper.GetBoostLink(username, channelId);
 
         // Calculate premium audience (only for admins)
         MyTelegram.Schema.IStatsPercentValue? premiumAudience = null;

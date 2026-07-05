@@ -20,6 +20,8 @@ internal sealed class ApplyBoostHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IMessageAppService messageAppService,
+    IChatConverterService chatConverterService,
+    IQueryProcessor queryProcessor,
     ILogger<ApplyBoostHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Premium.RequestApplyBoost, MyTelegram.Schema.Premium.IMyBoosts>
 {
     private static long GetInt64(BsonValue v)
@@ -130,93 +132,11 @@ internal sealed class ApplyBoostHandler(
             });
         }
 
-        var channelCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-channelreadmodel");
-        var channelFilter = Builders<BsonDocument>.Filter.In("ChannelId", channelIds);
-        var channels = await channelCol.Find(channelFilter).ToListAsync();
-
-        var chats = new List<IChat>();
-        foreach (var channel in channels)
-        {
-            var chId = channel["ChannelId"].AsInt64;
-
-            // Get AdminRights from channelmemberreadmodel
-            var memberCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-channelmemberreadmodel");
-            var member = await memberCol.Find(Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("ChannelId", chId),
-                Builders<BsonDocument>.Filter.Eq("UserId", input.UserId)
-            )).FirstOrDefaultAsync();
-
-            TChatAdminRights? adminRights = null;
-            if (member != null && member.Contains("AdminRights") && member["AdminRights"].AsInt32 != 0)
-            {
-                var rights = new ChatAdminRights(member["AdminRights"].AsInt32);
-                adminRights = rights.ToChatAdminRights() as TChatAdminRights;
-            }
-
-            var broadcast = channel.Contains("Broadcast") && channel["Broadcast"].AsBoolean;
-            var megagroup = channel.Contains("MegaGroup") && channel["MegaGroup"].AsBoolean;
-
-            // Fix for old channels without Megagroup flag: if not broadcast, it's a megagroup
-            if (!broadcast && !megagroup)
-            {
-                megagroup = true;
-            }
-
-            // Read DefaultBannedRights from MongoDB
-            TChatBannedRights? defaultBannedRights;
-            if (channel.Contains("DefaultBannedRights") && !channel["DefaultBannedRights"].IsBsonNull)
-            {
-                var rights = channel["DefaultBannedRights"].AsBsonDocument;
-                defaultBannedRights = new TChatBannedRights
-                {
-                    ViewMessages = rights.GetValue("ViewMessages", false).AsBoolean,
-                    SendMessages = rights.GetValue("SendMessages", false).AsBoolean,
-                    SendMedia = rights.GetValue("SendMedia", false).AsBoolean,
-                    SendStickers = rights.GetValue("SendStickers", false).AsBoolean,
-                    SendGifs = rights.GetValue("SendGifs", false).AsBoolean,
-                    SendGames = rights.GetValue("SendGames", false).AsBoolean,
-                    SendInline = rights.GetValue("SendInline", false).AsBoolean,
-                    EmbedLinks = rights.GetValue("EmbedLinks", false).AsBoolean,
-                    SendPolls = rights.GetValue("SendPolls", false).AsBoolean,
-                    ChangeInfo = rights.GetValue("ChangeInfo", false).AsBoolean,
-                    InviteUsers = rights.GetValue("InviteUsers", false).AsBoolean,
-                    PinMessages = rights.GetValue("PinMessages", false).AsBoolean,
-                    ManageTopics = rights.GetValue("ManageTopics", false).AsBoolean,
-                    SendPhotos = rights.GetValue("SendPhotos", false).AsBoolean,
-                    SendVideos = rights.GetValue("SendVideos", false).AsBoolean,
-                    SendRoundvideos = rights.GetValue("SendRoundvideos", false).AsBoolean,
-                    SendAudios = rights.GetValue("SendAudios", false).AsBoolean,
-                    SendVoices = rights.GetValue("SendVoices", false).AsBoolean,
-                    SendDocs = rights.GetValue("SendDocs", false).AsBoolean,
-                    SendPlain = rights.GetValue("SendPlain", false).AsBoolean,
-                    UntilDate = rights.GetValue("UntilDate", 0).AsInt32
-                };
-            }
-            else
-            {
-                // DefaultBannedRights отсутствует или null — нет ограничений
-                defaultBannedRights = new TChatBannedRights { UntilDate = 0 };
-            }
-
-            chats.Add(new TChannel
-            {
-                Id = channel["ChannelId"].AsInt64,
-                AccessHash = channel["AccessHash"].AsInt64,
-                Title = channel["Title"].AsString,
-                Username = channel.Contains("UserName") ? channel["UserName"].AsString : null,
-                Photo = new TChatPhotoEmpty(),
-                Date = channel.Contains("Date") ? channel["Date"].AsInt32 : 0,
-                RestrictionReason = new TVector<IRestrictionReason>(),
-                Broadcast = broadcast,
-                Megagroup = megagroup,
-                AdminRights = adminRights,
-                DefaultBannedRights = defaultBannedRights,
-                ParticipantsCount = channel.Contains("ParticipantsCount") ? channel["ParticipantsCount"].AsInt32 : 0,
-                Verified = channel.Contains("Verified") && channel["Verified"].AsBoolean,
-                Scam = channel.Contains("Scam") && channel["Scam"].AsBoolean,
-                Fake = channel.Contains("Fake") && channel["Fake"].AsBoolean
-            });
-        }
+        var channelIdList = channelIds.ToList();
+        var channelMemberReadModels = channelIdList.Count == 0
+            ? []
+            : await queryProcessor.ProcessAsync(new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIdList));
+        var chats = await chatConverterService.GetChannelListAsync(input, channelIdList, channelMemberReadModels, input.Layer);
 
         return new TMyBoosts
         {
