@@ -111,16 +111,34 @@ public class PhotoConverter : IPhotoConverter, ITransientDependency
             return new TUserProfilePhotoEmpty();
         }
 
-        var strippedThumbSize = photoReadModel.Sizes?.FirstOrDefault(p => p.StrippedThumb?.Length > 0);
-
         return new TUserProfilePhoto
         {
             DcId = photoReadModel.DcId,
             PhotoId = photoReadModel.PhotoId,
             HasVideo = photoReadModel.VideoSizes2?.Count > 0,
-            StrippedThumb = strippedThumbSize?.StrippedThumb
-            //Personal = 
-            //StrippedThumb = 
+            StrippedThumb = GetProfileStrippedThumb(photoReadModel)
         };
+    }
+
+    private static ReadOnlyMemory<byte>? GetProfileStrippedThumb(IPhotoReadModel photoReadModel)
+    {
+        var strippedThumb = photoReadModel.Sizes2?
+            .OfType<TPhotoStrippedSize>()
+            .Select(p => (ReadOnlyMemory<byte>?)p.Bytes)
+            .FirstOrDefault(IsValidStrippedThumb);
+
+        if (strippedThumb is { Length: > 3 })
+        {
+            return strippedThumb;
+        }
+
+        return photoReadModel.Sizes?
+            .Select(p => (ReadOnlyMemory<byte>?)p.StrippedThumb)
+            .FirstOrDefault(IsValidStrippedThumb);
+    }
+
+    private static bool IsValidStrippedThumb(ReadOnlyMemory<byte>? strippedThumb)
+    {
+        return strippedThumb is { Length: > 3 };
     }
 }

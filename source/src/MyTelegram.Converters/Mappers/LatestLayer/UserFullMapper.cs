@@ -8,6 +8,10 @@ internal sealed class UserFullMapper
         ILayeredMapper,
         ITransientDependency
 {
+    private const int MediaDcId = 2;
+    private const int MinAdvertisedDcId = 1;
+    private const int MaxAdvertisedDcId = 5;
+
     public int Layer => Layers.LayerLatest;
     
 
@@ -25,7 +29,7 @@ internal sealed class UserFullMapper
         destination.BusinessLocation = source.BusinessLocation;
         destination.BusinessGreetingMessage = source.BusinessGreetingMessage;
         destination.BusinessAwayMessage = source.BusinessAwayMessage;
-        destination.BusinessIntro = source.BusinessIntro;
+        destination.BusinessIntro = NormalizeBusinessIntro(source.BusinessIntro);
 
         destination.Id = source.UserId;
         destination.Settings = new TPeerSettings();
@@ -81,7 +85,7 @@ internal sealed class UserFullMapper
         }
         if (source.BusinessIntro != null)
         {
-            destination.BusinessIntro = source.BusinessIntro;
+            destination.BusinessIntro = NormalizeBusinessIntro(source.BusinessIntro);
             destination.Flags2 = destination.Flags2.SetBit(4);
         }
 
@@ -108,5 +112,15 @@ internal sealed class UserFullMapper
         }
 
         return destination;
+    }
+
+    private static TBusinessIntro? NormalizeBusinessIntro(TBusinessIntro? intro)
+    {
+        if (intro?.Sticker is TDocument { DcId: < MinAdvertisedDcId or > MaxAdvertisedDcId } sticker)
+        {
+            sticker.DcId = MediaDcId;
+        }
+
+        return intro;
     }
 }

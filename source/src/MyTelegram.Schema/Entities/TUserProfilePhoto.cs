@@ -42,9 +42,10 @@ public sealed partial class TUserProfilePhoto : IUserProfilePhoto
 
     public void ComputeFlag()
     {
+        Flags = 0;
         if (HasVideo) { Flags = Flags.SetBit(0); }
         if (Personal) { Flags = Flags.SetBit(2); }
-        if (StrippedThumb != null) { Flags = Flags.SetBit(1); }
+        if (StrippedThumb is { Length: > 3 }) { Flags = Flags.SetBit(1); }
     }
 
     public void Serialize(IBufferWriter<byte> writer)
