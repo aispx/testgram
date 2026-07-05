@@ -283,7 +283,8 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
         //Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
         if (!IsNew)
         {
-            Emit(new MessageViewsIncrementedEvent(_state.MessageItem.MessageId, _state.MessageItem.Views ?? 0 + 1));
+            var views = (_state.MessageItem.Views ?? 0) + 1;
+            Emit(new MessageViewsIncrementedEvent(_state.MessageItem.MessageId, views));
         }
     }
 

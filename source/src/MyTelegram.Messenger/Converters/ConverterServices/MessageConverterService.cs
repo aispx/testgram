@@ -3,6 +3,7 @@ using System.Text;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.PaidMedia;
 
 namespace MyTelegram.Messenger.Converters.ConverterServices;
 
@@ -48,7 +49,8 @@ public class MessageConverterService(
         IMessageReadModel readModel,
         IMessageMedia? pollMedia = null,
         IReadOnlyCollection<IUserReactionReadModel>? userReactionReadModels = null,
-        int layer = 0
+        int layer = 0,
+        IReadOnlyDictionary<string, IFactCheck>? factChecks = null
     )
     {
         var fromId = new Peer(PeerType.User, readModel.SenderPeerId).ToPeer();
@@ -115,6 +117,7 @@ public class MessageConverterService(
 
                     // Enrich documents in media with Attributes2 from database
                     media = EnrichMediaDocuments(media);
+                    media = RevealPaidMediaIfPurchased(media, selfUserId, readModel);
 
                     m.Media = messageMediaResponseService.ToLayeredData(media, layer);
                     m.Out = readModel.SenderPeerId == selfUserId;
@@ -177,6 +180,11 @@ public class MessageConverterService(
                         m.Message = string.Empty;
                     }
 
+                    if (m is TMessage message)
+                    {
+                        ApplyFactCheck(message, factChecks, readModel.OwnerPeerId, readModel.MessageId);
+                    }
+
                     // Set ChosenOrder for current user's reactions
                     if (m.Reactions is TMessageReactions mr && mr.Results?.Count > 0 && readModel.RecentReactions2 != null)
                     {
@@ -223,6 +231,7 @@ public class MessageConverterService(
                 .ToDictionary(k => k.Key, v => v.Select(x => x.Option).ToList()) ?? [];
 
         var pollConverter = pollLayeredService.GetConverter(layer);
+        var factChecks = LoadFactChecks(messageReadModels);
 
         foreach (var readModel in messageReadModels)
         {
@@ -245,7 +254,7 @@ public class MessageConverterService(
                 }
             }
 
-            messages.Add(ToMessage(selfUserId, readModel, media, null, layer));
+            messages.Add(ToMessage(selfUserId, readModel, media, null, layer, factChecks));
         }
 
         return messages;
@@ -364,6 +373,53 @@ public class MessageConverterService(
         }
     }
 
+    private IReadOnlyDictionary<string, IFactCheck> LoadFactChecks(
+        IReadOnlyCollection<IMessageReadModel> messageReadModels)
+    {
+        try
+        {
+            var keys = messageReadModels
+                .Where(p => p.SendMessageType != SendMessageType.MessageService)
+                .Select(p => (p.OwnerPeerId, p.MessageId))
+                .Distinct()
+                .ToList();
+            var docs = FactCheckHelper.FindMany(mongoDatabase, keys);
+            return docs.ToDictionary(
+                p => FactCheckHelper.Key(
+                    p.GetValue("OwnerPeerId", 0L).ToInt64(),
+                    p.GetValue("MessageId", 0).ToInt32()),
+                p => (IFactCheck)FactCheckHelper.ToFactCheck(p, needCheck: true),
+                StringComparer.Ordinal);
+        }
+        catch (MongoException ex)
+        {
+            logger.LogWarning(ex, "Failed to load factcheck batch");
+            return new Dictionary<string, IFactCheck>();
+        }
+        catch (BsonException ex)
+        {
+            logger.LogWarning(ex, "Failed to deserialize factcheck batch");
+            return new Dictionary<string, IFactCheck>();
+        }
+        catch (InvalidOperationException ex)
+        {
+            logger.LogWarning(ex, "Failed to map factcheck batch");
+            return new Dictionary<string, IFactCheck>();
+        }
+    }
+
+    private static void ApplyFactCheck(
+        TMessage message,
+        IReadOnlyDictionary<string, IFactCheck>? factChecks,
+        long ownerPeerId,
+        int messageId)
+    {
+        if (factChecks?.TryGetValue(FactCheckHelper.Key(ownerPeerId, messageId), out var factCheck) == true)
+        {
+            message.Factcheck = factCheck;
+        }
+    }
+
     protected IMessageReplies? ToMessageReplies(bool post, MessageReply? reply)
     {
         if (reply == null)
@@ -442,6 +498,29 @@ public class MessageConverterService(
         {
             ArrayPool<byte>.Shared.Return(tempBytes);
         }
+    }
+
+    private IMessageMedia? RevealPaidMediaIfPurchased(IMessageMedia? media, long selfUserId, IMessageReadModel readModel)
+    {
+        if (media is not TMessageMediaPaidMedia paidMedia)
+            return media;
+
+        try
+        {
+            var doc = mongoDatabase.GetCollection<PaidMediaDocument>(PaidMediaHelper.CollectionName)
+                .Find(x => x.Id == PaidMediaHelper.MakeId(readModel.OwnerPeerId, readModel.MessageId))
+                .FirstOrDefault();
+            if (doc == null || !PaidMediaHelper.IsPurchasedBy(doc, selfUserId))
+                return media;
+
+            paidMedia.ExtendedMedia = PaidMediaHelper.ToRevealedExtendedMedia(doc.ExtendedMedia);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to reveal paid media: ownerPeerId={OwnerPeerId}, msgId={MsgId}", readModel.OwnerPeerId, readModel.MessageId);
+        }
+
+        return paidMedia;
     }
 
     private IMessageMedia? EnrichMediaDocuments(IMessageMedia? media)

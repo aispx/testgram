@@ -16,21 +16,30 @@ internal sealed class GetForumTopicsHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopics, MyTelegram.Schema.Messages.IForumTopics>
 {
+    private const int MinSearchQueryLength = 2;
+    private const int MaxLimit = 100;
+
     protected override async Task<MyTelegram.Schema.Messages.IForumTopics> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetForumTopics obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer == null || peer.PeerType != PeerType.Channel)
             RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
 
-        var channelId = peer.PeerId;
+        var channelId = peer!.PeerId;
 
         var topicsCol = mongoDatabase.GetCollection<BsonDocument>("forum_topics");
         var filterBuilder = Builders<BsonDocument>.Filter;
         var filter = filterBuilder.Eq("ChannelId", channelId);
+        var q = obj.Q?.Trim() ?? string.Empty;
 
-        if (!string.IsNullOrWhiteSpace(obj.Q))
+        if (q.Length is > 0 and < MinSearchQueryLength)
         {
-            filter &= filterBuilder.Regex("Title", new BsonRegularExpression(Regex.Escape(obj.Q), "i"));
+            RpcErrors.RpcErrors400.QueryTooShort.ThrowRpcError();
+        }
+
+        if (q.Length > 0)
+        {
+            filter &= filterBuilder.Regex("Title", new BsonRegularExpression(Regex.Escape(q), "i"));
         }
 
         if (obj.OffsetDate > 0)
@@ -49,7 +58,7 @@ internal sealed class GetForumTopicsHandler(
         }
 
         var count = (int)await topicsCol.CountDocumentsAsync(filter);
-        var limit = obj.Limit > 0 ? obj.Limit : 100;
+        var limit = obj.Limit > 0 ? Math.Min(obj.Limit, MaxLimit) : MaxLimit;
         var sort = Builders<BsonDocument>.Sort
             .Descending("Pinned")
             .Descending("PinOrder")

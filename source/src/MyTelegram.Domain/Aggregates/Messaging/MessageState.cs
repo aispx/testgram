@@ -131,7 +131,7 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
 
     public void Apply(MessageViewsIncrementedEvent aggregateEvent)
     {
-        MessageItem = MessageItem with { Views = MessageItem.Views + 1 };
+        MessageItem = MessageItem with { Views = aggregateEvent.Views };
     }
 
     public void Apply(OtherPartyMessageDeletedEvent aggregateEvent)

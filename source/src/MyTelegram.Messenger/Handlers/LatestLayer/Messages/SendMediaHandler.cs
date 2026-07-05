@@ -1,6 +1,7 @@
 using StackExchange.Redis;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
+using MyTelegram.Messenger.Services.PaidMedia;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Send a media
@@ -120,7 +121,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IAccessHashHelper accessHashHelper, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
+internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IAccessHashHelper accessHashHelper, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMedia obj)
     {
@@ -214,7 +215,21 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             ValidateTodoList(inputMediaTodo.Todo);
         }
 
-        var media = await mediaHelper.SaveMediaAsync(obj.Media);
+        var ownerPeerId = toPeer.PeerType == PeerType.Channel ? toPeer.PeerId : input.UserId;
+        int? preallocatedMessageId = null;
+        List<IMessageMedia>? paidMediaItems = null;
+        IMessageMedia? media;
+        if (obj.Media is TInputMediaPaidMedia inputPaidMedia)
+        {
+            var paidMedia = await CreatePaidMediaAsync(inputPaidMedia, toPeer, channelForMonoforum, input.UserId);
+            media = paidMedia.MessageMedia;
+            paidMediaItems = paidMedia.RevealedMedia;
+            preallocatedMessageId = (int)await idGenerator.NextIdAsync(IdType.MessageId, ownerPeerId);
+        }
+        else
+        {
+            media = await mediaHelper.SaveMediaAsync(obj.Media);
+        }
         int? topMsgId = null;
         Peer? savedPeerId = null;
         if (obj.ReplyTo is TInputReplyToMessage replyToMessage)
@@ -239,9 +254,71 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         }
 
         var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), obj.Message, obj.RandomId, clearDraft: obj.ClearDraft, entities: obj.Entities, media: media, //replyToMsgId: replyToMsgId,
- inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
+ inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, messageId: preallocatedMessageId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
         await messageAppService.SendMessageAsync([sendMessageInput]);
+
+        if (obj.Media is TInputMediaPaidMedia paidInput && paidMediaItems != null && preallocatedMessageId.HasValue)
+        {
+            await mongoDatabase.GetCollection<PaidMediaDocument>(PaidMediaHelper.CollectionName).ReplaceOneAsync(
+                x => x.Id == PaidMediaHelper.MakeId(ownerPeerId, preallocatedMessageId.Value),
+                new PaidMediaDocument
+                {
+                    Id = PaidMediaHelper.MakeId(ownerPeerId, preallocatedMessageId.Value),
+                    OwnerPeerId = ownerPeerId,
+                    MsgId = preallocatedMessageId.Value,
+                    ChannelId = toPeer.PeerId,
+                    SellerUserId = input.UserId,
+                    SenderUserId = input.UserId,
+                    StarsAmount = paidInput.StarsAmount,
+                    Payload = paidInput.Payload,
+                    ExtendedMedia = paidMediaItems.Select(x => x.ToBytes()).ToList(),
+                    Date = DateTime.UtcNow.ToTimestamp()
+                },
+                new ReplaceOptions { IsUpsert = true });
+        }
+
         return null!;
+    }
+
+    private async Task<(IMessageMedia MessageMedia, List<IMessageMedia> RevealedMedia)> CreatePaidMediaAsync(
+        TInputMediaPaidMedia inputPaidMedia,
+        Peer toPeer,
+        IChannelReadModel? channelReadModel,
+        long userId)
+    {
+        if (toPeer.PeerType != PeerType.Channel || channelReadModel?.Broadcast != true)
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+
+        if (inputPaidMedia.StarsAmount <= 0 || inputPaidMedia.StarsAmount > PaidMediaHelper.MaxStarsAmount)
+            RpcErrors.RpcErrors400.ExtendedMediaAmountInvalid.ThrowRpcError();
+
+        if (inputPaidMedia.ExtendedMedia == null || inputPaidMedia.ExtendedMedia.Count == 0)
+            RpcErrors.RpcErrors400.ExtendedMediaInvalid.ThrowRpcError();
+
+        if (inputPaidMedia.ExtendedMedia.Any(x => !PaidMediaHelper.IsAllowedInputMedia(x)))
+            RpcErrors.RpcErrors400.ExtendedMediaInvalid.ThrowRpcError();
+
+        var revealed = new List<IMessageMedia>(inputPaidMedia.ExtendedMedia.Count);
+        var previews = new TVector<IMessageExtendedMedia>();
+        foreach (var item in inputPaidMedia.ExtendedMedia)
+        {
+            // Android paid-media previews render only stripped/path thumbs here; regular
+            // photoSize points to a downloadable file and is ignored while media is locked.
+            var strippedThumb = await PaidMediaHelper.TryCreatePreviewThumbFromUploadAsync(mongoDatabase, userId, item);
+            var saved = await mediaHelper.SaveMediaAsync(item);
+            if (saved is not TMessageMediaPhoto and not TMessageMediaDocument)
+                RpcErrors.RpcErrors400.ExtendedMediaInvalid.ThrowRpcError();
+
+            strippedThumb ??= await PaidMediaHelper.TryCreatePreviewThumbFromStoredMediaAsync(mongoDatabase, saved);
+            revealed.Add(saved);
+            previews.Add(PaidMediaHelper.ToPreview(saved, strippedThumb));
+        }
+
+        return (new TMessageMediaPaidMedia
+        {
+            StarsAmount = inputPaidMedia.StarsAmount,
+            ExtendedMedia = previews
+        }, revealed);
     }
 
     private async Task<Peer> ResolveMonoforumSavedPeerAsync(Peer toPeer, IInputPeer monoforumPeerId)

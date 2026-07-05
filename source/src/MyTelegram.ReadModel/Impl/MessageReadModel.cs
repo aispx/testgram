@@ -24,6 +24,7 @@ public class MessageReadModel : IMessageReadModel,
     IAmReadModelFor<SendMessageSaga, SendMessageSagaId, PostChannelIdUpdatedSagaEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageUnpinnedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessagePinnedUpdatedEvent>,
+    IAmReadModelFor<MessageAggregate, MessageId, MessageViewsIncrementedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageReactionsUpdatedEvent>
 {
     public int Date { get; private set; }
@@ -254,6 +255,16 @@ public class MessageReadModel : IMessageReadModel,
         Media2 = item.Media;
         InvertMedia = item.InvertMedia;
         EncryptedData = item.EncryptedData;
+
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(
+        IReadModelContext context,
+        IDomainEvent<MessageAggregate, MessageId, MessageViewsIncrementedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        Views = domainEvent.AggregateEvent.Views;
 
         return Task.CompletedTask;
     }

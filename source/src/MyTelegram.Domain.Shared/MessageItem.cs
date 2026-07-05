@@ -61,7 +61,8 @@ public record MessageItem
     ISuggestedPost? SuggestedPost = null,
     bool PaidSuggestedPostStars = false,
     bool PaidSuggestedPostTon = false,
-    bool NoForwards = false
+    bool NoForwards = false,
+    int? ReportDeliveryUntilDate = null
 //int? DefaultHistoryTtl = null,
 //int? Ttl = null
 );

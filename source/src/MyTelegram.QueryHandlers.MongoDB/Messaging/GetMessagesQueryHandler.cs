@@ -8,9 +8,12 @@ public class
     GetMessagesQueryHandler(IQueryOnlyReadModelStore<MessageReadModel> store,
         IQueryOnlyReadModelStore<MessageTokenReadModel> messageTokenStore) : IQueryHandler<GetMessagesQuery, IReadOnlyCollection<IMessageReadModel>>
 {
+    private const int MinTextSearchLength = 2;
+
     public async Task<IReadOnlyCollection<IMessageReadModel>> ExecuteQueryAsync(GetMessagesQuery query,
         CancellationToken cancellationToken)
     {
+        var q = query.Q?.Trim() ?? string.Empty;
         if (query.Tokens?.Count > 0)
         {
             return await SearchByKeywordAsync(query, cancellationToken);
@@ -35,7 +38,7 @@ public class
                 .WhereIf(query.MessageActionType == null, p => p.MessageActionType != MessageActionType.CreateQuickReplyMessage)
                 .WhereIf(query.MessageActionType.HasValue, p => p.MessageActionType == query.MessageActionType)
                 //.WhereIf(query.Q?.Length > 2, p => p.Message.Contains(query.Q!))
-                .WhereIf(query.Q?.Length > 0, p => p.Message.Contains(query.Q!))
+                .WhereIf(q.Length >= MinTextSearchLength, p => p.Message.Contains(q))
                 .WhereIf(
                     query.MessageType != MessageType.Unknown && query.MessageType != MessageType.Pinned,
                     p => p.MessageType == query.MessageType)

@@ -33,6 +33,7 @@ public class MediaHelper(
             TMessageMediaGeo => MessageType.Geo,
             TMessageMediaGeoLive => MessageType.Geo,
             TMessageMediaInvoice => MessageType.Text,
+            TMessageMediaPaidMedia => MessageType.Photo,
             TMessageMediaPhoto => MessageType.Photo,
             TMessageMediaPoll => MessageType.Poll,
             TMessageMediaToDo => MessageType.Text,
@@ -451,7 +452,8 @@ public class MediaHelper(
             case TInputMediaUploadedDocument:
             case TInputMediaUploadedPhoto:
                 return await CreateMediaOnFileServerAsync(media);
-            case TInputMediaPaidMedia:
+            case TInputMediaPaidMedia inputMediaPaidMedia:
+                return CreateMediaPaidMedia(inputMediaPaidMedia);
             case TInputMediaGame:
                 throw new NotImplementedException();
             case TInputMediaInvoice inputMediaInvoice:
@@ -475,6 +477,43 @@ public class MediaHelper(
             default:
                 return null;
         }
+    }
+
+    private static IMessageMedia CreateMediaPaidMedia(TInputMediaPaidMedia inputMediaPaidMedia)
+    {
+        if (inputMediaPaidMedia.StarsAmount <= 0)
+        {
+            RpcErrors.RpcErrors400.ExtendedMediaAmountInvalid.ThrowRpcError();
+        }
+
+        var extendedMedia = inputMediaPaidMedia.ExtendedMedia;
+        if (extendedMedia == null || extendedMedia.Count == 0)
+        {
+            RpcErrors.RpcErrors400.ExtendedMediaInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (extendedMedia.Any(p => !IsAllowedPaidMediaItem(p)))
+        {
+            RpcErrors.RpcErrors400.ExtendedMediaInvalid.ThrowRpcError();
+        }
+
+        return new TMessageMediaPaidMedia
+        {
+            StarsAmount = inputMediaPaidMedia.StarsAmount,
+            ExtendedMedia = new TVector<IMessageExtendedMedia>(
+                extendedMedia.Select(_ => (IMessageExtendedMedia)new TMessageExtendedMediaPreview()))
+        };
+    }
+
+    private static bool IsAllowedPaidMediaItem(IInputMedia media)
+    {
+        return media is TInputMediaPhoto
+            or TInputMediaUploadedPhoto
+            or TInputMediaPhotoExternal
+            or TInputMediaDocument
+            or TInputMediaUploadedDocument
+            or TInputMediaDocumentExternal;
     }
 
     private IMessageMedia CreateMediaTodo(TInputMediaTodo inputMediaTodo)

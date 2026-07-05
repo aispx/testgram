@@ -22,6 +22,7 @@ public partial class MessageDomainEventHandler(
     IInviteToChannelConverterService inviteToChannelConverterService,
     IJoinChannelConverterService joinChannelConverterService,
     IPhotoAppService photoAppService,
+    MessagePushDataBuilder pushDataBuilder,
     IMongoDatabase mongoDatabase)
     : DomainEventHandlerBase(objectMessageSender,
             commandBus,
@@ -257,10 +258,20 @@ public partial class MessageDomainEventHandler(
         // state.
         updates = await EnrichInboxUpdatesAsync(aggregateEvent, updates);
 
+        // Build a PUSH payload for the recipient(s) so offline devices still get notified.
+        // Only personal (user-to-user) messages produce a push here; group/channel pushes are
+        // generated in their respective handlers.
+        PushData? pushData = null;
+        if (item.OwnerPeer.PeerType == PeerType.User && item.ToPeer.PeerType == PeerType.User)
+        {
+            pushData = await pushDataBuilder.BuildForPersonalMessageAsync(item);
+        }
+
         await PushUpdatesToPeerAsync(item.OwnerPeer,
             updates,
             pts: item.Pts,
-            senderUserId: item.SenderPeer.PeerId
+            senderUserId: item.SenderPeer.PeerId,
+            pushData: pushData
         );
 
         // Update MessageId in star-gift-offers by RandomId for recipient's message
@@ -600,6 +611,10 @@ public partial class MessageDomainEventHandler(
         // notify mentioned users
         if (aggregateEvent.MentionedUserIds?.Count > 0)
         {
+            // Channel mentions are high-priority notifications; build a per-mention push so each
+            // mentioned user's offline devices ring.
+            PushData? mentionPush = await pushDataBuilder.BuildForChannelMessageAsync(item, channelReadModel.Title);
+
             foreach (var mentionedUserId in aggregateEvent.MentionedUserIds)
             {
                 var mentionedUpdates = updatesConverterService.ToChannelMessageUpdates(mentionedUserId, aggregateEvent, 0, true);
@@ -615,7 +630,9 @@ public partial class MessageDomainEventHandler(
                     }
                 }
 
-                await PushUpdatesToPeerAsync(mentionedUserId.ToUserPeer(), mentionedUpdates);
+                // Stamp the push with the actual recipient so the dispatcher targets the right devices.
+                var targetedPush = mentionPush is null ? null : mentionPush with { UserId = mentionedUserId };
+                await PushUpdatesToPeerAsync(mentionedUserId.ToUserPeer(), mentionedUpdates, pushData: targetedPush);
             }
         }
 
