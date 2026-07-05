@@ -1,52 +1,138 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 # Give Stars to User
 # Usage: ./give-stars.sh <user_id> <stars_amount>
 
-if [ "$#" -ne 2 ]; then
+usage() {
     echo "Usage: $0 <user_id> <stars_amount>"
     echo "Example: $0 2010001 1000"
+}
+
+if [ "$#" -ne 2 ]; then
+    usage
     exit 1
 fi
 
 USER_ID=$1
 STARS=$2
 
-echo "⭐ Giving $STARS stars to user $USER_ID..."
-
-cd /root/testgram/docker/compose
-
-# Check if user exists
-USER_EXISTS=$(docker-compose exec -T mongodb mongosh tg --quiet --eval "
-db['eventflow-userreadmodel'].countDocuments({UserId: NumberLong('$USER_ID')})
-")
-
-if [ "$USER_EXISTS" = "0" ]; then
-    echo "❌ Error: User $USER_ID not found!"
+if [[ ! "$USER_ID" =~ ^[0-9]+$ ]]; then
+    echo "❌ Error: user_id must be a positive integer" >&2
     exit 1
 fi
 
-# Get current balance
-CURRENT_BALANCE=$(docker-compose exec -T mongodb mongosh tg --quiet --eval "
-var user = db['eventflow-userreadmodel'].findOne({UserId: NumberLong('$USER_ID')});
-if (user && user.StarsBalance) {
-  if (typeof user.StarsBalance === 'object') print(user.StarsBalance.toString());
-  else print(user.StarsBalance);
-} else print('0');
+if [[ ! "$STARS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "❌ Error: stars_amount must be a positive integer" >&2
+    exit 1
+fi
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+COMPOSE_DIR=$(cd -- "$SCRIPT_DIR/../docker/compose" && pwd)
+cd "$COMPOSE_DIR"
+
+compose() {
+    if command -v docker-compose >/dev/null 2>&1; then
+        docker-compose "$@"
+    else
+        docker compose "$@"
+    fi
+}
+
+echo "⭐ Giving $STARS stars to user $USER_ID..."
+
+set +e
+RESULT=$(compose exec -T mongodb mongosh tg --quiet --eval "
+const userId = NumberLong('$USER_ID');
+const delta = NumberLong('$STARS');
+
+const users = db.getCollection('eventflow-userreadmodel');
+if (users.countDocuments({ UserId: userId }) === 0) {
+  print('ERROR:USER_NOT_FOUND');
+  quit(2);
+}
+
+const balances = db.getCollection('star-balances');
+const beforeDoc = balances.findOne({ UserId: userId });
+const before = beforeDoc && beforeDoc.Balance != null ? NumberLong(beforeDoc.Balance.toString()) : NumberLong(0);
+
+const afterDoc = balances.findOneAndUpdate(
+  { UserId: userId },
+  {
+    \$setOnInsert: { UserId: userId },
+    \$inc: { Balance: delta }
+  },
+  { upsert: true, returnDocument: 'after' }
+);
+
+const txId = new ObjectId().toString();
+db.getCollection('star-transactions').insertOne({
+  _id: txId,
+  TransactionId: txId,
+  UserId: userId,
+  Amount: delta,
+  Date: Math.floor(Date.now() / 1000),
+  Gift: false,
+  Refund: false,
+  PeerUserId: null,
+  PeerChannelId: null,
+  Title: 'Manual stars grant',
+  Description: 'Added by scripts/give-stars.sh',
+  StargiftUpgrade: false,
+  StargiftAuctionBid: false,
+  Offer: false,
+  StargiftSlug: null,
+  PremiumGiftMonths: null,
+  StarrefCommissionPermille: null,
+  StarrefPeerUserId: null,
+  StarrefPeerChannelId: null,
+  StarrefAmount: null,
+  Pending: false,
+  Failed: false,
+  Reaction: false,
+  BusinessTransfer: false,
+  StargiftResale: false,
+  PostsSearch: false,
+  StargiftPrepaidUpgrade: false,
+  StargiftDropOriginalDetails: false,
+  PhonegroupMessage: false,
+  PaidMessages: null,
+  MsgId: null,
+  TransactionDate: null,
+  TransactionUrl: null
+});
+
+print('BEFORE:' + before.toString());
+print('AFTER:' + afterDoc.Balance.toString());
+print('TX:' + txId);
 " | tr -d '\r')
+MONGO_STATUS=$?
+set -e
+
+if grep -q '^ERROR:USER_NOT_FOUND$' <<<"$RESULT"; then
+    echo "❌ Error: User $USER_ID not found!" >&2
+    exit 1
+fi
+
+if [ "$MONGO_STATUS" -ne 0 ]; then
+    echo "❌ Error: mongosh failed with status $MONGO_STATUS" >&2
+    if [ -n "$RESULT" ]; then
+        echo "$RESULT" >&2
+    fi
+    exit "$MONGO_STATUS"
+fi
+
+CURRENT_BALANCE=$(awk -F: '/^BEFORE:/ {print $2}' <<<"$RESULT" | tail -1)
+NEW_BALANCE=$(awk -F: '/^AFTER:/ {print $2}' <<<"$RESULT" | tail -1)
+TX_ID=$(awk -F: '/^TX:/ {print $2}' <<<"$RESULT" | tail -1)
+
+if [[ -z "${CURRENT_BALANCE:-}" || -z "${NEW_BALANCE:-}" || -z "${TX_ID:-}" ]]; then
+    echo "❌ Error: unexpected mongosh output:" >&2
+    echo "$RESULT" >&2
+    exit 1
+fi
 
 echo "Current balance: $CURRENT_BALANCE stars"
-
-# Calculate new balance
-NEW_BALANCE=$((CURRENT_BALANCE + STARS))
-
-# Update user's stars balance
-docker-compose exec -T mongodb mongosh tg --quiet --eval "
-db['eventflow-userreadmodel'].updateOne(
-  { UserId: NumberLong('$USER_ID') },
-  { \$set: { StarsBalance: NumberLong('$NEW_BALANCE') } }
-)
-"
-
 echo "✅ Successfully gave $STARS stars to user $USER_ID!"
 echo "New balance: $NEW_BALANCE stars"
+echo "Transaction: $TX_ID"

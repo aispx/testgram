@@ -3,7 +3,7 @@ WORKDIR /app
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-COPY source/src /src
+COPY source /src
 RUN dotnet restore "src/MyTelegram.Messenger.QueryServer/MyTelegram.Messenger.QueryServer.csproj"
 WORKDIR "/src/src/MyTelegram.Messenger.QueryServer"
 RUN dotnet build "MyTelegram.Messenger.QueryServer.csproj" -c Release -o /app/build
