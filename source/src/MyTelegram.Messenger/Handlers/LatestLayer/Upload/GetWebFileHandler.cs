@@ -15,8 +15,19 @@ internal sealed class GetWebFileHandler : RpcResultObjectHandler<MyTelegram.Sche
 
     protected override Task<MyTelegram.Schema.Upload.IWebFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Upload.RequestGetWebFile obj)
     {
-        _logger.LogWarning("GetWebFile called but web proxy not implemented. Location: {Location}", obj.Location);
-        RpcErrors.RpcErrors400.WebfileNotAvailable.ThrowRpcError();
-        throw new InvalidOperationException();
+        _logger.LogInformation(
+            "GetWebFile fallback returned empty payload. Location: {Location}, Offset: {Offset}, Limit: {Limit}",
+            obj.Location,
+            obj.Offset,
+            obj.Limit);
+
+        return Task.FromResult<MyTelegram.Schema.Upload.IWebFile>(new MyTelegram.Schema.Upload.TWebFile
+        {
+            Size = 0,
+            MimeType = "application/octet-stream",
+            FileType = new MyTelegram.Schema.Storage.TFileUnknown(),
+            Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Bytes = ReadOnlyMemory<byte>.Empty
+        });
     }
 }

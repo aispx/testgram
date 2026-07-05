@@ -20,7 +20,7 @@ public sealed class FileDownloadLaneRouter(
     ILogger<FileDownloadLaneRouter> logger,
     IOptionsMonitor<RabbitMqOptions> rabbitMqOptions,
     IRabbitMqSerializer rabbitMqSerializer,
-    IMessageQueueProcessor<MessengerQueryDataReceivedEvent> processor,
+    MessengerQueryDataProcessor queryDataProcessor,
     IUserAccessHashKeyCache userAccessHashKeyCache)
     : BackgroundService, IFileDownloadLaneRouter, IDisposable
 {
@@ -180,8 +180,16 @@ public sealed class FileDownloadLaneRouter(
                 return;
             }
             case nameof(DownloadDataReceivedEvent):
+            {
+                var eventData = rabbitMqSerializer.Deserialize<DownloadDataReceivedEvent>(body);
+                if (await TryRerouteGroupCallStreamFileAsync(eventData))
+                {
+                    return;
+                }
+
                 await ForwardRawAsync(body, nameof(DownloadDataReceivedEvent));
                 return;
+            }
         }
 
         var uploadEvent = TryDeserialize<UploadDataReceivedEvent>(body);
@@ -196,7 +204,13 @@ public sealed class FileDownloadLaneRouter(
             return;
         }
 
-        if (TryDeserialize<DownloadDataReceivedEvent>(body) is not null)
+        var downloadEvent = TryDeserialize<DownloadDataReceivedEvent>(body);
+        if (downloadEvent is not null && await TryRerouteGroupCallStreamFileAsync(downloadEvent))
+        {
+            return;
+        }
+
+        if (downloadEvent is not null)
         {
             await ForwardRawAsync(body, nameof(DownloadDataReceivedEvent));
             return;
@@ -234,11 +248,10 @@ public sealed class FileDownloadLaneRouter(
         logger.LogInformation(
             "Rerouting upload.getFile inputGroupCallStream from direct file-server queue to messenger query lane, reqMsgId: {ReqMsgId}",
             eventData.ReqMsgId);
-        processor.Enqueue(
+        await queryDataProcessor.ProcessAsync(
             new MessengerQueryDataReceivedEvent(eventData.ConnectionId, eventData.ConnectionType, eventData.RequestId, eventData.ObjectId,
                 eventData.UserId, eventData.ReqMsgId, eventData.SeqNumber, eventData.AuthKeyId, eventData.PermAuthKeyId,
-                eventData.Data, eventData.Layer, eventData.Date, eventData.DeviceType, eventData.ClientIp, eventData.SessionId, eventData.AccessHashKeyId),
-            eventData.AuthKeyId);
+                eventData.Data, eventData.Layer, eventData.Date, eventData.DeviceType, eventData.ClientIp, eventData.SessionId, eventData.AccessHashKeyId));
         return true;
     }
 

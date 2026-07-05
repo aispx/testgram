@@ -12,11 +12,16 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
 {
     private readonly IMongoDatabase _database;
     private readonly ILogger<GetFileHandler> _logger;
+    private readonly IHlsGroupCallStreamService _hlsGroupCallStreamService;
 
-    public GetFileHandler(IMongoDatabase database, ILogger<GetFileHandler> logger)
+    public GetFileHandler(
+        IMongoDatabase database,
+        ILogger<GetFileHandler> logger,
+        IHlsGroupCallStreamService hlsGroupCallStreamService)
     {
         _database = database;
         _logger = logger;
+        _hlsGroupCallStreamService = hlsGroupCallStreamService;
     }
 
     protected override async Task<MyTelegram.Schema.Upload.IFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Upload.RequestGetFile obj)
@@ -34,7 +39,7 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
 
         if (obj.Location is TInputGroupCallStream groupCallStream)
         {
-            return await HandleGroupCallStreamAsync(input, groupCallStream);
+            return await HandleGroupCallStreamAsync(input, groupCallStream, obj.Limit);
         }
 
         // Extract file ID from location
@@ -120,7 +125,8 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
 
     private async Task<MyTelegram.Schema.Upload.IFile> HandleGroupCallStreamAsync(
         IRequestInput input,
-        TInputGroupCallStream location)
+        TInputGroupCallStream location,
+        int limit)
     {
         if (location.Call is not TInputGroupCall inputGroupCall)
         {
@@ -136,25 +142,38 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
             return null!;
         }
 
-        if (!GroupCallStateHelper.IsJoinedByUser(groupCall, input.UserId))
+        if (!GroupCallStateHelper.IsJoinedByUser(groupCall, input.UserId) && groupCall.CreatorId != input.UserId)
         {
             RpcErrors.RpcErrors400.GroupcallJoinMissing.ThrowRpcError();
             return null!;
         }
 
-        _logger.LogDebug(
-            "Returning empty group call stream chunk: CallId={CallId}, TimeMs={TimeMs}, Scale={Scale}, VideoChannel={VideoChannel}, VideoQuality={VideoQuality}",
-            inputGroupCall.Id,
+        _logger.LogInformation(
+            "Handling upload.getFile inputGroupCallStream: ReqMsgId={ReqMsgId}, CallId={CallId}, TimeMs={TimeMs}, Scale={Scale}, VideoChannel={VideoChannel}, VideoQuality={VideoQuality}",
+            input.ReqMsgId,
+            groupCall.CallId,
             location.TimeMs,
             location.Scale,
             location.VideoChannel,
             location.VideoQuality);
 
+        var bytes = await _hlsGroupCallStreamService.ReadPartAsync(groupCall, location);
+        if (bytes.Length > limit)
+        {
+            bytes = bytes.Take(limit).ToArray();
+        }
+
+        _logger.LogInformation(
+            "Returning upload.getFile inputGroupCallStream: ReqMsgId={ReqMsgId}, CallId={CallId}, Bytes={Bytes}",
+            input.ReqMsgId,
+            groupCall.CallId,
+            bytes.Length);
+
         return new MyTelegram.Schema.Upload.TFile
         {
             Type = new MyTelegram.Schema.Storage.TFilePartial(),
             Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            Bytes = ReadOnlyMemory<byte>.Empty
+            Bytes = bytes
         };
     }
 }
