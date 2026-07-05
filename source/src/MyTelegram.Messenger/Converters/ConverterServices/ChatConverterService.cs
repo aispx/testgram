@@ -1,4 +1,6 @@
-﻿using IChannelParticipant = MyTelegram.Schema.IChannelParticipant;
+﻿using MongoDB.Driver;
+using MyTelegram.Messenger.Services;
+using IChannelParticipant = MyTelegram.Schema.IChannelParticipant;
 using IChatFull = MyTelegram.Schema.IChatFull;
 using TChannelParticipant = MyTelegram.Schema.Channels.TChannelParticipant;
 using TChatFull = MyTelegram.Schema.Messages.TChatFull;
@@ -19,9 +21,13 @@ public class ChatConverterService(
     ILayeredService<IChatAdminRightsConverter> chatAdminRightsLayeredService,
     IChatInviteExportedConverterService chatInviteExportedConverterService,
     ILayeredService<IEmojiStatusConverter> emojiStatusLayeredService,
-    ILayeredService<IChatBannedRightsConverter> chatBannedRightsLayeredService)
+    ILayeredService<IChatBannedRightsConverter> chatBannedRightsLayeredService,
+    IMongoDatabase mongoDatabase)
     : IChatConverterService, ITransientDependency
 {
+    private readonly IMongoCollection<BotVerificationDocument> _botVerificationCollection =
+        mongoDatabase.GetCollection<BotVerificationDocument>("bot-verifications");
+
     public async Task<IChat> GetChannelAsync(IRequestWithAccessHashKeyId request, long channelId,
         bool checkChannelMember, bool? channelMemberIsLeft, int layer = 0)
     {
@@ -265,6 +271,7 @@ public class ChatConverterService(
         {
             tChannel.Forum = channelReadModel.Forum;
             tChannel.ForumTabs = channelReadModel.ForumTabs;
+            ApplyBotVerificationIcon(tChannel);
         }
 
         if (channelMemberIsLeft.HasValue)
@@ -308,6 +315,19 @@ public class ChatConverterService(
         return channel;
     }
 
+    private void ApplyBotVerificationIcon(TChannel channel)
+    {
+        var verification = _botVerificationCollection
+            .Find(Builders<BotVerificationDocument>.Filter.Eq(x => x.ChannelId, channel.Id))
+            .FirstOrDefault();
+        if (verification == null)
+        {
+            return;
+        }
+
+        channel.BotVerificationIcon = verification.Icon;
+    }
+
     public IChatFull ToChannelFull(IRequestWithAccessHashKeyId request,
         IChannelReadModel channelReadModel,
         IPhotoReadModel? photoReadModel,
@@ -336,6 +356,16 @@ public class ChatConverterService(
         {
             tChannelFull.PaidMediaAllowed = channelReadModel.Broadcast;
             tChannelFull.PaidReactionsAvailable = channelReadModel.PaidReactionsEnabled;
+            if (channelReadModel.CreatorId == request.UserId ||
+                channelReadModel.AdminList.Any(p => p.UserId == request.UserId))
+            {
+                // Clients show the Monetization/Stars balance UI only when these
+                // channelFull capability flags are present. The revenue handlers
+                // already return the channel ledger; expose the capability to the
+                // creator/admins that are allowed to open it.
+                tChannelFull.CanViewStarsRevenue = true;
+                tChannelFull.CanViewRevenue = true;
+            }
         }
         if (channelFullReadModel.RecentRequesters?.Count > 0 &&
             channelReadModel.AdminList.Any(p => p.UserId == request.UserId))

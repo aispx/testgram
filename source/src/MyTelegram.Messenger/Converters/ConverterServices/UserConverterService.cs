@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services;
 using MyTelegram.Messenger.Services.Impl;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Messenger.Services.Stories;
@@ -25,6 +26,8 @@ public class UserConverterService(
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
         mongoDatabase.GetCollection<StoryDocument>("stories");
+    private readonly IMongoCollection<BotVerificationDocument> _botVerificationCollection =
+        mongoDatabase.GetCollection<BotVerificationDocument>("bot-verifications");
 
     public async Task<ILayeredUser> GetUserAsync(IRequestWithAccessHashKeyId request, long userId, bool skipSetContactProperties = true,
         bool skipCheckPrivacy = true, int layer = 0)
@@ -153,7 +156,24 @@ public class UserConverterService(
             userFull.SendPaidMessagesStars = null;
         }
 
+        if (userReadModel.Bot && IsBotOwner(userId, request.UserId))
+        {
+            // Bot monetization is gated client-side by userFull.can_view_revenue.
+            // Balances are stored on the bot user ledger; expose the UI only to
+            // the BotFather owner recorded in bot-owners.
+            userFull.CanViewRevenue = true;
+        }
+
         return userFull;
+    }
+
+    private bool IsBotOwner(long botUserId, long ownerUserId)
+    {
+        return mongoDatabase.GetCollection<BsonDocument>("bot-owners")
+            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("OwnerId", ownerUserId))
+            .Limit(1)
+            .Any();
     }
 
     public async Task<IUserFull> GetUserFullAsync(IRequestWithAccessHashKeyId request, long userId, int layer = 0)
@@ -321,6 +341,11 @@ public class UserConverterService(
             }
         }
 
+        if (user is TUser tUserWithVerification)
+        {
+            ApplyBotVerificationIcon(tUserWithVerification);
+        }
+
         // Set BotBusiness flag from MongoDB if user is a bot
         if (userReadModel.Bot && user is TUser tUser)
         {
@@ -382,6 +407,19 @@ public class UserConverterService(
         }
 
         return user;
+    }
+
+    private void ApplyBotVerificationIcon(TUser user)
+    {
+        var verification = _botVerificationCollection
+            .Find(Builders<BotVerificationDocument>.Filter.Eq(x => x.UserId, user.Id))
+            .FirstOrDefault();
+        if (verification == null)
+        {
+            return;
+        }
+
+        user.BotVerificationIcon = verification.Icon;
     }
 
     private (long? DocumentId, int? Until, long? CollectibleId) GetLatestEmojiStatusFields(IUserReadModel userReadModel)

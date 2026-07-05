@@ -175,13 +175,20 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
     {
         var col = mongoDatabase.GetCollection<MyTelegram.Messenger.Services.BotVerificationDocument>("bot-verifications");
         var doc = await (await col.FindAsync(Builders<MyTelegram.Messenger.Services.BotVerificationDocument>.Filter.Eq(x => x.ChannelId, channelId))).FirstOrDefaultAsync();
-        if (doc == null) return;
+        if (doc == null)
+        {
+            return;
+        }
 
         var bv = new TBotVerification { BotId = doc.BotId, Icon = doc.Icon, Description = doc.Description };
         if (channelFull is TChannelFull tFull) tFull.BotVerification = bv;
 
         var ch = chatFull.Chats?.OfType<TChannel>().FirstOrDefault(c => c.Id == channelId);
-        if (ch != null) ch.BotVerificationIcon = doc.Icon;
+        if (ch != null)
+        {
+            ch.BotVerificationIcon = doc.Icon;
+            ch.ComputeFlag(); // CRITICAL: Recompute flags after setting BotVerificationIcon
+        }
     }
 
     private async Task SetBoostsInfoAsync(long userId, long channelId, ILayeredChannelFull channelFull)
