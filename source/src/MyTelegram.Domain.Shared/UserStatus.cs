@@ -12,7 +12,10 @@ public class UserStatus(
     public void UpdateStatus(bool online)
     {
         Online = online;
-        LastUpdateDate = DateTime.UtcNow;
+        if (online)
+        {
+            LastUpdateDate = DateTime.UtcNow;
+        }
     }
 
     public void SetLastOnline(DateTime lastOnline)

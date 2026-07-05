@@ -49,32 +49,25 @@ public class UserStatusCacheAppService(
         foreach (var s in statuses)
         {
             var userStatus = new UserStatus(s.UserId, false);
-            // Set LastUpdateDate via reflection-free approach: use UpdateStatus trick
-            // We create with correct time by using a workaround
             inMemoryRepository.Insert(s.UserId, userStatus);
-            // Force LastUpdateDate to stored value
             userStatus.SetLastOnline(s.LastOnline);
         }
     }
 
     // Mirror of the client's presence logic (MessagesController.updateTimerProc):
     // the active account re-sends account.updateStatus(offline=false) roughly every
-    // 55s while foreground, and background accounts stop pinging. So the server must
-    // treat "online" as valid only for a short window after the last online ping and
-    // advertise userStatusOnline.expires for exactly that window. Previously expires was
-    // set to +5 minutes while the online window was 60s, so an account that pinged online
-    // just once (e.g. a background account on app open) appeared online to everyone for
-    // 5 whole minutes. OnlineWindowSeconds (90s) covers the ~55s client refresh plus
-    // network margin, so the foreground account stays continuously online while a
-    // background account falls back to "last seen" within ~90s.
+    // 55s while foreground, and background accounts stop pinging. OnlineWindowSeconds (90s)
+    // covers the ~55s client refresh plus network margin.
     private const int OnlineWindowSeconds = 90;
 
     private static IUserStatus GetUserStatus(DateTime lastUpdateUtcTime, bool isOnline)
     {
-        var timespan = (DateTime.UtcNow - lastUpdateUtcTime).TotalSeconds;
-        var wasOnline = lastUpdateUtcTime.ToTimestamp();
-        var expire = lastUpdateUtcTime.AddSeconds(OnlineWindowSeconds).ToTimestamp();
+        var now = DateTime.UtcNow;
+        var timespan = (now - lastUpdateUtcTime).TotalSeconds;
         const int day = 60 * 60 * 24;
+        var expire = lastUpdateUtcTime.AddSeconds(OnlineWindowSeconds).ToTimestamp();
+        var wasOnline = Math.Min(lastUpdateUtcTime.ToTimestamp(), now.ToTimestamp() - 1);
+
         IUserStatus status;
         if (isOnline)
             status = timespan switch
