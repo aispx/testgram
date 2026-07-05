@@ -7,12 +7,15 @@
     <PackageVersion Include="AutoFixture.Xunit2" Version="4.18.1" />
     <PackageVersion Include="BloomFilter.NetCore" Version="2.1.1" />
     <PackageVersion Include="CommunityToolkit.HighPerformance" Version="8.4.0" />
+    <PackageVersion Include="CsCheck" Version="4.6.2" />
     <PackageVersion Include="ConfigureAwait.Fody" PrivateAssets="All" Version="3.3.2" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Cube.Timer" Version="1.0.5" />
     <PackageVersion Include="EventFlow" Version="1.2.3" />
     <PackageVersion Include="EventFlow.MongoDB" Version="1.2.3" />
     <PackageVersion Include="Fody" Version="6.9.3" />
+    <PackageVersion Include="FsCheck" Version="2.16.6" />
+    <PackageVersion Include="FsCheck.Xunit" Version="2.16.6" />
     <PackageVersion Include="Google.Protobuf" Version="3.33.2" />
     <PackageVersion Include="Grpc.AspNetCore" Version="2.66.0" />
     <PackageVersion Include="Grpc.Net.Client" Version="2.71.0" />
@@ -48,6 +51,7 @@
     <PackageVersion Include="SharpZipLib" Version="1.4.2" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
     <PackageVersion Include="Sigil" Version="5.0.0" />
+    <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.11" />
     <PackageVersion Include="Standart.Hash.xxHash" Version="4.0.5" />
     <PackageVersion Include="System.ComponentModel.TypeConverter" Version="4.3.0" />
     <PackageVersion Include="System.IO.Hashing" Version="10.0.1" />

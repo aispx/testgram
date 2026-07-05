@@ -43,6 +43,7 @@
     <Project Path="test/MyTelegram.Domain.IntegrationTests/MyTelegram.Domain.IntegrationTests.csproj" />
     <Project Path="test/MyTelegram.Domain.Tests/MyTelegram.Domain.Tests.csproj" />
     <Project Path="test/MyTelegram.MTProto.Tests/MyTelegram.MTProto.Tests.csproj" />
+    <Project Path="test/MyTelegram.Push.Tests/MyTelegram.Push.Tests.csproj" />
     <Project Path="test/MyTelegram.Schema.Tests/MyTelegram.Schema.Tests.csproj" />
     <Project Path="test/MyTelegram.Services.Tests/MyTelegram.Services.Tests.csproj" />
   </Folder>

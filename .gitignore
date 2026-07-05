@@ -365,7 +365,7 @@ bot/.env
 
 # Local appsettings with custom IPs
 **/appsettings.json
-apk/
+!source/src/*/appsettings.json
 
 # My stuff
 .aider*
@@ -384,3 +384,15 @@ scripts/stickers/
 .claude-flow/
 .swarm/
 .mcp.json
+
+# Local agent/runtime state
+/.omx/
+/.kiro/
+/.codex/
+/.agents/
+
+# Local generated backups and scratch files
+docker/compose/*.bak*
+docker/compose/backups/
+docker/compose/geoip/
+/*.backup

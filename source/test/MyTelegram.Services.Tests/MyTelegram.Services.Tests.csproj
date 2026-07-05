@@ -13,6 +13,7 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="CsCheck" />
     <PackageReference Include="Shouldly" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
@@ -22,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\MyTelegram.Messenger\MyTelegram.Messenger.csproj" />
     <ProjectReference Include="..\..\src\MyTelegram.Services\MyTelegram.Services.csproj" />
     <ProjectReference Include="..\..\src\MyTelegram.TestBase\MyTelegram.TestBase.csproj" />
   </ItemGroup>
