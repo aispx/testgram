@@ -19,6 +19,7 @@ Steps:
 """
 import asyncio, json, os, io, struct, time
 from pathlib import Path
+from typing import Any, Dict, List
 
 # Telegram API credentials — set via env or fill in
 TG_API_ID   = int(os.environ.get("TG_API_ID", "0"))
@@ -40,28 +41,109 @@ FIELDS = ["static_icon", "appear_animation", "select_animation",
           "activate_animation", "effect_animation", "around_animation", "center_icon"]
 
 
+def serialize_thumbs(document) -> List[Dict[str, Any]]:
+    """Convert Telethon document thumbs into MongoDB/manifest-safe dictionaries."""
+    from telethon.tl.types import (
+        PhotoCachedSize,
+        PhotoPathSize,
+        PhotoSize,
+        PhotoSizeEmpty,
+        PhotoSizeProgressive,
+        PhotoStrippedSize,
+    )
+
+    serialized = []
+    for thumb in getattr(document, "thumbs", None) or []:
+        if isinstance(thumb, PhotoSize):
+            serialized.append({
+                "_t": "TPhotoSize", "Type": thumb.type,
+                "W": thumb.w, "H": thumb.h, "Size": thumb.size,
+            })
+        elif isinstance(thumb, PhotoCachedSize):
+            serialized.append({
+                "_t": "TPhotoCachedSize", "Type": thumb.type,
+                "W": thumb.w, "H": thumb.h, "Bytes": list(thumb.bytes),
+            })
+        elif isinstance(thumb, PhotoSizeProgressive):
+            serialized.append({
+                "_t": "TPhotoSizeProgressive", "Type": thumb.type,
+                "W": thumb.w, "H": thumb.h, "Sizes": list(thumb.sizes),
+            })
+        elif isinstance(thumb, PhotoStrippedSize):
+            serialized.append({
+                "_t": "TPhotoStrippedSize", "Type": thumb.type,
+                "Bytes": list(thumb.bytes),
+            })
+        elif isinstance(thumb, PhotoPathSize):
+            serialized.append({
+                "_t": "TPhotoPathSize", "Type": thumb.type,
+                "Bytes": list(thumb.bytes),
+            })
+        elif isinstance(thumb, PhotoSizeEmpty):
+            serialized.append({"_t": "TPhotoSizeEmpty", "Type": thumb.type})
+    return serialized
+
+
+async def download_thumbs(client, document, field: str) -> Dict[str, str]:
+    """Download server-backed document thumbs so MyTelegram can serve them."""
+    from telethon.tl.types import PhotoSize, PhotoSizeProgressive
+
+    files = {}
+    for thumb in getattr(document, "thumbs", None) or []:
+        if not isinstance(thumb, (PhotoSize, PhotoSizeProgressive)):
+            continue
+        out = OUT_DIR / f"{document.id}_{field}_thumb_{thumb.type}.bin"
+        if not out.exists():
+            try:
+                data = await client.download_media(document, file=bytes, thumb=thumb)
+            except Exception as e:
+                print(f"  thumb {document.id}_{thumb.type}: ERROR {e}")
+                continue
+            if data:
+                out.write_bytes(data)
+        if out.exists():
+            files[thumb.type] = str(out)
+    return files
+
+
+def upload_thumbs(minio, doc_id: int, thumb_files: Dict[str, str]):
+    for thumb_type, file_path in (thumb_files or {}).items():
+        path = Path(file_path)
+        if not path.exists():
+            continue
+        data = path.read_bytes()
+        minio.put_object(
+            MINIO_BUCKET,
+            f"{doc_id}_{thumb_type}",
+            io.BytesIO(data),
+            length=len(data),
+        )
+
+
 # ── Download ──────────────────────────────────────────────────────────────────
 
 async def download_doc(client, emoji, field, doc, sem):
     from telethon.tl.types import Document, DocumentAttributeFilename
     if not isinstance(doc, Document):
-        return field, None
+        return field, None, [], {}
+    thumbs = serialize_thumbs(doc)
     async with sem:
+        thumb_files = await download_thumbs(client, doc, field)
         is_tgs = any(isinstance(a, DocumentAttributeFilename) and a.file_name.endswith(".tgs")
                      for a in doc.attributes) or "tgs" in (doc.mime_type or "")
         ext = "tgs" if is_tgs else ("webp" if "webp" in (doc.mime_type or "") else "bin")
         out = OUT_DIR / f"{doc.id}_{field}.{ext}"
         if out.exists():
-            return field, str(out)
+            return field, str(out), thumbs, thumb_files
         print(f"  [{emoji}] {field}: {doc.size}b", flush=True)
         try:
             data = await client.download_media(doc, file=bytes)
         except Exception as e:
             print(f"  [{emoji}] {field}: ERROR {e}")
-            return field, None
+            return field, None, thumbs, thumb_files
         if data:
             out.write_bytes(data)
-        return field, str(out) if data else None
+        return field, str(out) if data else None, thumbs, thumb_files
 
 
 async def cmd_download():
@@ -80,8 +162,12 @@ async def cmd_download():
         docs = {f: getattr(r, f, None) for f in FIELDS}
         results = await asyncio.gather(*[download_doc(client, r.reaction, f, d, sem)
                                          for f, d in docs.items()])
+        files = {field: path for field, path, _, _ in results}
+        thumbs = {f"{field}_thumbs": doc_thumbs for field, _, doc_thumbs, _ in results}
+        thumb_files = {f"{field}_thumb_files": files for field, _, _, files in results}
         return {"emoji": r.reaction, "title": r.title,
-                "inactive": r.inactive, "premium": r.premium, **dict(results)}
+                "inactive": r.inactive, "premium": r.premium,
+                **files, **thumbs, **thumb_files}
 
     manifest = await asyncio.gather(*[process(r) for r in result.reactions])
     MANIFEST_FILE.write_text(json.dumps(list(manifest), indent=2, ensure_ascii=False))
@@ -148,10 +234,17 @@ def cmd_import():
             # Extract original Telegram doc ID from filename
             orig_tg_id = p.stem.split("_")[0]
             name = p.name
+            thumbs = reaction.get(f"{field}_thumbs") or None
+            thumb_files = reaction.get(f"{field}_thumb_files") or {}
 
             # Check if already in MongoDB
             if name in existing:
                 doc_id = existing[name]
+                if thumbs:
+                    doc_col.update_one(
+                        {"DocumentId": doc_id},
+                        {"$set": {"Thumbs": thumbs}},
+                    )
                 # Check if file is in Minio
                 try:
                     minio.stat_object(MINIO_BUCKET, str(doc_id))
@@ -161,6 +254,7 @@ def cmd_import():
                     minio.put_object(MINIO_BUCKET, str(doc_id),
                                      io.BytesIO(data), length=len(data))
                     print(f"  [{emoji}] {field}: uploaded to minio doc_id={doc_id}")
+                upload_thumbs(minio, doc_id, thumb_files)
             else:
                 # New document — insert into MongoDB and upload to Minio
                 data = p.read_bytes()
@@ -175,6 +269,7 @@ def cmd_import():
 
                 minio.put_object(MINIO_BUCKET, str(doc_id),
                                  io.BytesIO(data), length=len(data), content_type=mime)
+                upload_thumbs(minio, doc_id, thumb_files)
                 doc_col.insert_one({
                     "_id": f"documentreadmodel-{doc_id}",
                     "Id": f"documentreadmodel-{doc_id}",
@@ -184,7 +279,7 @@ def cmd_import():
                     "FileReference": file_ref,
                     "Date": int(time.time()),
                     "DcId": DC_ID, "MimeType": mime, "Size": len(data),
-                    "Name": name, "Thumbs": None, "VideoThumbs": None,
+                    "Name": name, "Thumbs": thumbs, "VideoThumbs": None,
                     "Attributes": attrs_bytes, "Attributes2": None,
                     "CreatorId": None, "Fingerprint": None,
                     "Md5CheckSum": None, "ThumbId": None, "VideoThumbId": None,
@@ -205,7 +300,8 @@ def cmd_import():
                     "Date": doc_meta["Date"],
                     "MimeType": doc_meta["MimeType"],
                     "Size": doc_meta["Size"],
-                    "DcId": doc_meta["DcId"]
+                    "DcId": doc_meta["DcId"],
+                    "Thumbs": doc_meta.get("Thumbs"),
                 }
 
         reaction_docs.append(reaction_doc)

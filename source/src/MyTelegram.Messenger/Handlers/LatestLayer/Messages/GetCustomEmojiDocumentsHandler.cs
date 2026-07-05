@@ -10,7 +10,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetCustomEmojiDocuments, TVector<MyTelegram.Schema.IDocument>>
+internal sealed class GetCustomEmojiDocumentsHandler(
+    IMongoDatabase mongoDatabase,
+    IAccessHashHelper2 accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetCustomEmojiDocuments, TVector<MyTelegram.Schema.IDocument>>
 {
     protected override async Task<TVector<MyTelegram.Schema.IDocument>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetCustomEmojiDocuments obj)
     {
@@ -30,16 +32,19 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
         {
             if (!docMap.TryGetValue(documentId, out var d))
             {
+                result.Add(new TDocumentEmpty { Id = documentId });
                 continue;
             }
 
             try
             {
-                result.Add(BuildDocument(d, collectibleModelDocumentIds.Contains(documentId)));
+                result.Add(BuildDocument(input, d, collectibleModelDocumentIds.Contains(documentId)));
             }
             catch (Exception)
             {
-                // Skip malformed documents instead of crashing.
+                // Match Telegram: requested IDs that are not custom emoji are
+                // represented by documentEmpty instead of being omitted.
+                result.Add(new TDocumentEmpty { Id = documentId });
             }
         }
 
@@ -94,7 +99,7 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
         }
     }
 
-    private static IDocument BuildDocument(BsonDocument d, bool isCollectibleModelDocument)
+    private IDocument BuildDocument(IRequestInput input, BsonDocument d, bool isCollectibleModelDocument)
     {
         byte[] fileRef = [];
         if (d.Contains("FileReference") && !d["FileReference"].IsBsonNull)
@@ -106,41 +111,108 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
                 fileRef = fr.AsBsonArray.Select(x => (byte)GetInt32(x)).ToArray();
         }
 
-        var attributes = GetValidCustomEmojiAttributes(d, isCollectibleModelDocument);
+        var attributes = GetValidCustomEmojiAttributes(input, d, isCollectibleModelDocument);
+        var thumbs = ReadThumbs(d);
 
         return new TDocument
         {
             Id = GetInt64(d["DocumentId"]),
-            AccessHash = GetInt64(d["AccessHash"]),
+            AccessHash = accessHashHelper.GenerateAccessHash(input.UserId, input.AccessHashKeyId, GetInt64(d["DocumentId"]), AccessHashType.Document),
             FileReference = fileRef,
             Date = d.Contains("Date") ? GetInt32(d["Date"]) : 0,
             MimeType = d.Contains("MimeType") ? d["MimeType"].AsString : "application/octet-stream",
             Size = d.Contains("Size") ? GetInt64(d["Size"]) : 0,
-            Thumbs = new TVector<IPhotoSize>(),
+            Thumbs = thumbs,
             VideoThumbs = new TVector<IVideoSize>(),
-            DcId = d.Contains("DcId") ? GetInt32(d["DcId"]) : 0,
+            // A document served with dc_id=0 points the client at a non-existent
+            // datacenter; its download request then gets stuck and the client spams
+            // help.getConfig trying to discover DC0 (see MessagesController/tgnet
+            // updateDcSettings). Fall back to the media DC like every other builder.
+            DcId = d.Contains("DcId") && GetInt32(d["DcId"]) > 0 ? GetInt32(d["DcId"]) : MyTelegramConsts.MediaDcId,
             Attributes = attributes
         };
     }
 
-    private static TVector<IDocumentAttribute> GetValidCustomEmojiAttributes(BsonDocument d, bool isCollectibleModelDocument)
+    private static TVector<IPhotoSize> ReadThumbs(BsonDocument document)
+    {
+        var result = new TVector<IPhotoSize>();
+        if (!document.TryGetValue("Thumbs", out var thumbsValue) || !thumbsValue.IsBsonArray)
+        {
+            return result;
+        }
+
+        foreach (var value in thumbsValue.AsBsonArray.Where(value => value.IsBsonDocument))
+        {
+            var thumb = value.AsBsonDocument;
+            var type = thumb.GetValue("_t", "").AsString;
+            var thumbType = thumb.GetValue("Type", "").AsString;
+
+            switch (type)
+            {
+                case nameof(TPhotoSize):
+                    result.Add(new TPhotoSize
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Size = GetInt32(thumb["Size"]),
+                    });
+                    break;
+                case nameof(TPhotoCachedSize):
+                    result.Add(new TPhotoCachedSize
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Bytes = GetBytes(thumb["Bytes"]),
+                    });
+                    break;
+                case nameof(TPhotoSizeProgressive):
+                    result.Add(new TPhotoSizeProgressive
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Sizes = new TVector<int>(thumb["Sizes"].AsBsonArray.Select(GetInt32)),
+                    });
+                    break;
+                case nameof(TPhotoStrippedSize):
+                    result.Add(new TPhotoStrippedSize { Type = thumbType, Bytes = GetBytes(thumb["Bytes"]) });
+                    break;
+                case nameof(TPhotoPathSize):
+                    result.Add(new TPhotoPathSize { Type = thumbType, Bytes = GetBytes(thumb["Bytes"]) });
+                    break;
+                case nameof(TPhotoSizeEmpty):
+                    result.Add(new TPhotoSizeEmpty { Type = thumbType });
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    private static byte[] GetBytes(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Binary => value.AsBsonBinaryData.Bytes,
+            BsonType.Array => value.AsBsonArray.Select(item => (byte)GetInt32(item)).ToArray(),
+            _ => [],
+        };
+    }
+
+    private TVector<IDocumentAttribute> GetValidCustomEmojiAttributes(IRequestInput input, BsonDocument d, bool isCollectibleModelDocument)
     {
         if (CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(d, out var customEmojiAttribute))
         {
-            customEmojiAttribute.Stickerset ??= new TInputStickerSetEmpty();
-            return [customEmojiAttribute];
+            NormalizeCustomEmojiStickerSet(input, customEmojiAttribute);
+            return GetSupportingAttributes(d, customEmojiAttribute);
         }
 
-        // Emoji statuses may reference regular animated sticker documents
-        // (not only documents that were originally stored with
-        // documentAttributeCustomEmoji). Clients still fetch them through
-        // messages.getCustomEmojiDocuments when resolving the status after
-        // reconnect/account reload, so expose the sticker as a custom-emoji
-        // document instead of dropping it and causing a stale-status fallback.
-        if (CustomEmojiAttributeHelper.TryGetStickerAttributeAsCustomEmoji(d, out var stickerAsCustomEmoji))
+        if (CustomEmojiAttributeHelper.TryGetStickerAttributeAsCustomEmoji(d, out customEmojiAttribute))
         {
-            stickerAsCustomEmoji.Stickerset ??= new TInputStickerSetEmpty();
-            return [stickerAsCustomEmoji];
+            NormalizeCustomEmojiStickerSet(input, customEmojiAttribute);
+            return GetSupportingAttributes(d, customEmojiAttribute);
         }
 
         // Unique gift models are valid collectible emoji-status documents even
@@ -164,6 +236,46 @@ internal sealed class GetCustomEmojiDocumentsHandler(IMongoDatabase mongoDatabas
         }
 
         throw new InvalidDataException("Document is not a custom emoji.");
+    }
+
+    private void NormalizeCustomEmojiStickerSet(IRequestInput input, TDocumentAttributeCustomEmoji attribute)
+    {
+        if (attribute.Stickerset is TInputStickerSetID stickerSet)
+        {
+            stickerSet.AccessHash = accessHashHelper.GenerateAccessHash(
+                input.UserId,
+                input.AccessHashKeyId,
+                stickerSet.Id,
+                AccessHashType.StickerSet);
+            return;
+        }
+
+        attribute.Stickerset ??= new TInputStickerSetEmpty();
+    }
+
+    private static TVector<IDocumentAttribute> GetSupportingAttributes(
+        BsonDocument document,
+        TDocumentAttributeCustomEmoji customEmojiAttribute)
+    {
+        if (!document.TryGetValue("Attributes2", out var attributesValue) || !attributesValue.IsBsonArray)
+        {
+            return [customEmojiAttribute];
+        }
+
+        try
+        {
+            var attributes = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(
+                attributesValue.ToJson());
+            return new TVector<IDocumentAttribute>(
+                attributes.Where(attribute =>
+                    attribute is not TDocumentAttributeCustomEmoji &&
+                    attribute is not TDocumentAttributeSticker)
+                .Prepend(customEmojiAttribute));
+        }
+        catch
+        {
+            return [customEmojiAttribute];
+        }
     }
 
     private static long GetInt64(BsonValue v)

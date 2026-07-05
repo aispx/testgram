@@ -223,7 +223,9 @@ internal sealed class GetFeaturedEmojiStickersHandler(IMongoDatabase mongoDataba
             Size = d.Contains("Size") ? d["Size"].ToInt64() : 0,
             Thumbs = new TVector<IPhotoSize>(),
             VideoThumbs = new TVector<IVideoSize>(),
-            DcId = d.Contains("DcId") ? d["DcId"].ToInt32() : 0,
+            // dc_id=0 points the client at a non-existent datacenter and makes it spam
+            // help.getConfig; fall back to the media DC like the other document builders.
+            DcId = d.Contains("DcId") && d["DcId"].ToInt32() > 0 ? d["DcId"].ToInt32() : MyTelegramConsts.MediaDcId,
             Attributes = attributes
         };
     }

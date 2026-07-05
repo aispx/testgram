@@ -72,6 +72,125 @@ MIME_TO_EXT = {
 }
 
 
+def serialize_thumbs(document) -> List[Dict[str, Any]]:
+    """Convert Telethon document thumbs into MongoDB/manifest-safe dictionaries."""
+    from telethon.tl.types import (
+        PhotoCachedSize,
+        PhotoPathSize,
+        PhotoSize,
+        PhotoSizeEmpty,
+        PhotoSizeProgressive,
+        PhotoStrippedSize,
+    )
+
+    serialized = []
+    for thumb in getattr(document, "thumbs", None) or []:
+        if isinstance(thumb, PhotoSize):
+            serialized.append({
+                "_t": "TPhotoSize",
+                "Type": thumb.type,
+                "W": thumb.w,
+                "H": thumb.h,
+                "Size": thumb.size,
+            })
+        elif isinstance(thumb, PhotoCachedSize):
+            serialized.append({
+                "_t": "TPhotoCachedSize",
+                "Type": thumb.type,
+                "W": thumb.w,
+                "H": thumb.h,
+                "Bytes": list(thumb.bytes),
+            })
+        elif isinstance(thumb, PhotoSizeProgressive):
+            serialized.append({
+                "_t": "TPhotoSizeProgressive",
+                "Type": thumb.type,
+                "W": thumb.w,
+                "H": thumb.h,
+                "Sizes": list(thumb.sizes),
+            })
+        elif isinstance(thumb, PhotoStrippedSize):
+            serialized.append({
+                "_t": "TPhotoStrippedSize",
+                "Type": thumb.type,
+                "Bytes": list(thumb.bytes),
+            })
+        elif isinstance(thumb, PhotoPathSize):
+            serialized.append({
+                "_t": "TPhotoPathSize",
+                "Type": thumb.type,
+                "Bytes": list(thumb.bytes),
+            })
+        elif isinstance(thumb, PhotoSizeEmpty):
+            serialized.append({
+                "_t": "TPhotoSizeEmpty",
+                "Type": thumb.type,
+            })
+    return serialized
+
+
+async def download_thumbs(client, document, output_dir: Path) -> Dict[str, str]:
+    """Download server-backed document thumbs so MyTelegram can serve them."""
+    from telethon.tl.types import PhotoSize, PhotoSizeProgressive
+
+    files = {}
+    for thumb in getattr(document, "thumbs", None) or []:
+        if not isinstance(thumb, (PhotoSize, PhotoSizeProgressive)):
+            continue
+        path = output_dir / f"{document.id}_thumb_{thumb.type}.bin"
+        if not path.exists():
+            try:
+                data = await client.download_media(document, file=bytes, thumb=thumb)
+            except Exception as e:
+                print(f"    Thumb {document.id}_{thumb.type}: ERROR {e}")
+                continue
+            if data:
+                path.write_bytes(data)
+        if path.exists():
+            files[thumb.type] = str(path)
+    return files
+
+
+def upload_thumbs(minio, doc_id: int, thumb_files: Dict[str, str]):
+    for thumb_type, file_path in (thumb_files or {}).items():
+        path = Path(file_path)
+        if not path.exists():
+            continue
+        data = path.read_bytes()
+        minio.put_object(
+            MINIO_BUCKET,
+            f"{doc_id}_{thumb_type}",
+            io.BytesIO(data),
+            length=len(data),
+        )
+
+
+def serialize_supporting_attributes(document) -> List[Dict[str, Any]]:
+    """Preserve non-sticker attributes needed to describe downloaded documents."""
+    from telethon.tl.types import (
+        DocumentAttributeAnimated,
+        DocumentAttributeFilename,
+        DocumentAttributeImageSize,
+    )
+
+    serialized = []
+    for attribute in getattr(document, "attributes", None) or []:
+        if isinstance(attribute, DocumentAttributeImageSize):
+            serialized.append({
+                "_t": "TDocumentAttributeImageSize",
+                "W": attribute.w,
+                "H": attribute.h,
+            })
+        elif isinstance(attribute, DocumentAttributeFilename):
+            serialized.append({
+                "_t": "TDocumentAttributeFilename",
+                "FileName": attribute.file_name,
+            })
+        elif isinstance(attribute, DocumentAttributeAnimated):
+            serialized.append({"_t": "TDocumentAttributeAnimated"})
+    return serialized
+
+
 def get_file_ext(mime_type: str, file_name: str = "") -> str:
     if mime_type in MIME_TO_EXT:
         return MIME_TO_EXT[mime_type]
@@ -149,6 +268,9 @@ async def fetch_sticker_set(
             "size": doc.size,
             "file": str(path),
             "ext": ext,
+            "thumbs": serialize_thumbs(doc),
+            "thumb_files": await download_thumbs(client, doc, set_dir),
+            "attributes": serialize_supporting_attributes(doc),
         })
 
     packs = []
@@ -197,39 +319,62 @@ async def cmd_download():
     skipped_count = 0
     processed_keys = set()
 
-    print("\n=== Fetching featured sticker sets ===")
-    try:
-        featured_result = await client(functions.messages.GetFeaturedStickersRequest(hash=0))
-        print(f"Found {len(featured_result.sets)} featured sticker sets")
-        all_sets = list(featured_result.sets)
-    except Exception as e:
-        print(f"Could not fetch featured stickers: {e}")
-        all_sets = []
+    # Check if --set argument is provided
+    import sys
+    target_set = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--set" and i + 1 < len(sys.argv):
+            target_set = sys.argv[i + 1]
+            break
 
-    print(f"\n=== Processing {len(all_sets)} featured sticker sets ===")
-    for i, stickerset in enumerate(all_sets):
-        short_name = getattr(stickerset, "short_name", None)
-        if not short_name:
-            print(f"  [{i + 1}/{len(all_sets)}] Skipping set without short_name")
-            continue
-
-        print(f"  [{i + 1}/{len(all_sets)}] Processing: {short_name}")
+    if target_set:
+        print(f"\n=== Fetching single sticker set: {target_set} ===")
         payload = await fetch_sticker_set(
             client,
-            types.InputStickerSetShortName(short_name=short_name),
-            short_name,
-            short_name,
+            types.InputStickerSetShortName(short_name=target_set),
+            target_set,
+            target_set,
         )
-        if payload is None:
-            continue
+        if payload:
+            manifest.append(payload["manifest"])
+            downloaded_count += payload["downloaded_count"]
+            skipped_count += payload["skipped_count"]
+        else:
+            print(f"ERROR: Could not fetch sticker set {target_set}")
+    else:
+        print("\n=== Fetching featured sticker sets ===")
+        try:
+            featured_result = await client(functions.messages.GetFeaturedStickersRequest(hash=0))
+            print(f"Found {len(featured_result.sets)} featured sticker sets")
+            all_sets = list(featured_result.sets)
+        except Exception as e:
+            print(f"Could not fetch featured stickers: {e}")
+            all_sets = []
 
-        key = payload["manifest"]["short_name"]
-        if key in processed_keys:
-            continue
-        processed_keys.add(key)
-        manifest.append(payload["manifest"])
-        downloaded_count += payload["downloaded_count"]
-        skipped_count += payload["skipped_count"]
+        print(f"\n=== Processing {len(all_sets)} featured sticker sets ===")
+        for i, stickerset in enumerate(all_sets):
+            short_name = getattr(stickerset, "short_name", None)
+            if not short_name:
+                print(f"  [{i + 1}/{len(all_sets)}] Skipping set without short_name")
+                continue
+
+            print(f"  [{i + 1}/{len(all_sets)}] Processing: {short_name}")
+            payload = await fetch_sticker_set(
+                client,
+                types.InputStickerSetShortName(short_name=short_name),
+                short_name,
+                short_name,
+            )
+            if payload is None:
+                continue
+
+            key = payload["manifest"]["short_name"]
+            if key in processed_keys:
+                continue
+            processed_keys.add(key)
+            manifest.append(payload["manifest"])
+            downloaded_count += payload["downloaded_count"]
+            skipped_count += payload["skipped_count"]
 
     print("\n=== Processing special sets ===")
     # Resolve Telegram-owned sets through their actual InputStickerSet constructors.
@@ -338,6 +483,7 @@ def build_custom_emoji_attribute(set_id: int, set_access_hash: int, alt: str, fr
 
 def merge_attributes(existing_attributes: Any, new_primary_attribute: Dict[str, Any]) -> List[Dict[str, Any]]:
     attributes = [new_primary_attribute]
+    seen_supporting_attributes = set()
     if isinstance(existing_attributes, list):
         for attribute in existing_attributes:
             if not isinstance(attribute, dict):
@@ -345,6 +491,10 @@ def merge_attributes(existing_attributes: Any, new_primary_attribute: Dict[str, 
             attribute_type = attribute.get("_t") or ""
             if attribute_type.endswith(("TDocumentAttributeSticker", "TDocumentAttributeCustomEmoji")):
                 continue
+            key = json.dumps(attribute, sort_keys=True, ensure_ascii=False)
+            if key in seen_supporting_attributes:
+                continue
+            seen_supporting_attributes.add(key)
             attributes.append(attribute)
     return attributes
 
@@ -562,16 +712,16 @@ def infer_set_flags(entry: Dict[str, Any]) -> Dict[str, Any]:
         "inputStickerSetEmojiDefaultTopicIcons",
         "inputStickerSetEmojiChannelDefaultStatuses",
     }
+    # Match Telegram's set-level and per-document custom-emoji flags.  Default
+    # profile statuses are theme-color emoji, but topic icons are full-color
+    # custom emoji.  Marking topic icons as text_color makes clients recolor
+    # their TGS payload to theme blue/white.
     text_color = bool(entry.get("text_color")) or input_stickerset_type in {
         "inputStickerSetEmojiDefaultStatuses",
-        "inputStickerSetEmojiDefaultTopicIcons",
         "inputStickerSetEmojiChannelDefaultStatuses",
     }
     channel_emoji_status = bool(entry.get("channel_emoji_status")) or input_stickerset_type == "inputStickerSetEmojiChannelDefaultStatuses"
-    free = bool(entry.get("free")) or input_stickerset_type in {
-        "inputStickerSetEmojiDefaultStatuses",
-        "inputStickerSetEmojiDefaultTopicIcons",
-    }
+    free = bool(entry.get("free"))
     return {
         "is_custom_emoji": is_custom_emoji,
         "text_color": text_color,
@@ -668,7 +818,7 @@ def cmd_import():
 
     existing_docs = {
         to_int64(d["DocumentId"]): d
-        for d in doc_col.find({}, {"DocumentId": 1, "Attributes2": 1, "AccessHash": 1, "FileReference": 1, "Date": 1, "DcId": 1, "MimeType": 1, "Size": 1, "Name": 1, "Version": 1})
+        for d in doc_col.find({}, {"DocumentId": 1, "Attributes2": 1, "AccessHash": 1, "FileReference": 1, "Date": 1, "DcId": 1, "MimeType": 1, "Size": 1, "Name": 1, "Thumbs": 1, "Version": 1})
     }
     print(f"Found {len(existing_docs)} existing documents in MongoDB")
 
@@ -685,6 +835,7 @@ def cmd_import():
             doc_ids.append(doc_id)
             p = Path(doc["file"])
             mime = doc.get("mime", "application/octet-stream")
+            thumb_files = doc.get("thumb_files") or {}
             alt = extract_doc_alt(entry, doc_id)
             if entry.get("is_custom_emoji"):
                 primary_attribute = build_custom_emoji_attribute(set_id, set_access_hash, alt, entry.get("free", False), entry.get("text_color", False))
@@ -702,14 +853,22 @@ def cmd_import():
                         print(f"  Re-uploaded doc {doc_id}")
                     else:
                         print(f"  WARNING: doc {doc_id} missing in MinIO and file not found")
+                upload_thumbs(minio, doc_id, thumb_files)
 
-                merged_attributes = merge_attributes(existing_doc.get("Attributes2"), primary_attribute)
+                merged_attributes = merge_attributes(
+                    [*(doc.get("attributes") or []), *(existing_doc.get("Attributes2") or [])],
+                    primary_attribute,
+                )
                 update_fields = {
                     "Attributes2": merged_attributes,
                     "Version": max(int(existing_doc.get("Version", 1) or 1), 1),
                 }
                 if entry.get("is_custom_emoji"):
                     update_fields["Attributes"] = None
+
+                if doc.get("thumbs"):
+                    update_fields["Thumbs"] = doc["thumbs"]
+
                 doc_col.update_one({"DocumentId": doc_id}, {"$set": update_fields})
                 print(f"  Updated doc {doc_id} attributes")
                 continue
@@ -724,8 +883,10 @@ def cmd_import():
             ext = doc.get("ext", "bin")
 
             minio.put_object(MINIO_BUCKET, str(doc_id), io.BytesIO(data), length=len(data), content_type=mime)
+            upload_thumbs(minio, doc_id, thumb_files)
 
-            attributes2 = [primary_attribute]
+            attributes2 = merge_attributes(doc.get("attributes"), primary_attribute)
+
             document = {
                 "_id": f"documentreadmodel-{doc_id}",
                 "Id": f"documentreadmodel-{doc_id}",
@@ -738,7 +899,7 @@ def cmd_import():
                 "MimeType": mime,
                 "Size": len(data),
                 "Name": p.name,
-                "Thumbs": None,
+                "Thumbs": doc.get("thumbs") or None,
                 "VideoThumbs": None,
                 "Attributes": None,
                 "Attributes2": attributes2,

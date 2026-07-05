@@ -10,10 +10,12 @@ using MongoDB.Driver;
 internal sealed class GetAvailableReactionsHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetAvailableReactions, MyTelegram.Schema.Messages.IAvailableReactions>
 {
     private readonly IMongoDatabase _database;
+    private readonly IAccessHashHelper2 _accessHashHelper;
 
-    public GetAvailableReactionsHandler(IMongoDatabase database)
+    public GetAvailableReactionsHandler(IMongoDatabase database, IAccessHashHelper2 accessHashHelper)
     {
         _database = database;
+        _accessHashHelper = accessHashHelper;
     }
 
     protected override async Task<MyTelegram.Schema.Messages.IAvailableReactions> HandleCoreAsync(
@@ -46,16 +48,16 @@ internal sealed class GetAvailableReactionsHandler : RpcResultObjectHandler<MyTe
                 Title = doc["Title"].AsString,
                 Inactive = doc.Contains("Inactive") && doc["Inactive"].AsBoolean,
                 Premium = doc.Contains("Premium") && doc["Premium"].AsBoolean,
-                StaticIcon = ConvertToDocument(doc["StaticIcon"].AsBsonDocument),
-                AppearAnimation = ConvertToDocument(doc["AppearAnimation"].AsBsonDocument),
-                SelectAnimation = ConvertToDocument(doc["SelectAnimation"].AsBsonDocument),
-                ActivateAnimation = ConvertToDocument(doc["ActivateAnimation"].AsBsonDocument),
-                EffectAnimation = ConvertToDocument(doc["EffectAnimation"].AsBsonDocument),
+                StaticIcon = ConvertToDocument(input, doc["StaticIcon"].AsBsonDocument),
+                AppearAnimation = ConvertToDocument(input, doc["AppearAnimation"].AsBsonDocument),
+                SelectAnimation = ConvertToDocument(input, doc["SelectAnimation"].AsBsonDocument),
+                ActivateAnimation = ConvertToDocument(input, doc["ActivateAnimation"].AsBsonDocument),
+                EffectAnimation = ConvertToDocument(input, doc["EffectAnimation"].AsBsonDocument),
                 AroundAnimation = doc.Contains("AroundAnimation") && !doc["AroundAnimation"].IsBsonNull
-                    ? ConvertToDocument(doc["AroundAnimation"].AsBsonDocument)
+                    ? ConvertToDocument(input, doc["AroundAnimation"].AsBsonDocument)
                     : new TDocumentEmpty(),
                 CenterIcon = doc.Contains("CenterIcon") && !doc["CenterIcon"].IsBsonNull
-                    ? ConvertToDocument(doc["CenterIcon"].AsBsonDocument)
+                    ? ConvertToDocument(input, doc["CenterIcon"].AsBsonDocument)
                     : new TDocumentEmpty()
             };
             reactions.Add(reaction);
@@ -75,21 +77,95 @@ internal sealed class GetAvailableReactionsHandler : RpcResultObjectHandler<MyTe
         };
     }
 
-    private static TDocument ConvertToDocument(BsonDocument doc)
+    private TDocument ConvertToDocument(IRequestInput input, BsonDocument doc)
     {
+        var documentId = GetInt64(doc["Id"]);
+        var mimeType = doc["MimeType"].AsString;
         return new TDocument
         {
-            Id = GetInt64(doc["Id"]),
-            AccessHash = GetInt64(doc["AccessHash"]),
+            Id = documentId,
+            AccessHash = _accessHashHelper.GenerateAccessHash(input.UserId, input.AccessHashKeyId, documentId, AccessHashType.Document),
             FileReference = GetByteArray(doc["FileReference"]),
             Date = GetInt32(doc["Date"]),
-            MimeType = doc["MimeType"].AsString,
+            MimeType = mimeType,
             Size = GetInt64(doc["Size"]),
-            Thumbs = new TVector<IPhotoSize>(),
+            Thumbs = ReadThumbs(doc),
             VideoThumbs = new TVector<IVideoSize>(),
             DcId = GetInt32(doc["DcId"]),
-            Attributes = new TVector<IDocumentAttribute>()
+            Attributes = BuildAttributes(mimeType)
         };
+    }
+
+    private static TVector<IDocumentAttribute> BuildAttributes(string mimeType)
+    {
+        if (mimeType == "application/x-tgsticker")
+        {
+            return
+            [
+                new TDocumentAttributeImageSize { W = 512, H = 512 },
+                new TDocumentAttributeFilename { FileName = "AnimatedSticker.tgs" }
+            ];
+        }
+
+        return [];
+    }
+
+    private static TVector<IPhotoSize> ReadThumbs(BsonDocument document)
+    {
+        var result = new TVector<IPhotoSize>();
+        if (!document.TryGetValue("Thumbs", out var thumbsValue) || !thumbsValue.IsBsonArray)
+        {
+            return result;
+        }
+
+        foreach (var value in thumbsValue.AsBsonArray.Where(value => value.IsBsonDocument))
+        {
+            var thumb = value.AsBsonDocument;
+            var type = thumb.GetValue("_t", "").AsString;
+            var thumbType = thumb.GetValue("Type", "").AsString;
+
+            switch (type)
+            {
+                case nameof(TPhotoSize):
+                    result.Add(new TPhotoSize
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Size = GetInt32(thumb["Size"]),
+                    });
+                    break;
+                case nameof(TPhotoCachedSize):
+                    result.Add(new TPhotoCachedSize
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Bytes = GetByteArray(thumb["Bytes"]),
+                    });
+                    break;
+                case nameof(TPhotoSizeProgressive):
+                    result.Add(new TPhotoSizeProgressive
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Sizes = new TVector<int>(thumb["Sizes"].AsBsonArray.Select(GetInt32)),
+                    });
+                    break;
+                case nameof(TPhotoStrippedSize):
+                    result.Add(new TPhotoStrippedSize { Type = thumbType, Bytes = GetByteArray(thumb["Bytes"]) });
+                    break;
+                case nameof(TPhotoPathSize):
+                    result.Add(new TPhotoPathSize { Type = thumbType, Bytes = GetByteArray(thumb["Bytes"]) });
+                    break;
+                case nameof(TPhotoSizeEmpty):
+                    result.Add(new TPhotoSizeEmpty { Type = thumbType });
+                    break;
+            }
+        }
+
+        return result;
     }
 
     private static byte[] GetByteArray(BsonValue value)

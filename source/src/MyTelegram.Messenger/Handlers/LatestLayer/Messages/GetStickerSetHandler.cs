@@ -3,7 +3,7 @@ using MongoDB.Driver;
 using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
-internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetStickerSet, MyTelegram.Schema.Messages.IStickerSet>
+internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase, IAccessHashHelper2 accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetStickerSet, MyTelegram.Schema.Messages.IStickerSet>
 {
     private static readonly Dictionary<string, string> DiceSlugMap = new()
     {
@@ -58,22 +58,22 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
     protected override async Task<MyTelegram.Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetStickerSet obj)
     {
         if (obj.Stickerset is TInputStickerSetDice dice)
-            return await GetStickerSetBySlugAsync(DiceSlugMap.GetValueOrDefault(dice.Emoticon) ?? "", dice.Emoticon);
+            return await GetStickerSetBySlugAsync(input, DiceSlugMap.GetValueOrDefault(dice.Emoticon) ?? "", dice.Emoticon);
 
         if (SpecialSetSlugMap.TryGetValue(obj.Stickerset.GetType(), out var slug))
-            return await GetStickerSetBySlugAsync(slug, null);
+            return await GetStickerSetBySlugAsync(input, slug, null);
 
         if (obj.Stickerset is TInputStickerSetID setById)
-            return await GetStickerSetByIdAsync(setById.Id);
+            return await GetStickerSetByIdAsync(input, setById.Id);
 
         if (obj.Stickerset is TInputStickerSetShortName shortNameSet)
-            return await GetStickerSetBySlugAsync(shortNameSet.ShortName, null);
+            return await GetStickerSetBySlugAsync(input, shortNameSet.ShortName, null);
 
         RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
         return null!;
     }
 
-    private async Task<MyTelegram.Schema.Messages.IStickerSet> GetStickerSetByIdAsync(long setId)
+    private async Task<MyTelegram.Schema.Messages.IStickerSet> GetStickerSetByIdAsync(IRequestInput input, long setId)
     {
         var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
         var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", setId)).FirstOrDefaultAsync();
@@ -88,10 +88,10 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
             };
         }
 
-        return await BuildResponseAsync(setDoc, null);
+        return await BuildResponseAsync(input, setDoc, null);
     }
 
-    private async Task<MyTelegram.Schema.Messages.IStickerSet> GetStickerSetBySlugAsync(string slug, string? emoticon)
+    private async Task<MyTelegram.Schema.Messages.IStickerSet> GetStickerSetBySlugAsync(IRequestInput input, string slug, string? emoticon)
     {
         if (string.IsNullOrEmpty(slug))
         {
@@ -125,15 +125,15 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
             };
         }
 
-        return await BuildResponseAsync(setDoc, emoticon);
+        return await BuildResponseAsync(input, setDoc, emoticon);
     }
 
-    private async Task<MyTelegram.Schema.Messages.IStickerSet> BuildResponseAsync(BsonDocument setDoc, string? emoticon)
+    private async Task<MyTelegram.Schema.Messages.IStickerSet> BuildResponseAsync(IRequestInput input, BsonDocument setDoc, string? emoticon)
     {
         var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
 
         var setId = GetInt64(setDoc["StickerSetId"]);
-        var accessHash = GetInt64(setDoc["AccessHash"]);
+        var accessHash = accessHashHelper.GenerateAccessHash(input.UserId, input.AccessHashKeyId, setId, AccessHashType.StickerSet);
         var title = setDoc["Title"].AsString;
         var shortName = setDoc["ShortName"].AsString;
         var count = GetInt32(setDoc["Count"]);
@@ -194,14 +194,14 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
                 return (IDocument)new TDocument
                 {
                     Id = GetInt64(d["DocumentId"]),
-                    AccessHash = GetInt64(d["AccessHash"]),
+                    AccessHash = accessHashHelper.GenerateAccessHash(input.UserId, input.AccessHashKeyId, GetInt64(d["DocumentId"]), AccessHashType.Document),
                     FileReference = fileRef,
                     Date = GetInt32(d["Date"]),
                     MimeType = d["MimeType"].AsString,
                     Size = GetInt64(d["Size"]),
                     DcId = GetInt32(d["DcId"]),
                     Attributes = attributes,
-                    Thumbs = new TVector<IPhotoSize>(),
+                    Thumbs = ReadThumbs(d),
                     VideoThumbs = new TVector<IVideoSize>(),
                 };
             }).ToList();
@@ -301,8 +301,94 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase) : RpcRe
         {
             compatibleAttributes.InsertRange(0, BuildFallbackAttributes(isEmojiSet, textColor, alt, setId, accessHash));
         }
+        else
+        {
+            foreach (var attribute in compatibleAttributes)
+            {
+                switch (attribute)
+                {
+                    case TDocumentAttributeCustomEmoji customEmoji:
+                        customEmoji.Alt = alt;
+                        customEmoji.Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash };
+                        customEmoji.TextColor = textColor;
+                        break;
+                    case TDocumentAttributeSticker sticker:
+                        sticker.Alt = alt;
+                        sticker.Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash };
+                        break;
+                }
+            }
+        }
 
         return new TVector<IDocumentAttribute>(compatibleAttributes);
+    }
+
+    private static TVector<IPhotoSize> ReadThumbs(BsonDocument document)
+    {
+        var result = new TVector<IPhotoSize>();
+        if (!document.TryGetValue("Thumbs", out var thumbsValue) || !thumbsValue.IsBsonArray)
+        {
+            return result;
+        }
+
+        foreach (var value in thumbsValue.AsBsonArray.Where(value => value.IsBsonDocument))
+        {
+            var thumb = value.AsBsonDocument;
+            var type = thumb.GetValue("_t", "").AsString;
+            var thumbType = thumb.GetValue("Type", "").AsString;
+
+            switch (type)
+            {
+                case nameof(TPhotoSize):
+                    result.Add(new TPhotoSize
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Size = GetInt32(thumb["Size"]),
+                    });
+                    break;
+                case nameof(TPhotoCachedSize):
+                    result.Add(new TPhotoCachedSize
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Bytes = GetBytes(thumb["Bytes"]),
+                    });
+                    break;
+                case nameof(TPhotoSizeProgressive):
+                    result.Add(new TPhotoSizeProgressive
+                    {
+                        Type = thumbType,
+                        W = GetInt32(thumb["W"]),
+                        H = GetInt32(thumb["H"]),
+                        Sizes = new TVector<int>(thumb["Sizes"].AsBsonArray.Select(GetInt32)),
+                    });
+                    break;
+                case nameof(TPhotoStrippedSize):
+                    result.Add(new TPhotoStrippedSize { Type = thumbType, Bytes = GetBytes(thumb["Bytes"]) });
+                    break;
+                case nameof(TPhotoPathSize):
+                    result.Add(new TPhotoPathSize { Type = thumbType, Bytes = GetBytes(thumb["Bytes"]) });
+                    break;
+                case nameof(TPhotoSizeEmpty):
+                    result.Add(new TPhotoSizeEmpty { Type = thumbType });
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    private static byte[] GetBytes(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Binary => value.AsBsonBinaryData.Bytes,
+            BsonType.Array => value.AsBsonArray.Select(item => (byte)GetInt32(item)).ToArray(),
+            _ => [],
+        };
     }
 
     private static Dictionary<long, string> BuildAltByDocumentId(BsonDocument setDoc, string? fallbackEmoticon)
