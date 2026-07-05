@@ -28,6 +28,12 @@ internal sealed class GetPrivacyHandler(IPrivacyService privacyService)
         TInputPrivacyKeyStarGiftsAutoSave => PrivacyType.StarGiftsAutoSave,
         TInputPrivacyKeyNoPaidMessages => PrivacyType.NoPaidMessages,
         TInputPrivacyKeySavedMusic => PrivacyType.SavedMusic,
-        _ => PrivacyType.StatusTimestamp
+        _ => ThrowPrivacyKeyInvalid()
     };
+
+    private static PrivacyType ThrowPrivacyKeyInvalid()
+    {
+        RpcErrors.RpcErrors400.PrivacyKeyInvalid.ThrowRpcError();
+        return PrivacyType.StatusTimestamp;
+    }
 }

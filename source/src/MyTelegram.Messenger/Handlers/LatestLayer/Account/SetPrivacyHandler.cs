@@ -40,22 +40,27 @@ internal sealed class SetPrivacyHandler(
         return new TPrivacyRules { Rules = new TVector<IPrivacyRule>(tlRules), Chats = new TVector<IChat>(), Users = new TVector<IUser>() };
     }
 
-    private static PrivacyRuleEntry ToEntry(IInputPrivacyRule rule) => rule switch
+    private static PrivacyRuleEntry ToEntry(IInputPrivacyRule rule)
     {
-        TInputPrivacyValueAllowAll => new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowAll },
-        TInputPrivacyValueAllowContacts => new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowContacts },
-        TInputPrivacyValueDisallowAll => new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowAll },
-        TInputPrivacyValueDisallowContacts => new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowContacts },
-        TInputPrivacyValueAllowUsers r => new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowUsers, UserIds = r.Users?.OfType<TInputUser>().Select(u => u.UserId).ToList() },
-        TInputPrivacyValueDisallowUsers r => new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowUsers, UserIds = r.Users?.OfType<TInputUser>().Select(u => u.UserId).ToList() },
-        TInputPrivacyValueAllowChatParticipants r => new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowChatParticipants, ChatIds = r.Chats?.ToList() },
-        TInputPrivacyValueDisallowChatParticipants r => new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowChatParticipants, ChatIds = r.Chats?.ToList() },
-        TInputPrivacyValueAllowCloseFriends => new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowCloseFriends },
-        TInputPrivacyValueAllowBots => new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowBots },
-        TInputPrivacyValueDisallowBots => new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowBots },
-        TInputPrivacyValueAllowPremium => new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowPremium },
-        _ => new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowAll }
-    };
+        switch (rule)
+        {
+            case TInputPrivacyValueAllowAll:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowAll };
+            case TInputPrivacyValueAllowContacts:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowContacts };
+            case TInputPrivacyValueDisallowAll:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowAll };
+            case TInputPrivacyValueDisallowContacts:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowContacts };
+            case TInputPrivacyValueAllowUsers r:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowUsers, UserIds = r.Users?.OfType<TInputUser>().Select(u => u.UserId).ToList() };
+            case TInputPrivacyValueDisallowUsers r:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowUsers, UserIds = r.Users?.OfType<TInputUser>().Select(u => u.UserId).ToList() };
+            default:
+                RpcErrors.RpcErrors400.PrivacyValueInvalid.ThrowRpcError();
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.Unknown };
+        }
+    }
 
     private static PrivacyType ToPrivacyType(IInputPrivacyKey key) => key switch
     {
@@ -73,7 +78,7 @@ internal sealed class SetPrivacyHandler(
         TInputPrivacyKeyStarGiftsAutoSave => PrivacyType.StarGiftsAutoSave,
         TInputPrivacyKeyNoPaidMessages => PrivacyType.NoPaidMessages,
         TInputPrivacyKeySavedMusic => PrivacyType.SavedMusic,
-        _ => PrivacyType.StatusTimestamp
+        _ => ThrowPrivacyKeyInvalid()
     };
 
     private static IPrivacyKey ToPrivacyKey(PrivacyType type) => type switch
@@ -94,4 +99,10 @@ internal sealed class SetPrivacyHandler(
         PrivacyType.SavedMusic => new TPrivacyKeySavedMusic(),
         _ => new TPrivacyKeyStatusTimestamp()
     };
+
+    private static PrivacyType ThrowPrivacyKeyInvalid()
+    {
+        RpcErrors.RpcErrors400.PrivacyKeyInvalid.ThrowRpcError();
+        return PrivacyType.StatusTimestamp;
+    }
 }

@@ -1,16 +1,28 @@
 ﻿using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Privacy;
 
 namespace MyTelegram.Messenger.Services.Impl;
 
 public class PrivacyAppService(
     ICacheManager<GlobalPrivacySettingsCacheItem> cacheManager,
     IQueryProcessor queryProcessor,
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IPrivacyService privacyService,
+    IContactHelper contactHelper,
+    IPrivacyHelper privacyHelper)
     : BaseAppService, IPrivacyAppService, ITransientDependency
 {
-    public Task<IReadOnlyCollection<IPrivacyReadModel>> GetPrivacyListAsync(IReadOnlyList<long> userIds)
+    private IMongoCollection<PrivacyDocument> PrivacyCollection => mongoDatabase.GetCollection<PrivacyDocument>("privacy-readmodel");
+
+    public async Task<IReadOnlyCollection<IPrivacyReadModel>> GetPrivacyListAsync(IReadOnlyList<long> userIds)
     {
-        return Task.FromResult<IReadOnlyCollection<IPrivacyReadModel>>([]);
+        if (userIds.Count == 0)
+        {
+            return [];
+        }
+
+        var docs = await PrivacyCollection.Find(Builders<PrivacyDocument>.Filter.In(p => p.UserId, userIds)).ToListAsync();
+        return docs.Select(ToReadModel).ToList();
     }
 
     public Task<IReadOnlyCollection<IPrivacyReadModel>> GetPrivacyListAsync(long userId)
@@ -20,43 +32,44 @@ public class PrivacyAppService(
 
     public Task ApplyPrivacyAsync(long selfUserId, long targetUserId, Action executeOnPrivacyNotMatch, List<PrivacyType> privacyTypes)
     {
-        return Task.CompletedTask;
+        return ApplyPrivacyAsync(selfUserId, targetUserId, _ => executeOnPrivacyNotMatch(), privacyTypes);
     }
 
-    public Task ApplyPrivacyListAsync(long selfUserId, IReadOnlyList<long> targetUserIdList, Action<long> executeOnPrivacyNotMatch,
+    public async Task ApplyPrivacyListAsync(long selfUserId, IReadOnlyList<long> targetUserIdList, Action<long> executeOnPrivacyNotMatch,
         List<PrivacyType> privacyTypes)
     {
-        return Task.CompletedTask;
+        await ApplyPrivacyListAsync(selfUserId, targetUserIdList, (_, targetUserId) => executeOnPrivacyNotMatch(targetUserId), privacyTypes);
     }
 
-    public Task<IReadOnlyList<IPrivacyRule>> GetPrivacyRulesAsync(long selfUserId,
+    public async Task<IReadOnlyList<IPrivacyRule>> GetPrivacyRulesAsync(long selfUserId,
         IInputPrivacyKey key)
     {
-        return Task.FromResult<IReadOnlyList<IPrivacyRule>>(Array.Empty<IPrivacyRule>());
-
+        return await privacyService.GetPrivacyRulesAsync(selfUserId, ToPrivacyType(key));
     }
 
     public async Task ApplyPrivacyListAsync(long selfUserId, IReadOnlyList<long> targetUserIdList, Action<PrivacyValueType, long> executeOnPrivacyNotMatch,
         List<PrivacyType> privacyTypes)
     {
         if (targetUserIdList.Count == 0) return;
-        var col = mongoDatabase.GetCollection<MyTelegram.Messenger.Services.Privacy.PrivacyDocument>("privacy-readmodel");
         foreach (var targetUserId in targetUserIdList)
         {
+            var contactType = await GetContactTypeAsync(selfUserId, targetUserId);
             foreach (var privacyType in privacyTypes)
             {
-                var id = targetUserId.ToString() + ":" + (int)privacyType;
-                var doc = await (await col.FindAsync(Builders<MyTelegram.Messenger.Services.Privacy.PrivacyDocument>.Filter.Eq(x => x.Id, id))).FirstOrDefaultAsync();
-                var pvt = doc?.Rules?.FirstOrDefault()?.ValueType ?? PrivacyValueType.DisallowAll;
-                if (pvt != PrivacyValueType.AllowAll)
-                    executeOnPrivacyNotMatch(pvt, targetUserId);
+                var privacy = await GetPrivacyReadModelAsync(targetUserId, privacyType);
+                privacyHelper.ApplyPrivacy(privacy, pvt => executeOnPrivacyNotMatch(pvt, targetUserId), selfUserId, contactType);
             }
         }
     }
 
-    public Task SetGlobalPrivacySettingsAsync(long selfUserId, GlobalPrivacySettings globalPrivacySettings)
+    public async Task SetGlobalPrivacySettingsAsync(long selfUserId, GlobalPrivacySettings globalPrivacySettings)
     {
-        return Task.CompletedTask;
+        var cacheKey = GlobalPrivacySettingsCacheItem.GetCacheKey(selfUserId);
+        var item = new GlobalPrivacySettingsCacheItem(globalPrivacySettings.ArchiveAndMuteNewNoncontactPeers,
+            globalPrivacySettings.KeepArchivedUnmuted, globalPrivacySettings.KeepArchivedFolders,
+            globalPrivacySettings.HideReadMarks, globalPrivacySettings.NewNoncontactPeersRequirePremium,
+            globalPrivacySettings.NoncontactPeersPaidStars);
+        await cacheManager.SetAsync(cacheKey, item);
     }
 
     public async Task<GlobalPrivacySettingsCacheItem?> GetGlobalPrivacySettingsAsync(long userId)
@@ -82,29 +95,153 @@ public class PrivacyAppService(
 
     public PrivacyValueData GetPrivacyValueData(IInputPrivacyRule rule)
     {
-        throw new NotImplementedException();
+        return rule switch
+        {
+            TInputPrivacyValueAllowAll => new PrivacyValueData(PrivacyValueType.AllowAll),
+            TInputPrivacyValueAllowContacts => new PrivacyValueData(PrivacyValueType.AllowContacts),
+            TInputPrivacyValueDisallowAll => new PrivacyValueData(PrivacyValueType.DisallowAll),
+            TInputPrivacyValueDisallowContacts => new PrivacyValueData(PrivacyValueType.DisallowContacts),
+            TInputPrivacyValueAllowUsers r => new PrivacyValueData(PrivacyValueType.AllowUsers, SerializeInputUsers(r.Users)),
+            TInputPrivacyValueDisallowUsers r => new PrivacyValueData(PrivacyValueType.DisallowUsers, SerializeInputUsers(r.Users)),
+            _ => new PrivacyValueData(PrivacyValueType.Unknown)
+        };
     }
 
     public List<PrivacyValueData> GetPrivacyValueDataList(IList<IInputPrivacyRule> rules)
     {
-        return [];
+        return rules.Select(GetPrivacyValueData).Where(p => p.PrivacyValueType != PrivacyValueType.Unknown).ToList();
     }
 
-    public Task<SetPrivacyOutput> SetPrivacyAsync(RequestInfo requestInfo,
+    public async Task<SetPrivacyOutput> SetPrivacyAsync(RequestInfo requestInfo,
         long selfUserId,
         IInputPrivacyKey key,
         IReadOnlyList<IInputPrivacyRule> ruleList)
     {
-        return Task.FromResult(new SetPrivacyOutput(new List<IPrivacyRule>()));
+        var privacyType = ToPrivacyType(key);
+        var rules = ruleList.Select(ToPrivacyRuleEntry).ToList();
+        await privacyService.SetPrivacyRulesAsync(selfUserId, privacyType, rules);
+        var tlRules = await privacyService.GetPrivacyRulesAsync(selfUserId, privacyType);
+        return new SetPrivacyOutput(tlRules);
     }
 
     public Task ApplyPrivacyAsync(long selfUserId, long targetUserId, Action<PrivacyValueType> executeOnPrivacyNotMatch, PrivacyType privacyType)
     {
-        return Task.CompletedTask;
+        return ApplyPrivacyAsync(selfUserId, targetUserId, executeOnPrivacyNotMatch, [privacyType]);
     }
 
-    public Task ApplyPrivacyAsync(long selfUserId, long targetUserId, Action<PrivacyValueType> executeOnPrivacyNotMatch, List<PrivacyType> privacyTypes)
+    public async Task ApplyPrivacyAsync(long selfUserId, long targetUserId, Action<PrivacyValueType> executeOnPrivacyNotMatch, List<PrivacyType> privacyTypes)
     {
-        return Task.CompletedTask;
+        var contactType = await GetContactTypeAsync(selfUserId, targetUserId);
+        foreach (var privacyType in privacyTypes)
+        {
+            var privacy = await GetPrivacyReadModelAsync(targetUserId, privacyType);
+            privacyHelper.ApplyPrivacy(privacy, executeOnPrivacyNotMatch, selfUserId, contactType);
+        }
+    }
+
+    private async Task<IPrivacyReadModel?> GetPrivacyReadModelAsync(long userId, PrivacyType privacyType)
+    {
+        var doc = await PrivacyCollection.Find(p => p.UserId == userId && p.PrivacyType == privacyType).FirstOrDefaultAsync();
+        return doc == null ? null : ToReadModel(doc);
+    }
+
+    private async Task<ContactType> GetContactTypeAsync(long selfUserId, long targetUserId)
+    {
+        if (selfUserId == targetUserId)
+        {
+            return ContactType.Mutual;
+        }
+
+        var contactReadModels = await queryProcessor.ProcessAsync(new GetContactListBySelfIdAndTargetUserIdQuery(selfUserId, targetUserId));
+        return contactHelper.GetContactType(selfUserId, targetUserId, contactReadModels);
+    }
+
+    private static IPrivacyReadModel ToReadModel(PrivacyDocument doc)
+    {
+        return new PrivacyReadModelAdapter(doc.Id, doc.UserId, doc.PrivacyType,
+            doc.Rules
+                .Select(ToPrivacyValueData)
+                .Where(p => p.PrivacyValueType != PrivacyValueType.Unknown)
+                .ToList());
+    }
+
+    private static PrivacyValueData ToPrivacyValueData(PrivacyRuleEntry rule)
+    {
+        return rule.ValueType switch
+        {
+            PrivacyValueType.AllowUsers or PrivacyValueType.DisallowUsers => new PrivacyValueData(rule.ValueType, SerializeIds(rule.UserIds)),
+            _ => new PrivacyValueData(rule.ValueType)
+        };
+    }
+
+    private static PrivacyRuleEntry ToPrivacyRuleEntry(IInputPrivacyRule rule)
+    {
+        switch (rule)
+        {
+            case TInputPrivacyValueAllowAll:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowAll };
+            case TInputPrivacyValueAllowContacts:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowContacts };
+            case TInputPrivacyValueDisallowAll:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowAll };
+            case TInputPrivacyValueDisallowContacts:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowContacts };
+            case TInputPrivacyValueAllowUsers r:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowUsers, UserIds = GetInputUserIds(r.Users) };
+            case TInputPrivacyValueDisallowUsers r:
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowUsers, UserIds = GetInputUserIds(r.Users) };
+            default:
+                RpcErrors.RpcErrors400.PrivacyValueInvalid.ThrowRpcError();
+                return new PrivacyRuleEntry { ValueType = PrivacyValueType.Unknown };
+        }
+    }
+
+    private static PrivacyType ToPrivacyType(IInputPrivacyKey key) => key switch
+    {
+        TInputPrivacyKeyStatusTimestamp => PrivacyType.StatusTimestamp,
+        TInputPrivacyKeyChatInvite => PrivacyType.ChatInvite,
+        TInputPrivacyKeyPhoneCall => PrivacyType.PhoneCall,
+        TInputPrivacyKeyPhoneP2P => PrivacyType.PhoneP2P,
+        TInputPrivacyKeyForwards => PrivacyType.Forwards,
+        TInputPrivacyKeyProfilePhoto => PrivacyType.ProfilePhoto,
+        TInputPrivacyKeyPhoneNumber => PrivacyType.PhoneNumber,
+        TInputPrivacyKeyAddedByPhone => PrivacyType.AddedByPhone,
+        TInputPrivacyKeyVoiceMessages => PrivacyType.VoiceMessages,
+        TInputPrivacyKeyAbout => PrivacyType.About,
+        TInputPrivacyKeyBirthday => PrivacyType.Birthday,
+        TInputPrivacyKeyStarGiftsAutoSave => PrivacyType.StarGiftsAutoSave,
+        TInputPrivacyKeyNoPaidMessages => PrivacyType.NoPaidMessages,
+        TInputPrivacyKeySavedMusic => PrivacyType.SavedMusic,
+        _ => ThrowPrivacyKeyInvalid()
+    };
+
+    private static PrivacyType ThrowPrivacyKeyInvalid()
+    {
+        RpcErrors.RpcErrors400.PrivacyKeyInvalid.ThrowRpcError();
+        return PrivacyType.StatusTimestamp;
+    }
+
+    private static string? SerializeInputUsers(IEnumerable<IInputUser>? users)
+    {
+        return SerializeIds(GetInputUserIds(users));
+    }
+
+    private static List<long> GetInputUserIds(IEnumerable<IInputUser>? users)
+    {
+        return users?.OfType<TInputUser>().Select(p => p.UserId).Distinct().ToList() ?? [];
+    }
+
+    private static string? SerializeIds(IEnumerable<long>? ids)
+    {
+        var list = ids?.Distinct().ToList() ?? [];
+        return list.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(list);
+    }
+
+    private sealed class PrivacyReadModelAdapter(string id, long userId, PrivacyType privacyType, IReadOnlyList<PrivacyValueData> privacyValueDataList) : IPrivacyReadModel
+    {
+        public string Id { get; } = id;
+        public PrivacyType PrivacyType { get; } = privacyType;
+        public IReadOnlyList<PrivacyValueData> PrivacyValueDataList { get; } = privacyValueDataList;
+        public long UserId { get; } = userId;
     }
 }

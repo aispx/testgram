@@ -17,7 +17,7 @@ public class PrivacyService(IMongoDatabase mongoDatabase) : IPrivacyService, ISi
     {
         var doc = await Collection.Find(p => p.UserId == userId && p.PrivacyType == type).FirstOrDefaultAsync();
         if (doc == null) return [];
-        return doc.Rules.Select(ToTlRule).ToList();
+        return doc.Rules.Where(p => p.IsSupportedByEvaluator).Select(ToTlRule).ToList();
     }
 
     public async Task SetPrivacyRulesAsync(long userId, PrivacyType type, List<PrivacyRuleEntry> rules)
@@ -27,7 +27,7 @@ public class PrivacyService(IMongoDatabase mongoDatabase) : IPrivacyService, ISi
             Id = $"{userId}:{(int)type}",
             UserId = userId,
             PrivacyType = type,
-            Rules = rules
+            Rules = rules.Where(p => p.IsSupportedByEvaluator).ToList()
         };
         await Collection.ReplaceOneAsync(
             p => p.UserId == userId && p.PrivacyType == type,
@@ -43,12 +43,6 @@ public class PrivacyService(IMongoDatabase mongoDatabase) : IPrivacyService, ISi
         PrivacyValueType.DisallowContacts => new TPrivacyValueDisallowContacts(),
         PrivacyValueType.AllowUsers => new TPrivacyValueAllowUsers { Users = new TVector<long>(r.UserIds ?? []) },
         PrivacyValueType.DisallowUsers => new TPrivacyValueDisallowUsers { Users = new TVector<long>(r.UserIds ?? []) },
-        PrivacyValueType.AllowChatParticipants => new TPrivacyValueAllowChatParticipants { Chats = new TVector<long>(r.ChatIds ?? []) },
-        PrivacyValueType.DisallowChatParticipants => new TPrivacyValueDisallowChatParticipants { Chats = new TVector<long>(r.ChatIds ?? []) },
-        PrivacyValueType.AllowBots => new TPrivacyValueAllowBots(),
-        PrivacyValueType.DisallowBots => new TPrivacyValueDisallowBots(),
-        PrivacyValueType.AllowCloseFriends => new TPrivacyValueAllowCloseFriends(),
-        PrivacyValueType.AllowPremium => new TPrivacyValueAllowPremium(),
-        _ => new TPrivacyValueAllowAll()
+        _ => new TPrivacyValueDisallowAll()
     };
 }
