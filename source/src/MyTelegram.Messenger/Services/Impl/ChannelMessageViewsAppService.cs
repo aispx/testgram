@@ -31,7 +31,8 @@ public class ChannelMessageViewsAppService(
     public async Task<IList<IMessageViews>> GetMessageViewsAsync(long selfUserId,
         long authKeyId,
         long channelId,
-        List<int> messageIdList)
+        List<int> messageIdList,
+        bool increment)
     {
         var messageIdGreaterThanZeroList = messageIdList.Where(p => p > 0).ToList();
 
@@ -43,6 +44,11 @@ public class ChannelMessageViewsAppService(
         {
             foreach (var id in messageIdList)
             {
+                if (!increment || id <= 0)
+                {
+                    continue;
+                }
+
                 GenerateFilterKey(selfUserId, channelId, id, key);
                 var canIncrementViews = CanIncrementViews(key);
                 if (canIncrementViews)

@@ -14,7 +14,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetMessagesViewsHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelMessageViewsAppService channelMessageViewsAppService, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetMessagesViews, MyTelegram.Schema.Messages.IMessageViews>
+internal sealed class GetMessagesViewsHandler(
+    IPeerHelper peerHelper,
+    IChannelMessageViewsAppService channelMessageViewsAppService,
+    IAccessHashHelper accessHashHelper,
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetMessagesViews, MyTelegram.Schema.Messages.IMessageViews>
 {
     protected override async Task<MyTelegram.Schema.Messages.IMessageViews> HandleCoreAsync(IRequestInput input, RequestGetMessagesViews obj)
     {
@@ -32,7 +36,7 @@ internal sealed class GetMessagesViewsHandler(IPeerHelper peerHelper, IQueryProc
                 };
             }
 
-            var views = await channelMessageViewsAppService.GetMessageViewsAsync(input.UserId, input.PermAuthKeyId, peer.PeerId, obj.Id.ToList());
+            var views = await GetMessageViewsAsync(input, peer, obj.Id.ToList(), obj.Increment);
             return new MyTelegram.Schema.Messages.TMessageViews
             {
                 Chats = new TVector<IChat>(),
@@ -41,21 +45,90 @@ internal sealed class GetMessagesViewsHandler(IPeerHelper peerHelper, IQueryProc
             };
         }
 
-        var boxIdList = obj.Id.Select(p => MessageId.Create(input.UserId, p).Value).ToList();
-        var messages = await queryProcessor.ProcessAsync(new GetMessagesByIdListQuery(boxIdList));
-        var dict = messages.ToDictionary(k => k.MessageId, v => v);
+        var nonChannelViews = await GetMessageViewsAsync(input, peer, obj.Id.ToList(), obj.Increment);
         return new MyTelegram.Schema.Messages.TMessageViews
         {
             Chats = new TVector<IChat>(),
             Users = new TVector<IUser>(),
-            Views = [..obj.Id.Select(p =>
-            {
-                dict.TryGetValue(p, out var box);
-                return new Schema.TMessageViews
-                {
-                    Views = box?.Views ?? 0
-                };
-            })]
+            Views = [..nonChannelViews]
         };
+    }
+
+    private async Task<IList<MyTelegram.Schema.IMessageViews>> GetMessageViewsAsync(
+        IRequestInput input,
+        Peer peer,
+        List<int> messageIds,
+        bool increment)
+    {
+        var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
+        var messages = await queryProcessor.ProcessAsync(new GetMessagesQuery(
+            ownerPeerId,
+            MessageType.Unknown,
+            null,
+            messageIds,
+            0,
+            0,
+            null,
+            null,
+            0,
+            0,
+            0,
+            null,
+            null,
+            false,
+            false,
+            false,
+            null,
+            0
+        ));
+
+        var messageMap = messages.ToDictionary(GetMessageId);
+        var views = new List<MyTelegram.Schema.IMessageViews>(messageIds.Count);
+        foreach (var messageId in messageIds)
+        {
+            var targetChannelId = ownerPeerId;
+            var targetMessageId = messageId;
+            if (messageMap.TryGetValue(messageId, out var message) &&
+                TryGetForwardedChannelPostTarget(message, out var originalChannelId, out var originalMessageId))
+            {
+                targetChannelId = originalChannelId;
+                targetMessageId = originalMessageId;
+            }
+
+            var result = await channelMessageViewsAppService.GetMessageViewsAsync(
+                input.UserId,
+                input.PermAuthKeyId,
+                targetChannelId,
+                [targetMessageId],
+                increment);
+            views.Add(result.FirstOrDefault() ?? new Schema.TMessageViews { Views = 0 });
+        }
+
+        return views;
+    }
+
+    private static bool TryGetForwardedChannelPostTarget(
+        IMessageReadModel message,
+        out long channelId,
+        out int messageId)
+    {
+        if (message.FwdHeader?.FromId?.PeerType == PeerType.Channel &&
+            message.FwdHeader.ChannelPost.HasValue)
+        {
+            channelId = message.FwdHeader.FromId.PeerId;
+            messageId = message.FwdHeader.ChannelPost.Value;
+            return true;
+        }
+
+        channelId = 0;
+        messageId = 0;
+        return false;
+    }
+
+    private static int GetMessageId(IMessageReadModel message)
+    {
+        return message.SenderMessageId != 0
+            ? message.SenderMessageId
+            : int.Parse(message.Id.Split('-', StringSplitOptions.RemoveEmptyEntries).Last());
     }
 }

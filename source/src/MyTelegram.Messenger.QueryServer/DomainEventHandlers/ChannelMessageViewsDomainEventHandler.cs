@@ -9,7 +9,7 @@ public class ChannelMessageViewsDomainEventHandler(IChannelMessageViewsAppServic
         CancellationToken cancellationToken)
     {
         var item = domainEvent.AggregateEvent.MessageItem;
-        if (item.ToPeer.PeerType == PeerType.Channel && item.FwdHeader == null && item.Views > 0)
+        if (item.ToPeer.PeerType == PeerType.Channel && item.FwdHeader == null && item.Views.HasValue)
         {
             await channelMessageViewsAppService
                 .IncrementViewsIfNotIncrementedAsync(domainEvent.AggregateEvent.RequestInfo.UserId,
