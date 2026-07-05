@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Push;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// When client-side passcode lock feature is enabled, will not show message texts in incoming <a href="https://corefork.telegram.org/api/push-updates">PUSH notifications</a>.
@@ -6,10 +8,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class UpdateDeviceLockedHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdateDeviceLocked, IBool>
+internal sealed class UpdateDeviceLockedHandler(IDeviceLockStore deviceLockStore) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdateDeviceLocked, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUpdateDeviceLocked obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUpdateDeviceLocked obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        await deviceLockStore.SetAsync(input.PermAuthKeyId, obj.Period);
+
+        return new TBoolTrue();
     }
 }

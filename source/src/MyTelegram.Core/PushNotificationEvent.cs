@@ -127,4 +127,10 @@ public class PushNotificationCustomData
     /// Server address with port number in the format 111.112.113.114:443
     /// </summary>
     public string? Addr { get; set; }
+
+    /// <summary>
+    /// Unix timestamp until which the client should report delivery of the message via
+    /// messages.reportMessagesDelivery (custom.report_delivery_until_date)
+    /// </summary>
+    public int? ReportDeliveryUntilDate { get; set; }
 }

@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Push;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// Register device to receive <a href="https://corefork.telegram.org/api/push-updates">PUSH notifications</a>
@@ -14,10 +16,18 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class RegisterDeviceHandler(ICommandBus commandBus) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestRegisterDevice, IBool>
+internal sealed class RegisterDeviceHandler(ICommandBus commandBus, IPushTokenValidator pushTokenValidator) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestRegisterDevice, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestRegisterDevice obj)
     {
+        // Validate the token/token_type pair before publishing the command so an invalid request is
+        // rejected with the correct RPC error and no device is created (Req 1.2, 1.3, 1.5-1.8).
+        var error = pushTokenValidator.Validate(obj.TokenType, obj.Token);
+        if (error != null)
+        {
+            throw new RpcException(error.Value);
+        }
+
         var command = new RegisterDeviceCommand(PushDeviceId.Create(obj.Token), input.ToRequestInfo(), input.UserId, input.PermAuthKeyId, obj.TokenType, obj.Token, obj.NoMuted, obj.AppSandbox, obj.Secret, obj.OtherUids.ToList());
         await commandBus.PublishAsync(command);
         return new TBoolTrue();
