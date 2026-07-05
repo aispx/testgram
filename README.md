@@ -21,7 +21,12 @@
 - Bot Support
 - Stories
 - Privacy Settings & 2FA
-- Voice & Video Calls (WebRTC)
+- Voice & Video Calls (1:1, WebRTC)
+- Group Calls / Voice & Video Chats
+- Conference Calls (E2E encrypted)
+- Live Streams (RTMP / HLS)
+- Push Notifications (APNS / FCM / WebPush)
+- Email Sender & 2FA Recovery Email
 - Telegram Business
 - Auto-Delete Messages
 - Stickers
@@ -31,10 +36,8 @@
 - Folders (Dialog Filters)
 
 ### Soon...
-- End-to-End Encrypted Chat
-- Email Login
-- Email Sender
-- Push Notifications (Firebase)
+- End-to-End Encrypted Chat (Secret Chats)
+- Full Email Login
 
 ---
 
@@ -76,15 +79,13 @@ Key `.env` settings:
 
 ### Voice & Video Calls Setup
 
-Voice and video calls **require** a TURN/STUN server. Install Coturn:
+Calls **require** a TURN/STUN server. As of the latest version this is **bundled**:
+the `docker compose` stack ships a `coturn` service (STUN/TURN) and a `rtmp-server`
+service (`mediamtx`, used for group-call live streams). You no longer need to install
+Coturn on the host — just point the WebRTC config at your server IP.
 
-```bash
-sudo apt-get install coturn
-# Configure /etc/turnserver.conf (see docs/CALLS_SETUP.md)
-sudo systemctl start coturn
-```
-
-Configure WebRTC in `.env`:
+Configure WebRTC in `.env` (the credentials **must match** the bundled coturn user,
+which defaults to `testgram:testgram2024`):
 
 ```bash
 # REQUIRED for calls to work
@@ -93,16 +94,28 @@ App__WebRtcConnections__0__Port=3478
 App__WebRtcConnections__0__Turn=True
 App__WebRtcConnections__0__Stun=True
 App__WebRtcConnections__0__UserName=testgram
-App__WebRtcConnections__0__Password=testgram123
+App__WebRtcConnections__0__Password=testgram2024
 ```
 
-Setup MongoDB indexes (automatic on first start):
+Group calls and live streams use the bundled RTMP/HLS server:
+
+```bash
+App__RtmpStreamUrl=rtmp://YOUR_SERVER_IP:1935/live
+App__RtmpHlsUrl=http://rtmp-server:8888/live
+RTMP_PORT=1935
+RTMP_HLS_PORT=8888
+```
+
+MongoDB call indexes are created **automatically** on first start via the `call-init`
+container. To run them manually:
 
 ```bash
 cd scripts && ./setup_call_indexes.sh  # Optional: manual setup
 ```
 
-See [docs/CALLS_SETUP.md](docs/CALLS_SETUP.md) for complete setup instructions.
+Open the required UDP/TCP ports on your firewall: `3478` (STUN/TURN), `49152-49172/udp`
+(TURN relay), and `1935` (RTMP). See [docs/CALLS_SETUP.md](docs/CALLS_SETUP.md) for
+complete setup instructions, including using an external TURN server.
 
 ## Troubleshooting
 

@@ -1,83 +1,34 @@
-# Настройка голосовых и видео звонков в Testgram
+# Настройка голосовых, видео и групповых звонков в Testgram
 
 ## Обзор
 
-Testgram поддерживает голосовые и видео звонки через WebRTC. Для работы звонков **обязательно** необходимо настроить собственный STUN/TURN сервер.
+Testgram поддерживает полный набор методов `phone.*` через WebRTC:
 
-## Быстрая настройка
+- **Голосовые и видеозвонки 1:1** (WebRTC, обмен ключами по DH через MTProto)
+- **Групповые звонки / голосовые и видеочаты** (много участников, на основе SSRC)
+- **Конференц-звонки** (сквозное шифрование, E2E)
+- **Трансляции** (приём RTMP + воспроизведение HLS для групповых звонков и историй)
 
-### 1. Установка Coturn TURN сервера (обязательно)
+Для работы звонков нужен STUN/TURN сервер. Стек `docker compose` уже **включает** его:
 
-Для работы звонков необходим собственный TURN сервер:
+| Сервис | Образ | Назначение |
+|--------|-------|------------|
+| `coturn` | `coturn/coturn:latest` | STUN/TURN сервер для WebRTC (1:1 и групповые звонки) |
+| `rtmp-server` | `bluenviron/mediamtx:latest` | Приём RTMP + воспроизведение HLS для трансляций |
+| `call-init` | `mongo:8` | Создаёт индексы MongoDB для звонков при первом запуске |
 
-```bash
-# Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install coturn
+Устанавливать Coturn на хост **больше не нужно**. Достаточно настроить `.env` и
+запустить стек. Внешний/ручной Coturn по-прежнему поддерживается как альтернатива
+(см. ниже).
 
-# Включить сервис
-sudo systemctl enable coturn
-```
+## Быстрая настройка (встроенный Coturn — рекомендуется)
 
-### 2. Конфигурация Coturn
+### 1. Настройка WebRTC в `.env`
 
-Отредактируйте `/etc/turnserver.conf`:
-
-```conf
-# Listening port
-listening-port=3478
-tls-listening-port=5349
-
-# External IP (замените на IP вашего сервера)
-external-ip=YOUR_SERVER_IP
-
-# Realm
-realm=testgram.local
-
-# User credentials
-user=testgram:testgram123
-
-# Fingerprint
-fingerprint
-
-# Long-term credentials
-lt-cred-mech
-
-# Verbose logging (для отладки)
-verbose
-
-# Log file
-log-file=/var/log/turnserver.log
-
-# Relay IP
-relay-ip=YOUR_SERVER_IP
-
-# No TCP relay
-no-tcp-relay
-
-# No TLS
-no-tls
-no-dtls
-```
-
-### 3. Запуск Coturn
-
-```bash
-sudo systemctl start coturn
-sudo systemctl status coturn
-```
-
-### 4. Открытие портов в файрволе
-
-```bash
-sudo ufw allow 3478/udp
-sudo ufw allow 3478/tcp
-sudo ufw allow 49152:65535/udp  # Диапазон портов для relay
-```
-
-### 5. Настройка WebRTC в Testgram
-
-Отредактируйте файл `.env`:
+Встроенный сервис `coturn` использует long-term учётные данные `testgram:testgram2024`
+(см. флаг `--user` сервиса `coturn` в `docker-compose.yml`). Учётные данные, которые
+сервер отдаёт клиентам в `.env`, **должны совпадать** с пользователем coturn, иначе
+аутентификация TURN relay не пройдёт.
 
 ```bash
 # ОБЯЗАТЕЛЬНАЯ конфигурация для звонков
@@ -87,7 +38,7 @@ App__WebRtcConnections__0__Port=3478
 App__WebRtcConnections__0__Turn=True
 App__WebRtcConnections__0__Stun=True
 App__WebRtcConnections__0__UserName=testgram
-App__WebRtcConnections__0__Password=testgram123
+App__WebRtcConnections__0__Password=testgram2024
 
 # Дополнительный сервер для резервирования (опционально)
 App__WebRtcConnections__1__Ip=BACKUP_SERVER_IP
@@ -95,51 +46,113 @@ App__WebRtcConnections__1__Port=3478
 App__WebRtcConnections__1__Turn=True
 App__WebRtcConnections__1__Stun=True
 App__WebRtcConnections__1__UserName=testgram
-App__WebRtcConnections__1__Password=testgram123
+App__WebRtcConnections__1__Password=testgram2024
 ```
 
-### 6. Установка индексов MongoDB
+> Сервис `coturn` читает `App__WebRtcConnections__0__Ip` как свой `--external-ip`,
+> поэтому одного этого значения достаточно, чтобы TURN поднялся с правильным
+> публичным адресом.
 
-Индексы создаются **автоматически** при запуске серверов через init-контейнер `call-init`.
-
-Если нужно создать индексы вручную:
+### 2. Настройка RTMP / HLS (групповые звонки и трансляции)
 
 ```bash
-cd /root/testgram/scripts
-./setup_call_indexes.sh
+App__RtmpStreamUrl=rtmp://YOUR_SERVER_IP:1935/live
+App__RtmpHlsUrl=http://rtmp-server:8888/live
+RTMP_PORT=1935
+RTMP_HLS_PORT=8888
 ```
 
-Или через mongosh:
+- `App__RtmpStreamUrl` — публичный URL приёма RTMP, который выдаётся программам для
+  стриминга (OBS и т.п.). Используйте публичный IP или домен сервера.
+- `App__RtmpHlsUrl` — внутренний HLS-URL, откуда мессенджер читает сегменты; оставьте
+  его указывающим на имя сервиса `rtmp-server`.
+
+### 3. Открытие портов в файрволе
 
 ```bash
-docker compose exec mongodb mongosh tg < scripts/setup_call_indexes.js
+sudo ufw allow 3478/tcp
+sudo ufw allow 3478/udp
+sudo ufw allow 3479/tcp
+sudo ufw allow 3479/udp
+sudo ufw allow 49152:49172/udp   # Диапазон relay-портов TURN (совпадает с min/max-port coturn)
+sudo ufw allow 1935/tcp          # Приём RTMP
 ```
 
-### 7. Запуск серверов
+Встроенный сервис `coturn` публикует `3478`, `3479` и диапазон relay
+`49152-49172/udp`; `rtmp-server` публикует `1935` (RTMP) и `8888` (HLS).
+
+### 4. Запуск стека
 
 ```bash
-cd /root/testgram/docker/compose
+cd docker/compose
 docker compose up -d
 ```
 
 При первом запуске автоматически:
-- Создадутся индексы для коллекции `call_sessions`
-- Настроится TTL для автоматической очистки старых записей
-- Проверится готовность MongoDB
+- Контейнер `call-init` создаёт индексы для коллекций `call_sessions` / `group_calls`
+  и настраивает TTL-очистку старых записей.
+- `coturn` и `rtmp-server` запускаются вместе с сервисами мессенджера.
 
-Проверьте логи init-контейнера:
+Проверьте вспомогательные сервисы:
+
 ```bash
-docker compose logs call-init
+docker compose logs call-init      # создание индексов
+docker compose logs coturn         # TURN сервер
+docker compose logs rtmp-server    # RTMP/HLS сервер
 ```
+
+Создать индексы вручную:
+
+```bash
+cd scripts
+./setup_call_indexes.sh
+# или:
+docker compose exec mongodb mongosh tg < scripts/setup_call_indexes.js
+```
+
+## Альтернатива: внешний / хостовый Coturn
+
+Если вы предпочитаете свой Coturn (например, на отдельном relay-хосте), отключите или
+удалите встроенный сервис `coturn` и установите Coturn самостоятельно:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install coturn
+sudo systemctl enable coturn
+```
+
+Отредактируйте `/etc/turnserver.conf`:
+
+```conf
+listening-port=3478
+tls-listening-port=5349
+external-ip=YOUR_SERVER_IP
+realm=testgram
+user=testgram:testgram2024
+fingerprint
+lt-cred-mech
+min-port=49152
+max-port=49172
+log-file=/var/log/turnserver.log
+no-tls
+no-dtls
+```
+
+```bash
+sudo systemctl start coturn
+sudo systemctl status coturn
+```
+
+Затем укажите `App__WebRtcConnections__0__Ip` / `UserName` / `Password` в `.env` на ваш
+внешний сервер, следя за тем, чтобы учётные данные совпадали со строкой `user` выше.
 
 ## Тестирование звонков
 
 ### 1. Проверка конфигурации
 
-Используйте Telegram клиент для проверки:
-
-1. Войдите с двух разных аккаунтов
-2. Инициируйте звонок между ними
+1. Войдите с двух разных аккаунтов.
+2. Запустите звонок 1:1, затем групповой звонок (голосовой чат) между ними.
 3. Проверьте логи сервера:
 
 ```bash
@@ -148,76 +161,76 @@ docker compose logs -f messenger-command-server | grep -i call
 
 ### 2. Проверка STUN/TURN сервера
 
-Используйте онлайн инструмент: https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/
+Онлайн-инструмент: https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/
 
 Или через командную строку:
 
 ```bash
-# Установка stuntman
 sudo apt-get install stuntman-client
 
 # Проверка STUN
 stunclient YOUR_SERVER_IP 3478
 
 # Проверка TURN
-turnutils_uclient -v -u testgram -w testgram123 YOUR_SERVER_IP
+turnutils_uclient -v -u testgram -w testgram2024 YOUR_SERVER_IP
 ```
+
+### 3. Проверка RTMP-трансляции
+
+Направьте программу для стриминга (например, OBS) на `rtmp://YOUR_SERVER_IP:1935/live`
+с ключом трансляции, который возвращает `phone.getGroupCallStreamRtmpUrl`, затем
+подключитесь к групповому звонку как зритель, чтобы проверить воспроизведение HLS.
 
 ## Архитектура звонков
 
-### Поток данных
+### Поток данных звонка 1:1
 
-1. **RequestCall** - Инициатор создает звонок
-   - Создается запись в MongoDB `call_sessions`
-   - Отправляется `UpdatePhoneCall` получателю
-   
-2. **AcceptCall** - Получатель принимает звонок
-   - Обновляется состояние на "accepted"
-   - Отправляется обновление инициатору
+1. **RequestCall** — инициатор создаёт звонок.
+   - Создаётся запись в MongoDB `call_sessions` (состояние `requested`).
+   - Получателю отправляется `updatePhoneCall{ phoneCallRequested }` (несёт `g_a_hash`
+     и протокол).
 
-3. **ConfirmCall** - Инициатор подтверждает звонок
-   - Обмен ключами шифрования (Diffie-Hellman)
-   - Возвращаются WebRTC connections (STUN/TURN серверы)
-   - Состояние меняется на "confirmed"
+2. **AcceptCall** — получатель принимает звонок.
+   - Состояние меняется на `accepted`; инициатору отправляется
+     `updatePhoneCall{ phoneCallAccepted }`.
+   - Остальные сессии принимающего устройства получают `phoneCallDiscarded`
+     (единственное принятие).
 
-4. **SendSignalingData** - Обмен WebRTC сигналами
-   - ICE candidates
-   - SDP offers/answers
-   - Передается через `UpdatePhoneCallSignalingData`
+3. **ConfirmCall** — инициатор подтверждает звонок.
+   - Завершается обмен ключами Diffie-Hellman (проверка диапазона и хеша `g_a`/`g_b`).
+   - Возвращаются WebRTC `connections` (STUN/TURN рефлекторы + опционально P2P).
+   - Состояние меняется на `confirmed`.
 
-5. **DiscardCall** - Завершение звонка
-   - Сохраняется длительность и причина завершения
-   - Состояние меняется на "discarded"
+4. **SendSignalingData** — обмен WebRTC-сигналами (ICE candidates, SDP) через
+   `updatePhoneCallSignalingData`.
 
-### Состояния звонка
+5. **DiscardCall** — завершение звонка.
+   - Сохраняются длительность и причина; состояние меняется на `discarded`
+     (повторный discard идемпотентен).
 
-- `requested` - Звонок инициирован
-- `accepted` - Звонок принят
-- `confirmed` - Ключи обменены, WebRTC соединение устанавливается
-- `discarded` - Звонок завершен
+### Состояния звонка 1:1
 
-## Улучшения в этом обновлении
+- `requested` — звонок инициирован
+- `received` — клиент получателя получил запрос
+- `accepted` — звонок принят
+- `confirmed` — ключи обменены, WebRTC-соединение устанавливается
+- `discarded` — звонок завершён (терминальное)
 
-### 1. Поддержка нескольких WebRTC серверов
-- Можно настроить несколько STUN/TURN серверов
-- Автоматический fallback на публичные STUN серверы Google
+### Групповые звонки и трансляции
 
-### 2. Улучшенная конфигурация
-- Поддержка UDP и TCP транспортов для TURN
-- Правильные параметры протокола (minLayer, maxLayer)
-- Поддержка IPv6
+- **CreateGroupCall / JoinGroupCall / LeaveGroupCall / DiscardGroupCall** управляют
+  жизненным циклом группового звонка; участники отслеживаются по уникальным SSRC
+  (`Source`) и монотонно растущему `Version`.
+- **EditGroupCallParticipant / ToggleGroupCallSettings / ToggleGroupCallRecord /
+  EditGroupCallTitle** управляют состоянием участников и звонка в целом.
+- **Запланированные звонки** поддерживают `schedule_date` и `StartScheduledGroupCall`.
+- **Конференц-звонки (E2E)** добавляют цепочки блоков (chain blocks), приглашения и
+  зашифрованные широковещательные сообщения.
+- **Трансляции**: `GetGroupCallStreamRtmpUrl` возвращает RTMP `url`/`key` (с ротацией
+  ключа при `revoke`); `GetGroupCallStreamChannels` перечисляет каналы; HLS-сегменты
+  отдаются через `upload.getFile` с локацией `inputGroupCallStream`.
 
-### 3. Оптимизация базы данных
-- Индексы для быстрого поиска звонков
-- Автоматическое удаление старых записей (TTL 30 дней)
-- Уникальный индекс по CallId + AccessHash
-
-### 4. Улучшенная обработка ошибок
-- Проверка состояний звонка
-- Валидация участников
-- Правильные RPC ошибки
-
-## Troubleshooting
+## Устранение неполадок
 
 ### Звонки не соединяются
 
@@ -232,37 +245,53 @@ docker compose exec mongodb mongosh tg
 db.call_sessions.find().sort({Date: -1}).limit(5)
 ```
 
-3. Проверьте конфигурацию WebRTC:
+3. Проверьте конфигурацию WebRTC, переданную мессенджеру:
 ```bash
 docker compose exec messenger-command-server env | grep WebRtc
 ```
 
 ### TURN сервер не работает
 
-1. Проверьте статус Coturn:
+1. Проверьте встроенный контейнер coturn:
 ```bash
-sudo systemctl status coturn
-sudo tail -f /var/log/turnserver.log
+docker compose logs -f coturn
+docker compose ps coturn
 ```
 
-2. Проверьте порты:
-```bash
-sudo netstat -tulpn | grep 3478
-```
+2. Убедитесь, что отдаваемые клиентам учётные данные совпадают с `--user` coturn
+   (`testgram:testgram2024`). Несовпадение — самая частая причина одностороннего звука
+   и неработающего relay.
 
-3. Проверьте файрвол:
+3. Проверьте порты на хосте:
 ```bash
+sudo ss -tulpn | grep -E '3478|3479'
 sudo ufw status
 ```
 
+### Трансляция не воспроизводится
+
+1. Проверьте RTMP-сервер:
+```bash
+docker compose logs -f rtmp-server
+```
+
+2. Убедитесь, что `App__RtmpStreamUrl` использует доступный публичный адрес, а
+   `App__RtmpHlsUrl` указывает на имя сервиса `rtmp-server`.
+
+3. Убедитесь, что порт `1935` открыт, а ключ трансляции совпадает с возвращённым
+   методом `phone.getGroupCallStreamRtmpUrl`.
+
 ### Плохое качество звука/видео
 
-1. Увеличьте диапазон портов для relay в Coturn
-2. Проверьте пропускную способность сети
-3. Используйте несколько TURN серверов в разных локациях
+1. Расширьте диапазон relay-портов во флагах coturn `--min-port`/`--max-port`
+   (и откройте соответствующий UDP-диапазон в файрволе).
+2. Проверьте пропускную способность сети.
+3. Добавьте несколько TURN-серверов в разных локациях через
+   `App__WebRtcConnections__N__*`.
 
 ## Дополнительные ресурсы
 
-- [WebRTC документация](https://webrtc.org/)
-- [Coturn документация](https://github.com/coturn/coturn)
-- [Telegram MTProto звонки](https://core.telegram.org/api/calls)
+- [Документация WebRTC](https://webrtc.org/)
+- [Документация Coturn](https://github.com/coturn/coturn)
+- [MediaMTX (RTMP/HLS сервер)](https://github.com/bluenviron/mediamtx)
+- [Звонки Telegram MTProto](https://core.telegram.org/api/calls)

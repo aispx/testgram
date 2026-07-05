@@ -21,7 +21,12 @@
 - Поддержка ботов
 - Истории
 - Настройки приватности и двухфакторная аутентификация
-- Голосовые и видеозвонки (WebRTC)
+- Голосовые и видеозвонки (1:1, WebRTC)
+- Групповые звонки / голосовые и видеочаты
+- Конференц-звонки (сквозное шифрование)
+- Трансляции (RTMP / HLS)
+- Push-уведомления (APNS / FCM / WebPush)
+- Отправка email и восстановление 2FA через email
 - Telegram Business
 - Автоудаление сообщений
 - Стикеры
@@ -31,9 +36,8 @@
 - Папки (фильтры диалогов)
 
 ### Скоро...
-- Сквозное шифрование
-- Вход через email
-- Push-уведомления (Firebase)
+- Сквозное шифрование чатов (Secret Chats)
+- Полноценный вход через email
 
 ---
 
@@ -75,15 +79,13 @@ docker compose up -d
 
 ### Настройка голосовых и видеозвонков
 
-Голосовые и видеозвонки **требуют** TURN/STUN сервер. Установите Coturn:
+Звонки **требуют** TURN/STUN сервер. В актуальной версии он уже **встроен**: стек
+`docker compose` включает сервис `coturn` (STUN/TURN) и сервис `rtmp-server`
+(`mediamtx`, используется для трансляций в групповых звонках). Устанавливать Coturn
+на хост больше не нужно — достаточно указать в конфиге WebRTC IP вашего сервера.
 
-```bash
-sudo apt-get install coturn
-# Настройте /etc/turnserver.conf (см. docs/CALLS_SETUP.md)
-sudo systemctl start coturn
-```
-
-Настройте WebRTC в `.env`:
+Настройте WebRTC в `.env` (учётные данные **должны совпадать** с пользователем
+встроенного coturn, по умолчанию `testgram:testgram2024`):
 
 ```bash
 # ОБЯЗАТЕЛЬНО для работы звонков
@@ -92,16 +94,28 @@ App__WebRtcConnections__0__Port=3478
 App__WebRtcConnections__0__Turn=True
 App__WebRtcConnections__0__Stun=True
 App__WebRtcConnections__0__UserName=testgram
-App__WebRtcConnections__0__Password=testgram123
+App__WebRtcConnections__0__Password=testgram2024
 ```
 
-Настройка индексов MongoDB (автоматически при первом запуске):
+Групповые звонки и трансляции используют встроенный RTMP/HLS сервер:
+
+```bash
+App__RtmpStreamUrl=rtmp://YOUR_SERVER_IP:1935/live
+App__RtmpHlsUrl=http://rtmp-server:8888/live
+RTMP_PORT=1935
+RTMP_HLS_PORT=8888
+```
+
+Индексы MongoDB для звонков создаются **автоматически** при первом запуске через
+контейнер `call-init`. Чтобы выполнить вручную:
 
 ```bash
 cd scripts && ./setup_call_indexes.sh  # Опционально: ручная настройка
 ```
 
-См. [docs/CALLS_SETUP.md](docs/CALLS_SETUP.md) для полной инструкции по настройке.
+Откройте нужные UDP/TCP порты в файрволе: `3478` (STUN/TURN), `49152-49172/udp`
+(TURN relay) и `1935` (RTMP). См. [docs/CALLS_SETUP.md](docs/CALLS_SETUP.md) для полной
+инструкции, включая использование внешнего TURN-сервера.
 
 ## Устранение неполадок
 
