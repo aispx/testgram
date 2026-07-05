@@ -50,7 +50,8 @@ public static class SerializerExtensions
                 TopMsgId = buffer.ReadNullableInt32(),
                 MaxId = buffer.ReadNullableInt32(),
                 Dc = buffer.ReadNullableInt32(),
-                Addr = buffer.ReadString2()
+                Addr = buffer.ReadString2(),
+                ReportDeliveryUntilDate = buffer.ReadNullableInt32()
             };
         }
         var sound = buffer.ReadString2();
@@ -105,6 +106,7 @@ public static class SerializerExtensions
                 writer.Write(value.Custom.MaxId);
                 writer.Write(value.Custom.Dc);
                 writer.WriteString(value.Custom.Addr);
+                writer.Write(value.Custom.ReportDeliveryUntilDate);
             }
 
             writer.WriteString(value.Sound);

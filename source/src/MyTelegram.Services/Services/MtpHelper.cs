@@ -8,12 +8,12 @@ public class MtpHelper(IAesHelper aesHelper) : IMtpHelper, ITransientDependency
 {
     public void Encrypt(long authKeyId, byte[] authKeyData, ReadOnlySpan<byte> data, Span<byte> outputBuffer)
     {
-        Span<byte> tempSpan = stackalloc byte[32];
-        Span<byte> messageKey = tempSpan.Slice(0, 16);
+        Span<byte> messageKey = stackalloc byte[16];
         CalcMessageKey(authKeyData, data, true, messageKey);
-        //Span<byte> aesKey = tempSpan.Slice(16, 32);
+        // MTProto v2 AES-IGE uses a 32-byte key and a 32-byte IV (16 bytes cipher-prev + 16 bytes
+        // plain-prev). The IV span must therefore be 32 bytes; CalcAesKey writes the full 32 bytes.
         var aesKey = new byte[32];
-        Span<byte> aesIv = tempSpan.Slice(16, 16);
+        Span<byte> aesIv = stackalloc byte[32];
         CalcAesKey(authKeyData, messageKey, false, aesKey, aesIv);
 
         var encryptedSpan = outputBuffer.Slice(24);

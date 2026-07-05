@@ -13,6 +13,11 @@ public class QueuedObjectMessageSender(
         int? qts = null,
         long globalSeqNo = 0) where TData : IObject
     {
+        // Push updates are serialized here and never pass through RpcResultObjectHandler,
+        // so normalize any invalid media DcId (<=0) before it reaches the client. Otherwise
+        // the client hot-loops help.getConfig and floods the log with "skip queue: unknown dc".
+        DcIdNormalizer.Normalize(data, nameof(PushSessionMessageToAuthKeyIdAsync));
+
         sessionMessageQueueProcessor.Enqueue(new LayeredAuthKeyIdMessageCreatedIntegrationEvent(
             authKeyId,
                 data.ToBytes(),
@@ -37,6 +42,10 @@ public class QueuedObjectMessageSender(
         List<long>? excludeUserIds = null
         ) where TData : IObject
     {
+        // See PushSessionMessageToAuthKeyIdAsync: updates pushed to peers bypass the
+        // RpcResultObjectHandler safety net, so normalize invalid media DcId here too.
+        DcIdNormalizer.Normalize(data, nameof(PushMessageToPeerAsync));
+
         sessionMessageQueueProcessor.Enqueue(new LayeredPushMessageCreatedIntegrationEvent(peer.PeerType,
                 peer.PeerId,
                 data.ToBytes(),
@@ -95,6 +104,10 @@ public class QueuedObjectMessageSender(
         long sessionId,
         long reqMsgId, TData data, int pts = 0, long permAuthKeyId = 0) where TData : IObject
     {
+        // Updates built by domain event handlers reach the client through this path without
+        // passing through RpcResultObjectHandler; normalize invalid media DcId before sending.
+        DcIdNormalizer.Normalize(data, nameof(SendRpcMessageToClientAsync));
+
         var rpcResult = CreateRpcResult(reqMsgId, data);
 
         sessionMessageQueueProcessor.Enqueue(new DataResultResponseReceivedEvent(connectionId, tempAuthKeyId, sessionId, reqMsgId, Array.Empty<byte>())
@@ -111,6 +124,7 @@ public class QueuedObjectMessageSender(
         int pts = 0) where TData : IObject
     {
         UpdateAccessHashIfNeeded(requestInfo, data);
+        DcIdNormalizer.Normalize(data, nameof(SendRpcMessageToClientAsync));
 
         var rpcResult = CreateRpcResult(requestInfo.ReqMsgId, data);
         sessionMessageQueueProcessor.Enqueue(
