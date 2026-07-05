@@ -1,3 +1,7 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using System.Security.Cryptography;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// Initialize a <a href="https://corefork.telegram.org/api/takeout">takeout session, see here » for more info</a>.
@@ -9,10 +13,38 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class InitTakeoutSessionHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestInitTakeoutSession, MyTelegram.Schema.Account.ITakeout>
+internal sealed class InitTakeoutSessionHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestInitTakeoutSession, MyTelegram.Schema.Account.ITakeout>
 {
-    protected override Task<MyTelegram.Schema.Account.ITakeout> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestInitTakeoutSession obj)
+    protected override async Task<MyTelegram.Schema.Account.ITakeout> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestInitTakeoutSession obj)
     {
-        throw new NotImplementedException();
+        var id = CreateTakeoutId();
+        var expiresAt = DateTime.UtcNow.AddDays(7);
+        await mongoDatabase.GetCollection<BsonDocument>("takeout_sessions").ReplaceOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", id),
+            new BsonDocument
+            {
+                ["_id"] = id,
+                ["UserId"] = input.UserId,
+                ["Contacts"] = obj.Contacts,
+                ["MessageUsers"] = obj.MessageUsers,
+                ["MessageChats"] = obj.MessageChats,
+                ["MessageMegagroups"] = obj.MessageMegagroups,
+                ["MessageChannels"] = obj.MessageChannels,
+                ["Files"] = obj.Files,
+                ["FileMaxSize"] = obj.FileMaxSize ?? 0,
+                ["Date"] = CurrentDate,
+                ["ExpiresAt"] = expiresAt,
+                ["Active"] = true,
+            },
+            new ReplaceOptions { IsUpsert = true });
+
+        return new TTakeout { Id = id };
+    }
+
+    private static long CreateTakeoutId()
+    {
+        var bytes = RandomNumberGenerator.GetBytes(sizeof(long));
+        var id = BitConverter.ToInt64(bytes) & long.MaxValue;
+        return id == 0 ? 1 : id;
     }
 }

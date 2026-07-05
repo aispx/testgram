@@ -1,3 +1,7 @@
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// Terminate a <a href="https://corefork.telegram.org/api/takeout">takeout session, see here » for more info</a>.
@@ -9,10 +13,24 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class FinishTakeoutSessionHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestFinishTakeoutSession, IBool>
+internal sealed class FinishTakeoutSessionHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestFinishTakeoutSession, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestFinishTakeoutSession obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestFinishTakeoutSession obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        var session = TakeoutContext.CurrentSession;
+        if (session == null)
+        {
+            RpcErrors.RpcErrors403.TakeoutRequired.ThrowRpcError();
+        }
+
+        await mongoDatabase.GetCollection<BsonDocument>("takeout_sessions").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", session.TakeoutId),
+                Builders<BsonDocument>.Filter.Eq("UserId", input.UserId)),
+            Builders<BsonDocument>.Update
+                .Set("Active", false)
+                .Set("Success", obj.Success)
+                .Set("FinishedAt", DateTime.UtcNow));
+        return new TBoolTrue();
     }
 }
