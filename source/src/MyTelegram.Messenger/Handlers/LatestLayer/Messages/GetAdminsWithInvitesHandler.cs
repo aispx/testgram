@@ -11,22 +11,35 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetAdminsWithInvitesHandler(IQueryProcessor queryProcessor, IAccessHashHelper accessHashHelper, IUserConverterService userConverterService) : RpcResultObjectHandler<RequestGetAdminsWithInvites, IChatAdminsWithInvites>
+internal sealed class GetAdminsWithInvitesHandler(IQueryProcessor queryProcessor, IAccessHashHelper accessHashHelper, IUserConverterService userConverterService, IPeerHelper peerHelper, IChannelAppService channelAppService) : RpcResultObjectHandler<RequestGetAdminsWithInvites, IChatAdminsWithInvites>
 {
     protected override async Task<IChatAdminsWithInvites> HandleCoreAsync(IRequestInput input, RequestGetAdminsWithInvites obj)
     {
-        if (obj.Peer is TInputPeerChannel inputPeerChannel)
+        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer.PeerType != PeerType.Channel)
         {
-            var adminWithInvitesList = await queryProcessor.ProcessAsync(new GetAdminInvitesQuery(inputPeerChannel.ChannelId));
-            var userIds = adminWithInvitesList.Select(p => p.AdminId).ToList();
-            var users = await userConverterService.GetUserListAsync(input, userIds, false, false, input.Layer);
-            return new TChatAdminsWithInvites
-            {
-                Admins = [..adminWithInvitesList.Select(p => new TChatAdminWithInvites { AdminId = p.AdminId, InvitesCount = p.InvitesCount, RevokedInvitesCount = p.RevokedInvitesCount })],
-                Users = [..users]
-            };
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }
 
-        throw new NotImplementedException();
+        var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
+        if (channelReadModel == null)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+        }
+
+        if (!channelReadModel!.AdminList.Any(p => p.UserId == input.UserId))
+        {
+            RpcErrors.RpcErrors400.ChatAdminRequired.ThrowRpcError();
+        }
+
+        var adminWithInvitesList = await queryProcessor.ProcessAsync(new GetAdminInvitesQuery(peer.PeerId));
+        var userIds = adminWithInvitesList.Select(p => p.AdminId).ToList();
+        var users = await userConverterService.GetUserListAsync(input, userIds, false, false, input.Layer);
+        return new TChatAdminsWithInvites
+        {
+            Admins = [..adminWithInvitesList.Select(p => new TChatAdminWithInvites { AdminId = p.AdminId, InvitesCount = p.InvitesCount, RevokedInvitesCount = p.RevokedInvitesCount })],
+            Users = [..users]
+        };
     }
 }

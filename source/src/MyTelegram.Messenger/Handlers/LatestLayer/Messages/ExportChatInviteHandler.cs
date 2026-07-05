@@ -21,24 +21,26 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class ExportChatInviteHandler(ICommandBus commandBus, IIdGenerator idGenerator, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IChatInviteLinkHelper chatInviteLinkHelper, IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestExportChatInvite, MyTelegram.Schema.IExportedChatInvite>
+internal sealed class ExportChatInviteHandler(ICommandBus commandBus, IIdGenerator idGenerator, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IChatInviteLinkHelper chatInviteLinkHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IAccessHashHelper accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestExportChatInvite, MyTelegram.Schema.IExportedChatInvite>
 {
     protected override async Task<MyTelegram.Schema.IExportedChatInvite> HandleCoreAsync(IRequestInput input, RequestExportChatInvite obj)
     {
         if (obj.Peer is TInputPeerChannel inputPeerChannel)
         {
+            await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
             var chatInviteId = await idGenerator.NextLongIdAsync(IdType.InviteId, inputPeerChannel.ChannelId);
             var inviteHash = chatInviteLinkHelper.GenerateInviteLink();
             var channelReadModel = await channelAppService.GetAsync(inputPeerChannel.ChannelId);
-            if (channelReadModel == null !)
+            if (channelReadModel == null)
             {
                 RpcErrors.RpcErrors400.ChannelIdInvalid.ThrowRpcError();
+                return null!;
             }
 
             await channelAdminRightsChecker.CheckAdminRightAsync(inputPeerChannel.ChannelId, input.UserId, (p) => p.ChangeInfo, RpcErrors.RpcErrors403.ChatAdminRequired);
             if (obj.LegacyRevokePermanent)
             {
-                var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetPermanentChatInviteQuery(channelReadModel!.ChannelId, input.UserId));
+                var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetPermanentChatInviteQuery(channelReadModel.ChannelId, input.UserId));
                 if (chatInviteReadModel != null)
                 {
                     var revokeChatInviteCommand = new RevokeChatInviteCommand(ChatInviteId.Create(channelReadModel.ChannelId, chatInviteReadModel.InviteId));
@@ -46,11 +48,12 @@ internal sealed class ExportChatInviteHandler(ICommandBus commandBus, IIdGenerat
                 }
             }
 
-            var command = new CreateChatInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteId), input.ToRequestInfo(), inputPeerChannel.ChannelId, chatInviteId, inviteHash, input.UserId, obj.Title, obj.RequestNeeded, null, obj.ExpireDate, obj.UsageLimit, obj.LegacyRevokePermanent, CurrentDate, channelReadModel!.Broadcast);
+            var command = new CreateChatInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteId), input.ToRequestInfo(), inputPeerChannel.ChannelId, chatInviteId, inviteHash, input.UserId, obj.Title, obj.RequestNeeded, null, obj.ExpireDate, obj.UsageLimit, obj.LegacyRevokePermanent, CurrentDate, channelReadModel.Broadcast);
             await commandBus.PublishAsync(command);
-            return null !;
+            return null!;
         }
 
-        throw new NotImplementedException();
+        RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+        return null!;
     }
 }

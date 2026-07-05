@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Converters.ConverterServices;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Get info about a chat invite
@@ -14,10 +16,57 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetExportedChatInviteHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetExportedChatInvite, MyTelegram.Schema.Messages.IExportedChatInvite>
+internal sealed class GetExportedChatInviteHandler(
+    IPeerHelper peerHelper,
+    IAccessHashHelper accessHashHelper,
+    IQueryProcessor queryProcessor,
+    IChannelAppService channelAppService,
+    IUserConverterService userConverterService,
+    IChatInviteExportedConverterService chatInviteExportedConverterService,
+    IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetExportedChatInvite, MyTelegram.Schema.Messages.IExportedChatInvite>
 {
-    protected override Task<MyTelegram.Schema.Messages.IExportedChatInvite> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetExportedChatInvite obj)
+    protected override async Task<MyTelegram.Schema.Messages.IExportedChatInvite> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetExportedChatInvite obj)
     {
-        throw new NotImplementedException();
+        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer.PeerType != PeerType.Channel)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+        }
+
+        var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
+        if (channelReadModel == null)
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+        }
+
+        if (!channelReadModel!.AdminList.Any(p => p.UserId == input.UserId))
+        {
+            RpcErrors.RpcErrors400.ChatAdminRequired.ThrowRpcError();
+        }
+
+        var link = chatInviteLinkHelper.GetHashFromLink(obj.Link);
+        if (string.IsNullOrWhiteSpace(link))
+        {
+            RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
+        }
+
+        var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteQuery(peer.PeerId, link));
+        if (chatInviteReadModel == null)
+        {
+            RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
+        }
+
+        if (chatInviteReadModel!.ExpireDate is > 0 && chatInviteReadModel.ExpireDate.Value < CurrentDate)
+        {
+            RpcErrors.RpcErrors400.InviteHashExpired.ThrowRpcError();
+        }
+
+        var users = await userConverterService.GetUserListAsync(input, [chatInviteReadModel.AdminId], false, false, input.Layer);
+        return new TExportedChatInvite
+        {
+            Invite = chatInviteExportedConverterService.ToExportedChatInvite(chatInviteReadModel, input.Layer),
+            Users = [..users]
+        };
     }
 }
