@@ -11,67 +11,113 @@ public sealed class LanguagePackDataSeeder(
     IDataSeederHelper dataSeederHelper,
     ILogger<LanguagePackDataSeeder> logger) : IDataSeeder, ITransientDependency
 {
-    private const string RussianLanguageCode = "ru";
-    private static readonly DeviceType[] RussianAndroidTargetPlatforms =
-    [
-        DeviceType.Android,
-        DeviceType.AndroidX,
-        DeviceType.Desktop,
-        DeviceType.Ios,
-        DeviceType.MacOs,
-        DeviceType.TdLib,
-        DeviceType.Unigram,
-        DeviceType.WebA,
-        DeviceType.WebK
-    ];
+    private static readonly JsonSerializerOptions JsonSerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     public async Task SeedAsync()
     {
-        var jsonText = await dataSeederHelper.GetJsonTextAsync(DataSeederConsts.RussianAndroidLangPackFileName);
-        if (string.IsNullOrWhiteSpace(jsonText))
+        var rootFolder = Path.Combine(
+            AppContext.BaseDirectory,
+            DataSeederConsts.RootFolder,
+            DataSeederConsts.LanguagePacksRootFolder);
+
+        if (!Directory.Exists(rootFolder))
         {
-            logger.LogWarning("Russian language pack file is missing: {FileName}",
-                DataSeederConsts.RussianAndroidLangPackFileName);
+            logger.LogWarning("Language pack folder is missing: {Folder}", rootFolder);
             return;
         }
 
-        var languagePack = JsonSerializer.Deserialize<LanguagePackSnapshot>(jsonText, new JsonSerializerOptions
+        var files = Directory
+            .EnumerateFiles(rootFolder, "*.json", SearchOption.AllDirectories)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (files.Count == 0)
         {
-            PropertyNameCaseInsensitive = true
-        });
-        if (languagePack?.Strings.Count is null or 0)
-        {
-            logger.LogWarning("Russian language pack contains no strings: {FileName}",
-                DataSeederConsts.RussianAndroidLangPackFileName);
+            logger.LogWarning("Language pack folder contains no json files: {Folder}", rootFolder);
             return;
         }
 
-        var languageVersion = languagePack.Version <= 0 ? 1 : languagePack.Version;
-        var importKey = $"{RussianLanguageCode}:official-android";
         var config = await dataSeederHelper.LoadDataSeederConfigAsync();
-        if (config.ImportedLanguagePackVersions.TryGetValue(importKey, out var importedVersion) &&
-            importedVersion == languageVersion)
-        {
-            logger.LogInformation("Russian language pack is already imported, version: {Version}", languageVersion);
-            return;
-        }
-
         var languageCollection = database.GetCollection<BsonDocument>(GetCollectionName<LanguageReadModel>());
         var languageTextCollection = database.GetCollection<BsonDocument>(GetCollectionName<LanguageTextReadModel>());
+        var importedCount = 0;
+        var skippedCount = 0;
+        var invalidCount = 0;
+        var unsupportedCount = 0;
+        var importedStringsCount = 0;
+        var configChanged = false;
 
-        foreach (var platform in RussianAndroidTargetPlatforms)
+        foreach (var fileName in files)
         {
-            await UpsertLanguageAsync(languageCollection, platform, languagePack, languageVersion);
-            await UpsertLanguageTextsAsync(languageTextCollection, platform, languageVersion, languagePack.Strings);
+            LanguagePackSnapshot? languagePack;
+            try
+            {
+                languagePack = await ReadLanguagePackAsync(fileName);
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            {
+                invalidCount++;
+                logger.LogWarning(ex, "Language pack cannot be parsed: {FileName}", fileName);
+                continue;
+            }
+
+            if (languagePack?.Strings.Count is null or 0)
+            {
+                invalidCount++;
+                logger.LogWarning("Language pack contains no strings or cannot be parsed: {FileName}", fileName);
+                continue;
+            }
+
+            var languageCode = GetLanguageCode(languagePack, fileName);
+            var languagePackName = GetLanguagePackName(languagePack, fileName);
+            if (!TryGetPlatform(languagePackName, out var platform))
+            {
+                unsupportedCount++;
+                logger.LogWarning(
+                    "Language pack platform is not supported: {LanguagePack}, file: {FileName}",
+                    languagePackName,
+                    fileName);
+                continue;
+            }
+
+            var languageVersion = languagePack.Version <= 0 ? 1 : languagePack.Version;
+            var importKey = $"{languageCode}:{languagePackName}";
+            if (config.ImportedLanguagePackVersions.TryGetValue(importKey, out var importedVersion) &&
+                importedVersion == languageVersion)
+            {
+                skippedCount++;
+                continue;
+            }
+
+            await UpsertLanguageAsync(languageCollection, platform, languageCode, languagePack, languageVersion);
+            await UpsertLanguageTextsAsync(
+                languageTextCollection,
+                platform,
+                languageCode,
+                languageVersion,
+                languagePack.Strings);
+
+            config.ImportedLanguagePackVersions[importKey] = languageVersion;
+            configChanged = true;
+            importedCount++;
+            importedStringsCount += languagePack.Strings.Count;
         }
 
-        config.ImportedLanguagePackVersions[importKey] = languageVersion;
-        await dataSeederHelper.SaveDataSeederConfigAsync();
+        if (configChanged)
+        {
+            await dataSeederHelper.SaveDataSeederConfigAsync();
+        }
+
         logger.LogInformation(
-            "Russian language pack imported from official Telegram Android resources, version: {Version}, strings: {StringsCount}, platforms: {PlatformsCount}",
-            languageVersion,
-            languagePack.Strings.Count,
-            RussianAndroidTargetPlatforms.Length);
+            "Language packs import completed. Imported: {ImportedCount}, skipped: {SkippedCount}, invalid: {InvalidCount}, unsupported: {UnsupportedCount}, strings: {StringsCount}",
+            importedCount,
+            skippedCount,
+            invalidCount,
+            unsupportedCount,
+            importedStringsCount);
     }
 
     private string GetCollectionName<TReadModel>()
@@ -80,20 +126,27 @@ public sealed class LanguagePackDataSeeder(
         return readModelDescriptionProvider.GetReadModelDescription<TReadModel>().RootCollectionName.Value;
     }
 
+    private static async Task<LanguagePackSnapshot?> ReadLanguagePackAsync(string fileName)
+    {
+        await using var stream = File.OpenRead(fileName);
+        return await JsonSerializer.DeserializeAsync<LanguagePackSnapshot>(stream, JsonSerializerOptions);
+    }
+
     private static async Task UpsertLanguageAsync(
         IMongoCollection<BsonDocument> collection,
         DeviceType platform,
+        string languageCode,
         LanguagePackSnapshot languagePack,
         int languageVersion)
     {
-        var id = GetLanguageId(RussianLanguageCode, platform);
+        var id = GetLanguageId(languageCode, platform);
         var update = Builders<BsonDocument>.Update
             .SetOnInsert("_id", id)
             .Set("Platform", (int)platform)
-            .Set("Rtl", false)
+            .Set("Rtl", languagePack.Rtl)
             .Set("Name", languagePack.Name)
             .Set("NativeName", languagePack.NativeName)
-            .Set("LanguageCode", RussianLanguageCode)
+            .Set("LanguageCode", languageCode)
             .Set("PluralCode", languagePack.PluralCode)
             .Set("TranslationsUrl", languagePack.Source)
             .Set("IsEnabled", true)
@@ -110,17 +163,23 @@ public sealed class LanguagePackDataSeeder(
     private static async Task UpsertLanguageTextsAsync(
         IMongoCollection<BsonDocument> collection,
         DeviceType platform,
+        string languageCode,
         int languageVersion,
         IReadOnlyCollection<LanguagePackStringSnapshot> strings)
     {
         var writes = new List<WriteModel<BsonDocument>>(strings.Count);
         foreach (var item in strings)
         {
-            var id = GetLanguageTextId(RussianLanguageCode, platform, item.Key);
+            if (string.IsNullOrWhiteSpace(item.Key))
+            {
+                continue;
+            }
+
+            var id = GetLanguageTextId(languageCode, platform, item.Key);
             var update = Builders<BsonDocument>.Update
                 .SetOnInsert("_id", id)
                 .Set("Platform", (int)platform)
-                .Set("LanguageCode", RussianLanguageCode)
+                .Set("LanguageCode", languageCode)
                 .Set("Key", item.Key)
                 .Set("Value", ToBsonValue(item.Value))
                 .Set("ZeroValue", ToBsonValue(item.ZeroValue))
@@ -146,6 +205,76 @@ public sealed class LanguagePackDataSeeder(
         }
     }
 
+    private static string GetLanguageCode(LanguagePackSnapshot languagePack, string fileName)
+    {
+        if (!string.IsNullOrWhiteSpace(languagePack.LanguageCode))
+        {
+            return languagePack.LanguageCode.Trim();
+        }
+
+        return new DirectoryInfo(Path.GetDirectoryName(fileName) ?? string.Empty).Name;
+    }
+
+    private static string GetLanguagePackName(LanguagePackSnapshot languagePack, string fileName)
+    {
+        var languagePackName = string.IsNullOrWhiteSpace(languagePack.LanguagePack)
+            ? Path.GetFileNameWithoutExtension(fileName)
+            : languagePack.LanguagePack;
+
+        return NormalizeLanguagePack(languagePackName);
+    }
+
+    private static bool TryGetPlatform(string languagePack, out DeviceType platform)
+    {
+        switch (NormalizeLanguagePack(languagePack))
+        {
+            case "android":
+                platform = DeviceType.Android;
+                return true;
+            case "android_x":
+                platform = DeviceType.AndroidX;
+                return true;
+            case "tdesktop":
+                platform = DeviceType.Desktop;
+                return true;
+            case "ios":
+                platform = DeviceType.Ios;
+                return true;
+            case "macos":
+                platform = DeviceType.MacOs;
+                return true;
+            case "tdlib":
+                platform = DeviceType.TdLib;
+                return true;
+            case "unigram":
+                platform = DeviceType.Unigram;
+                return true;
+            case "weba":
+                platform = DeviceType.WebA;
+                return true;
+            case "webk":
+                platform = DeviceType.WebK;
+                return true;
+            default:
+                platform = DeviceType.Unknown;
+                return false;
+        }
+    }
+
+    private static string NormalizeLanguagePack(string languagePack)
+    {
+        var normalized = languagePack.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "desktop" or "telegramdesktop" => "tdesktop",
+            "androidx" or "android-x" => "android_x",
+            "macosx" or "mac-os" or "mac_os" => "macos",
+            "web-a" or "web_a" => "weba",
+            "web-k" or "web_k" => "webk",
+            _ => normalized
+        };
+    }
+
     private static BsonValue ToBsonValue(string? value) =>
         string.IsNullOrEmpty(value) ? BsonNull.Value : value;
 
@@ -159,21 +288,24 @@ public sealed class LanguagePackDataSeeder(
         return $"{languageCode}_{platform}_{key}".ToLowerInvariant();
     }
 
-    private sealed record LanguagePackSnapshot(
-        string Source,
-        string LanguageCode,
-        string LanguagePack,
-        string Name,
-        string NativeName,
-        string PluralCode,
-        int Version,
-        Dictionary<string, int> Sections,
-        List<LanguagePackStringSnapshot> Strings);
+    private sealed record LanguagePackSnapshot
+    {
+        public string Source { get; init; } = string.Empty;
+        public string LanguageCode { get; init; } = string.Empty;
+        public string LanguagePack { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public string NativeName { get; init; } = string.Empty;
+        public string PluralCode { get; init; } = string.Empty;
+        public bool Rtl { get; init; }
+        public int Version { get; init; }
+        public Dictionary<string, int> Sections { get; init; } = [];
+        public List<LanguagePackStringSnapshot> Strings { get; init; } = [];
+    }
 
     private sealed record LanguagePackStringSnapshot
     {
         [JsonPropertyName("key")]
-        public required string Key { get; init; }
+        public string Key { get; init; } = string.Empty;
 
         [JsonPropertyName("section")]
         public string? Section { get; init; }

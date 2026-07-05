@@ -71,6 +71,7 @@ public class LanguageCacheService(IQueryProcessor queryProcessor, ILogger<Langua
 
     private string GetLanguageTextKey(string languageCode, string languagePack, bool removeSuffix = true)
     {
+        languagePack = GetLanguagePack(languagePack);
         if (removeSuffix)
         {
             return $"{GetLanguageCode(languageCode)}_{languagePack}";
@@ -94,6 +95,26 @@ public class LanguageCacheService(IQueryProcessor queryProcessor, ILogger<Langua
 
         return langPack;
     }
+
+    private string GetLanguagePack(string languagePack)
+    {
+        if (string.IsNullOrWhiteSpace(languagePack))
+        {
+            return string.Empty;
+        }
+
+        var normalized = languagePack.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "desktop" or "telegramdesktop" => "tdesktop",
+            "androidx" or "android-x" => "android_x",
+            "macosx" or "mac-os" or "mac_os" => "macos",
+            "web-a" or "web_a" => "weba",
+            "web-k" or "web_k" => "webk",
+            _ => normalized
+        };
+    }
+
     private string GetLanguageTextKey(string languageCode, DeviceType deviceType, bool removeSuffix = true)
     {
         var langPack = GetLanguagePack(deviceType);
@@ -108,7 +129,8 @@ public class LanguageCacheService(IQueryProcessor queryProcessor, ILogger<Langua
             await LoadAllLanguagesAsync();
         }
 
-        if (_languageReadModels.TryGetValue(languagePack, out var languages))
+        var normalizedLanguagePack = GetLanguagePack(languagePack);
+        if (_languageReadModels.TryGetValue(normalizedLanguagePack, out var languages))
         {
             return languages.Values;
         }
@@ -192,7 +214,8 @@ public class LanguageCacheService(IQueryProcessor queryProcessor, ILogger<Langua
         }
 
         ILanguageReadModel? languageReadModel = null;
-        if (_languageReadModels.TryGetValue(languagePack, out var languages))
+        var normalizedLanguagePack = GetLanguagePack(languagePack);
+        if (_languageReadModels.TryGetValue(normalizedLanguagePack, out var languages))
         {
             var key = GetLanguageTextKey(languageCode, languagePack);
             languages.TryGetValue(key, out languageReadModel);
