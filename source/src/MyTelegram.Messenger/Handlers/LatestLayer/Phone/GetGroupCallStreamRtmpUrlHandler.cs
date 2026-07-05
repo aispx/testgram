@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
@@ -9,7 +10,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class GetGroupCallStreamRtmpUrlHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options,
+    IChannelAdminRightsChecker channelAdminRightsChecker)
     : RpcResultObjectHandler<RequestGetGroupCallStreamRtmpUrl, IGroupCallStreamRtmpUrl>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -27,6 +29,8 @@ internal sealed class GetGroupCallStreamRtmpUrlHandler(
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
             return null!;
         }
+
+        await CheckCanGetRtmpCredentialsAsync(peer, input.UserId, obj.LiveStory);
 
         var defaultRtmpUrl = GroupCallRtmpHelper.GetRtmpStreamUrl(options.CurrentValue);
         if (obj.LiveStory)
@@ -148,6 +152,20 @@ internal sealed class GetGroupCallStreamRtmpUrlHandler(
         };
     }
 
+    private async Task CheckCanGetRtmpCredentialsAsync(Peer peer, long userId, bool liveStory)
+    {
+        if (peer.PeerType != PeerType.Channel)
+        {
+            return;
+        }
+
+        await channelAdminRightsChecker.CheckAdminRightAsync(
+            peer.PeerId,
+            userId,
+            rights => liveStory ? rights.PostStories : rights.ManageCall,
+            RpcErrors.RpcErrors400.ChatAdminRequired);
+    }
+
     private async Task<GroupCallRtmpStreamDocument> GetOrCreateSavedStreamAsync(
         string id,
         long peerId,
@@ -160,6 +178,23 @@ internal sealed class GetGroupCallStreamRtmpUrlHandler(
         var saved = await _rtmpStreamCollection.Find(stream => stream.Id == id).FirstOrDefaultAsync();
         if (saved != null && !revoke)
         {
+            if (!string.IsNullOrWhiteSpace(preferredKey) && saved.Key != preferredKey)
+            {
+                var updated = GroupCallRtmpHelper.CreateStreamDocument(
+                    id,
+                    peerId,
+                    peerType,
+                    GroupCallRtmpHelper.GetStoredOrDefault(saved.Url, defaultRtmpUrl),
+                    preferredKey,
+                    saved.Date == 0 ? date : saved.Date);
+                await _rtmpStreamCollection.ReplaceOneAsync(
+                    existing => existing.Id == id,
+                    updated,
+                    new ReplaceOptions { IsUpsert = true });
+
+                return updated;
+            }
+
             return saved;
         }
 

@@ -46,6 +46,20 @@ internal sealed class AcceptCallHandler(
 
         ValidateHandshakeProtocol(obj.Protocol);
 
+        if (!PhoneCallDhValidator.IsValidDhValue(obj.GB))
+        {
+            RpcErrors.RpcErrors400.CallProtocolFlagsInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (!PhoneCallProtocolHelper.HasCommonLibraryVersion(
+                session.CallerLibraryVersions,
+                PhoneCallProtocolHelper.GetLibraryVersions(obj.Protocol)))
+        {
+            RpcErrors.RpcErrors406.CallProtocolCompatLayerInvalid.ThrowRpcError();
+            return null!;
+        }
+
         if (session.State == "accepted" || session.State == "confirmed")
         {
             RpcErrors.RpcErrors400.CallAlreadyAccepted.ThrowRpcError();
@@ -61,6 +75,7 @@ internal sealed class AcceptCallHandler(
         var update = Builders<CallSessionDocument>.Update
             .Set(s => s.GB, obj.GB)
             .Set(s => s.CalleeLibraryVersions, [.. PhoneCallProtocolHelper.GetLibraryVersions(obj.Protocol)])
+            .Set(s => s.CalleeConferenceSupported, PhoneCallProtocolHelper.AdvertisesConferenceSupport(obj.Protocol))
             .Set(s => s.State, "accepted");
 
         await _callCollection.UpdateOneAsync(filter, update);
@@ -93,6 +108,28 @@ internal sealed class AcceptCallHandler(
                 Chats = new TVector<IChat>(),
                 Date = currentDate
             });
+
+        // Requirement 4.3 / 30.2: the accepting callee's other devices receive a
+        // phoneCallDiscarded so the call cannot be accepted twice. Push to all of the
+        // callee's active sessions except the device that performed the accept.
+        var phoneCallDiscardedForOtherDevices = new Schema.TPhoneCallDiscarded
+        {
+            Id = session.CallId,
+            Video = session.Video
+        };
+        var calleePeer = new Peer(PeerType.User, session.CalleeId);
+        await objectMessageSender.PushMessageToPeerAsync(calleePeer,
+            new TUpdates
+            {
+                Updates = new TVector<IUpdate>
+                {
+                    new MyTelegram.Schema.TUpdatePhoneCall { PhoneCall = phoneCallDiscardedForOtherDevices }
+                },
+                Users = usersVector,
+                Chats = new TVector<IChat>(),
+                Date = currentDate
+            },
+            excludeAuthKeyId: input.AuthKeyId);
 
         await SendCallAcceptedServiceMessageAsync(input, session.CallId, session.CallerId, session.Video);
 

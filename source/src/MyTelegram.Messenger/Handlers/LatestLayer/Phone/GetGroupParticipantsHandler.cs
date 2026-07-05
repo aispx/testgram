@@ -56,7 +56,7 @@ internal sealed class GetGroupParticipantsHandler(
         {
             Count = total,
             Participants = new TVector<IGroupCallParticipant>(
-                page.Select(p => (IGroupCallParticipant)GroupCallStateHelper.ToParticipant(p, input.UserId, peerHelper))),
+                page.Select(p => (IGroupCallParticipant)GroupCallStateHelper.ToParticipant(p, input.UserId, peerHelper, call: groupCall))),
             NextOffset = nextOffset,
             Chats = new TVector<IChat>(),
             Users = new TVector<IUser>(),

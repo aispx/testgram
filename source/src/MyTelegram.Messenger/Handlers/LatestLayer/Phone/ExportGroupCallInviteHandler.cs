@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Messenger.Services.Phone;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
@@ -14,7 +15,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class ExportGroupCallInviteHandler(
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IChannelAppService channelAppService,
+    IChannelAdminRightsChecker channelAdminRightsChecker)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestExportGroupCallInvite, MyTelegram.Schema.Phone.IExportedGroupCallInvite>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -30,10 +33,67 @@ internal sealed class ExportGroupCallInviteHandler(
             return null!;
         }
 
-        if (groupCall.InviteLink == null)
+        await GroupCallStateHelper.EnsureCanManageCallAsync(groupCall, input.UserId, channelAdminRightsChecker);
+
+        var changed = false;
+        if (groupCall.Conference)
         {
-            groupCall.InviteHash = GroupCallStateHelper.CreateInviteHash();
-            groupCall.InviteLink = $"https://t.me/call/{groupCall.InviteHash}";
+            if (groupCall.InviteHash == null)
+            {
+                groupCall.InviteHash = GroupCallStateHelper.CreateInviteHash();
+                changed = true;
+            }
+
+            var link = TelegramDeepLinkHelper.GetConferenceCallLink(groupCall.InviteHash);
+            if (groupCall.InviteLink != link)
+            {
+                groupCall.InviteLink = link;
+                changed = true;
+            }
+        }
+        else
+        {
+            if (groupCall.PeerType != (int)PeerType.Channel)
+            {
+                RpcErrors.RpcErrors403.PublicChannelMissing.ThrowRpcError();
+                return null!;
+            }
+
+            var channel = await channelAppService.GetAsync(groupCall.PeerId);
+            if (string.IsNullOrWhiteSpace(channel?.UserName))
+            {
+                RpcErrors.RpcErrors403.PublicChannelMissing.ThrowRpcError();
+                return null!;
+            }
+
+            if (obj.CanSelfUnmute)
+            {
+                if (groupCall.InviteHash == null)
+                {
+                    groupCall.InviteHash = GroupCallStateHelper.CreateInviteHash();
+                    changed = true;
+                }
+            }
+            else if (groupCall.InviteHash != null)
+            {
+                groupCall.InviteHash = null;
+                changed = true;
+            }
+
+            var link = TelegramDeepLinkHelper.GetGroupCallInviteLink(
+                channel.UserName,
+                groupCall.InviteHash,
+                channel.Broadcast);
+
+            if (groupCall.InviteLink != link)
+            {
+                groupCall.InviteLink = link;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
             groupCall.Version++;
             await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
         }

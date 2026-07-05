@@ -1,3 +1,5 @@
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
@@ -10,11 +12,14 @@ internal sealed class JoinGroupCallHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IObjectMessageSender objectMessageSender,
-    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options,
+    IChannelAppService channelAppService)
     : RpcResultObjectHandler<RequestJoinGroupCall, IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
         mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+    private readonly IMongoCollection<BsonDocument> _groupCallBsonCollection =
+        mongoDatabase.GetCollection<BsonDocument>("group_calls");
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestJoinGroupCall obj)
     {
@@ -26,19 +31,23 @@ internal sealed class JoinGroupCallHandler(
             return null!;
         }
 
+        if (!await EnsureCanJoinCallAsync(input, obj.Call, groupCall))
+        {
+            return null!;
+        }
+
         var joinAs = peerHelper.GetPeer(obj.JoinAs, input.UserId);
         if (joinAs == null)
         {
-            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            RpcErrors.RpcErrors400.JoinAsPeerInvalid.ThrowRpcError();
             return null!;
         }
 
         var currentDate = GroupCallStateHelper.CurrentDate();
         var ssrc = GroupCallStateHelper.CreateParticipantSource(
             obj.Params?.Data,
-            groupCall.Participants,
-            joinAs.PeerId,
-            (int)joinAs.PeerType);
+            groupCall,
+            input.UserId);
 
         var participant = new GroupCallParticipantDoc
         {
@@ -53,42 +62,163 @@ internal sealed class JoinGroupCallHandler(
             PublicKey = obj.PublicKey?.ToArray()
         };
 
-        groupCall.Participants.RemoveAll(p => p.PeerId == participant.PeerId && p.PeerType == participant.PeerType);
-        groupCall.Participants.Add(participant);
-        groupCall.InvitedUserIds.Remove(input.UserId);
-        groupCall.Version++;
-        if (obj.Block is { } block)
+        groupCall = await AddParticipantAtomicallyAsync(groupCall, participant, input.UserId, obj.Block?.ToArray());
+        participant = GroupCallStateHelper.FindParticipantByUser(groupCall, input.UserId, ssrc) ?? participant;
+
+        var pushUpdatesList = new List<IUpdate>();
+        var responseUpdates = new List<IUpdate>
         {
-            groupCall.ChainBlocks.Add(new GroupCallChainBlockDoc { SubChainId = 0, Block = block.ToArray() });
+            GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper)
+        };
+
+        if (!groupCall.RtmpStream)
+        {
+            var participantsUpdate = GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant], true);
+            pushUpdatesList.Add(participantsUpdate);
+            responseUpdates.Add(participantsUpdate);
         }
 
-        await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
-
-        var updates = new List<IUpdate>
-        {
-            GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant], true)
-        };
         if (groupCall.Conference && obj.Block is { } chainBlock)
         {
-            updates.Add(GroupCallStateHelper.CreateChainBlocksUpdate(
+            var chainUpdate = GroupCallStateHelper.CreateChainBlocksUpdate(
                 groupCall,
                 0,
                 [chainBlock.ToArray()],
-                groupCall.ChainBlocks.Count(block => block.SubChainId == 0)));
+                groupCall.ChainBlocks.Count(block => block.SubChainId == 0));
+            pushUpdatesList.Add(chainUpdate);
+            responseUpdates.Add(chainUpdate);
         }
 
-        var pushUpdates = GroupCallStateHelper.Updates(updates.ToArray());
-        await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
-            objectMessageSender,
-            groupCall,
-            pushUpdates,
-            input.UserId);
+        if (pushUpdatesList.Count > 0)
+        {
+            var pushUpdates = GroupCallStateHelper.Updates(pushUpdatesList.ToArray());
+            await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
+                objectMessageSender,
+                groupCall,
+                pushUpdates,
+                input.UserId);
+        }
 
-        updates.Add(GroupCallStateHelper.CreateConnectionUpdate(
+        responseUpdates.Add(GroupCallStateHelper.CreateConnectionUpdate(
                 groupCall,
                 options.CurrentValue.WebRtcConnections,
                 streamFallback: true));
 
-        return GroupCallStateHelper.Updates(updates.ToArray());
+        return GroupCallStateHelper.Updates(responseUpdates.ToArray());
+    }
+
+    private async Task<bool> EnsureCanJoinCallAsync(
+        IRequestInput input,
+        IInputGroupCall inputCall,
+        GroupCallDocument groupCall)
+    {
+        if (inputCall is TInputGroupCallSlug or TInputGroupCallInviteMessage ||
+            groupCall.Conference ||
+            groupCall.CreatorId == input.UserId ||
+            groupCall.InvitedUserIds.Contains(input.UserId) ||
+            groupCall.InviteMessages.Any(p => p.UserId == input.UserId && !p.Declined))
+        {
+            return true;
+        }
+
+        if ((PeerType)groupCall.PeerType == PeerType.Channel)
+        {
+            return !await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, groupCall.PeerId);
+        }
+
+        return true;
+    }
+
+    private async Task<GroupCallDocument> AddParticipantAtomicallyAsync(
+        GroupCallDocument groupCall,
+        GroupCallParticipantDoc participant,
+        long userId,
+        byte[]? chainBlock)
+    {
+        var participantDoc = participant.ToBsonDocument();
+        var controlledByUserCondition = CreateControlledByUserCondition(groupCall, userId);
+        var set = new BsonDocument
+        {
+            ["Participants"] = new BsonDocument("$concatArrays", new BsonArray
+            {
+                new BsonDocument("$filter", new BsonDocument
+                {
+                    ["input"] = new BsonDocument("$ifNull", new BsonArray { "$Participants", new BsonArray() }),
+                    ["as"] = "participant",
+                    ["cond"] = new BsonDocument("$not", new BsonArray { controlledByUserCondition })
+                }),
+                new BsonArray { participantDoc }
+            }),
+            ["InvitedUserIds"] = new BsonDocument("$filter", new BsonDocument
+            {
+                ["input"] = new BsonDocument("$ifNull", new BsonArray { "$InvitedUserIds", new BsonArray() }),
+                ["as"] = "invitedUserId",
+                ["cond"] = new BsonDocument("$ne", new BsonArray { "$$invitedUserId", userId })
+            }),
+            ["Version"] = new BsonDocument("$add", new BsonArray { "$Version", 1 })
+        };
+
+        if (chainBlock != null)
+        {
+            set["ChainBlocks"] = new BsonDocument("$concatArrays", new BsonArray
+            {
+                new BsonDocument("$ifNull", new BsonArray { "$ChainBlocks", new BsonArray() }),
+                new BsonArray
+                {
+                    new BsonDocument
+                    {
+                        ["SubChainId"] = 0,
+                        ["Block"] = new BsonBinaryData(chainBlock)
+                    }
+                }
+            });
+        }
+
+        var pipeline = PipelineDefinition<BsonDocument, BsonDocument>.Create(
+            new[] { new BsonDocument("$set", set) });
+        var updated = await _groupCallBsonCollection.FindOneAndUpdateAsync(
+            new BsonDocument
+            {
+                ["_id"] = groupCall.CallId,
+                ["Active"] = true
+            },
+            pipeline,
+            new FindOneAndUpdateOptions<BsonDocument>
+            {
+                ReturnDocument = ReturnDocument.After
+            });
+
+        if (updated == null)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        return BsonSerializer.Deserialize<GroupCallDocument>(updated);
+    }
+
+    private static BsonDocument CreateControlledByUserCondition(GroupCallDocument groupCall, long userId)
+    {
+        var conditions = new BsonArray
+        {
+            new BsonDocument("$eq", new BsonArray { "$$participant.UserId", userId }),
+            new BsonDocument("$and", new BsonArray
+            {
+                new BsonDocument("$eq", new BsonArray { "$$participant.PeerType", (int)PeerType.User }),
+                new BsonDocument("$eq", new BsonArray { "$$participant.PeerId", userId })
+            })
+        };
+
+        if (groupCall.CreatorId == userId)
+        {
+            conditions.Add(new BsonDocument("$and", new BsonArray
+            {
+                new BsonDocument("$eq", new BsonArray { "$$participant.UserId", 0 }),
+                new BsonDocument("$eq", new BsonArray { "$$participant.PeerType", groupCall.PeerType }),
+                new BsonDocument("$eq", new BsonArray { "$$participant.PeerId", groupCall.PeerId })
+            }));
+        }
+
+        return new BsonDocument("$or", conditions);
     }
 }

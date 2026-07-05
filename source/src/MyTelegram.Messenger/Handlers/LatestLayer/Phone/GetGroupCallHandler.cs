@@ -9,7 +9,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class GetGroupCallHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IAccessHashHelper2 accessHashHelper2)
+    IAccessHashHelper2 accessHashHelper2,
+    ILogger<GetGroupCallHandler> logger)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestGetGroupCall, MyTelegram.Schema.Phone.IGroupCall>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -33,15 +34,26 @@ internal sealed class GetGroupCallHandler(
         var limit = obj.Limit > 0 ? obj.Limit : 100;
         var participants = groupCall.Participants
             .Take(limit)
-            .Select(p => (MyTelegram.Schema.IGroupCallParticipant)GroupCallStateHelper.ToParticipant(p, input.UserId, peerHelper))
+            .Select(p => (MyTelegram.Schema.IGroupCallParticipant)GroupCallStateHelper.ToParticipant(p, input.UserId, peerHelper, call: groupCall))
             .ToList();
+
+        var accessHash = accessHashHelper2.GenerateAccessHash(
+            input.UserId,
+            input.AccessHashKeyId,
+            groupCall.CallId,
+            AccessHashType.GroupCall);
+        var call = GroupCallStateHelper.ToGroupCall(groupCall, input.UserId, accessHash);
+
+        logger.LogInformation(
+            "GetGroupCall response: CallId={CallId}, RtmpStream={RtmpStream}, Active={Active}, ParticipantsCount={ParticipantsCount}",
+            groupCall.CallId,
+            call.RtmpStream,
+            groupCall.Active,
+            participants.Count);
 
         return new MyTelegram.Schema.Phone.TGroupCall
         {
-            Call = GroupCallStateHelper.ToGroupCall(
-                groupCall,
-                input.UserId,
-                accessHashHelper2.GenerateAccessHash(input.UserId, input.AccessHashKeyId, groupCall.CallId, AccessHashType.GroupCall)),
+            Call = call,
             Participants = new TVector<MyTelegram.Schema.IGroupCallParticipant>(participants),
             ParticipantsNextOffset = groupCall.Participants.Count > limit ? limit.ToString() : string.Empty,
             Chats = new TVector<IChat>(),

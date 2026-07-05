@@ -43,7 +43,7 @@ internal sealed class CreateConferenceCallHandler(
             InviteHash = GroupCallStateHelper.CreateInviteHash(),
             Date = GroupCallStateHelper.CurrentDate()
         };
-        call.InviteLink = $"https://t.me/call/{call.InviteHash}";
+        call.InviteLink = TelegramDeepLinkHelper.GetConferenceCallLink(call.InviteHash);
 
         GroupCallParticipantDoc? participant = null;
         if (obj.Join)

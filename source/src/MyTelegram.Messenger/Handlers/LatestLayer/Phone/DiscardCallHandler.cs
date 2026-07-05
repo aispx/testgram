@@ -43,30 +43,62 @@ internal sealed class DiscardCallHandler(
             return null!;
         }
 
+        var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        var users = await userConverterService.GetUserListAsync(input, new List<long> { session.CallerId, session.CalleeId }, false, false, input.Layer);
+        var usersVector = new TVector<MyTelegram.Schema.IUser>(users);
+
+        // Requirement 7.9: idempotent re-discard - return the existing phoneCallDiscarded
+        // without mutating recorded state and without re-pushing updates / service messages.
+        if (session.State == "discarded")
+        {
+            var existingDiscardedCall = new Schema.TPhoneCallDiscarded
+            {
+                Id = session.CallId,
+                Reason = BuildStoredReason(session.DiscardReason, session.DiscardReasonSlug),
+                Duration = session.Duration,
+                NeedRating = session.NeedRating,
+                NeedDebug = session.NeedDebug,
+                Video = session.Video
+            };
+
+            return new TUpdates
+            {
+                Updates = new TVector<IUpdate> { new TUpdatePhoneCall { PhoneCall = existingDiscardedCall } },
+                Users = usersVector,
+                Chats = new TVector<IChat>(),
+                Date = currentDate
+            };
+        }
+
         var reason = ConvertReason(obj.Reason);
+        var reasonSlug = (obj.Reason as TPhoneCallDiscardReasonMigrateConferenceCall)?.Slug;
+
+        // Requirement 7.4/7.5: rating/debug policy - a call is rateable/debuggable only if it
+        // reached the connected (confirmed) state; rating additionally requires a non-zero duration.
+        var needRating = session.State == "confirmed" && obj.Duration > 0;
+        var needDebug = session.State == "confirmed";
 
         var update = Builders<CallSessionDocument>.Update
             .Set(s => s.State, "discarded")
             .Set(s => s.Duration, obj.Duration)
             .Set(s => s.DiscardReason, reason)
+            .Set(s => s.DiscardReasonSlug, reasonSlug)
+            .Set(s => s.NeedRating, needRating)
+            .Set(s => s.NeedDebug, needDebug)
             .Set(s => s.Video, session.Video || obj.Video);
 
         await _callCollection.UpdateOneAsync(filter, update);
-
-        var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         var discardedCall = new Schema.TPhoneCallDiscarded
         {
             Id = session.CallId,
             Reason = obj.Reason,
             Duration = obj.Duration,
-            NeedRating = session.State == "confirmed",
-            NeedDebug = session.State == "confirmed",
+            NeedRating = needRating,
+            NeedDebug = needDebug,
             Video = session.Video || obj.Video
         };
-
-        var users = await userConverterService.GetUserListAsync(input, new List<long> { session.CallerId, session.CalleeId }, false, false, input.Layer);
-        var usersVector = new TVector<MyTelegram.Schema.IUser>(users);
 
         var updatePhoneCall = new TUpdatePhoneCall { PhoneCall = discardedCall };
 
@@ -108,6 +140,19 @@ internal sealed class DiscardCallHandler(
             TPhoneCallDiscardReasonHangup => "hangup",
             TPhoneCallDiscardReasonBusy => "busy",
             TPhoneCallDiscardReasonMigrateConferenceCall => "migrate",
+            _ => null
+        };
+    }
+
+    private static IPhoneCallDiscardReason? BuildStoredReason(string? reason, string? slug)
+    {
+        return reason switch
+        {
+            "missed" => new TPhoneCallDiscardReasonMissed(),
+            "disconnect" => new TPhoneCallDiscardReasonDisconnect(),
+            "hangup" => new TPhoneCallDiscardReasonHangup(),
+            "busy" => new TPhoneCallDiscardReasonBusy(),
+            "migrate" => new TPhoneCallDiscardReasonMigrateConferenceCall { Slug = slug ?? string.Empty },
             _ => null
         };
     }

@@ -28,6 +28,10 @@ internal sealed class EditGroupCallParticipantHandler(
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
         mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
 
+    // Participant volume is expressed in 1/100 of a percent; clients clamp it to [1, 20000] (1% - 200%).
+    private const int MinParticipantVolume = 1;
+    private const int MaxParticipantVolume = 20000;
+
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestEditGroupCallParticipant obj)
     {
         var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
@@ -50,6 +54,20 @@ internal sealed class EditGroupCallParticipantHandler(
         if (participant == null)
         {
             RpcErrors.RpcErrors400.ParticipantJoinMissing.ThrowRpcError();
+            return null!;
+        }
+
+        if (obj.Volume.HasValue && (obj.Volume.Value < MinParticipantVolume || obj.Volume.Value > MaxParticipantVolume))
+        {
+            RpcErrors.RpcErrors400.UserVolumeInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        // A user may only raise their own hand; raising another participant's hand is forbidden.
+        if (obj.RaiseHand is true &&
+            !GroupCallStateHelper.IsParticipantControlledByUser(groupCall, participant, input.UserId))
+        {
+            RpcErrors.RpcErrors400.RaiseHandForbidden.ThrowRpcError();
             return null!;
         }
 

@@ -25,7 +25,7 @@ internal sealed class DeleteGroupCallParticipantMessagesHandler(
     {
         var filter = GroupCallStateHelper.Filter(obj.Call, input.UserId);
         var groupCall = await _groupCallCollection.Find(filter).FirstOrDefaultAsync();
-        if (groupCall == null)
+        if (groupCall == null || !groupCall.Active)
         {
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;

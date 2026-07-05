@@ -20,8 +20,13 @@ public class CallSessionDocument
     public int? ReceivedDate { get; set; }
     public int Duration { get; set; }
     public string? DiscardReason { get; set; }
+    public string? DiscardReasonSlug { get; set; }
+    public bool NeedRating { get; set; }
+    public bool NeedDebug { get; set; }
     public List<string> CallerLibraryVersions { get; set; } = [];
     public List<string> CalleeLibraryVersions { get; set; } = [];
+    public bool CallerConferenceSupported { get; set; }
+    public bool CalleeConferenceSupported { get; set; }
     public string? ProtocolJson { get; set; }
     public string? DebugJson { get; set; }
     public int? Rating { get; set; }
@@ -59,7 +64,12 @@ public class CallSessionDocument
             return false;
         }
 
-        return accessHash != 0 &&
-               (AccessHash == accessHash || GetAccessHashForUser(userId) == accessHash);
+        // R29.1/R29.3: authorize the requesting user strictly against the per-user
+        // access hash issued to them (GetAccessHashForUser falls back to the legacy
+        // shared AccessHash only when that user has no per-user hash). We must NOT
+        // accept the shared/other-party AccessHash here, otherwise the callee could
+        // reference the call using the caller's access hash (and vice versa),
+        // breaking independent per-user authorization.
+        return accessHash != 0 && GetAccessHashForUser(userId) == accessHash;
     }
 }

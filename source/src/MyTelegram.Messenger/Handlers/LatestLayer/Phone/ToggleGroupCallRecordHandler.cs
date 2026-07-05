@@ -37,15 +37,25 @@ internal sealed class ToggleGroupCallRecordHandler(
             RpcErrors.RpcErrors403.GroupcallForbidden.ThrowRpcError();
             return null!;
         }
-        if (groupCall.RecordVideoActive == obj.Start)
+        var recordingActive = groupCall.RecordStartDate.HasValue;
+        if (recordingActive == obj.Start)
         {
             RpcErrors.RpcErrors400.GroupcallNotModified.ThrowRpcError();
             return null!;
         }
 
-        groupCall.RecordVideoActive = obj.Start;
-        groupCall.RecordStartDate = obj.Start ? GroupCallStateHelper.CurrentDate() : null;
-        groupCall.RecordTitle = obj.Title;
+        if (obj.Start)
+        {
+            groupCall.RecordStartDate = GroupCallStateHelper.CurrentDate();
+            groupCall.RecordVideoActive = obj.Video;
+            groupCall.RecordTitle = obj.Title;
+        }
+        else
+        {
+            groupCall.RecordStartDate = null;
+            groupCall.RecordVideoActive = false;
+            groupCall.RecordTitle = null;
+        }
         groupCall.Version++;
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
         var updates = GroupCallStateHelper.Updates(GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper));

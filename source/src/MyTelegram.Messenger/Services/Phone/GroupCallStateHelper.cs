@@ -25,12 +25,37 @@ internal static class GroupCallStateHelper
             TInputGroupCall inputGroupCall => Filter(inputGroupCall),
             TInputGroupCallSlug slug => Builders<GroupCallDocument>.Filter.Or(
                 Builders<GroupCallDocument>.Filter.Eq(g => g.InviteHash, slug.Slug),
-                Builders<GroupCallDocument>.Filter.Eq(g => g.InviteLink, $"https://t.me/call/{slug.Slug}")),
+                Builders<GroupCallDocument>.Filter.Eq(g => g.InviteLink, TelegramDeepLinkHelper.GetConferenceCallLink(slug.Slug))),
             TInputGroupCallInviteMessage inviteMessage => Builders<GroupCallDocument>.Filter.ElemMatch(
                 g => g.InviteMessages,
                 invite => invite.UserId == userId && invite.MessageId == inviteMessage.MsgId),
             _ => Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, long.MinValue)
         };
+    }
+
+    public static async Task EnsureCanManageCallAsync(
+        GroupCallDocument call,
+        long userId,
+        IChannelAdminRightsChecker channelAdminRightsChecker,
+        RpcError? forbiddenError = null)
+    {
+        RpcError error = forbiddenError ?? RpcErrors.RpcErrors400.ChatAdminRequired;
+        if (call.CreatorId == userId)
+        {
+            return;
+        }
+
+        if ((PeerType)call.PeerType == PeerType.Channel)
+        {
+            await channelAdminRightsChecker.CheckAdminRightAsync(
+                call.PeerId,
+                userId,
+                rights => rights.ManageCall,
+                error);
+            return;
+        }
+
+        error.ThrowRpcError();
     }
 
     public static TInputGroupCall ToInputGroupCall(GroupCallDocument call)
@@ -48,7 +73,7 @@ internal static class GroupCallStateHelper
         {
             Id = call.CallId,
             AccessHash = accessHash ?? call.AccessHash,
-            ParticipantsCount = call.Participants.Count,
+            ParticipantsCount = call.Participants.Count(p => !p.Left),
             Title = call.Title,
             StreamDcId = DefaultGroupCallStreamDcId,
             ScheduleDate = call.ScheduleDate,
@@ -64,7 +89,7 @@ internal static class GroupCallStateHelper
             CanChangeJoinMuted = true,
             CanChangeMessagesEnabled = true,
             CanStartVideo = true,
-            UnmutedVideoCount = call.Participants.Count(p => !p.VideoStopped),
+            UnmutedVideoCount = call.Participants.Count(p => !p.Left && !p.VideoStopped),
             UnmutedVideoLimit = 100,
             InviteLink = call.Conference ? call.InviteLink : null,
             SendPaidMessagesStars = call.SendPaidMessagesStars,
@@ -167,7 +192,8 @@ internal static class GroupCallStateHelper
         GroupCallParticipantDoc participant,
         long selfUserId,
         IPeerHelper peerHelper,
-        bool justJoined = false)
+        bool justJoined = false,
+        GroupCallDocument? call = null)
     {
         return new TGroupCallParticipant
         {
@@ -178,7 +204,9 @@ internal static class GroupCallStateHelper
             Muted = participant.Muted,
             CanSelfUnmute = true,
             JustJoined = justJoined,
-            Self = participant.PeerId == selfUserId,
+            Self = call == null
+                ? IsParticipantControlledByUser(participant, selfUserId)
+                : IsParticipantControlledByUser(call, participant, selfUserId),
             Left = participant.Left,
             VideoJoined = !participant.Left && !participant.VideoStopped,
             Volume = participant.Volume,
@@ -221,7 +249,7 @@ internal static class GroupCallStateHelper
         {
             Call = ToInputGroupCall(call),
             Participants = new TVector<IGroupCallParticipant>(
-                participants.Select(p => (IGroupCallParticipant)ToParticipant(p, selfUserId, peerHelper, justJoined))),
+                participants.Select(p => (IGroupCallParticipant)ToParticipant(p, selfUserId, peerHelper, justJoined, call))),
             Version = call.Version
         };
     }
@@ -325,13 +353,20 @@ internal static class GroupCallStateHelper
             IsParticipantControlledByUser(call, participant, userId));
     }
 
-    private static bool IsParticipantControlledByUser(
-        GroupCallDocument call,
+    public static bool IsParticipantControlledByUser(
         GroupCallParticipantDoc participant,
         long userId)
     {
         return participant.UserId == userId ||
-               (participant.PeerType == (int)PeerType.User && participant.PeerId == userId) ||
+               (participant.PeerType == (int)PeerType.User && participant.PeerId == userId);
+    }
+
+    public static bool IsParticipantControlledByUser(
+        GroupCallDocument call,
+        GroupCallParticipantDoc participant,
+        long userId)
+    {
+        return IsParticipantControlledByUser(participant, userId) ||
                (participant.UserId == 0 &&
                 call.CreatorId == userId &&
                 participant.PeerId == call.PeerId &&
@@ -385,7 +420,7 @@ internal static class GroupCallStateHelper
     {
         await PushUpdatesToUserIdsAsync(
             objectMessageSender,
-            GetCallUserRecipientIds(call, extraUserIds),
+            GetCallUserRecipientIds(call, extraUserIds, includeInvited: true),
             updates,
             excludeUserId);
 
@@ -414,10 +449,20 @@ internal static class GroupCallStateHelper
     {
         if (streamFallback)
         {
-            var streamJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+            // Stream mode: the client plays the call by downloading media chunks instead of using a live
+            // WebRTC connection (see https://corefork.telegram.org/api/group-calls#detecting-stream-mode).
+            //   * RTMP-mode calls (a single external publisher over RTMP)  -> {"stream": true, "rtmp": true}
+            //   * automatically-scaled stream mode (large audiences)        -> {"stream": true}
+            var streamParams = new Dictionary<string, object?>
             {
                 ["stream"] = true
-            });
+            };
+            if (call.RtmpStream)
+            {
+                streamParams["rtmp"] = true;
+            }
+
+            var streamJson = System.Text.Json.JsonSerializer.Serialize(streamParams);
 
             return new TUpdateGroupCallConnection
             {
@@ -459,10 +504,13 @@ internal static class GroupCallStateHelper
         };
     }
 
-    public static int CreateParticipantSource(string? paramsJson, IReadOnlyCollection<GroupCallParticipantDoc> participants, long peerId, int peerType)
+    public static int CreateParticipantSource(string? paramsJson, GroupCallDocument call, long userId)
     {
         var source = TryReadSsrc(paramsJson, true) ?? Random.Shared.Next(100000, 999999);
-        if (participants.Any(p => p.Source == source && (p.PeerId != peerId || p.PeerType != peerType)))
+        if (call.Participants.Any(p =>
+                !p.Left &&
+                p.Source == source &&
+                !IsParticipantControlledByUser(call, p, userId)))
         {
             RpcErrors.RpcErrors400.GroupcallSsrcDuplicateMuch.ThrowRpcError();
         }

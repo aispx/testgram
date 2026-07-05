@@ -2,6 +2,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
@@ -21,11 +22,14 @@ internal sealed class DiscardGroupCallHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IObjectMessageSender objectMessageSender,
-    IMessageAppService messageAppService)
+    IMessageAppService messageAppService,
+    IChannelAdminRightsChecker channelAdminRightsChecker)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDiscardGroupCall, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
         mongoDatabase.GetCollection<GroupCallDocument>("group_calls");
+    private readonly IMongoCollection<StoryDocument> _storyCollection =
+        mongoDatabase.GetCollection<StoryDocument>("stories");
 
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestDiscardGroupCall obj)
     {
@@ -42,6 +46,12 @@ internal sealed class DiscardGroupCallHandler(
             return null!;
         }
 
+        await GroupCallStateHelper.EnsureCanManageCallAsync(
+            groupCall,
+            input.UserId,
+            channelAdminRightsChecker,
+            RpcErrors.RpcErrors403.GroupcallForbidden);
+
         groupCall.Active = false;
         groupCall.Version++;
         var date = GroupCallStateHelper.CurrentDate();
@@ -52,25 +62,70 @@ internal sealed class DiscardGroupCallHandler(
             Peer = peerHelper.ToPeer((PeerType)groupCall.PeerType, groupCall.PeerId),
             Call = GroupCallStateHelper.ToDiscardedGroupCall(groupCall, date)
         };
-        var updates = GroupCallStateHelper.Updates(
+        var updateList = new List<IUpdate>
+        {
             GroupCallStateHelper.CreatePeerChangedUpdate(groupCall),
-            updateGroupCall);
+            updateGroupCall
+        };
+
+        if (groupCall.LiveStory && groupCall.StoryId.HasValue)
+        {
+            var storyId = groupCall.StoryId.Value;
+            await MarkLiveStoryDeletedAsync(groupCall);
+            updateList.Add(new TUpdateStory
+            {
+                Peer = StoryHelper.CreatePeer(StoryHelper.ToStoryPeerType((PeerType)groupCall.PeerType), groupCall.PeerId),
+                Story = new TStoryItemDeleted
+                {
+                    Id = storyId
+                }
+            });
+        }
+
+        var updates = GroupCallStateHelper.Updates(updateList.ToArray());
         await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
             objectMessageSender,
             groupCall,
             updates,
             input.UserId,
             groupCall.InvitedUserIds);
-        await GroupCallStateHelper.SendGroupCallServiceMessageAsync(
-            messageAppService,
-            input,
-            groupCall,
-            new TMessageActionGroupCall
-            {
-                Call = GroupCallStateHelper.ToInputGroupCall(groupCall),
-                Duration = GroupCallStateHelper.GetCallDuration(groupCall, date)
-            });
+
+        if (!groupCall.LiveStory)
+        {
+            await GroupCallStateHelper.SendGroupCallServiceMessageAsync(
+                messageAppService,
+                input,
+                groupCall,
+                new TMessageActionGroupCall
+                {
+                    Call = GroupCallStateHelper.ToInputGroupCall(groupCall),
+                    Duration = GroupCallStateHelper.GetCallDuration(groupCall, date)
+                });
+        }
+
         await AdminLogHelper.LogDiscardGroupCall(mongoDatabase, groupCall, input.UserId);
         return updates;
+    }
+
+    private async Task MarkLiveStoryDeletedAsync(GroupCallDocument groupCall)
+    {
+        var storyPeerType = StoryHelper.ToStoryPeerType((PeerType)groupCall.PeerType);
+        if (storyPeerType < 0 || !groupCall.StoryId.HasValue)
+        {
+            return;
+        }
+        var storyId = groupCall.StoryId.Value;
+
+        var storyFilter = Builders<StoryDocument>.Filter.And(
+            Builders<StoryDocument>.Filter.Eq(story => story.OwnerPeerId, groupCall.PeerId),
+            Builders<StoryDocument>.Filter.Eq(story => story.OwnerPeerType, storyPeerType),
+            Builders<StoryDocument>.Filter.Eq(story => story.StoryId, storyId),
+            Builders<StoryDocument>.Filter.Eq(story => story.IsLive, true));
+
+        var storyUpdate = Builders<StoryDocument>.Update
+            .Set(story => story.Deleted, true)
+            .Set(story => story.ExpireDate, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+        await _storyCollection.UpdateOneAsync(storyFilter, storyUpdate);
     }
 }

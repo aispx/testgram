@@ -25,7 +25,8 @@ internal sealed class CreateGroupCallHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IMessageAppService messageAppService,
-    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options,
+    IChannelAdminRightsChecker channelAdminRightsChecker)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestCreateGroupCall, MyTelegram.Schema.IUpdates>
 {
     private readonly IMongoCollection<GroupCallDocument> _groupCallCollection =
@@ -40,6 +41,15 @@ internal sealed class CreateGroupCallHandler(
         {
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
             return null!;
+        }
+
+        if (peer.PeerType == PeerType.Channel)
+        {
+            await channelAdminRightsChecker.CheckAdminRightAsync(
+                peer.PeerId,
+                input.UserId,
+                rights => rights.ManageCall,
+                RpcErrors.RpcErrors400.ChatAdminRequired);
         }
 
         if (obj.ScheduleDate is { } scheduleDate && scheduleDate <= GroupCallStateHelper.CurrentDate())

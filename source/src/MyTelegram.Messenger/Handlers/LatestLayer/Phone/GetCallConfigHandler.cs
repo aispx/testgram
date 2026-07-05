@@ -11,6 +11,12 @@ internal sealed class GetCallConfigHandler(
 {
     protected override Task<IDataJSON> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestGetCallConfig obj)
     {
+        // Requirement 1.3: an unauthorized session (auth key not bound to a user) must be rejected.
+        if (input.UserId == 0)
+        {
+            RpcErrors.RpcErrors401.AuthKeyUnregistered.ThrowRpcError();
+        }
+
         var iceServers = new List<object>();
 
         var webRtcConnections = options.CurrentValue.WebRtcConnections;

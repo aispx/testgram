@@ -32,15 +32,16 @@ internal sealed class LeaveGroupCallHandler(
             await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
             participant.Muted = true;
             participant.Left = true;
-            var updates = GroupCallStateHelper.Updates(
+            var participantsUpdate = GroupCallStateHelper.Updates(
                 GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]));
             await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
                 objectMessageSender,
                 groupCall,
-                updates,
+                participantsUpdate,
                 input.UserId,
                 [input.UserId]);
-            return updates;
+            return GroupCallStateHelper.Updates(
+                GroupCallStateHelper.CreateCallUpdate(groupCall, input.UserId, peerHelper));
         }
 
         return GroupCallStateHelper.Updates();

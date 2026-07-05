@@ -1,5 +1,7 @@
 ﻿using MongoDB.Driver;
 using MyTelegram.Domain.Shared;
+using MyTelegram.Messenger.Services.Caching;
+using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Schema;
@@ -15,7 +17,9 @@ internal sealed class RequestCallHandler(
     IObjectMessageSender objectMessageSender,
     IMessageAppService messageAppService,
     IUserAccessHashKeyCache userAccessHashKeyCache,
-    IAccessHashHelper2 accessHashHelper2)
+    IAccessHashHelper2 accessHashHelper2,
+    IBlockCacheAppService blockCacheAppService,
+    IPrivacyAppService privacyAppService)
     : RpcResultObjectHandler<RequestRequestCall, MyTelegram.Schema.Phone.IPhoneCall>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -45,6 +49,22 @@ internal sealed class RequestCallHandler(
         }
 
         ValidateHandshakeProtocol(obj.Protocol);
+
+        // R2.9: reject the request if the Caller has been blocked by the Callee. The
+        // block list stores an entry keyed by the blocker; IsBlockedAsync(calleeId,
+        // callerId) is true when the callee has the caller on their blocklist.
+        if (await blockCacheAppService.IsBlockedAsync(calleeId, input.UserId))
+        {
+            RpcErrors.RpcErrors403.UserIsBlocked.ThrowRpcError();
+        }
+
+        // R2.8: honor the Callee's phoneCall privacy setting. ApplyPrivacyAsync reads
+        // the target (callee) privacy rules and invokes the callback when the Caller is
+        // not permitted to call, at which point we surface USER_PRIVACY_RESTRICTED.
+        await privacyAppService.ApplyPrivacyAsync(input.UserId, calleeId, _ =>
+        {
+            RpcErrors.RpcErrors403.UserPrivacyRestricted.ThrowRpcError();
+        }, PrivacyType.PhoneCall);
 
         var duplicateFilter = Builders<CallSessionDocument>.Filter.And(
             Builders<CallSessionDocument>.Filter.Eq(s => s.CallerId, input.UserId),
@@ -89,7 +109,8 @@ internal sealed class RequestCallHandler(
             Video = obj.Video,
             State = "requested",
             Date = currentDate,
-            CallerLibraryVersions = [.. PhoneCallProtocolHelper.GetLibraryVersions(obj.Protocol)]
+            CallerLibraryVersions = [.. PhoneCallProtocolHelper.GetLibraryVersions(obj.Protocol)],
+            CallerConferenceSupported = PhoneCallProtocolHelper.AdvertisesConferenceSupport(obj.Protocol)
         };
         await _callCollection.InsertOneAsync(session);
 
