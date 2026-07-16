@@ -1,3 +1,6 @@
+using MyTelegram.Messenger.Services.Interfaces;
+using MyTelegram.Messenger.Services.Stats;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stats;
 /// <summary>
 /// Get <a href="https://corefork.telegram.org/api/stats">supergroup statistics</a>
@@ -11,10 +14,16 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stats;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetMegagroupStatsHandler : RpcResultObjectHandler<MyTelegram.Schema.Stats.RequestGetMegagroupStats, MyTelegram.Schema.Stats.IMegagroupStats>
+internal sealed class GetMegagroupStatsHandler(
+    IStatsAccessController accessController,
+    IStatsService statsService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stats.RequestGetMegagroupStats, MyTelegram.Schema.Stats.IMegagroupStats>
 {
-    protected override Task<MyTelegram.Schema.Stats.IMegagroupStats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stats.RequestGetMegagroupStats obj)
+    protected override async Task<MyTelegram.Schema.Stats.IMegagroupStats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stats.RequestGetMegagroupStats obj)
     {
-        throw new NotImplementedException();
+        var channel = await accessController.ResolveChannelForStatsAsync(
+            input, obj.Channel, StatsChannelKind.MegagroupOnly, checkJoinable: false);
+
+        return await statsService.GetMegagroupStatsAsync(input, channel.ChannelId, obj.Dark);
     }
 }

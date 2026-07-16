@@ -1,3 +1,6 @@
+using MyTelegram.Messenger.Services.Interfaces;
+using MyTelegram.Messenger.Services.Stats;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stats;
 /// <summary>
 /// Get <a href="https://corefork.telegram.org/api/stats">channel statistics</a>
@@ -12,10 +15,16 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stats;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetBroadcastStatsHandler : RpcResultObjectHandler<MyTelegram.Schema.Stats.RequestGetBroadcastStats, MyTelegram.Schema.Stats.IBroadcastStats>
+internal sealed class GetBroadcastStatsHandler(
+    IStatsAccessController accessController,
+    IStatsService statsService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stats.RequestGetBroadcastStats, MyTelegram.Schema.Stats.IBroadcastStats>
 {
-    protected override Task<MyTelegram.Schema.Stats.IBroadcastStats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stats.RequestGetBroadcastStats obj)
+    protected override async Task<MyTelegram.Schema.Stats.IBroadcastStats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stats.RequestGetBroadcastStats obj)
     {
-        throw new NotImplementedException();
+        var channel = await accessController.ResolveChannelForStatsAsync(
+            input, obj.Channel, StatsChannelKind.BroadcastOnly, checkJoinable: true);
+
+        return await statsService.GetBroadcastStatsAsync(input, channel.ChannelId, obj.Dark);
     }
 }

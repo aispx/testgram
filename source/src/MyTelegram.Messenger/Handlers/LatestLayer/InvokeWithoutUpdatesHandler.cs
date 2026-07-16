@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services;
+
 namespace MyTelegram.Messenger.Handlers;
 /// <summary>
 /// Invoke a request without subscribing the used connection for <a href="https://corefork.telegram.org/api/updates">updates</a> (this is enabled by default for <a href="https://corefork.telegram.org/api/files">file queries</a>).
@@ -14,13 +16,14 @@ internal sealed class InvokeWithoutUpdatesHandler : BaseObjectHandler<MyTelegram
         _handlerHelper = handlerHelper;
     }
 
-    protected override Task<IObject> HandleCoreAsync(IRequestInput input, RequestInvokeWithoutUpdates obj)
+    protected override async Task<IObject> HandleCoreAsync(IRequestInput input, RequestInvokeWithoutUpdates obj)
     {
-        if (_handlerHelper.TryGetHandler(obj.Query.ConstructorId, out var handler))
+        // Suppress update delivery for the current connection while the inner query runs.
+        // The scope must remain active for the full duration of execution, so we await
+        // inside the using block and let the AsyncLocal flag reset afterward.
+        using (NoUpdatesContext.Enter())
         {
-            return handler.HandleAsync(input, obj.Query)!;
+            return await SubQueryExecutor.ExecuteInnerAsync(_handlerHelper, input, obj.Query);
         }
-
-        throw new NotImplementedException();
     }
 }

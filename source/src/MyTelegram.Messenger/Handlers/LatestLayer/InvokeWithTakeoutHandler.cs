@@ -29,16 +29,11 @@ internal sealed class InvokeWithTakeoutHandler(
             RpcErrors.RpcErrors400.TakeoutInvalid.ThrowRpcError();
         }
 
-        if (!handlerHelper.TryGetHandler(obj.Query.ConstructorId, out var handler))
-        {
-            throw new NotImplementedException();
-        }
-
         using (TakeoutContext.Enter(new TakeoutSessionScope(
             obj.TakeoutId,
             session.GetValue("Contacts", false).ToBoolean())))
         {
-            return await handler.HandleAsync(input, obj.Query);
+            return await SubQueryExecutor.ExecuteInnerAsync(handlerHelper, input, obj.Query);
         }
     }
 }

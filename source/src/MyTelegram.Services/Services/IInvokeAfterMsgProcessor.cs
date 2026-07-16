@@ -10,6 +10,10 @@ public interface IInvokeAfterMsgProcessor
         IRequestInput input,
         IObject query);
 
+    void EnqueueAfterMsgs(IReadOnlyList<long> dependencyMsgIds,
+        IRequestInput input,
+        IObject query);
+
     bool ExistsInRecentMessageId(long messageId);
     Task HandleAsync(long reqMsgId);
 

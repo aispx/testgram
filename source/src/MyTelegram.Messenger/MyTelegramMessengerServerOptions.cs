@@ -51,6 +51,21 @@ public class MyTelegramMessengerServerOptions
     public EncryptionConfig EncryptionConfig { get; set; }
     public StripeConfig Stripe { get; set; } = new();
     public PushConfig Push { get; set; } = new();
+    public StatsConfig Stats { get; set; } = new();
+}
+
+/// <summary>
+/// Statistics subsystem configuration (Stats API). See https://corefork.telegram.org/api/stats .
+/// </summary>
+public class StatsConfig
+{
+    /// <summary>
+    /// The reporting window, in whole days, used to compute the statistics <c>period</c>
+    /// (<c>min_date = max_date - ReportingWindowDays</c>), per Requirement 10.3. Default 7 days;
+    /// valid range 1..365 (values outside the range are clamped by the Metrics_Store).
+    /// </summary>
+    [Range(1, 365)]
+    public int ReportingWindowDays { get; set; } = 7;
 }
 
 /// <summary>

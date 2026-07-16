@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Interfaces;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stats;
 /// <summary>
 /// Load <a href="https://corefork.telegram.org/api/stats">channel statistics graph</a> asynchronously
@@ -11,10 +13,13 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stats;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class LoadAsyncGraphHandler : RpcResultObjectHandler<MyTelegram.Schema.Stats.RequestLoadAsyncGraph, MyTelegram.Schema.IStatsGraph>
+internal sealed class LoadAsyncGraphHandler(IStatsService statsService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stats.RequestLoadAsyncGraph, MyTelegram.Schema.IStatsGraph>
 {
-    protected override Task<MyTelegram.Schema.IStatsGraph> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stats.RequestLoadAsyncGraph obj)
+    protected override async Task<MyTelegram.Schema.IStatsGraph> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stats.RequestLoadAsyncGraph obj)
     {
-        throw new NotImplementedException();
+        // No channel resolution: the token itself scopes the request. Token/zoom resolution and the
+        // GRAPH_*_RELOAD error mapping are handled by the Stats_Service (Requirements 9.2-9.7).
+        return await statsService.LoadAsyncGraphAsync(input, obj.Token, obj.X);
     }
 }

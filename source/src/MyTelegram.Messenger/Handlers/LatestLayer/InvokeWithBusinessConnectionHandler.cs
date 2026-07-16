@@ -52,16 +52,31 @@ internal sealed class InvokeWithBusinessConnectionHandler : RpcResultObjectHandl
             RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
         }
 
-        // Create new RequestInput with business user's ID
-        // Cast to RequestInput to use record 'with' syntax
-        var businessInput = (input as RequestInput) with { UserId = userId };
+        // Create new RequestInput with business user's ID.
+        // Use a null-safe path: when input is already a RequestInput reuse the record 'with'
+        // syntax; otherwise build a fresh RequestInput copied from the IRequestInput members so
+        // there is no NullReferenceException when input is not a RequestInput.
+        var businessInput = input is RequestInput ri
+            ? ri with { UserId = userId }
+            : new RequestInput(
+                input.ConnectionId,
+                input.ConnectionType,
+                input.RequestId,
+                input.ObjectId,
+                input.ReqMsgId,
+                input.SeqNumber,
+                userId,
+                input.AuthKeyId,
+                input.PermAuthKeyId,
+                input.Layer,
+                input.Date,
+                input.DeviceType,
+                input.ClientIp,
+                input.SessionId,
+                input.AccessHashKeyId);
 
-        // Execute the wrapped query as the business user
-        if (_handlerHelper.TryGetHandler(obj.Query.ConstructorId, out var handler))
-        {
-            return await handler.HandleAsync(businessInput, obj.Query)!;
-        }
-
-        throw new NotImplementedException($"Handler not found for constructor {obj.Query.ConstructorId}");
+        // Execute the wrapped query as the business user. Unresolved inner constructors surface
+        // 400 INPUT_CONSTRUCTOR_INVALID instead of throwing NotImplementedException.
+        return await SubQueryExecutor.ExecuteInnerAsync(_handlerHelper, businessInput, obj.Query);
     }
 }

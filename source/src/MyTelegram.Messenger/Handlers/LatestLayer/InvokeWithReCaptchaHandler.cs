@@ -8,8 +8,17 @@ namespace MyTelegram.Messenger.Handlers;
 /// </remarks>
 internal sealed class InvokeWithReCaptchaHandler : RpcResultObjectHandler<MyTelegram.Schema.RequestInvokeWithReCaptcha, IObject>
 {
+    private readonly IHandlerHelper _handlerHelper;
+    public InvokeWithReCaptchaHandler(IHandlerHelper handlerHelper)
+    {
+        _handlerHelper = handlerHelper;
+    }
+
     protected override Task<IObject> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.RequestInvokeWithReCaptcha obj)
     {
-        throw new NotImplementedException();
+        // Transparent pass-through: this server cannot verify the reCAPTCHA attestation, so the
+        // attestation fields (action/token) are accepted but ignored, and the inner query is
+        // executed directly. An unresolved inner constructor yields 400 INPUT_CONSTRUCTOR_INVALID.
+        return SubQueryExecutor.ExecuteInnerAsync(_handlerHelper, input, obj.Query);
     }
 }

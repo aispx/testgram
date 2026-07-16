@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Interfaces;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stats;
 /// <summary>
 /// Get <a href="https://corefork.telegram.org/api/stats">statistics</a> for a certain <a href="https://corefork.telegram.org/api/stories">story</a>.
@@ -10,10 +12,15 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stats;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetStoryStatsHandler : RpcResultObjectHandler<MyTelegram.Schema.Stats.RequestGetStoryStats, MyTelegram.Schema.Stats.IStoryStats>
+internal sealed class GetStoryStatsHandler(
+    IStatsAccessController accessController,
+    IStatsService statsService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stats.RequestGetStoryStats, MyTelegram.Schema.Stats.IStoryStats>
 {
-    protected override Task<MyTelegram.Schema.Stats.IStoryStats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stats.RequestGetStoryStats obj)
+    protected override async Task<MyTelegram.Schema.Stats.IStoryStats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stats.RequestGetStoryStats obj)
     {
-        throw new NotImplementedException();
+        var peer = await accessController.ResolvePeerForStoryStatsAsync(input, obj.Peer);
+
+        return await statsService.GetStoryStatsAsync(input, peer, obj.Id, obj.Dark);
     }
 }

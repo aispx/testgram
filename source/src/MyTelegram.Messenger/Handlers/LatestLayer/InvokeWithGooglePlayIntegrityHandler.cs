@@ -8,8 +8,18 @@ namespace MyTelegram.Messenger.Handlers;
 /// </remarks>
 internal sealed class InvokeWithGooglePlayIntegrityHandler : RpcResultObjectHandler<MyTelegram.Schema.RequestInvokeWithGooglePlayIntegrity, IObject>
 {
-    protected override Task<IObject> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.RequestInvokeWithGooglePlayIntegrity obj)
+    private readonly IHandlerHelper _handlerHelper;
+
+    public InvokeWithGooglePlayIntegrityHandler(IHandlerHelper handlerHelper)
     {
-        throw new NotImplementedException();
+        _handlerHelper = handlerHelper;
+    }
+
+    protected override async Task<IObject> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.RequestInvokeWithGooglePlayIntegrity obj)
+    {
+        // Transparent pass-through: the attestation fields (obj.Nonce / obj.Token) are
+        // Google Play Integrity payloads that a self-hosted server cannot verify, so they
+        // are accepted and ignored. The inner query is dispatched and executed as-is.
+        return await SubQueryExecutor.ExecuteInnerAsync(_handlerHelper, input, obj.Query);
     }
 }
