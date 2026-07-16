@@ -10,11 +10,11 @@ services:
   file-server:
     image: ${MyTelegramRegistry}/mytelegram-file-server:0.38.224.531
 
-  # Freshly rebuilt with the online-status, help.getConfig-spam (dc_id=0) fixes.
-  # .704 additionally normalizes invalid media DcId (<=0) on push-update / domain-event
-  # send paths (QueuedObjectMessageSender), closing the "skip queue: unknown dc" spam gap.
+  # In-repo services track the "latest" tag produced by the build scripts (each build tags both
+  # the versioned image and :latest), so redeploying a freshly built image no longer requires
+  # bumping a pinned version here.
   messenger-query-server:
-    image: ${MyTelegramRegistry}/mytelegram-messenger-query-server:0.38.224.716
+    image: ${MyTelegramRegistry}/mytelegram-messenger-query-server:latest
 
   messenger-command-server:
-    image: ${MyTelegramRegistry}/mytelegram-messenger-command-server:0.38.224.716
+    image: ${MyTelegramRegistry}/mytelegram-messenger-command-server:latest
