@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.SecretChat;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Confirms creation of a secret chat
@@ -11,10 +13,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class AcceptEncryptionHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAcceptEncryption, MyTelegram.Schema.IEncryptedChat>
+internal sealed class AcceptEncryptionHandler(ISecretChatAppService secretChatAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAcceptEncryption, MyTelegram.Schema.IEncryptedChat>
 {
     protected override Task<MyTelegram.Schema.IEncryptedChat> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestAcceptEncryption obj)
     {
-        throw new NotImplementedException();
+        return secretChatAppService.AcceptEncryptionAsync(input, obj.Peer, obj.GB, obj.KeyFingerprint);
     }
 }

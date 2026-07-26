@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.SecretChat;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Sends a text message to a secret chat.
@@ -14,10 +16,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendEncryptedHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendEncrypted, MyTelegram.Schema.Messages.ISentEncryptedMessage>
+internal sealed class SendEncryptedHandler(ISecretChatAppService secretChatAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendEncrypted, MyTelegram.Schema.Messages.ISentEncryptedMessage>
 {
     protected override Task<MyTelegram.Schema.Messages.ISentEncryptedMessage> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSendEncrypted obj)
     {
-        throw new NotImplementedException();
+        return secretChatAppService.SendEncryptedAsync(input, obj.Peer, obj.RandomId, obj.Data, obj.Silent);
     }
 }

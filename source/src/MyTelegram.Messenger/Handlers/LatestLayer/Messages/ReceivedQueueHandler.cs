@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.SecretChat;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Confirms receipt of messages in a secret chat by client, cancels push notifications.<br/>
@@ -11,10 +13,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ReceivedQueueHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReceivedQueue, TVector<long>>
+internal sealed class ReceivedQueueHandler(ISecretChatAppService secretChatAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReceivedQueue, TVector<long>>
 {
     protected override Task<TVector<long>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReceivedQueue obj)
     {
-        return Task.FromResult(new TVector<long>());
+        return secretChatAppService.ReceivedQueueAsync(input, obj.MaxQts);
     }
 }

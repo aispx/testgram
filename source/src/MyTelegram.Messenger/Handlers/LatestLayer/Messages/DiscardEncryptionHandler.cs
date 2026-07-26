@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.SecretChat;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Cancels a request for creation and/or delete info on secret chat.
@@ -13,10 +15,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class DiscardEncryptionHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDiscardEncryption, IBool>
+internal sealed class DiscardEncryptionHandler(ISecretChatAppService secretChatAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDiscardEncryption, IBool>
 {
     protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestDiscardEncryption obj)
     {
-        throw new NotImplementedException();
+        return secretChatAppService.DiscardEncryptionAsync(input, obj.ChatId, obj.DeleteHistory);
     }
 }

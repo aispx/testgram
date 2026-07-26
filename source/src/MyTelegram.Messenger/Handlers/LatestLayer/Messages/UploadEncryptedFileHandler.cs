@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.SecretChat;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Upload encrypted file and associate it to a secret chat (without actually sending it to the chat).
@@ -9,10 +11,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class UploadEncryptedFileHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUploadEncryptedFile, MyTelegram.Schema.IEncryptedFile>
+internal sealed class UploadEncryptedFileHandler(ISecretChatAppService secretChatAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUploadEncryptedFile, MyTelegram.Schema.IEncryptedFile>
 {
     protected override Task<MyTelegram.Schema.IEncryptedFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestUploadEncryptedFile obj)
     {
-        throw new NotImplementedException();
+        return secretChatAppService.UploadEncryptedFileAsync(input, obj.Peer, obj.File);
     }
 }

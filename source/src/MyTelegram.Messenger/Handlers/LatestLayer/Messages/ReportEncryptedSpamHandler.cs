@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.SecretChat;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Report a secret chat for spam
@@ -9,10 +11,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ReportEncryptedSpamHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReportEncryptedSpam, IBool>
+internal sealed class ReportEncryptedSpamHandler(ISecretChatAppService secretChatAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReportEncryptedSpam, IBool>
 {
     protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReportEncryptedSpam obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        return secretChatAppService.ReportEncryptedSpamAsync(input, obj.Peer);
     }
 }
