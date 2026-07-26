@@ -4,11 +4,12 @@
 # built 0.38.224.620 images. Safe because these services are pure storage backends (session/file)
 # and do not depend on the push-notification changes.
 services:
+  # File-server and session-server are external services (built/published separately).
   session-server:
-    image: ${MyTelegramRegistry}/mytelegram-session-server:0.38.224.531
+    image: ${MyTelegramRegistry}/mytelegram-session-server:latest
 
   file-server:
-    image: ${MyTelegramRegistry}/mytelegram-file-server:0.38.224.531
+    image: ${MyTelegramRegistry}/mytelegram-file-server:latest
 
   # In-repo services track the "latest" tag produced by the build scripts (each build tags both
   # the versioned image and :latest), so redeploying a freshly built image no longer requires
