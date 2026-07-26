@@ -396,3 +396,9 @@ docker/compose/*.bak*
 docker/compose/backups/
 docker/compose/geoip/
 /*.backup
+
+# Local backup copies of the compose stack (not part of the source tree)
+docker/docker-backup/
+
+# Vendored telethon fork used for manual client-side testing — it is its own git clone
+telethon-testgram/
