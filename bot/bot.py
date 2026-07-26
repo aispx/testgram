@@ -67,6 +67,8 @@ def get_rabbitmq_url():
 
     container_names = [
         os.environ.get("RABBITMQ_CONTAINER", ""),
+        "mytelegram_rabbitmq_1",
+        "mytelegram-rabbitmq-1",
         "compose_rabbitmq_1",
         "compose-rabbitmq-1",
     ]
