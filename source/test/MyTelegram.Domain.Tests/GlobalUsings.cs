@@ -4,6 +4,7 @@ global using EventFlow.Sagas;
 global using Moq;
 global using MyTelegram.Domain.Aggregates.AppCode;
 global using MyTelegram.Domain.Aggregates.Channel;
+global using MyTelegram.Domain.Aggregates.EncryptedChat;
 global using MyTelegram.Domain.Aggregates.Messaging;
 global using MyTelegram.Domain.Aggregates.User;
 global using MyTelegram.Domain.Extensions;
