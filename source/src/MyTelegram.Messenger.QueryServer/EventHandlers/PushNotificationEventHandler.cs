@@ -101,6 +101,15 @@ public class PushNotificationEventHandler(
                 continue;
             }
 
+            // A device-targeted update must not notify the recipient's other devices. Secret chats are
+            // bound to one Authorization_Key, so the other devices hold no key for the chat: a push there
+            // is undismissable noise and leaks the chat's existence and timing.
+            if (eventData.OnlySendToThisAuthKeyId.HasValue &&
+                eventData.OnlySendToThisAuthKeyId.Value != device.PermAuthKeyId)
+            {
+                continue;
+            }
+
             // Skip devices with an active MTProto session: the update reaches them directly and a
             // push would be redundant (Req 7.1, battery-friendly, same as upstream).
             if (await onlineFilter.IsOnlineAsync(device.PermAuthKeyId))
