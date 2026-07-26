@@ -15,6 +15,7 @@ global using MyTelegram.Domain.Aggregates.ChatInvite;
 global using MyTelegram.Domain.Aggregates.Contact;
 global using MyTelegram.Domain.Aggregates.Device;
 global using MyTelegram.Domain.Aggregates.Dialog;
+global using MyTelegram.Domain.Aggregates.EncryptedChat;
 global using MyTelegram.Domain.Aggregates.Messaging;
 global using MyTelegram.Domain.Aggregates.Poll;
 global using MyTelegram.Domain.Aggregates.UserConfig;

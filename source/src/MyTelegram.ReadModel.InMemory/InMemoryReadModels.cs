@@ -62,6 +62,10 @@ public class DraftReadModel : Impl.DraftReadModel
 }
 
 
+public class EncryptedChatReadModel : Impl.EncryptedChatReadModel
+{
+}
+
 public class ImportedContactReadModel : Impl.ImportedContactReadModel
 {
 }

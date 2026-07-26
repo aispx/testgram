@@ -54,6 +54,10 @@ public class MongoDbIndexesCreator(
         await CreateIndexAsync<ReadingHistoryReadModel>(p => p.TargetPeerId);
 
         await CreateIndexAsync<PtsReadModel>(p => p.PeerId);
+        await CreateIndexAsync<EncryptedChatReadModel>(p => p.ChatId);
+        await CreateIndexAsync<EncryptedChatReadModel>(p => p.AdminId);
+        await CreateIndexAsync<EncryptedChatReadModel>(p => p.ParticipantId);
+
         await CreateIndexAsync<PtsForAuthKeyIdReadModel>(p => p.PeerId);
         await CreateIndexAsync<PtsForAuthKeyIdReadModel>(p => p.PermAuthKeyId);
         await CreateIndexAsync<PtsForAuthKeyIdReadModel>(p => p.GlobalSeqNo);

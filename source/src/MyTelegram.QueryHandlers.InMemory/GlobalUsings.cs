@@ -21,6 +21,7 @@ global using DeviceReadModel = MyTelegram.ReadModel.InMemory.DeviceReadModel;
 global using DialogFilterReadModel = MyTelegram.ReadModel.InMemory.DialogFilterReadModel;
 global using DialogReadModel = MyTelegram.ReadModel.InMemory.DialogReadModel;
 global using DraftReadModel = MyTelegram.ReadModel.InMemory.DraftReadModel;
+global using EncryptedChatReadModel = MyTelegram.ReadModel.InMemory.EncryptedChatReadModel;
 global using LanguageReadModel = MyTelegram.ReadModel.InMemory.LanguageReadModel;
 global using LanguageTextReadModel = MyTelegram.ReadModel.InMemory.LanguageTextReadModel;
 global using MessageReadModel = MyTelegram.ReadModel.InMemory.MessageReadModel;

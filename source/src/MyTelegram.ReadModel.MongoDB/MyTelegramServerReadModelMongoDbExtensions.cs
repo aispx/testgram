@@ -154,6 +154,7 @@ public static class MyTelegramServerReadModelMongoDbExtensions
             .UseMongoDbReadModel<LanguageAggregate, LanguageId, LanguageReadModel>()
             .UseMongoDbReadModel<LanguageTextAggregate, LanguageTextId, LanguageTextReadModel>()
             .UseMongoDbReadModel<JoinChannelAggregate, JoinChannelId, JoinChannelRequestReadModel>()
+            .UseMongoDbReadModel<EncryptedChatAggregate, EncryptedChatId, EncryptedChatReadModel>()
 
             .UseMongoDbReadModel<UserConfigAggregate, UserConfigId, UserConfigReadModel>()
             .UseMongoDbReadModel<MessageTokenAggregate, MessageTokenId, MessageTokenReadModel>()

@@ -7,4 +7,5 @@ public interface IEncryptedPushUpdatesReadModel : IReadModel
     long InboxOwnerPermAuthKeyId { get; }
     long InboxOwnerPeerId { get; }
     int Qts { get; }
+    bool Acked { get; }
 }

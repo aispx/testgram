@@ -134,6 +134,7 @@ public record GetDiscussionMessageQuery(
 
 public record GetEncryptedChatByIdQuery(long ChatId) : IQuery<IEncryptedChatReadModel?>;
 
+// superseded by ISecretChatMessageStore (encrypted_messages collection) — no handler is registered for this query
 public record GetEncryptedPushUpdatesByQtsQuery(
     long PeerId,
     long PermAuthKeyId,
@@ -415,6 +416,7 @@ public record GetReplyToMsgIdListQuery(Peer ToPeer, long SelfUserId, int? ReplyT
 
 public record GetPermanentChatInviteQuery(long ChannelId, long AdminUserId) : IQuery<IChatInviteReadModel?>;
 
+// superseded by ISecretChatMessageStore (encrypted_messages collection) — no handler is registered for this query
 public record GetEncryptedMessagesQuery(long UserId, long PermAuthKeyId, int Qts)
     : IQuery<IReadOnlyCollection<IEncryptedMessageReadModel>>;
 

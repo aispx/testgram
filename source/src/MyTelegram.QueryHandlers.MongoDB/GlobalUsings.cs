@@ -23,6 +23,7 @@ global using DeviceReadModel = MyTelegram.ReadModel.MongoDB.DeviceReadModel;
 global using DialogFilterReadModel = MyTelegram.ReadModel.MongoDB.DialogFilterReadModel;
 global using DialogReadModel = MyTelegram.ReadModel.MongoDB.DialogReadModel;
 global using DraftReadModel = MyTelegram.ReadModel.MongoDB.DraftReadModel;
+global using EncryptedChatReadModel = MyTelegram.ReadModel.MongoDB.EncryptedChatReadModel;
 global using LanguageReadModel = MyTelegram.ReadModel.MongoDB.LanguageReadModel;
 global using LanguageTextReadModel = MyTelegram.ReadModel.MongoDB.LanguageTextReadModel;
 global using MessageReadModel = MyTelegram.ReadModel.MongoDB.MessageReadModel;

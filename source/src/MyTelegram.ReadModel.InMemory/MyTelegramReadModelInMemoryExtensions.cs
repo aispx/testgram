@@ -7,6 +7,7 @@ using MyTelegram.Domain.Aggregates.Contact;
 using MyTelegram.Domain.Aggregates.Device;
 using MyTelegram.Domain.Aggregates.Dialog;
 using MyTelegram.Domain.Aggregates.Document;
+using MyTelegram.Domain.Aggregates.EncryptedChat;
 using MyTelegram.Domain.Aggregates.Language;
 using MyTelegram.Domain.Aggregates.Messaging;
 using MyTelegram.Domain.Aggregates.PeerNotifySetting;
@@ -117,6 +118,7 @@ public static class MyTelegramReadModelInMemoryExtensions
             .UseMyInMemoryReadStoreFor<LanguageAggregate, LanguageId, LanguageReadModel>()
             .UseMyInMemoryReadStoreFor<LanguageTextAggregate, LanguageTextId, LanguageTextReadModel>()
             .UseMyInMemoryReadStoreFor<JoinChannelAggregate, JoinChannelId, JoinChannelRequestReadModel>()
+            .UseMyInMemoryReadStoreFor<EncryptedChatAggregate, EncryptedChatId, EncryptedChatReadModel>()
             ;
 
         return options;
