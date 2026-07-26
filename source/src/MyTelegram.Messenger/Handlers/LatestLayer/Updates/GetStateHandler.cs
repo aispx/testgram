@@ -1,3 +1,4 @@
+using MyTelegram.Messenger.Services.SecretChat;
 using MyTelegram.Schema.Updates;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Updates;
@@ -8,7 +9,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Updates;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetStateHandler(IPtsHelper ptsHelper) : RpcResultObjectHandler<MyTelegram.Schema.Updates.RequestGetState, MyTelegram.Schema.Updates.IState>
+internal sealed class GetStateHandler(IPtsHelper ptsHelper, ISecretChatMessageStore secretChatMessageStore) : RpcResultObjectHandler<MyTelegram.Schema.Updates.RequestGetState, MyTelegram.Schema.Updates.IState>
 {
     protected override async Task<IState> HandleCoreAsync(IRequestInput input, RequestGetState obj)
     {
@@ -19,11 +20,13 @@ internal sealed class GetStateHandler(IPtsHelper ptsHelper) : RpcResultObjectHan
         }
 
         var cacheItem = await ptsHelper.GetPtsForUserAsync(input.UserId);
+        // qts is the secret-chat per-Authorization_Key sequence (QtsInitialValue-1 == 0 when unused).
+        var secretChatQts = await secretChatMessageStore.GetHighestQtsAsync(input.UserId, input.PermAuthKeyId);
         var state = new TState
         {
             Date = CurrentDate,
             Pts = cacheItem.Pts,
-            Qts = cacheItem.Qts,
+            Qts = Math.Max(cacheItem.Qts, secretChatQts),
             Seq = 1,
             UnreadCount = cacheItem.UnreadCount,
         };

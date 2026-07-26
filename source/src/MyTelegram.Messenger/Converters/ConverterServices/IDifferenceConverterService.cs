@@ -24,5 +24,7 @@ public interface IDifferenceConverterService
         IList<IUpdate> updateList,
         IList<IChat> chatListFromUpdates,
         IReadOnlyCollection<IEncryptedMessageReadModel>? encryptedMessageReadModels,
+        int secretChatQts = 0,
+        bool encryptedMessagesTruncated = false,
         int layer = 0);
 }

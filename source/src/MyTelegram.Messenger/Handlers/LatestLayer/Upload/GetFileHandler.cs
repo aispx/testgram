@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Messenger.Services.SecretChat;
 
 namespace MyTelegram.Messenger.Messenger.Handlers.LatestLayer.Upload;
 
@@ -13,15 +14,18 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
     private readonly IMongoDatabase _database;
     private readonly ILogger<GetFileHandler> _logger;
     private readonly IHlsGroupCallStreamService _hlsGroupCallStreamService;
+    private readonly IEncryptedFileStore _encryptedFileStore;
 
     public GetFileHandler(
         IMongoDatabase database,
         ILogger<GetFileHandler> logger,
-        IHlsGroupCallStreamService hlsGroupCallStreamService)
+        IHlsGroupCallStreamService hlsGroupCallStreamService,
+        IEncryptedFileStore encryptedFileStore)
     {
         _database = database;
         _logger = logger;
         _hlsGroupCallStreamService = hlsGroupCallStreamService;
+        _encryptedFileStore = encryptedFileStore;
     }
 
     protected override async Task<MyTelegram.Schema.Upload.IFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Upload.RequestGetFile obj)
@@ -40,6 +44,29 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
         if (obj.Location is TInputGroupCallStream groupCallStream)
         {
             return await HandleGroupCallStreamAsync(input, groupCallStream, obj.Limit);
+        }
+
+        // Encrypted-file download for secret chats. Branch BEFORE the file_parts lookup below,
+        // which filters by the caller's UserId and would reject the recipient. access_hash is the
+        // capability token (as on Telegram proper) — no membership join.
+        if (obj.Location is TInputEncryptedFileLocation encryptedFileLocation)
+        {
+            // Reads only the requested window, not the whole blob.
+            var loaded = await _encryptedFileStore.LoadRangeAsync(encryptedFileLocation.Id,
+                encryptedFileLocation.AccessHash,
+                obj.Offset,
+                obj.Limit);
+            if (loaded == null)
+            {
+                RpcErrors.RpcErrors400.FileIdInvalid.ThrowRpcError();
+            }
+
+            return new MyTelegram.Schema.Upload.TFile
+            {
+                Type = new MyTelegram.Schema.Storage.TFilePartial(),
+                Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Bytes = loaded!.Value.Bytes
+            };
         }
 
         // Extract file ID from location

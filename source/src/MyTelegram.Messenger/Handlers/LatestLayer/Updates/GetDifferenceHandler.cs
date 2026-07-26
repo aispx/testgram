@@ -1,3 +1,4 @@
+using MyTelegram.Messenger.Services.SecretChat;
 using MyTelegram.Schema.Updates;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Updates;
@@ -22,7 +23,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Updates;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetDifferenceHandler(IMessageAppService messageAppService, IPtsHelper ptsHelper, IQueryProcessor queryProcessor, IAckCacheService ackCacheService, IDifferenceConverterService differenceConverterService) : RpcResultObjectHandler<RequestGetDifference, IDifference>
+internal sealed class GetDifferenceHandler(IMessageAppService messageAppService, IPtsHelper ptsHelper, IQueryProcessor queryProcessor, IAckCacheService ackCacheService, IDifferenceConverterService differenceConverterService, ISecretChatMessageStore secretChatMessageStore) : RpcResultObjectHandler<RequestGetDifference, IDifference>
 {
     protected override async Task<IDifference> HandleCoreAsync(IRequestInput input, RequestGetDifference obj)
     {
@@ -73,7 +74,19 @@ internal sealed class GetDifferenceHandler(IMessageAppService messageAppService,
         }
 
         dto.MessageList = dto.MessageList.OrderBy(p => p.MessageId).ToList();
-        var r = differenceConverterService.ToDifference(input, dto, ptsReadModel, cachedPts, limit, allUpdateList, [], [], layer: input.Layer);
+
+        // Secret-chat updates: unacked messages with qts > obj.Qts, plus the per-Authorization_Key qts watermark.
+        var encryptedMessages = await secretChatMessageStore.GetForDifferenceAsync(input.UserId, input.PermAuthKeyId, obj.Qts, limit);
+
+        // A full page means the tail was cut off. Advertising the global watermark here would make the
+        // client skip past the messages it did not receive, losing them permanently, so report only the
+        // qts actually covered by this response and force the slice form so the client asks again.
+        var encryptedMessagesTruncated = limit > 0 && encryptedMessages.Count >= limit;
+        var secretChatQts = encryptedMessagesTruncated
+            ? encryptedMessages[^1].Qts
+            : await secretChatMessageStore.GetHighestQtsAsync(input.UserId, input.PermAuthKeyId);
+
+        var r = differenceConverterService.ToDifference(input, dto, ptsReadModel, cachedPts, limit, allUpdateList, [], encryptedMessages, secretChatQts, encryptedMessagesTruncated, layer: input.Layer);
         //logger.LogInformation("{UserId},Layer={Layer},res:{@Res}", input.UserId, input.Layer, r);
         return r;
     }

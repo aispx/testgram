@@ -8,7 +8,8 @@ public class DifferenceConverterService(
     IUserConverterService userConverterService,
     IMessageConverterService messageConverterService,
     IUpdatesResponseService updatesResponseService,
-    ILayeredService<IMessageConverter> messageLayeredService) : IDifferenceConverterService, ITransientDependency
+    ILayeredService<IMessageConverter> messageLayeredService,
+    ILayeredService<IEncryptedMessageConverter> encryptedMessageLayeredService) : IDifferenceConverterService, ITransientDependency
 {
     public IChannelDifference ToChannelDifference(
         IRequestWithAccessHashKeyId request,
@@ -58,10 +59,12 @@ public class DifferenceConverterService(
     public IDifference ToDifference(
         IRequestWithAccessHashKeyId request,
         GetMessageOutput output, IPtsReadModel? pts, int cachedPts, int limit, IList<IUpdate> updateList,
-        IList<IChat> chatListFromUpdates, IReadOnlyCollection<IEncryptedMessageReadModel>? encryptedMessageReadModels, int layer = 0)
+        IList<IChat> chatListFromUpdates, IReadOnlyCollection<IEncryptedMessageReadModel>? encryptedMessageReadModels, int secretChatQts = 0, bool encryptedMessagesTruncated = false, int layer = 0)
     {
         var messageList = messageConverterService.ToMessageList(output.SelfUserId, output.MessageList, output.PollList,
             output.ChosenPollOptions, output.UserReactionList, layer);
+
+        var newEncryptedMessageList = ToEncryptedMessageList(encryptedMessageReadModels, layer);
 
         // Filter out null messages and TMessageService with null Action
         messageList = messageList.Where(m => m != null && !(m is TMessageService ms && ms.Action == null)).ToList();
@@ -82,12 +85,14 @@ public class DifferenceConverterService(
         // Filter out updates with null messages or TMessageService with null Action
         layeredUpdates = layeredUpdates.Where(u => u != null && !IsInvalidUpdate(u));
 
-        if (updateList.Count == limit)
+        // The slice form tells the client "there is more, ask again". Encrypted messages can be cut off
+        // by the same limit independently of the other updates, so they must be able to force it too.
+        if (updateList.Count == limit || encryptedMessagesTruncated)
         {
             var differenceSlice = new TDifferenceSlice
             {
                 Chats = new TVector<IChat>(channelList ?? []),
-                NewEncryptedMessages = new TVector<IEncryptedMessage>(),
+                NewEncryptedMessages = new TVector<IEncryptedMessage>(newEncryptedMessageList),
                 NewMessages = new TVector<IMessage>(messageList ?? []),
                 OtherUpdates = new TVector<IUpdate>(layeredUpdates?.Where(u => u != null) ?? []),
                 Users = new TVector<IUser>(userList ?? []),
@@ -110,15 +115,19 @@ public class DifferenceConverterService(
                     }
             };
 
+            // Only updateNewEncryptedMessage carries qts; reflect the per-Authorization_Key sequence.
+            if (secretChatQts > 0 && differenceSlice.IntermediateState is TState sliceState)
+            {
+                sliceState.Qts = secretChatQts;
+            }
+
             return differenceSlice;
         }
-
-        var newEncryptedMessages = Array.Empty<IEncryptedMessage>();
 
         var difference = new TDifference
         {
             Chats = new TVector<IChat>(channelList ?? []),
-            NewEncryptedMessages = new TVector<IEncryptedMessage>(newEncryptedMessages ?? []),
+            NewEncryptedMessages = new TVector<IEncryptedMessage>(newEncryptedMessageList),
             NewMessages = new TVector<IMessage>(messageList ?? []),
             OtherUpdates = new TVector<IUpdate>(layeredUpdates?.Where(u => u != null) ?? []),
             Users = new TVector<IUser>(userList ?? []),
@@ -145,7 +154,50 @@ public class DifferenceConverterService(
             difference.State.Pts = cachedPts;
         }
 
+        // Only updateNewEncryptedMessage carries qts; reflect the per-Authorization_Key sequence.
+        if (secretChatQts > 0 && difference.State is TState state)
+        {
+            state.Qts = secretChatQts;
+        }
+
         return difference;
+    }
+
+    private IReadOnlyList<IEncryptedMessage> ToEncryptedMessageList(
+        IReadOnlyCollection<IEncryptedMessageReadModel>? encryptedMessageReadModels,
+        int layer)
+    {
+        if (encryptedMessageReadModels == null || encryptedMessageReadModels.Count == 0)
+        {
+            return [];
+        }
+
+        var messageConverter = encryptedMessageLayeredService.GetConverter(layer);
+
+        return encryptedMessageReadModels.Select(m =>
+        {
+            if (m.MessageType == SendMessageType.MessageService)
+            {
+                return messageConverter.ToEncryptedMessageService(m);
+            }
+
+            // A single unreadable file descriptor must not abort the caller's whole sync: fall back to
+            // encryptedFileEmpty (the message body itself is still relayed verbatim).
+            IEncryptedFile? file = null;
+            if (m.File is { Length: > 0 })
+            {
+                try
+                {
+                    file = ((ReadOnlyMemory<byte>)m.File).ToTObject<IEncryptedFile>();
+                }
+                catch (Exception)
+                {
+                    file = null;
+                }
+            }
+
+            return messageConverter.ToEncryptedMessage(m, file);
+        }).ToList();
     }
 
     private static bool IsInvalidUpdate(IUpdate update)
