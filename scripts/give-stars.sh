@@ -42,7 +42,7 @@ compose() {
 echo "⭐ Giving $STARS stars to user $USER_ID..."
 
 set +e
-RESULT=$(compose exec -T mongodb mongosh tg --quiet --eval "
+RESULT=$(compose exec -T mongodb mongosh "mongodb://127.0.0.1:27017/tg" --quiet --eval "
 const userId = NumberLong('$USER_ID');
 const delta = NumberLong('$STARS');
 
