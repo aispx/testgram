@@ -388,13 +388,16 @@ public static class StoryHelper
         return (peerId, peerType);
     }
 
+    /// <summary>Story-document owner peer type value for channels (see <see cref="ToStoryPeerType"/>).</summary>
+    public const int PeerTypeChannel = 2;
+
     public static int ToStoryPeerType(PeerType peerType)
     {
         return peerType switch
         {
             PeerType.User or PeerType.Self => 0,
             PeerType.Chat => 1,
-            PeerType.Channel => 2,
+            PeerType.Channel => PeerTypeChannel,
             _ => -1
         };
     }

@@ -20,6 +20,10 @@ namespace MyTelegram.Messenger.Tests.Stats;
 /// The shared <see cref="StatsGen.GraphSpec"/> generator covers empty, single-series, multi-series, and
 /// zoom cases with the theme flag toggled, so this single property exercises all of those shapes. Each
 /// run executes a minimum of 100 generated cases.
+///
+/// A degenerate fixture (fewer than 2 x points) must instead yield a <c>statsGraphError</c> — client
+/// chart parsers crash on such payloads, so the Graph_Builder refuses to wrap them in a
+/// <c>statsGraph</c>.
 /// </summary>
 [Properties(Arbitrary = new[] { typeof(StatsArbitraries) }, MaxTest = 100)]
 public class GraphJsonStructurePropertyTests
@@ -33,6 +37,15 @@ public class GraphJsonStructurePropertyTests
         // Requirement 8.1: inline serialization yields a statsGraph whose json is a dataJSON.
         var graph = builder.BuildInlineAsync(spec, fixture.Dark, snapshotId: "snapshot", nowUnix: 0)
             .GetAwaiter().GetResult();
+
+        // A degenerate spec (x.length < 2) never reaches a client as a statsGraph: chart parsers
+        // construct the chart before validating it and crash on such payloads.
+        if (fixture.XAxisMillis.Count < 2)
+        {
+            var degenerate = graph.ShouldBeOfType<TStatsGraphError>();
+            degenerate.Error.ShouldNotBeNullOrEmpty();
+            return;
+        }
 
         var statsGraph = graph.ShouldBeOfType<TStatsGraph>();
         var dataJson = statsGraph.Json.ShouldBeOfType<TDataJSON>();

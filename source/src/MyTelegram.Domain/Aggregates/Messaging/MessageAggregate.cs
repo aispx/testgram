@@ -288,6 +288,20 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
         }
     }
 
+    /// <summary>
+    /// Successor of <see cref="IncrementViews"/> whose event also carries the owning peer, so per-view
+    /// increments can be attributed to a channel (stats ingestion). The V1 event lacks the owner and its
+    /// historical instances stay applied via the old handler; no upgrader is needed for a new event name.
+    /// </summary>
+    public void IncrementViews2()
+    {
+        if (!IsNew)
+        {
+            var views = (_state.MessageItem.Views ?? 0) + 1;
+            Emit(new MessageViewsIncrementedEvent2(_state.MessageItem.MessageId, views, _state.MessageItem.OwnerPeer));
+        }
+    }
+
     [DoNotInheritRequestCommand]
     public void PinChannelMessage(RequestInfo requestInfo)
     {

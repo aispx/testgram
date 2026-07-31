@@ -28,6 +28,11 @@ namespace MyTelegram.Messenger.Tests.Stats;
 /// <see cref="StatsGen.GraphSpec"/> generator emits empty, single-series, multi-series, and zoom cases
 /// (with the theme flag toggled), so this single property exercises both the "has zoom" and "no zoom"
 /// branches. Each run executes a minimum of 100 generated cases.
+///
+/// A degenerate fixture (fewer than 2 x points) still issues and resolves tokens, but the final
+/// serialization yields a <c>statsGraphError</c> — the Graph_Builder refuses to emit a
+/// client-crashing <c>statsGraph</c> — so the JSON-equality and zoom-token assertions apply only to
+/// renderable fixtures.
 /// </summary>
 [Properties(Arbitrary = new[] { typeof(StatsArbitraries) }, MaxTest = 100)]
 public class AsyncTokenRoundTripPropertyTests
@@ -67,6 +72,17 @@ public class AsyncTokenRoundTripPropertyTests
         var resolvedGraph = builder
             .BuildInlineAsync(resolution.Spec!, resolution.Dark, NewSnapshotId("resolved"), Now)
             .GetAwaiter().GetResult();
+
+        // A degenerate spec (x.length < 2) round-trips through the store, but the final serialization
+        // refuses to emit a client-crashing statsGraph and yields a statsGraphError instead; the
+        // JSON-equality and zoom assertions below only apply to renderable specs.
+        if (fixture.XAxisMillis.Count < 2)
+        {
+            var degenerate = resolvedGraph.ShouldBeOfType<TStatsGraphError>();
+            degenerate.Error.ShouldNotBeNullOrEmpty();
+            return;
+        }
+
         var resolvedInline = resolvedGraph.ShouldBeOfType<TStatsGraph>();
         resolvedInline.Json.Data.ShouldBe(
             expectedMainJson,

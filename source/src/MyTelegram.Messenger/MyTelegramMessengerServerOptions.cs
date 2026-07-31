@@ -52,6 +52,24 @@ public class MyTelegramMessengerServerOptions
     public StripeConfig Stripe { get; set; } = new();
     public PushConfig Push { get; set; } = new();
     public StatsConfig Stats { get; set; } = new();
+    public RatesConfig Rates { get; set; } = new();
+}
+
+/// <summary>
+/// Fiat conversion rates surfaced to clients (e.g. <c>payments.starsRevenueStats.usd_rate</c>).
+/// Defaults mirror the appConfig values (<c>ton_usd_rate</c>, <c>stars_usd_sell_rate_x1000</c>).
+/// </summary>
+public class RatesConfig
+{
+    /// <summary>
+    /// USD per one whole TON. Clients multiply by <c>amount / 1e9</c> (balances are in nanotons).
+    /// </summary>
+    [Range(0.0, 1_000_000.0)]
+    public double TonUsdRate { get; set; } = 3.5293105384415675;
+
+    /// <summary>USD per one Telegram Star (sell rate: 1410 / 100000).</summary>
+    [Range(0.0, 1_000.0)]
+    public double StarsUsdRate { get; set; } = 0.0141;
 }
 
 /// <summary>

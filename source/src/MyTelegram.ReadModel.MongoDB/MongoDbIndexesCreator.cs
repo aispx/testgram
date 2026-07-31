@@ -36,6 +36,9 @@ public class MongoDbIndexesCreator(
         await CreateIndexAsync<DeviceReadModel>(p => p.UserId);
         await CreateIndexAsync<DeviceReadModel>(p => p.IsActive);
 
+        // Stats ingestion counts muted subscribers per channel (notify_on/muted gauges).
+        await CreateIndexAsync<PeerNotifySettingsReadModel>(p => p.PeerId);
+
         await CreateIndexAsync<ContactReadModel>(p => p.SelfUserId);
         await CreateIndexAsync<ContactReadModel>(p => p.TargetUserId);
         //await CreateIndexAsync<FileReadModel>(p => p.UserId);

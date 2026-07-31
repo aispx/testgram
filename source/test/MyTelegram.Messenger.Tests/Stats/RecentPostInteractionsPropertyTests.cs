@@ -180,6 +180,9 @@ internal sealed class RecentPostsInMemoryMetricsStore : IMetricsStore
     public Task<IReadOnlyList<CategorySeries>> GetCategorySeriesAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
         throw new NotSupportedException();
 
+    public Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
+        throw new NotSupportedException();
+
     public Task<TopEntities> GetTopEntitiesAsync(long channelId, int minDayUtc, int maxDayUtc, int perListMax = 10) =>
         throw new NotSupportedException();
 }

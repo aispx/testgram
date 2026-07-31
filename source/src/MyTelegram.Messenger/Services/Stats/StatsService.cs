@@ -32,6 +32,10 @@ public class StatsService(
 
     private const long MillisPerSecond = 1000L;
 
+    private const long MillisPerHour = 3_600_000L;
+
+    private const int SecondsPerDay = 86_400;
+
     /// <summary>
     /// The reporting window in days used to compute the <c>period</c> (Requirement 10.3), surfaced through
     /// the server settings mechanism (<see cref="MyTelegramMessengerServerOptions.Stats"/>, default 7,
@@ -45,17 +49,21 @@ public class StatsService(
         var nowUnix = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         var period = await metricsStore.GetPeriodAsync(channel, ReportingWindowDays);
+        var graphPeriod = EffectiveGraphPeriod(period, nowUnix);
         var snapshotId = BuildSnapshotId("broadcast", channelId, period);
 
         // statsAbsValueAndPrev fields: current = aggregate over the Period, previous = aggregate over the
         // Previous_Period; AggregateAsync returns 0 for a range with no recorded metric (Requirement 2.8).
         var followers = await AbsValueAsync(channel, StatsMetricNames.Followers, period);
-        var viewsPerPost = await AbsValueAsync(channel, StatsMetricNames.Views, period);
-        var sharesPerPost = await AbsValueAsync(channel, StatsMetricNames.Shares, period);
-        var reactionsPerPost = await AbsValueAsync(channel, StatsMetricNames.Reactions, period);
-        var viewsPerStory = await AbsValueAsync(channel, StatsMetricNames.Views, period);
-        var sharesPerStory = await AbsValueAsync(channel, StatsMetricNames.Shares, period);
-        var reactionsPerStory = await AbsValueAsync(channel, StatsMetricNames.Reactions, period);
+
+        // views/shares/reactions "per post" and "per story" are means, not period totals: divide the
+        // interaction totals by the number of posts (resp. stories) published in the same range.
+        var viewsPerPost = await PerItemValueAsync(channel, StatsMetricNames.Views, StatsMetricNames.Messages, period);
+        var sharesPerPost = await PerItemValueAsync(channel, StatsMetricNames.Shares, StatsMetricNames.Messages, period);
+        var reactionsPerPost = await PerItemValueAsync(channel, StatsMetricNames.Reactions, StatsMetricNames.Messages, period);
+        var viewsPerStory = await PerItemValueAsync(channel, StatsMetricNames.StoryViews, StatsMetricNames.StoryPosts, period);
+        var sharesPerStory = await PerItemValueAsync(channel, StatsMetricNames.StoryShares, StatsMetricNames.StoryPosts, period);
+        var reactionsPerStory = await PerItemValueAsync(channel, StatsMetricNames.StoryReactions, StatsMetricNames.StoryPosts, period);
 
         // enabled_notifications: part = notifications-enabled count, total = subscriber count (Requirement 2.5).
         var notifyOn = await metricsStore.AggregateAsync(channel, StatsMetricNames.NotifyOn, period.MinDate, period.MaxDate);
@@ -64,6 +72,10 @@ public class StatsService(
         var enabledNotifications = new TStatsPercentValue { Part = notifyOn, Total = subscriberCount };
 
         var recentPosts = await metricsStore.GetRecentPostInteractionsAsync(channelId);
+
+        // The interactions graph zooms into hourly detail when hour-of-day view data exists.
+        var viewsHourlyZoom = await BuildHourlyZoomSpecAsync(channel, StatsMetricNames.ViewsByHour, graphPeriod,
+            "views", "Views", "primary", GraphKind.Line);
 
         return new TBroadcastStats
         {
@@ -76,18 +88,27 @@ public class StatsService(
             SharesPerStory = sharesPerStory,
             ReactionsPerStory = reactionsPerStory,
             EnabledNotifications = enabledNotifications,
-            GrowthGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Followers, period, "Growth", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
-            FollowersGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Followers, period, "Followers", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
-            MuteGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Muted, period, "Muted", "secondary", GraphKind.Line, dark, snapshotId, nowUnix),
-            TopHoursGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Views, period, "Views by hour", "tertiary", GraphKind.Bar, dark, snapshotId, nowUnix),
-            InteractionsGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Views, period, "Interactions", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
-            IvInteractionsGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Views, period, "IV interactions", "secondary", GraphKind.Line, dark, snapshotId, nowUnix),
-            ViewsBySourceGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Views, period, GraphKind.StackedBar, dark, snapshotId, nowUnix),
-            NewFollowersBySourceGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Followers, period, GraphKind.StackedBar, dark, snapshotId, nowUnix),
-            LanguagesGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Followers, period, GraphKind.Pie, dark, snapshotId, nowUnix),
-            ReactionsByEmotionGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Reactions, period, GraphKind.StackedBar, dark, snapshotId, nowUnix),
-            StoryInteractionsGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Shares, period, "Story interactions", "tertiary", GraphKind.Line, dark, snapshotId, nowUnix),
-            StoryReactionsByEmotionGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Reactions, period, GraphKind.StackedBar, dark, snapshotId, nowUnix),
+            GrowthGraph = await BuildGrowthGraphAsync(channel, StatsMetricNames.Followers, graphPeriod, "Growth", "primary", dark, snapshotId, nowUnix),
+            FollowersGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.Followers, graphPeriod, "Followers", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
+            MuteGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.Muted, graphPeriod, "Muted", "secondary", GraphKind.Line, dark, snapshotId, nowUnix),
+            TopHoursGraph = await BuildTopHoursGraphAsync(channel, StatsMetricNames.ViewsByHour, graphPeriod, "Views by hour", "tertiary", dark, snapshotId, nowUnix),
+            InteractionsGraph = await BuildMultiSeriesGraphAsync(channel, graphPeriod,
+                [(StatsMetricNames.Views, "Views", "primary"), (StatsMetricNames.Shares, "Shares", "secondary")],
+                GraphKind.Line, dark, snapshotId, nowUnix, viewsHourlyZoom),
+            // Instant View is not supported by this server, so IV interactions are genuinely zero.
+            IvInteractionsGraph = await BuildMultiSeriesGraphAsync(channel, graphPeriod,
+                [("iv_views", "IV views", "primary"), ("iv_shares", "IV shares", "secondary")],
+                GraphKind.Line, dark, snapshotId, nowUnix),
+            // View sources (URL/search/other channels) are not tracked; with no recorded categories the
+            // Graph_Builder emits a statsGraphError for this slot.
+            ViewsBySourceGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Views, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
+            NewFollowersBySourceGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.JoinsBySource, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
+            LanguagesGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.JoinsByLanguage, graphPeriod, GraphKind.Pie, dark, snapshotId, nowUnix),
+            ReactionsByEmotionGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Reactions, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
+            StoryInteractionsGraph = await BuildMultiSeriesGraphAsync(channel, graphPeriod,
+                [(StatsMetricNames.StoryViews, "Story views", "primary"), (StatsMetricNames.StoryShares, "Story shares", "secondary")],
+                GraphKind.Line, dark, snapshotId, nowUnix),
+            StoryReactionsByEmotionGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.StoryReactions, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
             RecentPostsInteractions = new TVector<IPostInteractionCounters>(recentPosts.Select(ToPostInteractionCounters))
         };
     }
@@ -98,6 +119,7 @@ public class StatsService(
         var nowUnix = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         var period = await metricsStore.GetPeriodAsync(channel, ReportingWindowDays);
+        var graphPeriod = EffectiveGraphPeriod(period, nowUnix);
         var snapshotId = BuildSnapshotId("megagroup", channelId, period);
 
         var members = await AbsValueAsync(channel, StatsMetricNames.Members, period);
@@ -115,14 +137,19 @@ public class StatsService(
             Messages = messages,
             Viewers = viewers,
             Posters = posters,
-            GrowthGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Members, period, "Growth", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
-            MembersGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Members, period, "Members", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
-            NewMembersBySourceGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Members, period, GraphKind.StackedBar, dark, snapshotId, nowUnix),
-            LanguagesGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Members, period, GraphKind.Pie, dark, snapshotId, nowUnix),
-            MessagesGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Messages, period, "Messages", "secondary", GraphKind.StackedBar, dark, snapshotId, nowUnix),
-            ActionsGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Messages, period, "Actions", "tertiary", GraphKind.Line, dark, snapshotId, nowUnix),
-            TopHoursGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Messages, period, "Activity by hour", "primary", GraphKind.Bar, dark, snapshotId, nowUnix),
-            WeekdaysGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Messages, period, GraphKind.StackedBar, dark, snapshotId, nowUnix),
+            GrowthGraph = await BuildGrowthGraphAsync(channel, StatsMetricNames.Members, graphPeriod, "Growth", "primary", dark, snapshotId, nowUnix),
+            MembersGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.Members, graphPeriod, "Members", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
+            NewMembersBySourceGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.JoinsBySource, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
+            LanguagesGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.JoinsByLanguage, graphPeriod, GraphKind.Pie, dark, snapshotId, nowUnix),
+            MessagesGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Messages, graphPeriod, "Messages", "secondary", GraphKind.StackedBar, dark, snapshotId, nowUnix,
+                await BuildHourlyZoomSpecAsync(channel, StatsMetricNames.MessagesByHour, graphPeriod, "messages", "Messages", "secondary", GraphKind.StackedBar)),
+            // actions_graph is parsed as a two-line chart by official clients: messages posted vs
+            // membership changes (a single series would fault on the second line).
+            ActionsGraph = await BuildMultiSeriesGraphAsync(channel, graphPeriod,
+                [(StatsMetricNames.Messages, "Messages", "primary"), (StatsMetricNames.Actions, "Actions", "secondary")],
+                GraphKind.Line, dark, snapshotId, nowUnix),
+            TopHoursGraph = await BuildTopHoursGraphAsync(channel, StatsMetricNames.MessagesByHour, graphPeriod, "Activity by hour", "primary", dark, snapshotId, nowUnix),
+            WeekdaysGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.MessagesByWeekday, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
             TopPosters = new TVector<IStatsGroupTopPoster>(topEntities.Posters.Select(p =>
                 (IStatsGroupTopPoster)new TStatsGroupTopPoster { UserId = p.UserId, Messages = p.Messages, AvgChars = p.AvgChars })),
             TopAdmins = new TVector<IStatsGroupTopAdmin>(topEntities.Admins.Select(a =>
@@ -138,8 +165,9 @@ public class StatsService(
     /// <summary>
     /// Assembles <c>stats.messageStats</c> for a channel post. The <c>views_graph</c> is the per-day view
     /// series and the <c>reactions_by_emotion_graph</c> is the per-emotion reaction breakdown, both over the
-    /// Period (Requirements 4.1, 4.3). An item with no recorded metric yields an empty <c>statsGraph</c>
-    /// rather than a <c>statsGraphError</c> (Requirement 4.4, handled by the Graph_Builder). When the
+    /// Period (Requirements 4.1, 4.3). An item with no recorded metric yields a Period-covering
+    /// zero-filled <c>views_graph</c> and a <c>statsGraphError</c> for the category graph
+    /// (Requirement 4.4, enforced by the Graph_Builder). When the
     /// <paramref name="msgId"/> does not identify an existing post in the resolved channel, the service
     /// raises <c>MESSAGE_ID_INVALID</c> (Requirement 4.2).
     /// </summary>
@@ -157,12 +185,13 @@ public class StatsService(
         var entity = new StatsEntityKey(StatsEntityType.Message, channelId, msgId);
         var nowUnix = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var period = await metricsStore.GetPeriodAsync(entity, ReportingWindowDays);
+        var graphPeriod = EffectiveGraphPeriod(period, nowUnix);
         var snapshotId = BuildItemSnapshotId("message", channelId, msgId, period);
 
         return new TMessageStats
         {
-            ViewsGraph = await BuildSeriesGraphAsync(entity, StatsMetricNames.Views, period, "Views", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
-            ReactionsByEmotionGraph = await BuildCategoryGraphAsync(entity, StatsMetricNames.Reactions, period, GraphKind.StackedBar, dark, snapshotId, nowUnix)
+            ViewsGraph = await BuildSeriesGraphAsync(entity, StatsMetricNames.Views, graphPeriod, "Views", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
+            ReactionsByEmotionGraph = await BuildCategoryGraphAsync(entity, StatsMetricNames.Reactions, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix)
         };
     }
 
@@ -180,12 +209,13 @@ public class StatsService(
         var entity = new StatsEntityKey(StatsEntityType.Story, peer.PeerId, storyId);
         var nowUnix = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var period = await metricsStore.GetPeriodAsync(entity, ReportingWindowDays);
+        var graphPeriod = EffectiveGraphPeriod(period, nowUnix);
         var snapshotId = BuildItemSnapshotId("story", peer.PeerId, storyId, period);
 
         return new TStoryStats
         {
-            ViewsGraph = await BuildSeriesGraphAsync(entity, StatsMetricNames.Views, period, "Views", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
-            ReactionsByEmotionGraph = await BuildCategoryGraphAsync(entity, StatsMetricNames.Reactions, period, GraphKind.StackedBar, dark, snapshotId, nowUnix)
+            ViewsGraph = await BuildSeriesGraphAsync(entity, StatsMetricNames.Views, graphPeriod, "Views", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
+            ReactionsByEmotionGraph = await BuildCategoryGraphAsync(entity, StatsMetricNames.Reactions, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix)
         };
     }
 
@@ -284,39 +314,274 @@ public class StatsService(
     }
 
     /// <summary>
-    /// Builds a single-series <c>statsGraph</c> from the per-day series of <paramref name="metric"/> over
-    /// the Period. An empty series yields an empty <c>statsGraph</c> rather than a <c>statsGraphError</c>.
+    /// Builds a <c>statsAbsValueAndPrev</c> for a per-item mean: the total of
+    /// <paramref name="totalMetric"/> divided by the number of items counted by
+    /// <paramref name="itemCountMetric"/>, over the Period and the Previous_Period respectively. A range
+    /// without items yields <c>0</c> rather than a division by zero.
+    /// </summary>
+    private async Task<IStatsAbsValueAndPrev> PerItemValueAsync(StatsEntityKey entity, string totalMetric,
+        string itemCountMetric, StatsDateRange period)
+    {
+        var previousMin = period.MinDate - (period.MaxDate - period.MinDate);
+
+        var currentTotal = await metricsStore.AggregateAsync(entity, totalMetric, period.MinDate, period.MaxDate);
+        var currentItems = await metricsStore.AggregateAsync(entity, itemCountMetric, period.MinDate, period.MaxDate);
+        var previousTotal = await metricsStore.AggregateAsync(entity, totalMetric, previousMin, period.MinDate);
+        var previousItems = await metricsStore.AggregateAsync(entity, itemCountMetric, previousMin, period.MinDate);
+
+        return new TStatsAbsValueAndPrev
+        {
+            Current = currentItems > 0 ? (double)currentTotal / currentItems : 0,
+            Previous = previousItems > 0 ? (double)previousTotal / previousItems : 0
+        };
+    }
+
+    /// <summary>
+    /// The period used for graph x-axes. For an entity with no recorded metrics
+    /// (<see cref="IMetricsStore.GetPeriodAsync"/> yields <c>{0,0}</c>) this falls back to the reporting
+    /// window ending at the current UTC day so zero-filled graphs carry current dates; the response
+    /// <c>period</c> itself keeps the store's value (Requirement 10.4).
+    /// </summary>
+    private StatsDateRange EffectiveGraphPeriod(StatsDateRange period, int nowUnix)
+    {
+        if (period.MaxDate > 0)
+        {
+            return period;
+        }
+
+        var today = nowUnix - nowUnix % SecondsPerDay;
+        var window = Math.Clamp(ReportingWindowDays, 1, 365);
+        return new StatsDateRange(today - window * SecondsPerDay, today);
+    }
+
+    /// <summary>Enumerates every UTC day key of the Period, inclusive on both ends.</summary>
+    private static List<int> EnumeratePeriodDays(int minDay, int maxDay)
+    {
+        var days = new List<int>();
+        // long iteration variable: an int would wrap around near int.MaxValue (year 2038) and loop forever.
+        for (long day = minDay; day <= maxDay; day += SecondsPerDay)
+        {
+            days.Add((int)day);
+        }
+
+        return days;
+    }
+
+    /// <summary>
+    /// Builds a single-series <c>statsGraph</c> from the per-day series of <paramref name="metric"/>,
+    /// zero-filled across the whole Period so the x-axis always carries at least 2 points (days without a
+    /// recorded value contribute <c>0</c>); client chart parsers crash on shorter axes.
     /// </summary>
     private async Task<IStatsGraph> BuildSeriesGraphAsync(StatsEntityKey entity, string metric, StatsDateRange period,
-        string seriesName, string colorKey, GraphKind kind, bool dark, string snapshotId, int nowUnix)
+        string seriesName, string colorKey, GraphKind kind, bool dark, string snapshotId, int nowUnix,
+        GraphSpec? zoom = null)
     {
-        var points = await metricsStore.GetSeriesAsync(entity, metric, period.MinDate, period.MaxDate);
-
-        var xAxis = points.Select(p => p.UtcDay * MillisPerSecond).ToList();
-        var values = points.Select(p => p.Value).ToList();
+        var days = EnumeratePeriodDays(period.MinDate, period.MaxDate);
+        var values = await GetCounterDailyValuesAsync(entity, metric, period, days);
+        var xAxis = days.Select(d => d * MillisPerSecond).ToList();
         var series = new[] { new GraphSeries(metric, seriesName, colorKey, values) };
 
-        var spec = new GraphSpec(kind, xAxis, series);
+        var spec = new GraphSpec(kind, xAxis, series, zoom);
         return await graphBuilder.BuildInlineAsync(spec, dark, snapshotId, nowUnix);
     }
 
     /// <summary>
+    /// Builds a multi-series counter <c>statsGraph</c> (e.g. the interactions graph's views+shares pair),
+    /// each series zero-filled across the whole Period.
+    /// </summary>
+    private async Task<IStatsGraph> BuildMultiSeriesGraphAsync(StatsEntityKey entity, StatsDateRange period,
+        IReadOnlyList<(string Metric, string Name, string ColorKey)> seriesDefs, GraphKind kind, bool dark,
+        string snapshotId, int nowUnix, GraphSpec? zoom = null)
+    {
+        var days = EnumeratePeriodDays(period.MinDate, period.MaxDate);
+        var xAxis = days.Select(d => d * MillisPerSecond).ToList();
+
+        var series = new List<GraphSeries>(seriesDefs.Count);
+        foreach (var (metric, name, colorKey) in seriesDefs)
+        {
+            var values = await GetCounterDailyValuesAsync(entity, metric, period, days);
+            series.Add(new GraphSeries(metric, name, colorKey, values));
+        }
+
+        var spec = new GraphSpec(kind, xAxis, series, zoom);
+        return await graphBuilder.BuildInlineAsync(spec, dark, snapshotId, nowUnix);
+    }
+
+    private async Task<List<long>> GetCounterDailyValuesAsync(StatsEntityKey entity, string metric,
+        StatsDateRange period, List<int> days)
+    {
+        var points = await metricsStore.GetSeriesAsync(entity, metric, period.MinDate, period.MaxDate);
+
+        var byDay = new Dictionary<int, long>(points.Count);
+        foreach (var point in points)
+        {
+            byDay[point.UtcDay] = byDay.GetValueOrDefault(point.UtcDay) + point.Value;
+        }
+
+        return days.Select(d => byDay.GetValueOrDefault(d)).ToList();
+    }
+
+    /// <summary>
+    /// Builds a single-series <c>statsGraph</c> for a gauge metric (followers/members/muted). Unlike
+    /// counters, days without a recorded snapshot carry the last known value forward (a quiet day does not
+    /// drop the follower count to zero); days before the first snapshot are <c>0</c>.
+    /// </summary>
+    private async Task<IStatsGraph> BuildGaugeSeriesGraphAsync(StatsEntityKey entity, string metric,
+        StatsDateRange period, string seriesName, string colorKey, GraphKind kind, bool dark, string snapshotId,
+        int nowUnix)
+    {
+        var days = EnumeratePeriodDays(period.MinDate, period.MaxDate);
+        var values = await GetGaugeDailyValuesAsync(entity, metric, period.MinDate, days);
+        var xAxis = days.Select(d => d * MillisPerSecond).ToList();
+        var series = new[] { new GraphSeries(metric, seriesName, colorKey, values) };
+
+        return await graphBuilder.BuildInlineAsync(new GraphSpec(kind, xAxis, series), dark, snapshotId, nowUnix);
+    }
+
+    /// <summary>
+    /// Builds the growth graph: the per-day delta of a gauge metric (how many followers/members were
+    /// gained or lost each day), seeded from the last snapshot before the Period.
+    /// </summary>
+    private async Task<IStatsGraph> BuildGrowthGraphAsync(StatsEntityKey entity, string metric,
+        StatsDateRange period, string seriesName, string colorKey, bool dark, string snapshotId, int nowUnix)
+    {
+        // One extra day in front so the first window day has a predecessor to diff against.
+        var days = EnumeratePeriodDays(period.MinDate - SecondsPerDay, period.MaxDate);
+        var values = await GetGaugeDailyValuesAsync(entity, metric, period.MinDate - SecondsPerDay, days);
+
+        var xAxis = new List<long>(days.Count - 1);
+        var deltas = new List<long>(days.Count - 1);
+        for (var i = 1; i < days.Count; i++)
+        {
+            xAxis.Add(days[i] * MillisPerSecond);
+            deltas.Add(values[i] - values[i - 1]);
+        }
+
+        var series = new[] { new GraphSeries("growth", seriesName, colorKey, deltas) };
+        return await graphBuilder.BuildInlineAsync(new GraphSpec(GraphKind.Line, xAxis, series), dark, snapshotId, nowUnix);
+    }
+
+    /// <summary>
+    /// Per-day absolute values of a gauge over <paramref name="days"/>: the recorded snapshot where one
+    /// exists, otherwise the last known value carried forward (seeded from history before
+    /// <paramref name="minDay"/>).
+    /// </summary>
+    private async Task<List<long>> GetGaugeDailyValuesAsync(StatsEntityKey entity, string metric, int minDay,
+        List<int> days)
+    {
+        // Include all history up to the window end so the forward-fill has a seed value.
+        var points = await metricsStore.GetSeriesAsync(entity, metric, 0, days.Count > 0 ? days[^1] : minDay);
+
+        var byDay = new Dictionary<int, long>(points.Count);
+        long seed = 0;
+        foreach (var point in points)
+        {
+            byDay[point.UtcDay] = point.Value;
+            if (point.UtcDay < minDay)
+            {
+                seed = point.Value;
+            }
+        }
+
+        var values = new List<long>(days.Count);
+        var last = seed;
+        foreach (var day in days)
+        {
+            if (byDay.TryGetValue(day, out var value))
+            {
+                last = value;
+            }
+
+            values.Add(last);
+        }
+
+        return values;
+    }
+
+    /// <summary>
+    /// Builds the top-hours graph: 24 hour-of-day buckets aggregated from <paramref name="hourMetric"/>'s
+    /// breakdown over the Period. The x axis carries the raw hour indices <c>0..23</c> — clients detect the
+    /// hour format from a unit x step (<c>timeStep == 1</c>) and label the axis <c>"00:00".."23:00"</c>;
+    /// millisecond offsets would be rendered as 1970 dates instead.
+    /// </summary>
+    private async Task<IStatsGraph> BuildTopHoursGraphAsync(StatsEntityKey entity, string hourMetric,
+        StatsDateRange period, string seriesName, string colorKey, bool dark, string snapshotId, int nowUnix)
+    {
+        var totals = await metricsStore.GetBreakdownTotalsAsync(entity, hourMetric, period.MinDate, period.MaxDate);
+
+        var xAxis = new List<long>(24);
+        var values = new List<long>(24);
+        for (var hour = 0; hour < 24; hour++)
+        {
+            xAxis.Add(hour);
+            values.Add(totals.GetValueOrDefault(hour.ToString()));
+        }
+
+        var series = new[] { new GraphSeries("top_hours", seriesName, colorKey, values) };
+        return await graphBuilder.BuildInlineAsync(new GraphSpec(GraphKind.Line, xAxis, series), dark, snapshotId, nowUnix);
+    }
+
+    /// <summary>
+    /// Builds the hourly-detail zoom spec for a counter that records an hour-of-day breakdown: one point
+    /// per hour across the whole Period (<c>days × 24</c>). Returns <see langword="null"/> when no hourly
+    /// data exists — the graph then carries no <c>zoom_token</c>.
+    /// </summary>
+    private async Task<GraphSpec?> BuildHourlyZoomSpecAsync(StatsEntityKey entity, string hourMetric,
+        StatsDateRange period, string seriesId, string seriesName, string colorKey, GraphKind kind)
+    {
+        var categorySeries = await metricsStore.GetCategorySeriesAsync(entity, hourMetric, period.MinDate, period.MaxDate);
+        if (categorySeries.Count == 0)
+        {
+            return null;
+        }
+
+        var byDayHour = new Dictionary<(int Day, int Hour), long>();
+        foreach (var category in categorySeries)
+        {
+            if (!int.TryParse(category.Category, out var hour) || hour is < 0 or > 23)
+            {
+                continue;
+            }
+
+            foreach (var point in category.Points)
+            {
+                byDayHour[(point.UtcDay, hour)] = byDayHour.GetValueOrDefault((point.UtcDay, hour)) + point.Value;
+            }
+        }
+
+        if (byDayHour.Count == 0)
+        {
+            return null;
+        }
+
+        var days = EnumeratePeriodDays(period.MinDate, period.MaxDate);
+        var xAxis = new List<long>(days.Count * 24);
+        var values = new List<long>(days.Count * 24);
+        foreach (var day in days)
+        {
+            for (var hour = 0; hour < 24; hour++)
+            {
+                xAxis.Add(day * MillisPerSecond + hour * MillisPerHour);
+                values.Add(byDayHour.GetValueOrDefault((day, hour)));
+            }
+        }
+
+        var series = new[] { new GraphSeries(seriesId, seriesName, colorKey, values) };
+        return new GraphSpec(kind, xAxis, series);
+    }
+
+    /// <summary>
     /// Builds a multi-series <c>statsGraph</c> from the per-category per-day series of
-    /// <paramref name="metric"/> over the Period. Categories are aligned onto a single, strictly-ascending
-    /// x-axis (missing days contribute <c>0</c>). An absent breakdown yields an empty <c>statsGraph</c>.
+    /// <paramref name="metric"/>, zero-filled across the whole Period (missing days contribute <c>0</c>).
+    /// With no recorded categories the spec has zero data series and the Graph_Builder emits a
+    /// <c>statsGraphError</c> — category names cannot be invented.
     /// </summary>
     private async Task<IStatsGraph> BuildCategoryGraphAsync(StatsEntityKey entity, string metric, StatsDateRange period,
         GraphKind kind, bool dark, string snapshotId, int nowUnix)
     {
         var categorySeries = await metricsStore.GetCategorySeriesAsync(entity, metric, period.MinDate, period.MaxDate);
 
-        // Unify the x-axis across all categories: the sorted set of distinct recorded days.
-        var days = categorySeries
-            .SelectMany(c => c.Points.Select(p => p.UtcDay))
-            .Distinct()
-            .OrderBy(d => d)
-            .ToList();
-
+        var days = EnumeratePeriodDays(period.MinDate, period.MaxDate);
         var dayIndex = new Dictionary<int, int>(days.Count);
         for (var i = 0; i < days.Count; i++)
         {
@@ -333,7 +598,10 @@ public class StatsService(
             var values = new long[days.Count];
             foreach (var point in category.Points)
             {
-                values[dayIndex[point.UtcDay]] += point.Value;
+                if (dayIndex.TryGetValue(point.UtcDay, out var index))
+                {
+                    values[index] += point.Value;
+                }
             }
 
             var colorKey = colorKeys[c % colorKeys.Length];

@@ -1,3 +1,4 @@
+using System.Text;
 using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Services.Stats;
@@ -49,7 +50,10 @@ public class MetricsStore : IMetricsStore, ISingletonDependency
         {
             foreach (var (category, value) in breakdown)
             {
-                var field = $"Breakdown.{category}";
+                // Breakdown categories can be client-supplied (reaction emoticons, language codes), and a
+                // category becomes a MongoDB field name: '.' would nest a sub-document, a leading '$' is
+                // rejected as an operator, and a null byte is illegal. Encode those away.
+                var field = $"Breakdown.{EncodeBreakdownKey(category)}";
                 updates.Add(isGauge ? builder.Set(field, value) : builder.Inc(field, value));
             }
         }
@@ -89,6 +93,20 @@ public class MetricsStore : IMetricsStore, ISingletonDependency
         if (maxDayUtc < minDayUtc)
         {
             return 0;
+        }
+
+        if (StatsMetricNames.IsGauge(metric))
+        {
+            // A gauge is an absolute snapshot, so the range's value is the most recent snapshot at or
+            // before the range end — summing daily snapshots would multiply e.g. the follower count by
+            // the number of recorded days. The lower bound is deliberately ignored: a gauge that last
+            // changed before the window still has that value throughout the window.
+            var latest = await Collection
+                .Find(BuildMetricRangeFilter(entity, metric, int.MinValue, maxDayUtc))
+                .SortByDescending(d => d.UtcDay)
+                .Limit(1)
+                .FirstOrDefaultAsync();
+            return latest?.Value ?? 0;
         }
 
         var docs = await Collection.Find(BuildMetricRangeFilter(entity, metric, minDayUtc, maxDayUtc)).ToListAsync();
@@ -134,8 +152,9 @@ public class MetricsStore : IMetricsStore, ISingletonDependency
                 continue;
             }
 
-            foreach (var (category, value) in doc.Breakdown)
+            foreach (var (field, value) in doc.Breakdown)
             {
+                var category = DecodeBreakdownKey(field);
                 if (!byCategory.TryGetValue(category, out var points))
                 {
                     points = [];
@@ -257,16 +276,18 @@ public class MetricsStore : IMetricsStore, ISingletonDependency
         return new TopEntities(posters, admins, inviters, userIds);
     }
 
-    private async Task<Dictionary<long, long>> AggregateBreakdownAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc)
+    public async Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc)
     {
+        await EnsureIndexesAsync();
+
         if (maxDayUtc < minDayUtc)
         {
-            return new Dictionary<long, long>();
+            return new Dictionary<string, long>(StringComparer.Ordinal);
         }
 
         var docs = await Collection.Find(BuildMetricRangeFilter(entity, metric, minDayUtc, maxDayUtc)).ToListAsync();
 
-        var totals = new Dictionary<long, long>();
+        var totals = new Dictionary<string, long>(StringComparer.Ordinal);
         foreach (var doc in docs)
         {
             if (doc.Breakdown == null)
@@ -274,18 +295,106 @@ public class MetricsStore : IMetricsStore, ISingletonDependency
                 continue;
             }
 
-            foreach (var (category, value) in doc.Breakdown)
+            foreach (var (field, value) in doc.Breakdown)
             {
-                if (!long.TryParse(category, out var userId))
-                {
-                    continue;
-                }
-
-                totals[userId] = totals.GetValueOrDefault(userId) + value;
+                var category = DecodeBreakdownKey(field);
+                totals[category] = totals.GetValueOrDefault(category) + value;
             }
         }
 
         return totals;
+    }
+
+    private async Task<Dictionary<long, long>> AggregateBreakdownAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc)
+    {
+        var byCategory = await GetBreakdownTotalsAsync(entity, metric, minDayUtc, maxDayUtc);
+
+        var totals = new Dictionary<long, long>();
+        foreach (var (category, value) in byCategory)
+        {
+            if (!long.TryParse(category, out var userId))
+            {
+                continue;
+            }
+
+            totals[userId] = totals.GetValueOrDefault(userId) + value;
+        }
+
+        return totals;
+    }
+
+    /// <summary>
+    /// Escapes a breakdown category so it is a legal MongoDB field name. '.', '$' and the null byte are
+    /// percent-encoded; the inverse (<see cref="DecodeBreakdownKey"/>) restores the original category when
+    /// the breakdown is read back, so encoding is invisible to callers.
+    /// </summary>
+    internal static string EncodeBreakdownKey(string category)
+    {
+        if (string.IsNullOrEmpty(category))
+        {
+            return "%00";
+        }
+
+        if (category.IndexOfAny(['%', '.', '$', '\0']) < 0)
+        {
+            return category;
+        }
+
+        var builder = new StringBuilder(category.Length + 8);
+        foreach (var ch in category)
+        {
+            switch (ch)
+            {
+                case '%': builder.Append("%25"); break;
+                case '.': builder.Append("%2E"); break;
+                case '$': builder.Append("%24"); break;
+                case '\0': builder.Append("%00"); break;
+                default: builder.Append(ch); break;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>Inverse of <see cref="EncodeBreakdownKey"/>.</summary>
+    internal static string DecodeBreakdownKey(string field)
+    {
+        if (field.IndexOf('%') < 0)
+        {
+            return field;
+        }
+
+        var builder = new StringBuilder(field.Length);
+        for (var i = 0; i < field.Length; i++)
+        {
+            if (field[i] == '%' && i + 2 < field.Length)
+            {
+                var code = field.Substring(i + 1, 2);
+                var decoded = code switch
+                {
+                    "25" => '%',
+                    "2E" => '.',
+                    "24" => '$',
+                    "00" => '\0',
+                    _ => '￿'
+                };
+
+                if (decoded != '￿')
+                {
+                    if (decoded != '\0')
+                    {
+                        builder.Append(decoded);
+                    }
+
+                    i += 2;
+                    continue;
+                }
+            }
+
+            builder.Append(field[i]);
+        }
+
+        return builder.ToString();
     }
 
     private static string BuildId(StatsEntityKey entity, string metric, int utcDay) =>

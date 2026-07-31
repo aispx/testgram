@@ -12,16 +12,16 @@ namespace MyTelegram.Messenger.Services.Stats.Ingestion;
 /// contribute to channel/supergroup statistics.</para>
 ///
 /// <para><b>Views:</b> per-view increments flow through
-/// <c>MessageAggregate.MessageViewsIncrementedEvent</c>, which carries only the numeric message id and the
-/// new view total — it does not carry the owning channel/peer, so a view increment cannot be attributed to
-/// a metrics entity. This subscriber therefore records the post's initial view count at creation time; the
-/// running per-view increments are a documented ingestion gap pending enrichment of the view event with
-/// its owner peer.</para>
+/// <c>MessageAggregate.MessageViewsIncrementedEvent2</c>, which carries the owning peer, so each view is
+/// attributed to both the channel and the individual post (with an hour-of-day breakdown feeding the
+/// top-hours graph). The legacy <c>MessageViewsIncrementedEvent</c> lacked the owner; the post's initial
+/// view count is still captured at creation time.</para>
 /// </summary>
 public sealed class MessageMetricsSubscriber(IMetricsStore metricsStore)
     : ISubscribeSynchronousTo<MessageAggregate, MessageId, OutboxMessageCreatedEvent>,
         ISubscribeSynchronousTo<MessageAggregate, MessageId, MessageForwardedEvent>,
-        ISubscribeSynchronousTo<MessageAggregate, MessageId, MessageReactionsUpdatedEvent>
+        ISubscribeSynchronousTo<MessageAggregate, MessageId, MessageReactionsUpdatedEvent>,
+        ISubscribeSynchronousTo<MessageAggregate, MessageId, MessageViewsIncrementedEvent2>
 {
     public async Task HandleAsync(
         IDomainEvent<MessageAggregate, MessageId, OutboxMessageCreatedEvent> domainEvent,
@@ -41,14 +41,24 @@ public sealed class MessageMetricsSubscriber(IMetricsStore metricsStore)
         // Channel post/message count (used for supergroup "messages" and post enumeration).
         await metricsStore.RecordAsync(channelEntity, StatsMetricNames.Messages, utcDay, 1);
 
+        // Hour-of-day / weekday activity breakdowns (top-hours and weekdays graphs) and the combined
+        // supergroup activity counter.
+        var eventTime = item.Date > 0 ? item.Date : StatsIngestionTime.CurrentUnixTime();
+        await metricsStore.RecordAsync(channelEntity, StatsMetricNames.MessagesByHour, utcDay, 1,
+            new Dictionary<string, long> { [HourKey(eventTime)] = 1 });
+        await metricsStore.RecordAsync(channelEntity, StatsMetricNames.MessagesByWeekday, utcDay, 1,
+            new Dictionary<string, long> { [WeekdayKey(eventTime)] = 1 });
+
         // Per-message post date gauge (enables newest-first recent-post ordering).
         await metricsStore.RecordAsync(messageEntity, StatsMetricNames.PostDate, utcDay,
             item.Date > 0 ? item.Date : StatsIngestionTime.CurrentUtcDay());
 
-        // Initial view count captured at post time (see class remarks on the per-view gap).
+        // Initial view count captured at post time, recorded against both entities so the channel total
+        // stays equal to the sum of its posts' views (subsequent views arrive via the view event).
         if (item.Views is > 0)
         {
             await metricsStore.RecordAsync(messageEntity, StatsMetricNames.Views, utcDay, item.Views.Value);
+            await metricsStore.RecordAsync(channelEntity, StatsMetricNames.Views, utcDay, item.Views.Value);
         }
 
         // Top-poster breakdown keyed by the posting user id (supergroup top posters).
@@ -120,10 +130,42 @@ public sealed class MessageMetricsSubscriber(IMetricsStore metricsStore)
             emotionBreakdown[emotion] = emotionBreakdown.GetValueOrDefault(emotion) + 1;
         }
 
-        await metricsStore.RecordAsync(channelEntity, StatsMetricNames.Reactions, utcDay, actorReactions.Count);
+        await metricsStore.RecordAsync(channelEntity, StatsMetricNames.Reactions, utcDay, actorReactions.Count,
+            emotionBreakdown);
         await metricsStore.RecordAsync(messageEntity, StatsMetricNames.Reactions, utcDay, actorReactions.Count,
             emotionBreakdown);
     }
+
+    public async Task HandleAsync(
+        IDomainEvent<MessageAggregate, MessageId, MessageViewsIncrementedEvent2> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        var e = domainEvent.AggregateEvent;
+        if (e.OwnerPeer.PeerType != PeerType.Channel)
+        {
+            return;
+        }
+
+        var channelId = e.OwnerPeer.PeerId;
+        var now = StatsIngestionTime.CurrentUnixTime();
+        var utcDay = StatsIngestionTime.ToUtcDay(now);
+        var channelEntity = new StatsEntityKey(StatsEntityType.Channel, channelId, 0);
+        var messageEntity = new StatsEntityKey(StatsEntityType.Message, channelId, e.MessageId);
+
+        // One event per successfully deduplicated viewer (ChannelMessageViewsAppService); attribute the
+        // view to the channel (aggregate views + hour bucket) and the individual post.
+        await metricsStore.RecordAsync(channelEntity, StatsMetricNames.Views, utcDay, 1);
+        await metricsStore.RecordAsync(channelEntity, StatsMetricNames.ViewsByHour, utcDay, 1,
+            new Dictionary<string, long> { [HourKey(now)] = 1 });
+        await metricsStore.RecordAsync(messageEntity, StatsMetricNames.Views, utcDay, 1);
+    }
+
+    /// <summary>Hour-of-day breakdown key ("0".."23", UTC) for a Unix-second timestamp.</summary>
+    private static string HourKey(long unixTime) => (unixTime % 86_400 / 3_600).ToString();
+
+    /// <summary>Weekday breakdown key ("Monday".."Sunday", UTC) for a Unix-second timestamp.</summary>
+    private static string WeekdayKey(long unixTime) =>
+        DateTimeOffset.FromUnixTimeSeconds(unixTime).UtcDateTime.DayOfWeek.ToString();
 
     // Groups a reaction into an emotion category key for reactions-by-emotion breakdowns.
     private static string GetEmotionKey(Reaction reaction)

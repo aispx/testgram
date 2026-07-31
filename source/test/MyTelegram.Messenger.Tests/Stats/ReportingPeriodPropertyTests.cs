@@ -115,6 +115,9 @@ public class ReportingPeriodPropertyTests
         public Task<IReadOnlyList<CategorySeries>> GetCategorySeriesAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
             throw new NotSupportedException("Not exercised by Property 16.");
 
+        public Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
+            throw new NotSupportedException("Not exercised by Property 16.");
+
         public Task<IReadOnlyList<PostInteraction>> GetRecentPostInteractionsAsync(long channelId, int max = 100) =>
             throw new NotSupportedException("Not exercised by Property 16.");
 

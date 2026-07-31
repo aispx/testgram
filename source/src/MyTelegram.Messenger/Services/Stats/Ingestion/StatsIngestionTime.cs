@@ -33,6 +33,9 @@ public static class StatsIngestionTime
     /// <summary>Returns the current UTC day (<c>00:00:00 UTC</c> Unix seconds).</summary>
     public static int CurrentUtcDay() => ToUtcDay(DateTime.UtcNow.ToTimestamp());
 
+    /// <summary>Returns the current Unix-second timestamp (used for hour-of-day bucketing).</summary>
+    public static long CurrentUnixTime() => DateTime.UtcNow.ToTimestamp();
+
     // Non-negative modulo so timestamps before the epoch still bucket to the correct day boundary.
     private static long Modulo(long value, long modulus)
     {

@@ -25,6 +25,7 @@ public class MessageReadModel : IMessageReadModel,
     IAmReadModelFor<MessageAggregate, MessageId, MessageUnpinnedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessagePinnedUpdatedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageViewsIncrementedEvent>,
+    IAmReadModelFor<MessageAggregate, MessageId, MessageViewsIncrementedEvent2>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageReactionsUpdatedEvent>
 {
     public int Date { get; private set; }
@@ -262,6 +263,16 @@ public class MessageReadModel : IMessageReadModel,
     public Task ApplyAsync(
         IReadModelContext context,
         IDomainEvent<MessageAggregate, MessageId, MessageViewsIncrementedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        Views = domainEvent.AggregateEvent.Views;
+
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(
+        IReadModelContext context,
+        IDomainEvent<MessageAggregate, MessageId, MessageViewsIncrementedEvent2> domainEvent,
         CancellationToken cancellationToken)
     {
         Views = domainEvent.AggregateEvent.Views;

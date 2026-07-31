@@ -73,7 +73,7 @@ public class ChannelMessageViewsAppService(
         {
             try
             {
-                var command = new IncrementViewsCommand(MessageId.Create(channelId, messageId));
+                var command = new IncrementViewsCommand2(MessageId.Create(channelId, messageId));
                 await commandBus.PublishAsync(command);
             }
             catch (Exception ex)

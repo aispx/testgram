@@ -101,6 +101,33 @@ public class MetricsStoreEdgeCaseTests
     }
 
     [Fact]
+    public void Aggregate_of_a_gauge_returns_the_latest_snapshot_not_the_sum()
+    {
+        var store = new InMemoryMetricsStore();
+        var entity = new StatsEntityKey(StatsEntityType.Channel, OwnerPeerId: 100, ItemId: 0);
+
+        var day0 = Day2023Aug01;
+        var day2 = Day2023Aug01 + 2 * SecondsPerDay;
+
+        // Two absolute follower-count snapshots; summing them (23 + 25) would be wrong — the range's
+        // value is the most recent snapshot.
+        store.RecordAsync(entity, StatsMetricNames.Followers, day0, 23).GetAwaiter().GetResult();
+        store.RecordAsync(entity, StatsMetricNames.Followers, day2, 25).GetAwaiter().GetResult();
+
+        var aggregate = store.AggregateAsync(entity, StatsMetricNames.Followers, day0, day2)
+            .GetAwaiter().GetResult();
+
+        aggregate.ShouldBe(25);
+
+        // A range starting after the last snapshot still sees it: an absolute value persists.
+        var later = store.AggregateAsync(
+                entity, StatsMetricNames.Followers, day2 + SecondsPerDay, day2 + 3 * SecondsPerDay)
+            .GetAwaiter().GetResult();
+
+        later.ShouldBe(25);
+    }
+
+    [Fact]
     public void Aggregate_returns_zero_when_no_metric_exists_for_any_day_in_the_range()
     {
         var store = new InMemoryMetricsStore();
@@ -228,6 +255,19 @@ public class MetricsStoreEdgeCaseTests
                 return Task.FromResult(0L);
             }
 
+            if (StatsMetricNames.IsGauge(metric))
+            {
+                // Mirrors production: latest snapshot at or before the range end (lower bound ignored).
+                var latest = _values
+                    .Where(kv => kv.Key.Entity.Equals(entity)
+                                 && kv.Key.Metric == metric
+                                 && kv.Key.UtcDay <= maxDayUtc)
+                    .OrderBy(kv => kv.Key.UtcDay)
+                    .Select(kv => kv.Value)
+                    .LastOrDefault();
+                return Task.FromResult(latest);
+            }
+
             var sum = _values
                 .Where(kv => kv.Key.Entity.Equals(entity)
                              && kv.Key.Metric == metric
@@ -242,6 +282,9 @@ public class MetricsStoreEdgeCaseTests
             throw new NotSupportedException("Not exercised by Task 3.7.");
 
         public Task<IReadOnlyList<CategorySeries>> GetCategorySeriesAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
+            throw new NotSupportedException("Not exercised by Task 3.7.");
+
+        public Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
             throw new NotSupportedException("Not exercised by Task 3.7.");
 
         public Task<IReadOnlyList<PostInteraction>> GetRecentPostInteractionsAsync(long channelId, int max = 100) =>

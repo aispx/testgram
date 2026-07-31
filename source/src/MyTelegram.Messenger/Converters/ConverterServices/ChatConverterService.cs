@@ -372,6 +372,10 @@ public class ChatConverterService(
                 // creator/admins that are allowed to open it.
                 tChannelFull.CanViewStarsRevenue = true;
                 tChannelFull.CanViewRevenue = true;
+
+                // Same gate as StatsAccessController.ResolveChannelForStatsAsync: without this flag
+                // official clients never surface the Statistics entry point at all.
+                tChannelFull.CanViewStats = true;
             }
         }
         if (channelFullReadModel.RecentRequesters?.Count > 0 &&

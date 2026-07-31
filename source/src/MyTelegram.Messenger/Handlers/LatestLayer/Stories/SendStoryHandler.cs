@@ -1,6 +1,8 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services;
+using MyTelegram.Messenger.Services.Stats;
+using MyTelegram.Messenger.Services.Stats.Ingestion;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Stories;
@@ -10,7 +12,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 internal sealed class SendStoryHandler(
     IIdGenerator idGenerator,
     IMongoDatabase mongoDatabase,
-    IMediaHelper mediaHelper)
+    IMediaHelper mediaHelper,
+    IMetricsStore metricsStore)
     : RpcResultObjectHandler<RequestSendStory, IUpdates>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
@@ -135,6 +138,20 @@ internal sealed class SendStoryHandler(
         }
 
         await _storyCollection.InsertOneAsync(storyDocument);
+
+        // Stats ingestion: the story's post date (gauge) enables newest-first ordering in
+        // recent-post interactions and marks the story entity as existing for stats.getStoryStats;
+        // the channel-level story count is the denominator of the per-story means.
+        var storyPostTime = (int)storyDocument.Date;
+        var storyUtcDay = StatsIngestionTime.ToUtcDayOrNow(storyPostTime);
+        await metricsStore.RecordAsync(
+            new StatsEntityKey(StatsEntityType.Story, ownerPeerId, storyId), StatsMetricNames.PostDate,
+            storyUtcDay, storyPostTime > 0 ? storyPostTime : StatsIngestionTime.CurrentUnixTime());
+        if (ownerPeerType == StoryHelper.PeerTypeChannel)
+        {
+            await metricsStore.RecordAsync(
+                new StatsEntityKey(StatsEntityType.Channel, ownerPeerId, 0), StatsMetricNames.StoryPosts, storyUtcDay, 1);
+        }
 
         var storyItem = StoryHelper.ConvertToStoryItem(storyDocument, input.UserId);
 

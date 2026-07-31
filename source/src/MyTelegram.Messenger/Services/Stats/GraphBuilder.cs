@@ -10,6 +10,10 @@ namespace MyTelegram.Messenger.Services.Stats;
 /// or dark palette keyed by <see cref="GraphSeries.ColorKey"/>.
 /// </summary>
 /// <remarks>
+/// A graph whose every series is entirely zero is likewise emitted as a <c>statsGraphError</c>: it would
+/// render as an empty card, and <c>DoubleLinearChartData</c> scales one series against the other's maximum
+/// (a zero maximum yields an infinite factor).
+///
 /// Wire format (verified against the reference clients — DrKLO <c>ChartData</c>, telegram-tt/tweb chart
 /// parsers, tdlib):
 /// <code>
@@ -21,8 +25,11 @@ namespace MyTelegram.Messenger.Services.Stats;
 /// }
 /// </code>
 /// The first column id is always <c>"x"</c> with Unix-millisecond timestamps in strictly ascending order,
-/// followed by one array per data series. An empty series yields the <c>x</c> column with zero timestamps
-/// and each data column with zero values — still a <c>statsGraph</c>, never a <c>statsGraphError</c>.
+/// followed by one array per data series. Client chart parsers (DrKLO <c>ChartData.measure</c>,
+/// <c>StackBarChartData</c>) require at least 2 x points and at least one aligned data column and crash
+/// otherwise, so <see cref="BuildInlineAsync"/> emits a <c>statsGraphError</c> for any spec with fewer
+/// than 2 x points, no data series, or a series whose length differs from the x axis.
+/// <see cref="SerializeGraphJson"/> itself stays total: it serializes any well-formed spec verbatim.
 /// </remarks>
 public sealed class GraphBuilder(IAsyncGraphStore asyncGraphStore) : IGraphBuilder, ISingletonDependency
 {
@@ -52,10 +59,32 @@ public sealed class GraphBuilder(IAsyncGraphStore asyncGraphStore) : IGraphBuild
 
     private const string DefaultColorKey = "default";
 
+    /// <summary>User-visible text shown in the chart slot when a graph has too little data to render.</summary>
+    private const string NoDataError = "Not enough data to display this graph.";
+
     public async Task<IStatsGraph> BuildInlineAsync(GraphSpec spec, bool dark, string snapshotId, int nowUnix)
     {
         try
         {
+            // Client chart parsers construct the chart before validating it and crash on x.length < 2,
+            // zero data columns, or columns misaligned with the x axis — never wrap such a spec into a
+            // statsGraph.
+            var xCount = spec?.XAxisMillis?.Count ?? 0;
+            if (xCount < 2
+                || spec!.Series is not { Count: > 0 }
+                || spec.Series.Any(s => s?.Values is null || s.Values.Count != xCount))
+            {
+                return new TStatsGraphError { Error = NoDataError };
+            }
+
+            // An all-zero graph carries no information: clients render an empty card, and
+            // DoubleLinearChartData divides the series maxima by each other (a zero series yields
+            // Infinity scaling). Report "no data" instead, which clients render as explanatory text.
+            if (spec.Series.All(s => s.Values.All(v => v == 0)))
+            {
+                return new TStatsGraphError { Error = NoDataError };
+            }
+
             var json = SerializeGraphJson(spec, dark);
             var graph = new TStatsGraph
             {

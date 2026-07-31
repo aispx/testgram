@@ -13,6 +13,7 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
     IApply<InboxMessageHasReadEvent>,
     //IApply<ReplyToMessageEvent>,
     IApply<MessageViewsIncrementedEvent>,
+    IApply<MessageViewsIncrementedEvent2>,
     //IApply<UpdatePinnedMessageStartedEvent>,
     IApply<InboxMessagePinnedUpdatedEvent>,
     IApply<OutboxMessagePinnedUpdatedEvent>,
@@ -130,6 +131,11 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
     }
 
     public void Apply(MessageViewsIncrementedEvent aggregateEvent)
+    {
+        MessageItem = MessageItem with { Views = aggregateEvent.Views };
+    }
+
+    public void Apply(MessageViewsIncrementedEvent2 aggregateEvent)
     {
         MessageItem = MessageItem with { Views = aggregateEvent.Views };
     }

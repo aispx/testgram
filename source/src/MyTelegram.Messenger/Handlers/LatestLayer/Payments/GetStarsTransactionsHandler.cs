@@ -1,10 +1,15 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Converters.ConverterServices;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Schema.Payments;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
-internal sealed class GetStarsTransactionsHandler(IMongoDatabase mongoDatabase, IPeerHelper peerHelper)
+internal sealed class GetStarsTransactionsHandler(
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper,
+    IUserConverterService userConverterService,
+    IChatConverterService chatConverterService)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetStarsTransactions, IStarsStatus>
 {
     protected override async Task<IStarsStatus> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetStarsTransactions obj)
@@ -34,13 +39,15 @@ internal sealed class GetStarsTransactionsHandler(IMongoDatabase mongoDatabase, 
             var chDocs = await mongoDatabase.GetCollection<ChannelRevenueTransactionDocument>(ChannelRevenueHelper.TransactionCollection)
                 .Find(chFilter).Sort(chSort).Limit(pageSize).ToListAsync();
             var chNext = chDocs.Count == pageSize ? chDocs[^1].Id : null;
+            var chHistory = chDocs.Select(ChannelRevenueHelper.ToTl).Cast<IStarsTransaction>().ToList();
+            var (chChats, chUsers) = await StarsTransactionPeerHelper.ResolveAsync(input, chHistory, userConverterService, chatConverterService);
             return new TStarsStatus
             {
                 Balance = ChannelRevenueHelper.BuildAmount(currency, current),
-                History = new TVector<IStarsTransaction>(chDocs.Select(ChannelRevenueHelper.ToTl).Cast<IStarsTransaction>().ToList()),
+                History = new TVector<IStarsTransaction>(chHistory),
                 NextOffset = chNext,
-                Chats = new TVector<IChat>(),
-                Users = new TVector<IUser>()
+                Chats = chChats,
+                Users = chUsers
             };
         }
 
@@ -65,13 +72,15 @@ internal sealed class GetStarsTransactionsHandler(IMongoDatabase mongoDatabase, 
 
             var tonNextOffset = tonDocs.Count == pageSize ? tonDocs.Last().Id : null;
 
+            var tonHistory = tonDocs.Select(TonBalanceHelper.ToTl).ToList();
+            var (tonChats, tonUsers) = await StarsTransactionPeerHelper.ResolveAsync(input, tonHistory, userConverterService, chatConverterService);
             return new TStarsStatus
             {
                 Balance = new TStarsTonAmount { Amount = tonBalance },
-                History = new TVector<IStarsTransaction>(tonDocs.Select(TonBalanceHelper.ToTl).ToList()),
+                History = new TVector<IStarsTransaction>(tonHistory),
                 NextOffset = tonNextOffset,
-                Chats = new TVector<IChat>(),
-                Users = new TVector<IUser>()
+                Chats = tonChats,
+                Users = tonUsers
             };
         }
 
@@ -100,12 +109,15 @@ internal sealed class GetStarsTransactionsHandler(IMongoDatabase mongoDatabase, 
         var history = docs.Select(StarsBalanceHelper.ToTl).ToList();
         await StarsBalanceHelper.HydrateGiftsAsync(mongoDatabase, history, docs.Select(d => d.StargiftSlug).ToList());
 
+        var selfHistory = history.Cast<IStarsTransaction>().ToList();
+        var (selfChats, selfUsers) = await StarsTransactionPeerHelper.ResolveAsync(input, selfHistory, userConverterService, chatConverterService);
         return new TStarsStatus
         {
             Balance = new TStarsAmount { Amount = balance },
-            History = new TVector<IStarsTransaction>(history.Cast<IStarsTransaction>().ToList()),
+            History = new TVector<IStarsTransaction>(selfHistory),
             NextOffset = nextOffset,
-            Chats = new TVector<IChat>(), Users = new TVector<IUser>()
+            Chats = selfChats,
+            Users = selfUsers
         };
     }
 }

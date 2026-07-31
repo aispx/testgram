@@ -22,8 +22,9 @@ namespace MyTelegram.Messenger.Tests.Stats;
 /// The property drives the real <see cref="StatsService.GetBroadcastStatsAsync"/> end to end over an
 /// in-memory Metrics_Store seeded with per-day <c>notify_on</c> and <c>muted</c> gauge values (the two
 /// families that make up the subscriber count: <c>total = notify_on + muted</c>). The expected
-/// notifications-enabled and subscriber counts are computed independently from the seeded fixture data over
-/// the Period the store reports, so the assertion checks the service's wiring
+/// notifications-enabled and subscriber counts are computed independently from the seeded fixture data —
+/// each gauge contributes its most recent snapshot at or before the Period end (gauges are absolute
+/// values, never summed across days) — so the assertion checks the service's wiring
 /// (<c>part = notify_on</c>, <c>total = notify_on + muted</c>) rather than re-deriving it from the same
 /// aggregation call. Generated days are drawn from a window that always lands inside the reported Period so
 /// non-trivial counts flow through, while the empty-data case exercises the <c>{0,0}</c> Period.
@@ -65,10 +66,11 @@ public class EnabledNotificationsPercentagePropertyTests
             .GetResult();
 
         // Compute the expected counts independently from the seeded fixture over the Period the store
-        // reports (max_date = most recent recorded day, min_date = max_date - window*86400).
+        // reports (max_date = most recent recorded day, min_date = max_date - window*86400). notify_on and
+        // muted are gauges: the range's value is the most recent snapshot at or before the Period end.
         var period = store.GetPeriodAsync(channel, DefaultReportingWindowDays).GetAwaiter().GetResult();
-        var expectedNotifyOn = SumWithinPeriod(testCase.NotifyOnPoints, period);
-        var expectedMuted = SumWithinPeriod(testCase.MutedPoints, period);
+        var expectedNotifyOn = LatestSnapshotAtOrBefore(testCase.NotifyOnPoints, period.MaxDate);
+        var expectedMuted = LatestSnapshotAtOrBefore(testCase.MutedPoints, period.MaxDate);
         var expectedSubscribers = expectedNotifyOn + expectedMuted;
 
         var percent = result.EnabledNotifications.ShouldBeOfType<TStatsPercentValue>();
@@ -80,10 +82,12 @@ public class EnabledNotificationsPercentagePropertyTests
         percent.Total.ShouldBe((double)expectedSubscribers);
     }
 
-    private static long SumWithinPeriod(IReadOnlyList<DailyMetricPointFixture> points, StatsDateRange period) =>
+    private static long LatestSnapshotAtOrBefore(IReadOnlyList<DailyMetricPointFixture> points, int maxDay) =>
         points
-            .Where(p => p.UtcDay >= period.MinDate && p.UtcDay <= period.MaxDate)
-            .Sum(p => p.Value);
+            .Where(p => p.UtcDay <= maxDay)
+            .OrderBy(p => p.UtcDay)
+            .Select(p => p.Value)
+            .LastOrDefault();
 
     private static StatsService CreateService(IMetricsStore store)
     {
@@ -115,8 +119,9 @@ public class EnabledNotificationsPercentagePropertyTests
     /// <summary>
     /// An in-memory <see cref="IMetricsStore"/> mirroring the production <see cref="MetricsStore"/>
     /// record/read semantics without MongoDB. Counter metrics accumulate via <c>$inc</c>, gauge metrics
-    /// (including <c>notify_on</c> and <c>muted</c>) use set-semantics; <see cref="AggregateAsync"/> sums the
-    /// per-day values across the inclusive range with missing days treated as 0; <see cref="GetPeriodAsync"/>
+    /// (including <c>notify_on</c> and <c>muted</c>) use set-semantics; <see cref="AggregateAsync"/> sums
+    /// counter values across the inclusive range (missing days are 0) and returns the most recent snapshot
+    /// at or before the range end for gauges; <see cref="GetPeriodAsync"/>
     /// reports <c>{0,0}</c> when no metric exists and otherwise <c>max_date</c> = most recent recorded day,
     /// <c>min_date = max_date - window*86400</c>. The series/list read paths return empty results (the
     /// broadcast graphs and recent-post list are populated by the service but not asserted by Property 3).
@@ -148,6 +153,19 @@ public class EnabledNotificationsPercentagePropertyTests
             if (maxDayUtc < minDayUtc)
             {
                 return Task.FromResult(0L);
+            }
+
+            if (StatsMetricNames.IsGauge(metric))
+            {
+                // Mirrors production: latest snapshot at or before the range end (lower bound ignored).
+                var latest = _values
+                    .Where(kv => kv.Key.Entity.Equals(entity)
+                                 && kv.Key.Metric == metric
+                                 && kv.Key.UtcDay <= maxDayUtc)
+                    .OrderBy(kv => kv.Key.UtcDay)
+                    .Select(kv => kv.Value)
+                    .LastOrDefault();
+                return Task.FromResult(latest);
             }
 
             var sum = _values
@@ -199,6 +217,9 @@ public class EnabledNotificationsPercentagePropertyTests
 
         public Task<IReadOnlyList<CategorySeries>> GetCategorySeriesAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
             Task.FromResult<IReadOnlyList<CategorySeries>>([]);
+
+        public Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
+            Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
 
         public Task<IReadOnlyList<PostInteraction>> GetRecentPostInteractionsAsync(long channelId, int max = 100) =>
             Task.FromResult<IReadOnlyList<PostInteraction>>([]);

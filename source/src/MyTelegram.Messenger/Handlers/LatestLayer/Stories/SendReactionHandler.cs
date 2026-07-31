@@ -1,12 +1,14 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stats;
+using MyTelegram.Messenger.Services.Stats.Ingestion;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Stories;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 
-internal sealed class SendReactionHandler(IMongoDatabase mongoDatabase)
+internal sealed class SendReactionHandler(IMongoDatabase mongoDatabase, IMetricsStore metricsStore)
     : RpcResultObjectHandler<MyTelegram.Schema.Stories.RequestSendReaction, IUpdates>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
@@ -99,6 +101,26 @@ internal sealed class SendReactionHandler(IMongoDatabase mongoDatabase)
             {
                 var update = Builders<StoryDocument>.Update.Inc(s => s.ReactionsCount, 1);
                 await _storyCollection.UpdateOneAsync(filter, update);
+
+                // Stats ingestion: per-story reactions with an emotion breakdown (reactions_by_emotion
+                // graph) and, for channel-owned stories, the channel-level story-reactions counter.
+                // Removals are not decremented (activity counter semantics, same as message reactions).
+                var emotion = obj.Reaction switch
+                {
+                    TReactionEmoji e => e.Emoticon,
+                    TReactionCustomEmoji c => $"custom:{c.DocumentId}",
+                    _ => "unknown"
+                };
+                var utcDay = StatsIngestionTime.CurrentUtcDay();
+                await metricsStore.RecordAsync(
+                    new StatsEntityKey(StatsEntityType.Story, peerId, obj.StoryId), StatsMetricNames.Reactions,
+                    utcDay, 1, new Dictionary<string, long> { [emotion] = 1 });
+                if (peerType == StoryHelper.PeerTypeChannel)
+                {
+                    await metricsStore.RecordAsync(
+                        new StatsEntityKey(StatsEntityType.Channel, peerId, 0), StatsMetricNames.StoryReactions,
+                        utcDay, 1, new Dictionary<string, long> { [emotion] = 1 });
+                }
             }
         }
 

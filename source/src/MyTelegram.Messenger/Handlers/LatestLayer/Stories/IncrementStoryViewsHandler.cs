@@ -1,12 +1,14 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stats;
+using MyTelegram.Messenger.Services.Stats.Ingestion;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Stories;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 
-internal sealed class IncrementStoryViewsHandler(IMongoDatabase mongoDatabase)
+internal sealed class IncrementStoryViewsHandler(IMongoDatabase mongoDatabase, IMetricsStore metricsStore)
     : RpcResultObjectHandler<RequestIncrementStoryViews, IBool>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
@@ -58,6 +60,17 @@ internal sealed class IncrementStoryViewsHandler(IMongoDatabase mongoDatabase)
                     { "date", currentTime }
                 };
                 await _storyViewsCollection.InsertOneAsync(viewDoc);
+
+                // Stats ingestion: per-story views series (stats.getStoryStats) and, for channel-owned
+                // stories, the channel-level story-views counter.
+                var utcDay = StatsIngestionTime.ToUtcDay(currentTime);
+                await metricsStore.RecordAsync(
+                    new StatsEntityKey(StatsEntityType.Story, peerId, storyId), StatsMetricNames.Views, utcDay, 1);
+                if (peerType == StoryHelper.PeerTypeChannel)
+                {
+                    await metricsStore.RecordAsync(
+                        new StatsEntityKey(StatsEntityType.Channel, peerId, 0), StatsMetricNames.StoryViews, utcDay, 1);
+                }
             }
         }
 

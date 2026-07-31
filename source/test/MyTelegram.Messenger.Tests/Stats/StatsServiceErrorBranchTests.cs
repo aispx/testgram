@@ -165,6 +165,14 @@ public class StatsServiceErrorBranchTests
         stats.Period.MinDate.ShouldBe(0);
         stats.Period.MaxDate.ShouldBe(0);
         stats.RecentPostsInteractions.Count.ShouldBe(0);
+
+        // Graphs never degenerate into client-crashing payloads. With no metric at all every graph is
+        // reported as a statsGraphError: series graphs would carry only zeros (an empty card, and an
+        // infinite scaling factor in the client's two-line charts) and category graphs have no series.
+        stats.GrowthGraph.ShouldBeOfType<TStatsGraphError>();
+        stats.FollowersGraph.ShouldBeOfType<TStatsGraphError>();
+        stats.ViewsBySourceGraph.ShouldBeOfType<TStatsGraphError>();
+        stats.LanguagesGraph.ShouldBeOfType<TStatsGraphError>();
     }
 
     [Fact]
@@ -321,6 +329,9 @@ public class StatsServiceErrorBranchTests
 
         public Task<IReadOnlyList<CategorySeries>> GetCategorySeriesAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
             Task.FromResult<IReadOnlyList<CategorySeries>>([]);
+
+        public Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
+            Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
 
         public Task<IReadOnlyList<PostInteraction>> GetRecentPostInteractionsAsync(long channelId, int max = 100) =>
             Task.FromResult<IReadOnlyList<PostInteraction>>([]);

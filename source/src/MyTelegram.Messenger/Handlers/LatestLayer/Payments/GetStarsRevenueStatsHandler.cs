@@ -1,6 +1,5 @@
 using MyTelegram.Schema.Payments;
 
-using System.Text.Json;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.StarGifts;
 
@@ -15,12 +14,19 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetStarsRevenueStatsHandler(IMongoDatabase mongoDatabase, IPeerHelper peerHelper, IQueryProcessor queryProcessor)
+internal sealed class GetStarsRevenueStatsHandler(
+    IMongoDatabase mongoDatabase,
+    IPeerHelper peerHelper,
+    IQueryProcessor queryProcessor,
+    IGraphBuilder graphBuilder,
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetStarsRevenueStats, MyTelegram.Schema.Payments.IStarsRevenueStats>
 {
     protected override async Task<MyTelegram.Schema.Payments.IStarsRevenueStats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetStarsRevenueStats obj)
     {
         var currency = obj.Ton ? ChannelRevenueHelper.TonCurrency : ChannelRevenueHelper.StarsCurrency;
+        var nowUnix = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var usdRate = obj.Ton ? options.CurrentValue.Rates.TonUsdRate : options.CurrentValue.Rates.StarsUsdRate;
 
         // Resolve target peer: inputPeerSelf = bot owner (own balance), otherwise a channel/bot
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
@@ -49,8 +55,10 @@ internal sealed class GetStarsRevenueStatsHandler(IMongoDatabase mongoDatabase, 
                     OverallRevenue = ChannelRevenueHelper.BuildAmount(currency, botOverall),
                     WithdrawalEnabled = botCurrent > 0 && (obj.Ton || botCurrent >= 1000),
                 },
-                RevenueGraph = obj.Ton ? await BuildRevenueGraphAsync(peer.PeerId, currency) : await BuildBotStarsRevenueGraphAsync(peer.PeerId),
-                UsdRate = obj.Ton ? 3.5293105 : 0.0141,
+                RevenueGraph = obj.Ton
+                    ? await BuildRevenueGraphAsync(peer.PeerId, currency, obj.Dark, nowUnix)
+                    : await BuildBotStarsRevenueGraphAsync(peer.PeerId, obj.Dark, nowUnix),
+                UsdRate = usdRate,
             };
         }
 
@@ -63,7 +71,7 @@ internal sealed class GetStarsRevenueStatsHandler(IMongoDatabase mongoDatabase, 
         var (current, overall) = await ChannelRevenueHelper.GetBalanceAsync(mongoDatabase, peerId, currency);
 
         // Build a simple last-30-days revenue graph from transactions
-        var graph = await BuildRevenueGraphAsync(peerId, currency);
+        var graph = await BuildRevenueGraphAsync(peerId, currency, obj.Dark, nowUnix);
 
         // Min withdrawal threshold (only for stars; TON has no min in client)
         var withdrawalEnabled = current > 0 && (obj.Ton || current >= 1000);
@@ -78,7 +86,7 @@ internal sealed class GetStarsRevenueStatsHandler(IMongoDatabase mongoDatabase, 
                 WithdrawalEnabled = withdrawalEnabled,
             },
             RevenueGraph = graph,
-            UsdRate = obj.Ton ? 3.5293105 : 0.0141,
+            UsdRate = usdRate,
         };
     }
 
@@ -92,51 +100,31 @@ internal sealed class GetStarsRevenueStatsHandler(IMongoDatabase mongoDatabase, 
         return docs.Sum(x => x.TryGetValue("Amount", out var amount) && amount.IsInt64 ? amount.AsInt64 : 0L);
     }
 
-    private async Task<IStatsGraph> BuildBotStarsRevenueGraphAsync(long botUserId)
+    private async Task<IStatsGraph> BuildBotStarsRevenueGraphAsync(long botUserId, bool dark, int nowUnix)
     {
-        var since = DateTime.UtcNow.AddDays(-30).ToTimestamp();
+        var since = RevenueGraphHelper.WindowStartDay(nowUnix);
         var docs = await mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("star-transactions")
             .Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", botUserId) &
                   Builders<MongoDB.Bson.BsonDocument>.Filter.Gt("Amount", 0L) &
                   Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("Date", since))
             .ToListAsync();
 
-        if (docs.Count == 0)
+        var totals = new Dictionary<long, long>();
+        foreach (var doc in docs)
         {
-            return new TStatsGraph
+            if (!doc.TryGetValue("Date", out var date) || !(date.IsInt32 || date.IsInt64))
             {
-                Json = new TDataJSON { Data = "{\"columns\":[[\"x\"],[\"y0\"]],\"types\":{\"y0\":\"line\",\"x\":\"x\"},\"names\":{\"y0\":\"Revenue\"}}" }
-            };
+                continue;
+            }
+
+            var timestamp = date.IsInt64 ? date.AsInt64 : date.AsInt32;
+            var day = timestamp - timestamp % 86400;
+            var amount = doc.TryGetValue("Amount", out var value) && value.IsInt64 ? value.AsInt64 : 0L;
+            totals[day] = totals.GetValueOrDefault(day) + amount;
         }
 
-        var byDay = docs
-            .Where(d => d.TryGetValue("Date", out var date) && (date.IsInt32 || date.IsInt64))
-            .GroupBy(d =>
-            {
-                var date = d["Date"].IsInt64 ? d["Date"].AsInt64 : d["Date"].AsInt32;
-                return date - (date % 86400);
-            })
-            .OrderBy(g => g.Key)
-            .ToList();
-        var xs = new List<long>();
-        var ys = new List<long>();
-        foreach (var g in byDay)
-        {
-            xs.Add(g.Key * 1000L);
-            ys.Add(g.Sum(x => x.TryGetValue("Amount", out var amount) && amount.IsInt64 ? amount.AsInt64 : 0L));
-        }
-
-        var dataJson = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            columns = new object[]
-            {
-                new object[] { "x" }.Concat(xs.Cast<object>()).ToArray(),
-                new object[] { "y0" }.Concat(ys.Cast<object>()).ToArray(),
-            },
-            types = new Dictionary<string, string> { ["y0"] = "line", ["x"] = "x" },
-            names = new Dictionary<string, string> { ["y0"] = "Revenue" },
-        });
-        return new TStatsGraph { Json = new TDataJSON { Data = dataJson } };
+        var spec = RevenueGraphHelper.BuildDailyRevenueSpec(totals, nowUnix);
+        return await graphBuilder.BuildInlineAsync(spec, dark, $"stars-revenue:{botUserId}:{ChannelRevenueHelper.StarsCurrency}", nowUnix);
     }
 
     private async Task<bool> IsBotOwnerAsync(long botUserId, long ownerUserId)
@@ -148,9 +136,9 @@ internal sealed class GetStarsRevenueStatsHandler(IMongoDatabase mongoDatabase, 
             .AnyAsync();
     }
 
-    private async Task<IStatsGraph> BuildRevenueGraphAsync(long peerId, string currency)
+    private async Task<IStatsGraph> BuildRevenueGraphAsync(long peerId, string currency, bool dark, int nowUnix)
     {
-        var since = DateTime.UtcNow.AddDays(-30).ToTimestamp();
+        var since = RevenueGraphHelper.WindowStartDay(nowUnix);
         var filter = Builders<ChannelRevenueTransactionDocument>.Filter.Eq(x => x.PeerId, peerId)
                      & Builders<ChannelRevenueTransactionDocument>.Filter.Eq(x => x.Currency, currency)
                      & Builders<ChannelRevenueTransactionDocument>.Filter.Gte(x => x.Date, since)
@@ -158,36 +146,14 @@ internal sealed class GetStarsRevenueStatsHandler(IMongoDatabase mongoDatabase, 
         var docs = await mongoDatabase.GetCollection<ChannelRevenueTransactionDocument>(ChannelRevenueHelper.TransactionCollection)
             .Find(filter).ToListAsync();
 
-        if (docs.Count == 0)
+        var totals = new Dictionary<long, long>();
+        foreach (var doc in docs)
         {
-            return new TStatsGraph
-            {
-                Json = new TDataJSON { Data = "{\"columns\":[[\"x\"],[\"y0\"]],\"types\":{\"y0\":\"line\",\"x\":\"x\"},\"names\":{\"y0\":\"Revenue\"}}" }
-            };
+            var day = (long)doc.Date - doc.Date % 86400;
+            totals[day] = totals.GetValueOrDefault(day) + doc.Amount;
         }
 
-        // Group by day (UTC midnight)
-        var byDay = docs.GroupBy(d => (long)d.Date - (d.Date % 86400))
-            .OrderBy(g => g.Key)
-            .ToList();
-        var xs = new List<long> { };
-        var ys = new List<long> { };
-        foreach (var g in byDay)
-        {
-            xs.Add(g.Key * 1000L);
-            ys.Add(g.Sum(x => x.Amount));
-        }
-
-        var dataJson = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            columns = new object[]
-            {
-                new object[] { "x" }.Concat(xs.Cast<object>()).ToArray(),
-                new object[] { "y0" }.Concat(ys.Cast<object>()).ToArray(),
-            },
-            types = new Dictionary<string, string> { ["y0"] = "line", ["x"] = "x" },
-            names = new Dictionary<string, string> { ["y0"] = "Revenue" },
-        });
-        return new TStatsGraph { Json = new TDataJSON { Data = dataJson } };
+        var spec = RevenueGraphHelper.BuildDailyRevenueSpec(totals, nowUnix);
+        return await graphBuilder.BuildInlineAsync(spec, dark, $"stars-revenue:{peerId}:{currency}", nowUnix);
     }
 }

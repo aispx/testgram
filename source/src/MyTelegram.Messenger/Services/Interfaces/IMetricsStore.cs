@@ -20,10 +20,18 @@ public interface IMetricsStore
     Task<StatsDateRange> GetPeriodAsync(StatsEntityKey entity, int reportingWindowDays);
 
     /// <summary>
-    /// Returns the sum of the per-day values of <paramref name="metric"/> across
-    /// <c>[minDayUtc, maxDayUtc]</c>, treating days with no metric as <c>0</c>.
+    /// Aggregates <paramref name="metric"/> across <c>[minDayUtc, maxDayUtc]</c>. Counter metrics return
+    /// the sum of the per-day values (days with no metric contribute <c>0</c>); gauge metrics
+    /// (<see cref="StatsMetricNames.IsGauge"/>) return the most recent snapshot recorded at or before
+    /// <paramref name="maxDayUtc"/> — an absolute value must not be multiplied by the number of days.
     /// </summary>
     Task<long> AggregateAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc);
+
+    /// <summary>
+    /// Returns the per-category totals of <paramref name="metric"/>'s breakdown across
+    /// <c>[minDayUtc, maxDayUtc]</c> (e.g. hour-of-day buckets, join sources, languages).
+    /// </summary>
+    Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc);
 
     /// <summary>
     /// Returns the per-day series of <paramref name="metric"/> across <c>[minDayUtc, maxDayUtc]</c>.

@@ -40,6 +40,36 @@ public static class StatsMetricNames
     /// <summary>Distinct poster count (supergroup activity).</summary>
     public const string Posters = "posters";
 
+    /// <summary>Story view count (channel-level; per-story views use <see cref="Views"/> on the story entity).</summary>
+    public const string StoryViews = "story_views";
+
+    /// <summary>Story share/forward count (channel-level).</summary>
+    public const string StoryShares = "story_shares";
+
+    /// <summary>Story reaction count (channel-level).</summary>
+    public const string StoryReactions = "story_reactions";
+
+    /// <summary>Story publication count (channel-level; denominator of the per-story means).</summary>
+    public const string StoryPosts = "story_posts";
+
+    /// <summary>Join count with a breakdown keyed by join source (invite link, search, ...).</summary>
+    public const string JoinsBySource = "joins_by_source";
+
+    /// <summary>Join count with a breakdown keyed by the joining user's language code.</summary>
+    public const string JoinsByLanguage = "joins_by_language";
+
+    /// <summary>View count with a breakdown keyed by hour-of-day ("0".."23", UTC).</summary>
+    public const string ViewsByHour = "views_by_hour";
+
+    /// <summary>Message count with a breakdown keyed by hour-of-day ("0".."23", UTC).</summary>
+    public const string MessagesByHour = "messages_by_hour";
+
+    /// <summary>Message count with a breakdown keyed by weekday name ("Monday".."Sunday", UTC).</summary>
+    public const string MessagesByWeekday = "messages_by_weekday";
+
+    /// <summary>Group activity count: messages plus member joins and leaves (supergroup actions graph).</summary>
+    public const string Actions = "actions";
+
     // --- Per-post metadata (for recent-post interactions) ---
 
     /// <summary>

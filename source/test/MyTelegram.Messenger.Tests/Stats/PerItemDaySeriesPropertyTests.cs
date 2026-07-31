@@ -292,6 +292,31 @@ public class PerItemDaySeriesPropertyTests
             return Task.FromResult<IReadOnlyList<DailyPoint>>(points);
         }
 
+        public Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc)
+        {
+            var totals = new Dictionary<string, long>(StringComparer.Ordinal);
+            if (maxDayUtc < minDayUtc)
+            {
+                return Task.FromResult<IReadOnlyDictionary<string, long>>(totals);
+            }
+
+            foreach (var kv in _cells)
+            {
+                if (!kv.Key.Entity.Equals(entity) || kv.Key.Metric != metric
+                    || kv.Key.UtcDay < minDayUtc || kv.Key.UtcDay > maxDayUtc || kv.Value.Breakdown == null)
+                {
+                    continue;
+                }
+
+                foreach (var (category, value) in kv.Value.Breakdown)
+                {
+                    totals[category] = totals.GetValueOrDefault(category) + value;
+                }
+            }
+
+            return Task.FromResult<IReadOnlyDictionary<string, long>>(totals);
+        }
+
         public Task<IReadOnlyList<CategorySeries>> GetCategorySeriesAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc)
         {
             if (maxDayUtc < minDayUtc)

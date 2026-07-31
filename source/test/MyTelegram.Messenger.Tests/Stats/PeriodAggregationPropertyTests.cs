@@ -6,23 +6,25 @@ using MyTelegram.Messenger.Services.Stats;
 namespace MyTelegram.Messenger.Tests.Stats;
 
 /// <summary>
-/// Feature: stats-api, Property 15: Period aggregates equal the sum of per-day metrics.
+/// Feature: stats-api, Property 15: Period aggregates equal the sum of per-day metrics for counters and
+/// the most recent snapshot for gauges.
 ///
 /// For any recorded per-day metric data and any <c>[min_date, max_date]</c> range, the aggregate returned
-/// by the Metrics_Store equals the sum of the per-day values for every day in the range (days with no
-/// recorded metric contributing <c>0</c>); consequently a <c>statsAbsValueAndPrev</c>'s <c>current</c>
-/// equals the aggregate over the Period and <c>previous</c> equals the aggregate over the Previous_Period.
+/// by the Metrics_Store equals: for counter metrics, the sum of the per-day values for every day in the
+/// range (days with no recorded metric contributing <c>0</c>); for gauge metrics (absolute snapshots such
+/// as followers), the most recent snapshot recorded at or before the range end — summing daily snapshots
+/// would multiply the absolute value by the number of recorded days.
 ///
 /// Validates: Requirements 10.2, 10.5, 10.6.
 ///
 /// Per the tasks.md testing notes, storage property tests run against an in-memory store rather than a
 /// real MongoDB. <see cref="InMemoryMetricsStore"/> (nested below) faithfully mirrors the documented
 /// Metrics_Store semantics — <c>$inc</c> accumulation for counter metrics, set-semantics for the
-/// absolute-gauge family, and sum-with-zero-fill for <c>AggregateAsync</c> — matching the production
-/// <see cref="MetricsStore"/>. The shared <see cref="StatsGen.MetricSeries"/> generator emits sparse day
-/// data (unique, ascending days with gaps) and the local range generator picks endpoints that land on and
-/// between recorded days, so the zero-fill behaviour (missing day => 0) is exercised. Each run executes a
-/// minimum of 100 generated cases.
+/// absolute-gauge family, sum-with-zero-fill for counter <c>AggregateAsync</c>, latest-snapshot for gauge
+/// <c>AggregateAsync</c> — matching the production <see cref="MetricsStore"/>. The shared
+/// <see cref="StatsGen.MetricSeries"/> generator emits sparse day data (unique, ascending days with gaps)
+/// and the local range generator picks endpoints that land on and between recorded days, so the zero-fill
+/// behaviour (missing day => 0) is exercised. Each run executes a minimum of 100 generated cases.
 /// </summary>
 [Properties(Arbitrary = new[] { typeof(PeriodAggregationArbitraries) }, MaxTest = 100)]
 public class PeriodAggregationPropertyTests
@@ -40,18 +42,27 @@ public class PeriodAggregationPropertyTests
             store.RecordAsync(entity, series.Metric, point.UtcDay, point.Value).GetAwaiter().GetResult();
         }
 
-        // Expected: sum of the per-day values for the days that fall within the inclusive range. Days in the
-        // range with no recorded metric contribute 0 simply by not appearing in the recorded set (10.5).
-        var expected = series.Points
-            .Where(p => p.UtcDay >= testCase.MinDayUtc && p.UtcDay <= testCase.MaxDayUtc)
-            .Sum(p => p.Value);
+        // Expected: for counters, the sum of the per-day values within the inclusive range (days with no
+        // recorded metric contribute 0 by not appearing in the recorded set, 10.5); for gauges, the most
+        // recent snapshot at or before the range end (the lower bound is ignored — a gauge that last
+        // changed before the window still holds that value throughout it).
+        var expected = StatsMetricNames.IsGauge(series.Metric)
+            ? series.Points
+                .Where(p => p.UtcDay <= testCase.MaxDayUtc)
+                .OrderBy(p => p.UtcDay)
+                .Select(p => p.Value)
+                .LastOrDefault()
+            : series.Points
+                .Where(p => p.UtcDay >= testCase.MinDayUtc && p.UtcDay <= testCase.MaxDayUtc)
+                .Sum(p => p.Value);
 
         var actual = store
             .AggregateAsync(entity, series.Metric, testCase.MinDayUtc, testCase.MaxDayUtc)
             .GetAwaiter()
             .GetResult();
 
-        // Requirement 10.6: the aggregate equals the sum of the per-day metrics over the range.
+        // Requirement 10.6: counter aggregates equal the sum over the range; gauge aggregates equal the
+        // latest snapshot.
         actual.ShouldBe(expected);
     }
 
@@ -137,6 +148,20 @@ public class PeriodAggregationPropertyTests
                 return Task.FromResult(0L);
             }
 
+            if (StatsMetricNames.IsGauge(metric))
+            {
+                // Mirrors production: the most recent snapshot at or before the range end; the lower
+                // bound is deliberately ignored.
+                var latest = _values
+                    .Where(kv => kv.Key.Entity.Equals(entity)
+                                 && kv.Key.Metric == metric
+                                 && kv.Key.UtcDay <= maxDayUtc)
+                    .OrderBy(kv => kv.Key.UtcDay)
+                    .Select(kv => kv.Value)
+                    .LastOrDefault();
+                return Task.FromResult(latest);
+            }
+
             var sum = _values
                 .Where(kv => kv.Key.Entity.Equals(entity)
                              && kv.Key.Metric == metric
@@ -154,6 +179,9 @@ public class PeriodAggregationPropertyTests
             throw new NotSupportedException("Not exercised by Property 15.");
 
         public Task<IReadOnlyList<CategorySeries>> GetCategorySeriesAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
+            throw new NotSupportedException("Not exercised by Property 15.");
+
+        public Task<IReadOnlyDictionary<string, long>> GetBreakdownTotalsAsync(StatsEntityKey entity, string metric, int minDayUtc, int maxDayUtc) =>
             throw new NotSupportedException("Not exercised by Property 15.");
 
         public Task<IReadOnlyList<PostInteraction>> GetRecentPostInteractionsAsync(long channelId, int max = 100) =>
