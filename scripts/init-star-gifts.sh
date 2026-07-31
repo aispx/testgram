@@ -5,8 +5,10 @@
 
 echo "🎁 Initializing Star Gifts data..."
 
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
+
 # Connect to MongoDB
-docker-compose exec -T mongodb mongosh tg --quiet --eval '
+compose exec -T mongodb mongosh tg --quiet --eval '
 
 // 1. Create star-gifts collection with sample gifts
 print("Creating star-gifts collection...");

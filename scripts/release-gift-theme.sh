@@ -17,10 +17,10 @@ TEXT_COLOR=${5:-0xffffff}
 
 echo "🎨 Releasing theme for unique gift #$UNIQUE_GIFT_ID..."
 
-cd /root/testgram/docker/compose
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
 
 # Update unique gift with theme settings
-docker-compose exec -T mongodb mongosh tg --quiet --eval "
+compose exec -T mongodb mongosh tg --quiet --eval "
 const uniqueGiftId = NumberLong('$UNIQUE_GIFT_ID');
 const centerColor = $CENTER_COLOR;
 const edgeColor = $EDGE_COLOR;

@@ -14,17 +14,17 @@ NFT_USERNAME=$2
 
 echo "🔷 Assigning NFT username '$NFT_USERNAME' to user $USER_ID..."
 
-cd /root/testgram/docker/compose
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
 
 # Check if Fragment collectible exists
-COLLECTIBLE_EXISTS=$(docker-compose exec -T mongodb mongosh tg --quiet --eval "
+COLLECTIBLE_EXISTS=$(compose exec -T mongodb mongosh tg --quiet --eval "
 db.fragment_collectibles.countDocuments({username: '$NFT_USERNAME'})
 ")
 
 if [ "$COLLECTIBLE_EXISTS" = "0" ]; then
     echo "❌ Error: Fragment collectible '$NFT_USERNAME' not found!"
     echo "Available NFT usernames:"
-    docker-compose exec -T mongodb mongosh tg --quiet --eval "
+    compose exec -T mongodb mongosh tg --quiet --eval "
     db.fragment_collectibles.find({type: 'username'}).forEach(doc => print('  - ' + doc.username))
     "
     exit 1
@@ -32,7 +32,7 @@ fi
 
 # Get user's current usernames
 echo "Fetching user's current usernames..."
-CURRENT_USERNAME=$(docker-compose exec -T mongodb mongosh tg --quiet --eval "
+CURRENT_USERNAME=$(compose exec -T mongodb mongosh tg --quiet --eval "
 var user = db['eventflow-userreadmodel'].findOne({UserId: NumberLong('$USER_ID')});
 if (user) print(user.UserName || '');
 ")
@@ -46,7 +46,7 @@ echo "Current username: $CURRENT_USERNAME"
 
 # Update user's Usernames array
 echo "Adding NFT username to user..."
-docker-compose exec -T mongodb mongosh tg --quiet --eval "
+compose exec -T mongodb mongosh tg --quiet --eval "
 db['eventflow-userreadmodel'].updateOne(
   { UserId: NumberLong('$USER_ID') },
   {

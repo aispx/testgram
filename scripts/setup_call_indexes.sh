@@ -2,14 +2,16 @@
 # Script to setup call indexes in MongoDB
 # Usage: ./setup_call_indexes.sh
 
-MONGO_URL=${MONGO_URL:-"mongodb://localhost:27017"}
+MONGO_URL=${MONGO_URL:-"mongodb://127.0.0.1:27017"}
 DATABASE=${DATABASE:-"tg"}
 
 echo "Setting up call indexes in MongoDB..."
 echo "MongoDB URL: $MONGO_URL"
 echo "Database: $DATABASE"
 
-mongosh "$MONGO_URL/$DATABASE" <<'EOF'
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
+
+compose exec -T mongodb mongosh "$DATABASE" <<'EOF'
 print("Creating indexes for call_sessions collection...");
 
 db.call_sessions.createIndex(

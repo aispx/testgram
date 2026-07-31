@@ -11,7 +11,7 @@ import os
 def run_mongosh(script):
     """Run mongosh command"""
     cmd = [
-        'docker-compose', 'exec', '-T', 'mongodb',
+        'docker', 'compose', 'exec', '-T', 'mongodb',
         'mongosh', 'tg', '--quiet', '--eval', script
     ]
     

@@ -12,11 +12,11 @@ fi
 CHANNEL_ID=$1
 GIVEAWAY_ID=$2
 
-cd "$(dirname "$0")/../docker/compose"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
 
 echo "Refunding giveaway $GIVEAWAY_ID in channel $CHANNEL_ID..."
 
-docker-compose exec -T mongodb mongosh tg --quiet --eval "
+compose exec -T mongodb mongosh tg --quiet --eval "
 db.giveaways.updateOne(
   { _id: '$GIVEAWAY_ID' },
   {

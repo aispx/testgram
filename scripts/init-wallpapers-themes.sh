@@ -5,10 +5,10 @@
 
 echo "🎨 Initializing Wallpapers and Themes data..."
 
-cd /root/testgram/docker/compose
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
 
 # Connect to MongoDB
-docker-compose exec -T mongodb mongosh tg --quiet --eval '
+compose exec -T mongodb mongosh tg --quiet --eval '
 
 // 1. Create wallpapers collection
 print("Creating wallpapers collection...");

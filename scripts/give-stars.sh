@@ -27,22 +27,12 @@ if [[ ! "$STARS" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-COMPOSE_DIR=$(cd -- "$SCRIPT_DIR/../docker/compose" && pwd)
-cd "$COMPOSE_DIR"
-
-compose() {
-    if command -v docker-compose >/dev/null 2>&1; then
-        docker-compose "$@"
-    else
-        docker compose "$@"
-    fi
-}
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
 
 echo "⭐ Giving $STARS stars to user $USER_ID..."
 
 set +e
-RESULT=$(compose exec -T mongodb mongosh "mongodb://127.0.0.1:27017/tg" --quiet --eval "
+RESULT=$(compose exec -T mongodb mongosh tg --quiet --eval "
 const userId = NumberLong('$USER_ID');
 const delta = NumberLong('$STARS');
 

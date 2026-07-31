@@ -5,8 +5,10 @@
 
 echo "🔷 Initializing Fragment NFT data..."
 
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
+
 # Connect to MongoDB
-docker-compose exec -T mongodb mongosh tg --quiet --eval '
+compose exec -T mongodb mongosh tg --quiet --eval '
 
 // Create fragment_collectibles collection with sample data
 print("Creating fragment_collectibles collection...");

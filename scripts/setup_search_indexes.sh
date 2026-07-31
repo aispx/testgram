@@ -4,7 +4,9 @@
 
 echo "Setting up search indexes in MongoDB..."
 
-docker-compose exec -T mongodb mongosh tg <<'EOF'
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
+
+compose exec -T mongodb mongosh tg <<'EOF'
 
 // Create text indexes for user search
 db.getCollection("eventflow-userreadmodel").createIndex(

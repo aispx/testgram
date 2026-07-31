@@ -4,7 +4,8 @@
 
 set -e
 
-MONGO_URL=${ConnectionStrings__Default:-"mongodb://mongodb:27017"}
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/compose-helper.sh"
+
 DATABASE=${App__DatabaseName:-"tg"}
 
 echo "========================================="
@@ -15,7 +16,7 @@ echo ""
 # Wait for MongoDB to be ready
 echo "Waiting for MongoDB to be ready..."
 for i in {1..30}; do
-    if mongosh "$MONGO_URL/admin" --quiet --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
+    if compose exec -T mongodb mongosh admin --quiet --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
         echo "✓ MongoDB is ready"
         break
     fi
@@ -29,7 +30,7 @@ done
 echo ""
 echo "Setting up call_sessions indexes..."
 
-mongosh "$MONGO_URL/$DATABASE" --quiet <<'EOF'
+compose exec -T mongodb mongosh "$DATABASE" --quiet <<'EOF'
 try {
     // Check if indexes already exist
     var indexes = db.call_sessions.getIndexes();
