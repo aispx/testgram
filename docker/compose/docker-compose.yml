@@ -156,8 +156,9 @@ services:
     environment:
       ConnectionStrings__Default: ${ConnectionStrings__Default}
       App__DatabaseName: ${App__DatabaseName}
-    volumes:
-      - ./init-calls.sh:/init-calls.sh:ro
+    configs:
+      - source: init_calls
+        target: /init-calls.sh
     command: ["/bin/bash", "/init-calls.sh"]
     depends_on:
       mongodb:
@@ -168,8 +169,9 @@ services:
     image: mongo:8
     networks:
       - tg-net
-    volumes:
-      - ./init-business.sh:/init-business.sh:ro
+    configs:
+      - source: init_business
+        target: /init-business.sh
     command: ["/bin/bash", "/init-business.sh"]
     depends_on:
       mongodb:
@@ -180,8 +182,9 @@ services:
     image: mongo:8
     networks:
       - tg-net
-    volumes:
-      - ./init-botfather.sh:/init-botfather.sh:ro
+    configs:
+      - source: init_botfather
+        target: /init-botfather.sh
     command: ["/bin/bash", "/init-botfather.sh"]
     depends_on:
       mongodb:
@@ -759,3 +762,306 @@ configs:
               }
           }
       }
+
+  init_botfather:
+    content: |
+      #!/bin/bash
+      set -e
+
+      echo "Waiting for MongoDB to be ready..."
+      until mongosh --host mongodb:27017 --eval "db.adminCommand('ping')" > /dev/null 2>&1; do
+        sleep 2
+      done
+
+      echo "MongoDB is ready. Checking BotFather bot..."
+
+      mongosh --host mongodb:27017 tg <<'EOF'
+      // Check if BotFather bot exists
+      var botFatherUserId = NumberLong("600000000000");
+      var botFatherUsername = "botfather";
+      var legacyUsername = "xie" + "father";
+      var now = new Date();
+
+      // Move existing state from the old collection name.
+      var oldStateCollection = legacyUsername + "-bot-state";
+      var newStateCollection = "botfather-bot-state";
+      var collectionNames = db.getCollectionNames();
+      if (collectionNames.indexOf(oldStateCollection) >= 0) {
+          if (collectionNames.indexOf(newStateCollection) < 0) {
+              db.getCollection(oldStateCollection).renameCollection(newStateCollection);
+              print("Renamed legacy bot state collection to botfather");
+          } else {
+              db.getCollection(oldStateCollection).find().forEach(function(doc) {
+                  db.getCollection(newStateCollection).replaceOne({ "_id": doc._id }, doc, { upsert: true });
+              });
+              db.getCollection(oldStateCollection).drop();
+              print("Merged legacy bot state collection into botfather");
+          }
+      }
+
+      // Free @botfather if it was previously assigned to a channel.
+      var channelRelease = db.getCollection("eventflow-channelreadmodel").updateMany(
+          { "UserName": botFatherUsername },
+          { "$$set": { "UserName": null } }
+      );
+      if (channelRelease.modifiedCount > 0) {
+          print("Released @botfather from channels: " + channelRelease.modifiedCount);
+      }
+
+      var usernameCollection = db.getCollection("eventflow-usernamereadmodel");
+      usernameCollection.deleteMany({ "UserName": botFatherUsername, "PeerId": { "$$ne": botFatherUserId } });
+      usernameCollection.deleteMany({ "_id": "username-botfather", "PeerId": { "$$ne": botFatherUserId } });
+      usernameCollection.deleteMany({ "UserName": legacyUsername });
+      usernameCollection.deleteMany({ "_id": "username-" + legacyUsername });
+
+      var existingBot = db.getCollection("eventflow-userreadmodel").findOne({ UserId: botFatherUserId });
+
+      if (existingBot) {
+          print("BotFather bot already exists with UserId: " + botFatherUserId);
+          db.getCollection("eventflow-userreadmodel").updateOne(
+              { "UserId": botFatherUserId },
+              {
+                  "$$set": {
+                      "FirstName": "BotFather",
+                      "UserName": botFatherUsername,
+                      "LastUpdateDate": now,
+                      "Bot": true,
+                      "Verified": true,
+                      "IsDeleted": false
+                  }
+              }
+          );
+      } else {
+          print("Creating BotFather bot...");
+
+          db.getCollection("eventflow-userreadmodel").insertOne({
+              "_id": "user-bot-botfather",
+              "About": "I can help you create and manage bots. Use /start to begin.",
+              "AccessHash": NumberLong(Math.floor(Math.random() * 9007199254740991)),
+              "AccountTtl": 365,
+              "Birthday": null,
+              "Bot": true,
+              "BotActiveUsers": null,
+              "BotHasMainApp": false,
+              "BotInfoVersion": 1,
+              "BotChatHistory": false,
+              "BotNochats": false,
+              "Color": {
+                  "Color": 0,
+                  "BackgroundEmojiId": null
+              },
+              "CreationTime": now,
+              "Email": null,
+              "EmojiStatusDocumentId": null,
+              "EmojiStatusValidUntil": null,
+              "FallbackPhotoId": null,
+              "FirstName": "BotFather",
+              "GlobalPrivacySettings": {
+                  "ArchiveAndMuteNewNoncontactPeers": false,
+                  "KeepArchivedUnmuted": false,
+                  "KeepArchivedFolders": false,
+                  "HideReadMarks": false,
+                  "NewNoncontactPeersRequirePremium": false,
+                  "NoncontactPeersPaidStars": null,
+                  "DisallowUnlimitedStargifts": false,
+                  "DisallowLimitedStargifts": false,
+                  "DisallowUniqueStargifts": false,
+                  "DisallowPremiumGifts": false
+              },
+              "HasPassword": false,
+              "IsOnline": false,
+              "LastName": "",
+              "LastUpdateDate": now,
+              "PersonalChannelId": null,
+              "PersonalPhotoId": null,
+              "PhoneNumber": "0",
+              "PinnedMsgId": null,
+              "PinnedMsgIdList": [],
+              "Premium": false,
+              "ProfileColor": null,
+              "ProfilePhoto": null,
+              "ProfilePhotoId": null,
+              "ProfilePhotoUpdateDate": null,
+              "RecentEmojiStatuses": [],
+              "SensitiveCanChange": false,
+              "SensitiveEnabled": false,
+              "ShowContactSignUpNotification": false,
+              "Fake": false,
+              "Scam": false,
+              "Support": false,
+              "UserId": botFatherUserId,
+              "UserName": botFatherUsername,
+              "Usernames": null,
+              "UserNameUpdateDate": null,
+              "IsDeleted": false,
+              "Verified": true,
+              "Version": NumberLong(1),
+              "VideoEmojiMarkup": null,
+              "DcId": 1
+          });
+
+          print("BotFather bot created successfully with UserId: " + botFatherUserId);
+      }
+
+      // Add or repair username in eventflow-usernamereadmodel
+      usernameCollection.updateOne(
+          { "_id": "username-botfather" },
+          {
+              "$$set": {
+                  "UserName": botFatherUsername,
+                  "PeerId": botFatherUserId,
+                  "PeerType": 3,
+                  "IsActive": true
+              }
+          },
+          { upsert: true }
+      );
+
+      print("BotFather username registered in usernamereadmodel");
+
+      // Create index for botfather-bot-state collection
+      db.getCollection("botfather-bot-state").createIndex(
+          { "OwnerId": 1 },
+          { name: "idx_ownerid" }
+      );
+
+      db.getCollection("botfather-bot-state").createIndex(
+          { "Username": 1 },
+          { unique: true, name: "idx_username" }
+      );
+
+      db.getCollection("botfather-bot-state").createIndex(
+          { "BotUserId": 1 },
+          { unique: true, name: "idx_botuserid" }
+      );
+
+      print("BotFather bot initialization complete!");
+      EOF
+
+      echo "BotFather bot setup complete."
+
+  init_business:
+    content: |
+      #!/bin/bash
+      set -e
+
+      echo "Waiting for MongoDB to be ready..."
+      until mongosh --host mongodb:27017 --eval "db.adminCommand('ping')" > /dev/null 2>&1; do
+        sleep 2
+      done
+
+      echo "MongoDB is ready. Creating business bot indexes..."
+
+      mongosh --host mongodb:27017 tg <<EOF
+      // Create indexes for connected_business_bots collection
+      db.connected_business_bots.createIndex(
+          { "UserId": 1 },
+          { name: "idx_userid" }
+      );
+
+      db.connected_business_bots.createIndex(
+          { "BotId": 1 },
+          { name: "idx_botid" }
+      );
+
+      db.connected_business_bots.createIndex(
+          { "ConnectionId": 1 },
+          { unique: true, name: "idx_connectionid" }
+      );
+
+      db.connected_business_bots.createIndex(
+          { "UserId": 1, "BotId": 1 },
+          { unique: true, name: "idx_userid_botid" }
+      );
+
+      // Create indexes for paused_business_bot_chats collection
+      db.paused_business_bot_chats.createIndex(
+          { "UserId": 1, "PeerId": 1 },
+          { unique: true, name: "idx_userid_peerid" }
+      );
+
+      db.paused_business_bot_chats.createIndex(
+          { "UserId": 1 },
+          { name: "idx_userid" }
+      );
+
+      // Create index for counters collection (for Qts)
+      db.counters.createIndex(
+          { "_id": 1 },
+          { name: "idx_id" }
+      );
+
+      print("Business bot indexes created successfully!");
+      EOF
+
+      echo "Business bot indexes setup complete."
+
+  init_calls:
+    content: |
+      #!/bin/bash
+      # Init container script to setup call indexes
+      set -e
+
+      echo "========================================="
+      echo "Testgram Call System Setup"
+      echo "========================================="
+
+      # Wait for MongoDB
+      echo "Waiting for MongoDB..."
+      until mongosh "$$ConnectionStrings__Default/admin" --quiet --eval "db.adminCommand('ping')" >/dev/null 2>&1; do
+          sleep 1
+      done
+      echo "✓ MongoDB is ready"
+
+      # Setup indexes
+      echo "Setting up call_sessions indexes..."
+      mongosh "$$ConnectionStrings__Default/$$App__DatabaseName" --quiet <<'EOF'
+      try {
+          db.getCollectionNames().forEach(function(name) { if (name == "call_sessions") found = true; });
+          if (typeof found === 'undefined') {
+              db.createCollection("call_sessions");
+              print("✓ call_sessions collection created");
+          }
+          var indexes = db.call_sessions.getIndexes();
+          var hasCallIdIndex = indexes.some(idx => idx.name === "idx_callid_accesshash");
+
+          if (hasCallIdIndex) {
+              print("✓ Indexes already exist");
+          } else {
+              print("Creating indexes...");
+
+              db.call_sessions.createIndex(
+                  { CallId: 1, AccessHash: 1 },
+                  { name: "idx_callid_accesshash", unique: true }
+              );
+
+              db.call_sessions.createIndex(
+                  { CallerId: 1, Date: -1 },
+                  { name: "idx_callerid_date" }
+              );
+
+              db.call_sessions.createIndex(
+                  { CalleeId: 1, Date: -1 },
+                  { name: "idx_calleeid_date" }
+              );
+
+              db.call_sessions.createIndex(
+                  { State: 1, Date: -1 },
+                  { name: "idx_state_date" }
+              );
+
+              db.call_sessions.createIndex(
+                  { Date: -1 },
+                  { name: "idx_date", expireAfterSeconds: 2592000 }
+              );
+
+              print("✓ All indexes created");
+          }
+      } catch (e) {
+          print("✗ Error: " + e);
+          quit(1);
+      }
+      EOF
+
+      echo "✓ Call system setup completed"
+      echo "========================================="
