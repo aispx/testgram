@@ -15,29 +15,39 @@
 - Supergroup Chat
 - Channel
 - Message Reactions
-- Star Gifts (channels, hide/show, unread mentions)
+- End-to-End Encrypted Chat (Secret Chats)
+- Star Gifts (channels, hide/show, unread mentions, auctions, collections, crafting)
+- Star Gift Upgrades & Unique Gifts (NFT themes)
+- Resale of Star Gifts in TON / Stars
 - Passkey Login (WebAuthn)
-- Channel Direct Messages (Monoforum)
-- Bot Support
-- Stories
+- Channel Direct Messages (Monoforum / paid messages)
+- Bot Support (incl. BotFather, business bots, affiliate / Star Ref bots)
+- Stories (incl. albums, live streams)
 - Privacy Settings & 2FA
 - Voice & Video Calls (1:1, WebRTC)
 - Group Calls / Voice & Video Chats
 - Conference Calls (E2E encrypted)
 - Live Streams (RTMP / HLS)
 - Push Notifications (APNS / FCM / WebPush)
-- Email Sender & 2FA Recovery Email
+- Email Sender, Email Verification & 2FA Recovery Email
 - Telegram Business
 - Auto-Delete Messages
-- Stickers
+- Stickers (incl. sticker sets, custom emoji)
 - Scheduled Messages
 - Forum Topics
 - Themes & Wallpapers
-- Folders (Dialog Filters)
+- Folders (Dialog Filters) & Shared Folders (chatlists)
+- Saved Music
+- Channel Statistics (stats.*)
+- Admin Logs
+- Todo Lists (collaborative checklists)
+- Fact Check
+- Giveaways & Boosts
+- Multiple Usernames (incl. Fragment NFT usernames)
+- Language Packs (incl. Russian)
 
 ### Soon...
-- End-to-End Encrypted Chat (Secret Chats)
-- Full Email Login
+- Full Email Login (email verification flow is implemented; logging in directly with an email address is not yet supported)
 
 ---
 
@@ -76,6 +86,10 @@ Key `.env` settings:
 | `App__AccessHashSecretKey` | Random secret key |
 | `App__EncryptionConfig__MessageKeys__0__Key` | Base64 encryption key |
 | `App__FixedVerifyCode` | Fixed SMS code for testing (leave empty in production) |
+| `App__PasskeyRpId` | Relying Party ID for Passkey (WebAuthn) login |
+| `App__EnableEmailLogin` | Enable email verification flow during login |
+| `App__Stripe__SecretKey` | Stripe secret key (for paid star gift purchases) |
+| `EmailSenderOptions__SmtpEmailOptions__*` | SMTP settings for email verification & 2FA recovery |
 
 ### Voice & Video Calls Setup
 
@@ -233,36 +247,48 @@ cd build/docker && ./build-all-arm64.sh
 
 ## Verification Bot
 
-The repo includes a Telegram bot (`bot/`) that listens for registration codes via RabbitMQ and sends them to users via Telegram.
+The repo includes a Telegram bot (`bot/`) that listens for registration codes via RabbitMQ and sends them to users via Telegram. It supports running multiple bots (`BOT_TOKEN`, `BOT_TOKEN1`, `BOT_TOKEN2`, ...) and an optional SOCKS5/HTTP proxy.
 
 ```bash
 cd bot
 cp .env.example .env
-# Edit .env with your BOT_TOKEN and RABBITMQ_URL
+# Edit .env with your BOT_TOKEN(s) and RABBITMQ_URL
 python3 bot.py
 ```
 
 ## Admin: Give Stars to a User
 
-Connect to MongoDB and run:
+The easiest way is the bundled helper script:
+
+```bash
+cd scripts && ./give-stars.sh <user_id> <stars_amount>
+# Example: ./give-stars.sh 2010001 1000
+```
+
+This updates the user's balance in the `star-balances` collection and records a
+transaction in `star-transactions`. To do it manually via `mongosh tg`:
 
 ```js
-// mongosh tg
-
 // 1. Add balance
+db['star-balances'].updateOne(
+  { UserId: Long('USER_ID') },
+  { $inc: { Balance: 1000 } },
+  { upsert: true }
+);
+
+// 2. Record transaction
 db['star-transactions'].insertOne({
+  _id: ObjectId().toString(),
+  TransactionId: ObjectId().toString(),
   UserId: Long('USER_ID'),
   Amount: 1000,          // number of stars
   Gift: false,
+  Refund: false,
+  Date: Math.floor(Date.now() / 1000),
   Title: 'Admin top-up',
-  PeerUserId: 0,
-  Date: new Date()
+  PeerUserId: null,
+  PeerChannelId: null
 });
-
-db['eventflow-userreadmodel'].updateOne(
-  { UserId: Long('USER_ID') },
-  { $inc: { StarsBalance: 1000 } }
-);
 ```
 
 > Replace `USER_ID` with the target user ID (find it via `db['eventflow-userreadmodel'].find({UserName: 'username'})`).
@@ -271,22 +297,37 @@ db['eventflow-userreadmodel'].updateOne(
 
 ## Admin: Add Star Gifts
 
-Gifts are stored in the `star-gifts` collection. To add a new gift:
+Gifts are stored in the `star-gifts` collection. Use the bundled seeder to create
+a full set of sample gifts plus upgrade variants:
+
+```bash
+cd scripts && ./init-star-gifts.sh
+```
+
+To add a single gift manually (`mongosh tg`):
 
 ```js
-// mongosh tg
-
 db['star-gifts'].insertOne({
   GiftId: Long('UNIQUE_GIFT_ID'),   // unique ID (e.g. 1001)
   Stars: 50,                         // price in stars
+  ConvertStars: 40,                  // stars you get when converting
+  UpgradeStars: null,                // null/0 = not upgradeable
+  Limited: false,                    // true = limited supply
+  SoldOut: false,
+  Birthday: false,
+  RequirePremium: false,
+  LimitedPerUser: false,
+  AvailabilityTotal: null,           // total copies (for limited gifts)
+  AvailabilityRemains: null,
   Title: 'My Gift',
-  Description: '',
   DocumentId: Long('DOCUMENT_ID'),   // sticker/document ID from Telegram
-  LimitedQuantity: 0,                // 0 = unlimited
-  SoldCount: 0,
-  Available: true,
-  FirstSaleDate: new Date(),
-  LastSaleDate: null
+  DocumentAccessHash: Long('ACCESS_HASH'),
+  DocumentDate: Math.floor(Date.now() / 1000),
+  MimeType: 'application/x-tgsticker',
+  DocumentSize: Long('50000'),
+  DcId: 2,
+  IsAuction: false,
+  RandomId: Long('1')
 });
 ```
 
@@ -294,13 +335,15 @@ To give a gift to a user directly (without purchase):
 
 ```js
 db['saved-star-gifts'].insertOne({
-  UserId: Long('RECIPIENT_USER_ID'),
+  OwnerUserId: Long('RECIPIENT_USER_ID'),  // recipient
   FromUserId: Long('0'),
   GiftId: Long('UNIQUE_GIFT_ID'),
   Stars: 50,
-  Message: '',
+  MessageText: '',
   Saved: true,
-  Date: new Date()
+  IsUnique: false,
+  DocumentId: Long('DOCUMENT_ID'),
+  Date: Math.floor(Date.now() / 1000)
 });
 ```
 
@@ -324,55 +367,97 @@ db['star-gifts'].updateOne(
 
 **2. Add upgrade config (attributes for unique version):**
 
-Each unique gift gets 3 attributes: `model` (sticker), `backdrop` (background), `pattern` (overlay).
-Add variants to `star-gift-upgrade-config`:
+Each unique gift gets 3 attribute types: `model` (sticker), `backdrop` (background), `pattern` (overlay).
+The bundled seeder `scripts/init-star-gifts.sh` inserts a full set of variants into
+`star-gift-upgrade-config` (4 models, 4 backdrops, 4 patterns). To add variants
+manually (`mongosh tg`):
 
 ```js
 db['star-gift-upgrade-config'].insertMany([
   // Model (sticker variant)
   {
-    gift_id: Long('GIFT_ID'),   // 0 = applies to all gifts
-    type: 'model',
-    name: 'Rare Model',
-    rarity_permille: 100,       // 100 = 10% chance (out of 1000)
-    document_id: Long('STICKER_DOCUMENT_ID')
+    Type: 'model',
+    Name: 'Rare Model',
+    RarityPermille: 100,        // 100 = 10% chance (out of 1000)
+    DocumentId: Long('STICKER_DOCUMENT_ID'),
+    DocumentAccessHash: Long('ACCESS_HASH'),
+    DocumentDate: Math.floor(Date.now() / 1000),
+    MimeType: 'application/x-tgsticker',
+    DocumentSize: Long('50000'),
+    DcId: 2
   },
   // Backdrop (background colors)
   {
-    gift_id: Long('GIFT_ID'),
-    type: 'backdrop',
-    name: 'Golden',
-    rarity_permille: 50,
-    backdrop_id: 1,
-    center_color: 0xF1C40F,
-    edge_color: 0xD4AC0D,
-    pattern_color: 0xF9E79F,
-    text_color: 0xFFFFFF
+    Type: 'backdrop',
+    Name: 'Golden',
+    RarityPermille: 50,
+    BackdropId: 1,
+    CenterColor: 0xF1C40F,
+    EdgeColor: 0xD4AC0D,
+    PatternColor: 0xF9E79F,
+    TextColor: 0xFFFFFF
   },
   // Pattern (overlay sticker)
   {
-    gift_id: Long('GIFT_ID'),
-    type: 'pattern',
-    name: 'Stars',
-    rarity_permille: 200,
-    document_id: Long('PATTERN_DOCUMENT_ID')
+    Type: 'pattern',
+    Name: 'Stars',
+    RarityPermille: 200,
+    DocumentId: Long('PATTERN_DOCUMENT_ID'),
+    DocumentAccessHash: Long('ACCESS_HASH'),
+    DocumentDate: Math.floor(Date.now() / 1000),
+    MimeType: 'application/x-tgsticker',
+    DocumentSize: Long('40000'),
+    DcId: 2
   }
 ]);
 ```
 
-> `rarity_permille` — weight out of 1000 (higher = more common). Use `gift_id: 0` for attributes shared across all gifts.
+> `RarityPermille` — weight out of 1000 (higher = more common).
 
-**3. Force-upgrade a gift for a user (admin):**
-```js
-// Find the saved gift
-db['saved-star-gifts'].findOne({ OwnerUserId: Long('USER_ID'), IsUnique: false });
-
-// Then trigger upgrade via API or set UpgradeStars: 0 to make it free
-db['star-gifts'].updateOne(
-  { GiftId: Long('GIFT_ID') },
-  { $set: { UpgradeStars: 0 } }
-);
+**3. Release a theme for a unique gift (admin):**
+```bash
+cd scripts && ./release-gift-theme.sh <unique_gift_id> <center_color> [edge_color] [pattern_color] [text_color]
+# Example: ./release-gift-theme.sh 1001 0x3390ec 0x6fb1f6 0x8ac5f8 0xffffff
 ```
+
+---
+
+## Admin: Fragment NFT Usernames
+
+The server supports multiple usernames per user/channel, including collectible
+(Fragment NFT) usernames. To seed sample collectibles:
+
+```bash
+cd scripts && ./init-fragment-nft.sh
+```
+
+To assign an NFT username to a user (must exist in `fragment_collectibles`):
+
+```bash
+cd scripts && ./assign-nft-username.sh <user_id> <nft_username>
+# Example: ./assign-nft-username.sh 2010001 blockchain
+```
+
+To add a collectible manually (`mongosh tg`):
+
+```js
+db.fragment_collectibles.insertOne({
+  _id: 'fragment-username-myusername',
+  type: 'username',             // "username" or "phone"
+  username: 'myusername',
+  phone: null,                  // required if type="phone"
+  purchase_date: Math.floor(Date.now() / 1000),
+  currency: 'USD',
+  amount: 14500,                // 145.00 USD
+  crypto_currency: 'TON',
+  crypto_amount: NumberLong('50000000000'),
+  url: 'https://fragment.com/username/myusername'
+});
+```
+
+NFT usernames are activated/deactivated via `account.toggleUsername`,
+`channels.toggleUsername` and `bots.toggleUsername`; the primary username is
+controlled by `account.reorderUsernames` / `channels.reorderUsernames`.
 
 ---
 

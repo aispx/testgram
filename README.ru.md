@@ -15,29 +15,39 @@
 - Супергруппы
 - Каналы
 - Реакции на сообщения
-- Star Gifts (каналы, скрыть/показать, непрочитанные упоминания)
+- Сквозное шифрование чатов (Secret Chats)
+- Star Gifts (каналы, скрыть/показать, непрочитанные упоминания, аукционы, коллекции, крафтинг)
+- Апгрейды Star Gifts и уникальные подарки (NFT темы)
+- Перепродажа Star Gifts за TON / Stars
 - Вход через Passkey (WebAuthn)
-- Директ канала (Monoforum)
-- Поддержка ботов
-- Истории
+- Директ канала (Monoforum / платные сообщения)
+- Поддержка ботов (включая BotFather, бизнес-ботов, аффилированные / Star Ref боты)
+- Истории (включая альбомы, трансляции)
 - Настройки приватности и двухфакторная аутентификация
 - Голосовые и видеозвонки (1:1, WebRTC)
 - Групповые звонки / голосовые и видеочаты
 - Конференц-звонки (сквозное шифрование)
 - Трансляции (RTMP / HLS)
 - Push-уведомления (APNS / FCM / WebPush)
-- Отправка email и восстановление 2FA через email
+- Отправка email, верификация email и восстановление 2FA через email
 - Telegram Business
 - Автоудаление сообщений
-- Стикеры
+- Стикеры (включая наборы стикеров, кастомные эмодзи)
 - Отложенные сообщения
 - Темы форума
 - Темы оформления и обои
-- Папки (фильтры диалогов)
+- Папки (фильтры диалогов) и общие папки (chatlists)
+- Сохранённая музыка (Saved Music)
+- Статистика каналов (stats.*)
+- Журнал действий администраторов
+- Списки задач (совместные чек-листы)
+- Факт-чек
+- Розыгрыши (Giveaways) и бусты
+- Несколько username (включая Fragment NFT username)
+- Языковые пакеты (включая русский)
 
 ### Скоро...
-- Сквозное шифрование чатов (Secret Chats)
-- Полноценный вход через email
+- Полноценный вход через email (флоу верификации email реализован; вход напрямую по email-адресу пока не поддерживается)
 
 ---
 
@@ -76,6 +86,10 @@ docker compose up -d
 | `App__AccessHashSecretKey` | Случайный секретный ключ |
 | `App__EncryptionConfig__MessageKeys__0__Key` | Ключ шифрования в Base64 |
 | `App__FixedVerifyCode` | Фиксированный SMS-код для тестирования (оставьте пустым в продакшене) |
+| `App__PasskeyRpId` | Relying Party ID для входа через Passkey (WebAuthn) |
+| `App__EnableEmailLogin` | Включить флоу верификации email при входе |
+| `App__Stripe__SecretKey` | Секретный ключ Stripe (для платной покупки подарков за звёзды) |
+| `EmailSenderOptions__SmtpEmailOptions__*` | Настройки SMTP для верификации email и восстановления 2FA |
 
 ### Настройка голосовых и видеозвонков
 
@@ -235,35 +249,48 @@ cd build/docker && ./build-all-arm64.sh
 
 ## Бот верификации
 
-В репозитории есть Telegram-бот (`bot/`), который слушает коды регистрации через RabbitMQ и отправляет их пользователям.
+В репозитории есть Telegram-бот (`bot/`), который слушает коды регистрации через RabbitMQ и отправляет их пользователям. Поддерживается запуск нескольких ботов (`BOT_TOKEN`, `BOT_TOKEN1`, `BOT_TOKEN2`, ...) и опциональный SOCKS5/HTTP прокси.
 
 ```bash
 cd bot
 cp .env.example .env
-# Отредактируйте .env: укажите BOT_TOKEN и RABBITMQ_URL
+# Отредактируйте .env: укажите BOT_TOKEN (и BOT_TOKEN1...) и RABBITMQ_URL
 python3 bot.py
 ```
 
 ## Админ: Выдать звёзды пользователю
 
-Подключитесь к MongoDB и выполните:
+Проще всего воспользоваться встроенным скриптом:
+
+```bash
+cd scripts && ./give-stars.sh <user_id> <stars_amount>
+# Пример: ./give-stars.sh 2010001 1000
+```
+
+Скрипт обновляет баланс пользователя в коллекции `star-balances` и записывает
+транзакцию в `star-transactions`. Вручную через `mongosh tg`:
 
 ```js
-// mongosh tg
+// 1. Добавить баланс
+db['star-balances'].updateOne(
+  { UserId: Long('USER_ID') },
+  { $inc: { Balance: 1000 } },
+  { upsert: true }
+);
 
+// 2. Записать транзакцию
 db['star-transactions'].insertOne({
+  _id: ObjectId().toString(),
+  TransactionId: ObjectId().toString(),
   UserId: Long('USER_ID'),
   Amount: 1000,          // количество звёзд
   Gift: false,
+  Refund: false,
+  Date: Math.floor(Date.now() / 1000),
   Title: 'Admin top-up',
-  PeerUserId: 0,
-  Date: new Date()
+  PeerUserId: null,
+  PeerChannelId: null
 });
-
-db['eventflow-userreadmodel'].updateOne(
-  { UserId: Long('USER_ID') },
-  { $inc: { StarsBalance: 1000 } }
-);
 ```
 
 > Замените `USER_ID` на нужный ID пользователя (найти через `db['eventflow-userreadmodel'].find({UserName: 'username'})`).
@@ -272,22 +299,37 @@ db['eventflow-userreadmodel'].updateOne(
 
 ## Админ: Добавить подарки (Star Gifts)
 
-Подарки хранятся в коллекции `star-gifts`. Чтобы добавить новый подарок:
+Подарки хранятся в коллекции `star-gifts`. Для создания набора демо-подарков и
+вариантов апгрейда используйте встроенный сидер:
+
+```bash
+cd scripts && ./init-star-gifts.sh
+```
+
+Чтобы добавить один подарок вручную (`mongosh tg`):
 
 ```js
-// mongosh tg
-
 db['star-gifts'].insertOne({
   GiftId: Long('UNIQUE_GIFT_ID'),   // уникальный ID (например, 1001)
   Stars: 50,                         // цена в звёздах
+  ConvertStars: 40,                  // звёзды при конвертации
+  UpgradeStars: null,                // null/0 = не апгрейдится
+  Limited: false,                    // true = ограниченный тираж
+  SoldOut: false,
+  Birthday: false,
+  RequirePremium: false,
+  LimitedPerUser: false,
+  AvailabilityTotal: null,           // всего копий (для limited)
+  AvailabilityRemains: null,
   Title: 'My Gift',
-  Description: '',
   DocumentId: Long('DOCUMENT_ID'),   // ID стикера/документа из Telegram
-  LimitedQuantity: 0,                // 0 = безлимитный
-  SoldCount: 0,
-  Available: true,
-  FirstSaleDate: new Date(),
-  LastSaleDate: null
+  DocumentAccessHash: Long('ACCESS_HASH'),
+  DocumentDate: Math.floor(Date.now() / 1000),
+  MimeType: 'application/x-tgsticker',
+  DocumentSize: Long('50000'),
+  DcId: 2,
+  IsAuction: false,
+  RandomId: Long('1')
 });
 ```
 
@@ -295,13 +337,15 @@ db['star-gifts'].insertOne({
 
 ```js
 db['saved-star-gifts'].insertOne({
-  UserId: Long('RECIPIENT_USER_ID'),
+  OwnerUserId: Long('RECIPIENT_USER_ID'),  // получатель
   FromUserId: Long('0'),
   GiftId: Long('UNIQUE_GIFT_ID'),
   Stars: 50,
-  Message: '',
+  MessageText: '',
   Saved: true,
-  Date: new Date()
+  IsUnique: false,
+  DocumentId: Long('DOCUMENT_ID'),
+  Date: Math.floor(Date.now() / 1000)
 });
 ```
 
@@ -325,55 +369,97 @@ db['star-gifts'].updateOne(
 
 **2. Добавить конфиг апгрейда (атрибуты уникальной версии):**
 
-Каждый уникальный подарок получает 3 атрибута: `model` (стикер), `backdrop` (фон), `pattern` (узор).
-Добавьте варианты в `star-gift-upgrade-config`:
+Каждый уникальный подарок получает 3 типа атрибутов: `model` (стикер), `backdrop` (фон), `pattern` (узор).
+Встроенный сидер `scripts/init-star-gifts.sh` добавляет полный набор вариантов в
+`star-gift-upgrade-config` (4 модели, 4 фона, 4 узора). Чтобы добавить варианты
+вручную (`mongosh tg`):
 
 ```js
 db['star-gift-upgrade-config'].insertMany([
   // Модель (вариант стикера)
   {
-    gift_id: Long('GIFT_ID'),   // 0 = применяется ко всем подаркам
-    type: 'model',
-    name: 'Редкая модель',
-    rarity_permille: 100,       // 100 = 10% шанс (из 1000)
-    document_id: Long('STICKER_DOCUMENT_ID')
+    Type: 'model',
+    Name: 'Редкая модель',
+    RarityPermille: 100,        // 100 = 10% шанс (из 1000)
+    DocumentId: Long('STICKER_DOCUMENT_ID'),
+    DocumentAccessHash: Long('ACCESS_HASH'),
+    DocumentDate: Math.floor(Date.now() / 1000),
+    MimeType: 'application/x-tgsticker',
+    DocumentSize: Long('50000'),
+    DcId: 2
   },
   // Фон (цвета)
   {
-    gift_id: Long('GIFT_ID'),
-    type: 'backdrop',
-    name: 'Золотой',
-    rarity_permille: 50,
-    backdrop_id: 1,
-    center_color: 0xF1C40F,
-    edge_color: 0xD4AC0D,
-    pattern_color: 0xF9E79F,
-    text_color: 0xFFFFFF
+    Type: 'backdrop',
+    Name: 'Золотой',
+    RarityPermille: 50,
+    BackdropId: 1,
+    CenterColor: 0xF1C40F,
+    EdgeColor: 0xD4AC0D,
+    PatternColor: 0xF9E79F,
+    TextColor: 0xFFFFFF
   },
   // Узор (стикер-оверлей)
   {
-    gift_id: Long('GIFT_ID'),
-    type: 'pattern',
-    name: 'Звёзды',
-    rarity_permille: 200,
-    document_id: Long('PATTERN_DOCUMENT_ID')
+    Type: 'pattern',
+    Name: 'Звёзды',
+    RarityPermille: 200,
+    DocumentId: Long('PATTERN_DOCUMENT_ID'),
+    DocumentAccessHash: Long('ACCESS_HASH'),
+    DocumentDate: Math.floor(Date.now() / 1000),
+    MimeType: 'application/x-tgsticker',
+    DocumentSize: Long('40000'),
+    DcId: 2
   }
 ]);
 ```
 
-> `rarity_permille` — вес из 1000 (больше = чаще выпадает). `gift_id: 0` — атрибуты для всех подарков.
+> `RarityPermille` — вес из 1000 (больше = чаще выпадает).
 
-**3. Принудительный апгрейд подарка пользователю (админ):**
-```js
-// Найти сохранённый подарок
-db['saved-star-gifts'].findOne({ OwnerUserId: Long('USER_ID'), IsUnique: false });
-
-// Сделать апгрейд бесплатным и дать пользователю апгрейднуть самому
-db['star-gifts'].updateOne(
-  { GiftId: Long('GIFT_ID') },
-  { $set: { UpgradeStars: 0 } }
-);
+**3. Выпустить тему для уникального подарка (админ):**
+```bash
+cd scripts && ./release-gift-theme.sh <unique_gift_id> <center_color> [edge_color] [pattern_color] [text_color]
+# Пример: ./release-gift-theme.sh 1001 0x3390ec 0x6fb1f6 0x8ac5f8 0xffffff
 ```
+
+---
+
+## Админ: Fragment NFT username
+
+Сервер поддерживает несколько username у пользователя/канала, включая
+коллекционные (Fragment NFT) username. Чтобы добавить демо-данные:
+
+```bash
+cd scripts && ./init-fragment-nft.sh
+```
+
+Чтобы назначить NFT username пользователю (должен существовать в `fragment_collectibles`):
+
+```bash
+cd scripts && ./assign-nft-username.sh <user_id> <nft_username>
+# Пример: ./assign-nft-username.sh 2010001 blockchain
+```
+
+Чтобы добавить collectible вручную (`mongosh tg`):
+
+```js
+db.fragment_collectibles.insertOne({
+  _id: 'fragment-username-myusername',
+  type: 'username',             // "username" или "phone"
+  username: 'myusername',
+  phone: null,                  // обязательно при type="phone"
+  purchase_date: Math.floor(Date.now() / 1000),
+  currency: 'USD',
+  amount: 14500,                // 145.00 USD
+  crypto_currency: 'TON',
+  crypto_amount: NumberLong('50000000000'),
+  url: 'https://fragment.com/username/myusername'
+});
+```
+
+NFT username активируются/деактивируются через `account.toggleUsername`,
+`channels.toggleUsername` и `bots.toggleUsername`; основной username задаётся
+через `account.reorderUsernames` / `channels.reorderUsernames`.
 
 ---
 
