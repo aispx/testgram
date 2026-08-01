@@ -3,6 +3,8 @@
 [![API Layer](https://img.shields.io/badge/API_Layer-224-blueviolet)](https://corefork.telegram.org/methods)
 [![MTProto](https://img.shields.io/badge/MTProto_Protocol-2.0-green)](https://corefork.telegram.org/mtproto/)
 [![Fork](https://img.shields.io/badge/fork-loyldg%2Fmytelegram-blue)](https://github.com/loyldg/mytelegram)
+[![Testgram Channel](https://img.shields.io/badge/Subscribe-_Testgram_Channel-0088cc)](https://t.me/testgramrofl)
+[![Testgram Discussion Group](https://img.shields.io/badge/Join_-Testgram_Discussion_Group-0088cc)](https://t.me/+etFTfnAPU7Q1M2Ri)
 
 **Testgram** is a fork of [MyTelegram](https://github.com/loyldg/mytelegram) — a self-hosted C# implementation of the Telegram server-side API.
 
@@ -495,3 +497,13 @@ cd ../../docker/compose && docker compose down && docker compose up -d
 ```
 
 > **Note:** Steps 1–3 only need to be done once. The generated handler is committed to the repo so subsequent deploys don't require re-seeding.
+
+## Support Testgram
+
+If you find Testgram helpful, please consider giving the project a ⭐️.
+
+## Feedback
+
+- Contact author: https://t.me/glebxdlol
+- Testgram Channel: https://t.me/testgram
+- Discussion Group: https://t.me/+etFTfnAPU7Q1M2Ri

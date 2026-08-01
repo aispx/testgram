@@ -3,6 +3,8 @@
 [![API Layer](https://img.shields.io/badge/API_Layer-224-blueviolet)](https://corefork.telegram.org/methods)
 [![MTProto](https://img.shields.io/badge/MTProto_Protocol-2.0-green)](https://corefork.telegram.org/mtproto/)
 [![Fork](https://img.shields.io/badge/fork-loyldg%2Fmytelegram-blue)](https://github.com/loyldg/mytelegram)
+[![Testgram Channel](https://img.shields.io/badge/Subscribe-_Testgram_Channel-0088cc)](https://t.me/testgramrofl)
+[![Testgram Discussion Group](https://img.shields.io/badge/Join_-Testgram_Discussion_Group-0088cc)](https://t.me/+etFTfnAPU7Q1M2Ri)
 
 **Testgram** — форк [MyTelegram](https://github.com/loyldg/mytelegram), самохостируемая реализация серверной части Telegram на C#.
 
@@ -497,3 +499,13 @@ cd ../../docker/compose && docker compose down && docker compose up -d
 ```
 
 > **Примечание:** Шаги 1–3 нужно выполнить только один раз. Сгенерированный хендлер коммитится в репозиторий, последующие деплои не требуют повторного сидинга.
+
+## Поддержка Testgram
+
+Если Testgram оказался вам полезен, пожалуйста, поставьте проекту ⭐️.
+
+## Обратная связь
+
+- Связаться с автором: https://t.me/glebxdlol
+- Канал Testgram: https://t.me/testgram
+- Группа обсуждений: https://t.me/+etFTfnAPU7Q1M2Ri
