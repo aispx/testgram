@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Dialog;
+using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -62,7 +63,8 @@ internal sealed class SetChatThemeHandler(
             var savedGift = await savedGiftsCol.Find(
                 Builders<BsonDocument>.Filter.And(
                     Builders<BsonDocument>.Filter.Eq("OwnerUserId", input.UserId),
-                    Builders<BsonDocument>.Filter.Eq("UniqueGiftId", uniqueGift["UniqueGiftId"].AsInt64)
+                    // saved-star-gifts stores the unique collectible id in RandomId
+                    Builders<BsonDocument>.Filter.Eq("RandomId", uniqueGift["UniqueId"].AsInt64)
                 )
             ).FirstOrDefaultAsync();
 
@@ -175,6 +177,7 @@ internal sealed class SetChatThemeHandler(
         {
             // Load gift for theme
             var uniqueGiftsCol = database.GetCollection<BsonDocument>("unique-star-gifts");
+            var giftTypesCol = database.GetCollection<BsonDocument>("star-gifts");
             var giftDoc = await uniqueGiftsCol.Find(
                 Builders<BsonDocument>.Filter.Eq("Slug", giftSlug)
             ).FirstOrDefaultAsync();
@@ -184,33 +187,25 @@ internal sealed class SetChatThemeHandler(
                 var starGift = new MyTelegram.Schema.TStarGiftUnique
                 {
                     ThemeAvailable = true,
-                    Id = giftDoc["UniqueGiftId"].ToInt64(),
+                    Id = giftDoc["UniqueId"].ToInt64(),
                     GiftId = giftDoc["GiftId"].ToInt64(),
                     Title = giftDoc["Title"].AsString,
                     Slug = giftDoc["Slug"].AsString,
-                    Num = giftDoc["Number"].AsInt32,
+                    Num = giftDoc["Num"].AsInt32,
                     Attributes = new TVector<MyTelegram.Schema.IStarGiftAttribute>(),
                     AvailabilityIssued = giftDoc["AvailabilityIssued"].AsInt32,
                     AvailabilityTotal = giftDoc["AvailabilityTotal"].AsInt32
                 };
 
-                var themeSettings = new TVector<MyTelegram.Schema.IThemeSettings>();
-                if (giftDoc.Contains("ThemeSettings") && giftDoc["ThemeSettings"].IsBsonArray)
-                {
-                    foreach (var settingDoc in giftDoc["ThemeSettings"].AsBsonArray)
-                    {
-                        var setting = settingDoc.AsBsonDocument;
-                        themeSettings.Add(new MyTelegram.Schema.TThemeSettings
-                        {
-                            BaseTheme = setting["BaseTheme"].AsString == "classic"
-                                ? new MyTelegram.Schema.TBaseThemeClassic()
-                                : new MyTelegram.Schema.TBaseThemeNight(),
-                            AccentColor = setting["AccentColor"].ToInt32(),
-                            MessageColorsAnimated = true,
-                            MessageColors = new TVector<int>(setting["MessageColors"].AsBsonArray.Select(c => c.ToInt32()))
-                        });
-                    }
-                }
+                // Theme is owned by the gift type: load it from star-gifts by
+                // GiftId so freshly upgraded NFTs inherit the released theme.
+                var giftId = giftDoc.Contains("GiftId") ? giftDoc["GiftId"].ToInt64() : 0L;
+                var giftTypeDoc = await giftTypesCol.Find(
+                    Builders<BsonDocument>.Filter.Eq("GiftId", giftId)
+                ).FirstOrDefaultAsync();
+
+                var themeSettings = StarGiftThemeHelper.LoadThemeSettings(giftDoc, giftTypeDoc)
+                    ?? new TVector<MyTelegram.Schema.IThemeSettings>();
 
                 themeObj = new MyTelegram.Schema.TChatThemeUniqueGift
                 {

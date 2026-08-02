@@ -520,33 +520,25 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
                         var starGift = new MyTelegram.Schema.TStarGiftUnique
                         {
                             ThemeAvailable = true,
-                            Id = giftDoc["UniqueGiftId"].ToInt64(),
+                            Id = giftDoc["UniqueId"].ToInt64(),
                             GiftId = giftDoc["GiftId"].ToInt64(),
                             Title = giftDoc["Title"].AsString,
                             Slug = giftDoc["Slug"].AsString,
-                            Num = giftDoc["Number"].AsInt32,
+                            Num = giftDoc["Num"].AsInt32,
                             Attributes = new TVector<MyTelegram.Schema.IStarGiftAttribute>(),
                             AvailabilityIssued = giftDoc["AvailabilityIssued"].AsInt32,
                             AvailabilityTotal = giftDoc["AvailabilityTotal"].AsInt32
                         };
 
-                        var themeSettings = new TVector<MyTelegram.Schema.IThemeSettings>();
-                        if (giftDoc.Contains("ThemeSettings") && giftDoc["ThemeSettings"].IsBsonArray)
-                        {
-                            foreach (var settingDoc in giftDoc["ThemeSettings"].AsBsonArray)
-                            {
-                                var setting = settingDoc.AsBsonDocument;
-                                themeSettings.Add(new MyTelegram.Schema.TThemeSettings
-                                {
-                                    BaseTheme = setting["BaseTheme"].AsString == "classic"
-                                        ? new MyTelegram.Schema.TBaseThemeClassic()
-                                        : new MyTelegram.Schema.TBaseThemeNight(),
-                                    AccentColor = setting["AccentColor"].ToInt32(),
-                                    MessageColorsAnimated = true,
-                                    MessageColors = new TVector<int>(setting["MessageColors"].AsBsonArray.Select(c => c.ToInt32()))
-                                });
-                            }
-                        }
+                        // Theme is owned by the gift type: load it from star-gifts
+                        // by GiftId so freshly upgraded NFTs inherit the theme.
+                        var giftId = giftDoc.Contains("GiftId") ? giftDoc["GiftId"].ToInt64() : 0L;
+                        var giftTypeDoc = await mongoDatabase.GetCollection<BsonDocument>("star-gifts")
+                            .Find(Builders<BsonDocument>.Filter.Eq("GiftId", giftId))
+                            .FirstOrDefaultAsync();
+
+                        var themeSettings = StarGiftThemeHelper.LoadThemeSettings(giftDoc, giftTypeDoc)
+                            ?? new TVector<MyTelegram.Schema.IThemeSettings>();
 
                         userFull.Theme = new MyTelegram.Schema.TChatThemeUniqueGift
                         {

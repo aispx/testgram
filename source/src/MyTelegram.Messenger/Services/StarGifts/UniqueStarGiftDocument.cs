@@ -71,6 +71,35 @@ public class UniqueStarGiftDocument
 
     // Emoji status expiration (unix timestamp), set when gift is used as emoji status
     public int? Until { get; set; }
+
+    // Chat theme released for this gift type (inherited from star-gifts).
+    // Kept on the NFT so legacy message actions / already-cached client data
+    // show the theme even if the gift-type lookup fails.
+    public bool ThemeAvailable { get; set; }
+    public UniqueGiftThemeSettings[]? ThemeSettings { get; set; }
+}
+
+public class UniqueGiftThemeSettings
+{
+    public string? BaseTheme { get; set; }
+    public int AccentColor { get; set; }
+    public int? OutboxAccentColor { get; set; }
+    public bool MessageColorsAnimated { get; set; }
+    public int[] MessageColors { get; set; } = [];
+    public UniqueGiftThemeWallpaper? Wallpaper { get; set; }
+}
+
+public class UniqueGiftThemeWallpaper
+{
+    public long Id { get; set; }
+    public bool Dark { get; set; }
+    public UniqueGiftThemeWallpaperSettings? Settings { get; set; }
+}
+
+public class UniqueGiftThemeWallpaperSettings
+{
+    public int BackgroundColor { get; set; }
+    public int Intensity { get; set; }
 }
 
 public class UniqueGiftAttribute

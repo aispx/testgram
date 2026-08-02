@@ -420,9 +420,16 @@ db['star-gift-upgrade-config'].insertMany([
 
 **3. Выпустить тему для уникального подарка (админ):**
 ```bash
-cd scripts && ./release-gift-theme.sh <unique_gift_id> <center_color> [edge_color] [pattern_color] [text_color]
-# Пример: ./release-gift-theme.sh 1001 0x3390ec 0x6fb1f6 0x8ac5f8 0xffffff
+cd scripts && ./release-gift-theme.sh <gift_id> <center_color> [edge_color] [pattern_color] [text_color]
+# Пример: ./release-gift-theme.sh 900 0x3390ec 0x6fb1f6 0x8ac5f8 0xffffff
 ```
+
+Тема принадлежит **типу подарка** (документ `star-gifts` по `GiftId`), а не
+конкретному NFT. Передача `GiftId` star-подарка выпускает тему сразу для **всех**
+существующих NFT этого типа, а каждый будущий коллекционный подарок (свеже
+апгрейженный или переданный) наследует тему автоматически. Существующие NFT и
+saved-подарки также помечаются, чтобы тема сразу подхватилась уже отправленными
+сообщениями с подарками.
 
 ---
 

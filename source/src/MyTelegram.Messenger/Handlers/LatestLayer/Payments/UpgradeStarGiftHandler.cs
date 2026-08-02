@@ -138,6 +138,10 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
 
         var currentTimestamp = DateTime.UtcNow.ToTimestamp();
 
+        // Inherit a released chat theme from the gift type (star-gifts by GiftId)
+        // so freshly upgraded NFTs get the theme without re-running the release script.
+        var giftTypeTheme = await GetGiftTypeThemeAsync(saved.GiftId);
+
         var uniqueDoc = new UniqueStarGiftDocument
         {
             Id = ObjectId.GenerateNewId(),
@@ -167,6 +171,8 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
             DcId = saved.DcId,
             // Set 21-day transfer cooldown after upgrade (from telelakel: "21-day transfer cooldown")
             TransferLockedUntil = currentTimestamp + (21 * 24 * 60 * 60),
+            ThemeAvailable = giftTypeTheme?.ThemeAvailable ?? false,
+            ThemeSettings = giftTypeTheme?.ThemeSettings,
         };
         await mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts").InsertOneAsync(uniqueDoc);
 
@@ -243,6 +249,59 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
         {
             Updates = new TVector<IUpdate>(),
             Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = uniqueDoc.Date, Seq = 0
+        };
+    }
+
+    private async Task<(bool ThemeAvailable, UniqueGiftThemeSettings[]? ThemeSettings)?> GetGiftTypeThemeAsync(long giftId)
+    {
+        var col = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("star-gifts");
+        var doc = await col.Find(MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("GiftId", giftId))
+            .FirstOrDefaultAsync();
+        if (doc == null) return null;
+
+        var themeAvailable = doc.Contains("ThemeAvailable") && doc["ThemeAvailable"].AsBoolean;
+        if (!themeAvailable) return null;
+
+        UniqueGiftThemeSettings[]? settings = null;
+        if (doc.Contains("ThemeSettings") && doc["ThemeSettings"].IsBsonArray)
+        {
+            settings = doc["ThemeSettings"].AsBsonArray
+                .Where(v => v.IsBsonDocument)
+                .Select(v =>
+                {
+                    var s = v.AsBsonDocument;
+                    return new UniqueGiftThemeSettings
+                    {
+                        BaseTheme = s.Contains("BaseTheme") ? s["BaseTheme"].AsString : "classic",
+                        AccentColor = s.Contains("AccentColor") ? s["AccentColor"].ToInt32() : 0,
+                        OutboxAccentColor = s.Contains("OutboxAccentColor") ? s["OutboxAccentColor"].ToInt32() : null,
+                        MessageColorsAnimated = s.Contains("MessageColorsAnimated") && s["MessageColorsAnimated"].AsBoolean,
+                        MessageColors = s.Contains("MessageColors") && s["MessageColors"].IsBsonArray
+                            ? s["MessageColors"].AsBsonArray.Select(c => c.ToInt32()).ToArray()
+                            : [],
+                        Wallpaper = s.Contains("Wallpaper") && s["Wallpaper"].IsBsonDocument
+                            ? BuildWallpaper(s["Wallpaper"].AsBsonDocument)
+                            : null,
+                    };
+                })
+                .ToArray();
+        }
+
+        return (true, settings);
+    }
+
+    private static UniqueGiftThemeWallpaper? BuildWallpaper(MongoDB.Bson.BsonDocument wp)
+    {
+        var settingsDoc = wp.Contains("Settings") ? wp["Settings"].AsBsonDocument : null;
+        return new UniqueGiftThemeWallpaper
+        {
+            Id = wp.Contains("Id") ? wp["Id"].ToInt64() : 0,
+            Dark = wp.Contains("Dark") && wp["Dark"].AsBoolean,
+            Settings = settingsDoc == null ? null : new UniqueGiftThemeWallpaperSettings
+            {
+                BackgroundColor = settingsDoc.Contains("BackgroundColor") ? settingsDoc["BackgroundColor"].ToInt32() : 0,
+                Intensity = settingsDoc.Contains("Intensity") ? settingsDoc["Intensity"].ToInt32() : 0,
+            },
         };
     }
 }

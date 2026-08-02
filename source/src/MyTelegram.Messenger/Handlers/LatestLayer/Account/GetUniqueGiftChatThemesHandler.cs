@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.StarGifts;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 
@@ -19,12 +20,11 @@ internal sealed class GetUniqueGiftChatThemesHandler(
         IRequestInput input,
         MyTelegram.Schema.Account.RequestGetUniqueGiftChatThemes obj)
     {
-        // Get user's unique star gifts with theme_available flag
+        // Get user's unique star gifts
         var savedGiftsCol = database.GetCollection<BsonDocument>("saved-star-gifts");
         var filter = Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("OwnerUserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("IsUpgraded", true),
-            Builders<BsonDocument>.Filter.Eq("ThemeAvailable", true)
+            Builders<BsonDocument>.Filter.Eq("IsUnique", true)
         );
 
         var savedGifts = await savedGiftsCol.Find(filter).ToListAsync();
@@ -41,27 +41,61 @@ internal sealed class GetUniqueGiftChatThemesHandler(
 
         // Load unique gift details
         var uniqueGiftsCol = database.GetCollection<BsonDocument>("unique-star-gifts");
+        var giftTypesCol = database.GetCollection<BsonDocument>("star-gifts");
+
+        // Batch-load the gift-type (star-gifts) docs for every NFT the user owns.
+        // The theme is owned by the gift type, so all NFTs of a gift — including
+        // ones upgraded after the theme was released — inherit it automatically.
+        var giftIds = savedGifts
+            .Where(s => s.Contains("GiftId"))
+            .Select(s => s["GiftId"].ToInt64())
+            .Distinct()
+            .ToList();
+        var giftTypeById = new Dictionary<long, BsonDocument>();
+        if (giftIds.Count > 0)
+        {
+            var giftTypes = await giftTypesCol.Find(
+                Builders<BsonDocument>.Filter.In("GiftId", giftIds)
+            ).ToListAsync();
+            giftTypeById = giftTypes.ToDictionary(g => g["GiftId"].ToInt64());
+        }
 
         foreach (var savedGift in savedGifts)
         {
-            var uniqueGiftId = savedGift["UniqueGiftId"].AsInt64;
+            // saved-star-gifts stores the unique collectible id in RandomId
+            // (RandomId = uniqueDoc.UniqueId, see UpgradeStarGiftHandler).
+            if (!savedGift.Contains("RandomId")) continue;
+            var uniqueGiftId = savedGift["RandomId"].AsInt64;
             var uniqueGiftDoc = await uniqueGiftsCol.Find(
-                Builders<BsonDocument>.Filter.Eq("UniqueGiftId", uniqueGiftId)
+                Builders<BsonDocument>.Filter.Eq("UniqueId", uniqueGiftId)
             ).FirstOrDefaultAsync();
 
             if (uniqueGiftDoc == null) continue;
 
+            var giftId = uniqueGiftDoc.Contains("GiftId") ? uniqueGiftDoc["GiftId"].ToInt64() : 0L;
+            giftTypeById.TryGetValue(giftId, out var giftTypeDoc);
+
+            // Only expose a theme when the gift type has one released
+            // (or the legacy per-NFT theme exists).
+            var themeSettings = StarGiftThemeHelper.LoadThemeSettings(uniqueGiftDoc, giftTypeDoc);
+            if (themeSettings == null || themeSettings.Count == 0)
+            {
+                continue;
+            }
+
             // Build StarGiftUnique
             var starGift = BuildStarGiftUnique(uniqueGiftDoc, savedGift, userIds);
-
-            // Load theme settings
-            var themeSettings = LoadThemeSettings(uniqueGiftDoc);
 
             themes.Add(new MyTelegram.Schema.TChatThemeUniqueGift
             {
                 Gift = starGift,
                 ThemeSettings = themeSettings
             });
+        }
+
+        if (themes.Count == 0)
+        {
+            return new MyTelegram.Schema.Account.TChatThemesNotModified();
         }
 
         // Load users
@@ -137,117 +171,15 @@ internal sealed class GetUniqueGiftChatThemesHandler(
         return new MyTelegram.Schema.TStarGiftUnique
         {
             ThemeAvailable = true,
-            Id = uniqueGiftDoc["UniqueGiftId"].ToInt64(),
+            Id = uniqueGiftDoc["UniqueId"].ToInt64(),
             GiftId = uniqueGiftDoc["GiftId"].ToInt64(),
             Title = uniqueGiftDoc["Title"].AsString,
             Slug = uniqueGiftDoc["Slug"].AsString,
-            Num = uniqueGiftDoc["Number"].AsInt32,
+            Num = uniqueGiftDoc["Num"].AsInt32,
             OwnerId = new MyTelegram.Schema.TPeerUser { UserId = savedGiftDoc["OwnerUserId"].ToInt64() },
             Attributes = attributes,
             AvailabilityIssued = uniqueGiftDoc["AvailabilityIssued"].AsInt32,
             AvailabilityTotal = uniqueGiftDoc["AvailabilityTotal"].AsInt32
         };
-    }
-
-    private TVector<MyTelegram.Schema.IThemeSettings> LoadThemeSettings(BsonDocument uniqueGiftDoc)
-    {
-        var settings = new TVector<MyTelegram.Schema.IThemeSettings>();
-
-        if (uniqueGiftDoc.Contains("ThemeSettings") && uniqueGiftDoc["ThemeSettings"].IsBsonArray)
-        {
-            foreach (var settingDoc in uniqueGiftDoc["ThemeSettings"].AsBsonArray)
-            {
-                var setting = settingDoc.AsBsonDocument;
-                var baseTheme = setting["BaseTheme"].AsString;
-
-                var themeSettings = new MyTelegram.Schema.TThemeSettings
-                {
-                    BaseTheme = baseTheme == "classic"
-                        ? new MyTelegram.Schema.TBaseThemeClassic()
-                        : new MyTelegram.Schema.TBaseThemeNight(),
-                    AccentColor = setting["AccentColor"].ToInt32(),
-                    MessageColorsAnimated = setting.Contains("MessageColorsAnimated") && setting["MessageColorsAnimated"].AsBoolean,
-                    MessageColors = new TVector<int>(
-                        setting["MessageColors"].AsBsonArray.Select(c => c.ToInt32())
-                    )
-                };
-
-                if (setting.Contains("OutboxAccentColor"))
-                {
-                    themeSettings.OutboxAccentColor = setting["OutboxAccentColor"].ToInt32();
-                }
-
-                if (setting.Contains("Wallpaper"))
-                {
-                    var wp = setting["Wallpaper"].AsBsonDocument;
-                    var wpSettings = wp["Settings"].AsBsonDocument;
-
-                    themeSettings.Wallpaper = new MyTelegram.Schema.TWallPaperNoFile
-                    {
-                        Id = wp["Id"].ToInt64(),
-                        Dark = wp.Contains("Dark") && wp["Dark"].AsBoolean,
-                        Settings = new MyTelegram.Schema.TWallPaperSettings
-                        {
-                            BackgroundColor = wpSettings["BackgroundColor"].ToInt32(),
-                            Intensity = wpSettings["Intensity"].ToInt32()
-                        }
-                    };
-                }
-
-                settings.Add(themeSettings);
-            }
-        }
-        else
-        {
-            // Generate default theme from backdrop attribute
-            var backdropAttr = uniqueGiftDoc.Contains("Attributes") && uniqueGiftDoc["Attributes"].IsBsonArray
-                ? uniqueGiftDoc["Attributes"].AsBsonArray
-                    .FirstOrDefault(a => a.AsBsonDocument["Type"].AsString == "backdrop")?.AsBsonDocument
-                : null;
-
-            if (backdropAttr != null)
-            {
-                var centerColor = backdropAttr.Contains("CenterColor") ? backdropAttr["CenterColor"].AsInt32 : 0x3390ec;
-                var edgeColor = backdropAttr.Contains("EdgeColor") ? backdropAttr["EdgeColor"].AsInt32 : 0x6fb1f6;
-
-                settings.Add(new MyTelegram.Schema.TThemeSettings
-                {
-                    BaseTheme = new MyTelegram.Schema.TBaseThemeClassic(),
-                    AccentColor = centerColor,
-                    OutboxAccentColor = edgeColor,
-                    MessageColorsAnimated = true,
-                    MessageColors = new TVector<int> { centerColor, edgeColor },
-                    Wallpaper = new MyTelegram.Schema.TWallPaperNoFile
-                    {
-                        Id = 0,
-                        Settings = new MyTelegram.Schema.TWallPaperSettings { BackgroundColor = unchecked((int)0xFFFFFFFF), Intensity = 0 }
-                    }
-                });
-
-                settings.Add(new MyTelegram.Schema.TThemeSettings
-                {
-                    BaseTheme = new MyTelegram.Schema.TBaseThemeNight(),
-                    AccentColor = DarkenColor(centerColor),
-                    MessageColorsAnimated = true,
-                    MessageColors = new TVector<int> { DarkenColor(centerColor), DarkenColor(edgeColor) },
-                    Wallpaper = new MyTelegram.Schema.TWallPaperNoFile
-                    {
-                        Id = 0,
-                        Dark = true,
-                        Settings = new MyTelegram.Schema.TWallPaperSettings { BackgroundColor = unchecked((int)0xFF0F0F0F), Intensity = 0 }
-                    }
-                });
-            }
-        }
-
-        return settings;
-    }
-
-    private static int DarkenColor(int color)
-    {
-        var r = (int)(((color >> 16) & 0xFF) * 0.8);
-        var g = (int)(((color >> 8) & 0xFF) * 0.8);
-        var b = (int)((color & 0xFF) * 0.8);
-        return (r << 16) | (g << 8) | b;
     }
 }

@@ -418,9 +418,15 @@ db['star-gift-upgrade-config'].insertMany([
 
 **3. Release a theme for a unique gift (admin):**
 ```bash
-cd scripts && ./release-gift-theme.sh <unique_gift_id> <center_color> [edge_color] [pattern_color] [text_color]
-# Example: ./release-gift-theme.sh 1001 0x3390ec 0x6fb1f6 0x8ac5f8 0xffffff
+cd scripts && ./release-gift-theme.sh <gift_id> <center_color> [edge_color] [pattern_color] [text_color]
+# Example: ./release-gift-theme.sh 900 0x3390ec 0x6fb1f6 0x8ac5f8 0xffffff
 ```
+
+The theme is owned by the **gift type** (`star-gifts` document by `GiftId`), not
+by a single NFT. Passing the `GiftId` of the star gift releases the theme for
+**all** existing NFTs of that type, and every future collectible (freshly
+upgraded or transferred) inherits the theme automatically. Existing NFTs and
+saved gifts are also stamped for immediate pickup by already-sent gift messages.
 
 ---
 
