@@ -23,7 +23,8 @@ internal sealed class PollConverter(IObjectMapper objectMapper) : IPollConverter
                 Correct = p.Correct,
                 Voters = p.Voters,
                 Option = Encoding.UTF8.GetBytes(p.Option),
-                Chosen = chosenOptions.Contains(p.Option)
+                Chosen = chosenOptions.Contains(p.Option),
+                RecentVoters = new TVector<IPeer>()
             });
             pollResults.Results = new TVector<IPollAnswerVoters>(voters);
         }
@@ -34,7 +35,8 @@ internal sealed class PollConverter(IObjectMapper objectMapper) : IPollConverter
                 Correct = false,
                 Voters = 0,
                 Option = Encoding.UTF8.GetBytes(p.Option),
-                Chosen = chosenOptions.Contains(p.Option)
+                Chosen = chosenOptions.Contains(p.Option),
+                RecentVoters = new TVector<IPeer>()
             });
             pollResults.Results = new TVector<IPollAnswerVoters>(voters);
         }

@@ -30,7 +30,7 @@ internal sealed class ToggleConnectedBotPausedHandler : RpcResultObjectHandler<R
         var userId = input.UserId;
         var peer = _peerHelper.GetPeer(obj.Peer, userId);
 
-        if (peer.PeerType != PeerType.User)
+        if (peer.PeerId == 0)
         {
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }

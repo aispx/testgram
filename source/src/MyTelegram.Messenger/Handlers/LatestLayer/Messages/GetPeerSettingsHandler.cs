@@ -241,14 +241,6 @@ internal sealed class GetPeerSettingsHandler(
         // Check for connected business bot
         await SetBusinessBotFieldsAsync(settings, userId, peer.PeerId, peer.PeerType);
 
-        // DEBUG: Force set for user 2010001
-        if (userId == 2010001 && settings is Schema.TPeerSettings debugSettings)
-        {
-            debugSettings.BusinessBotId = 2667006;
-            debugSettings.BusinessBotManageUrl = "tg://resolve?domain=botfather&start=manage_2667006";
-            debugSettings.BusinessBotCanReply = true;
-        }
-
         var peerSettings = new MyTelegram.Schema.Messages.TPeerSettings
         {
             Chats = new TVector<IChat>(),
