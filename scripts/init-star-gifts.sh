@@ -265,8 +265,12 @@ db["unique-star-gifts"].createIndex({ "Slug": 1 }, { unique: true });
 db["unique-star-gifts"].createIndex({ "OwnerUserId": 1 });
 db["unique-star-gifts"].createIndex({ "GiftId": 1 });
 db["unique-star-gifts"].createIndex({ "ResellStars": 1 });
-db["saved-star-gifts"].createIndex({ "UserId": 1, "SavedId": 1 }, { unique: true });
-db["saved-star-gifts"].createIndex({ "UserId": 1 });
+// Indexes for saved-star-gifts match the current SavedStarGiftDocument model
+// (OwnerUserId/OwnerChannelId + MessageId/RandomId/UniqueSlug).
+db["saved-star-gifts"].createIndex({ "OwnerUserId": 1, "MessageId": 1 });
+db["saved-star-gifts"].createIndex({ "OwnerChannelId": 1, "RandomId": 1 });
+db["saved-star-gifts"].createIndex({ "OwnerUserId": 1, "UniqueSlug": 1 });
+db["saved-star-gifts"].createIndex({ "OwnerUserId": 1 });
 db["star-gift-offers"].createIndex({ "RecipientUserId": 1, "Resolved": 1 });
 db["star-gift-offers"].createIndex({ "Slug": 1 });
 db["star-gift-collections"].createIndex({ "UserId": 1 });
