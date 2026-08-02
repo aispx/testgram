@@ -59,18 +59,36 @@ public class Property08_QtsSequencerTests
 {
     /// <summary>
     /// Allocates a qts AND commits it, mirroring the production send path
-    /// (insert row -> allocate -> set qts -> push). <c>GetHighestQtsAsync</c> deliberately reports the
-    /// DELIVERED watermark rather than the allocator, so a bare allocation must not move it: otherwise
-    /// updates.getState could advertise a qts whose message row is not yet visible to
-    /// updates.getDifference and the client would skip past it permanently.
+    /// (insert row -> allocate -> set qts -> push). The row insert is not optional: <c>SetQtsAsync</c> is
+    /// conditional on <c>Qts == 0</c>, so committing against an id that has no row reports "already
+    /// sequenced" and releases the allocation instead of publishing it.
+    /// <para><c>GetHighestQtsAsync</c> deliberately reports neither the raw allocator nor the bare
+    /// DELIVERED watermark, but <c>min(delivered, lowest live in-flight allocation - 1)</c>. A bare
+    /// allocation therefore does not move it — it actively holds it down until the row is written —
+    /// otherwise updates.getState could advertise a qts whose message row is not yet visible to
+    /// updates.getDifference and the client would skip past it permanently.</para>
     /// </summary>
     private static async Task<int> AllocateAndCommitAsync(ISecretChatMessageStore store,
         long userId,
         long permAuthKeyId)
     {
         var qts = await store.AllocateQtsAsync(userId, permAuthKeyId);
-        await store.SetQtsAsync(EncryptedMessageDocument.BuildId(userId, permAuthKeyId, qts), qts, userId,
-            permAuthKeyId);
+        var id = EncryptedMessageDocument.BuildId(userId, permAuthKeyId, qts);
+
+        await store.StoreAsync(new EncryptedMessageDocument
+        {
+            Id = id,
+            ChatId = permAuthKeyId,
+            UserId = userId,
+            RecipientUserId = userId,
+            RecipientPermAuthKeyId = permAuthKeyId,
+            Data = [],
+            RandomId = qts,
+            MessageType = SendMessageType.Text,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await store.SetQtsAsync(id, qts, userId, permAuthKeyId);
 
         return qts;
     }
@@ -290,7 +308,7 @@ public class Property08_QtsSequencerTests
         const int messageCount = 12;
         for (var i = 0; i < messageCount; i++)
         {
-            await service.SendEncryptedAsync(adminInput, peer, randomId: 1000 + i, new byte[] { 1, 2, (byte)i },
+            await service.SendEncryptedAsync(adminInput, peer, randomId: 1000 + i, SecretChatTestHarness.Payload(1, 2, (byte)i),
                 silent: false);
         }
 
@@ -316,7 +334,7 @@ public class Property08_QtsSequencerTests
 
         // A duplicate random_id is deduplicated: no new update, and the sequence is left exactly where it
         // was (Requirement 12.1 — a burnt value would show up as a permanent gap for the recipient).
-        await service.SendEncryptedAsync(adminInput, peer, randomId: 1003, new byte[] { 9, 9 }, silent: false);
+        await service.SendEncryptedAsync(adminInput, peer, randomId: 1003, SecretChatTestHarness.Payload(9, 9), silent: false);
         dispatcher.Dispatched.Count.ShouldBe(messageCount);
         (await store.GetHighestQtsAsync(SecretChatTestHarness.ParticipantId,
             SecretChatTestHarness.ParticipantPermAuthKeyId)).ShouldBe(deliveredQts[^1]);
@@ -324,7 +342,7 @@ public class Property08_QtsSequencerTests
         // Requirement 12.4 in the smallest real setting: the reply travels to the ADMIN's device, whose own
         // sequence is untouched by the 12 updates just delivered to the participant, so it starts over at
         // the initial value.
-        await service.SendEncryptedAsync(participantInput, peer, randomId: 7777, new byte[] { 5 }, silent: false);
+        await service.SendEncryptedAsync(participantInput, peer, randomId: 7777, SecretChatTestHarness.Payload(5), silent: false);
 
         dispatcher.Dispatched.Count.ShouldBe(messageCount + 1);
         var reply = dispatcher.Dispatched[^1];
@@ -402,6 +420,227 @@ public class Property08_QtsSequencerTests
         (await AllocateAndCommitAsync(store, 1, 23)).ShouldBe(SecretChatConsts.QtsInitialValue + 1);
         (await store.GetHighestQtsAsync(12, 3)).ShouldBe(SecretChatConsts.QtsInitialValue);
     }
+
+    // ==========================================================================================
+    // The in-flight allocation set: an allocated-but-unwritten qts must hold the advertised
+    // watermark down, or a concurrent send publishes over it and the message is lost for good.
+    // ==========================================================================================
+
+    /// <summary>
+    /// The core invariant: every qts in <c>(QtsInitialValue - 1, GetHighestQtsAsync()]</c> is already
+    /// written onto its row.
+    /// <para>Send A allocates and stalls before writing its row; send B — to the SAME recipient device,
+    /// typically a different secret chat on that user's primary device — allocates, writes and publishes.
+    /// The delivered watermark is a <c>$max</c>, so on its own it would now read B's qts and a
+    /// getDifference landing here would hand the client a cursor past A. A's row later becomes visible
+    /// below that cursor and <c>GetForDifferenceAsync</c> (filtering <c>Qts &gt; sinceQts</c>) can never
+    /// return it again.</para>
+    /// <para>Before the in-flight set this asserted 2 and lost the message; the watermark must stay at
+    /// <c>QtsInitialValue - 1</c> until A commits.</para>
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task An_uncommitted_allocation_holds_the_watermark_below_a_later_committed_one()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var store = new SecretChatMessageStore(mongo.Database);
+
+        const long userId = 951_001;
+        const long permAuthKeyId = 751_001;
+
+        // Send A: allocates, then stalls (crash / slow round-trip) before its row carries the qts.
+        var qtsA = await store.AllocateQtsAsync(userId, permAuthKeyId);
+        qtsA.ShouldBe(SecretChatConsts.QtsInitialValue);
+        var idA = EncryptedMessageDocument.BuildId(userId, permAuthKeyId, qtsA);
+        await store.StoreAsync(NewRow(idA, userId, permAuthKeyId, qtsA));
+
+        // Send B: allocates, writes and publishes while A is still in flight.
+        var qtsB = await AllocateAndCommitAsync(store, userId, permAuthKeyId);
+        qtsB.ShouldBe(SecretChatConsts.QtsInitialValue + 1);
+
+        // --- inside the window: B is delivered, but advertising its qts would strand A ---
+        (await store.GetHighestQtsAsync(userId, permAuthKeyId))
+            .ShouldBe(SecretChatConsts.QtsInitialValue - 1, "an unwritten allocation must hold the watermark");
+
+        var advertised = await store.GetHighestQtsAsync(userId, permAuthKeyId);
+
+        // The page must be bounded by the same watermark, or a truncated page's cursor jumps the hole.
+        (await store.GetForDifferenceAsync(userId, permAuthKeyId, SecretChatConsts.QtsInitialValue - 1,
+                limit: 0, maxQts: advertised))
+            .ShouldBeEmpty("no row may be handed out above the advertised watermark");
+
+        // --- A finally commits: both messages become visible and reachable from the old cursor ---
+        (await store.SetQtsAsync(idA, qtsA, userId, permAuthKeyId)).ShouldBeTrue();
+
+        (await store.GetHighestQtsAsync(userId, permAuthKeyId)).ShouldBe(qtsB);
+
+        var recovered = await store.GetForDifferenceAsync(userId, permAuthKeyId, advertised, limit: 0,
+            maxQts: await store.GetHighestQtsAsync(userId, permAuthKeyId));
+
+        recovered.Select(d => d.Qts).ShouldBe([qtsA, qtsB],
+            "the stalled message must still be reachable from the cursor advertised while it was in flight");
+    }
+
+    /// <summary>
+    /// A sender that dies between allocate and set must not wedge the device forever: the entry expires
+    /// after <c>InflightStaleAfter</c>, the value is BURNT (a permanent hole in the numbering, which is
+    /// safe because every consumer filters qts as a range), and the sequence carries on.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task An_abandoned_allocation_expires_and_is_burnt_rather_than_wedging_the_watermark()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var store = new SecretChatMessageStore(mongo.Database);
+
+        const long userId = 952_002;
+        const long permAuthKeyId = 752_002;
+
+        var abandoned = await store.AllocateQtsAsync(userId, permAuthKeyId);
+        abandoned.ShouldBe(SecretChatConsts.QtsInitialValue);
+
+        // Still inside the staleness window: held down, exactly as the previous fact requires.
+        (await store.GetHighestQtsAsync(userId, permAuthKeyId))
+            .ShouldBe(SecretChatConsts.QtsInitialValue - 1);
+
+        // Same data, a reader that considers every allocation stale: unwedged, back to DELIVERED.
+        var aged = new SecretChatMessageStore(mongo.Database) { InflightStaleAfter = TimeSpan.Zero };
+
+        (await aged.GetHighestQtsAsync(userId, permAuthKeyId))
+            .ShouldBe(SecretChatConsts.QtsInitialValue - 1, "delivered is still 0, but nothing is wedged");
+
+        // The abandoned value is never reused, and normal service resumes on top of the hole.
+        var next = await AllocateAndCommitAsync(aged, userId, permAuthKeyId);
+        next.ShouldBe(SecretChatConsts.QtsInitialValue + 1, "the abandoned value is burnt, not recycled");
+        (await aged.GetHighestQtsAsync(userId, permAuthKeyId)).ShouldBe(next);
+    }
+
+    /// <summary>
+    /// Explicitly releasing an allocation frees the watermark immediately, without waiting out the
+    /// staleness window. This is the path <c>AssignQtsAndDispatchAsync</c> takes when the send throws
+    /// after allocating.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task Abandoning_an_allocation_releases_the_watermark_immediately()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var store = new SecretChatMessageStore(mongo.Database);
+
+        const long userId = 953_003;
+        const long permAuthKeyId = 753_003;
+
+        var committed = await AllocateAndCommitAsync(store, userId, permAuthKeyId);
+        var doomed = await store.AllocateQtsAsync(userId, permAuthKeyId);
+
+        (await store.GetHighestQtsAsync(userId, permAuthKeyId))
+            .ShouldBe(doomed - 1, "the live allocation clamps the watermark below itself");
+
+        await store.AbandonQtsAsync(doomed, userId, permAuthKeyId);
+
+        (await store.GetHighestQtsAsync(userId, permAuthKeyId))
+            .ShouldBe(committed, "releasing the allocation restores the delivered watermark at once");
+    }
+
+    /// <summary>
+    /// <c>SetQtsAsync</c> is conditional on <c>Qts == 0</c>: two requests racing to finish the same
+    /// interrupted send must not both publish, or the recipient receives the message twice.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task Only_the_first_writer_sequences_a_row_and_the_loser_reports_it()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var store = new SecretChatMessageStore(mongo.Database);
+
+        const long userId = 954_004;
+        const long permAuthKeyId = 754_004;
+
+        var first = await store.AllocateQtsAsync(userId, permAuthKeyId);
+        var second = await store.AllocateQtsAsync(userId, permAuthKeyId);
+
+        var id = EncryptedMessageDocument.BuildId(userId, permAuthKeyId, first);
+        await store.StoreAsync(NewRow(id, userId, permAuthKeyId, first));
+
+        (await store.SetQtsAsync(id, first, userId, permAuthKeyId)).ShouldBeTrue();
+        (await store.SetQtsAsync(id, second, userId, permAuthKeyId))
+            .ShouldBeFalse("the row is already sequenced, so the caller must not push again");
+
+        // The loser's allocation is released, so it does not hold the watermark down for a minute.
+        (await store.GetHighestQtsAsync(userId, permAuthKeyId)).ShouldBe(first);
+
+        // The row keeps the FIRST writer's qts; the second value is burnt.
+        var rows = await store.GetForDifferenceAsync(userId, permAuthKeyId,
+            SecretChatConsts.QtsInitialValue - 1, limit: 0);
+        rows.Select(d => d.Qts).ShouldBe([first]);
+    }
+
+    /// <summary>
+    /// The invariant as a property, over random interleavings of allocate / commit-an-outstanding-one:
+    /// after EVERY step, every qts up to the advertised watermark is already written onto a row.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task The_watermark_never_advertises_a_qts_whose_row_is_not_yet_written()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var store = new SecretChatMessageStore(mongo.Database);
+
+        var schedules = Sample(QtsGen.SequenceCase, HeavyGeneratedCases);
+
+        for (var i = 0; i < schedules.Count; i++)
+        {
+            var userId = 960_000 + i;
+            var permAuthKeyId = 760_000 + schedules[i].KeySalt;
+            var because = $"case #{i} {schedules[i]}";
+
+            // Outstanding allocations, committed out of order so a later value can land before an earlier.
+            var outstanding = new List<int>();
+            var steps = Math.Max(2, schedules[i].AllocationCount);
+
+            for (var step = 0; step < steps * 2; step++)
+            {
+                // Alternate: allocate on even steps, commit the NEWEST outstanding on odd ones (LIFO is
+                // what actually reorders the commits and reproduces the race).
+                if (step % 2 == 0 || outstanding.Count == 0)
+                {
+                    var qts = await store.AllocateQtsAsync(userId, permAuthKeyId);
+                    await store.StoreAsync(NewRow(EncryptedMessageDocument.BuildId(userId, permAuthKeyId, qts),
+                        userId, permAuthKeyId, qts));
+                    outstanding.Add(qts);
+                }
+                else
+                {
+                    var qts = outstanding[^1];
+                    outstanding.RemoveAt(outstanding.Count - 1);
+                    await store.SetQtsAsync(EncryptedMessageDocument.BuildId(userId, permAuthKeyId, qts), qts,
+                        userId, permAuthKeyId);
+                }
+
+                var watermark = await store.GetHighestQtsAsync(userId, permAuthKeyId);
+                var visible = (await store.GetForDifferenceAsync(userId, permAuthKeyId,
+                        SecretChatConsts.QtsInitialValue - 1, limit: 0, maxQts: watermark))
+                    .Select(d => d.Qts)
+                    .ToHashSet();
+
+                for (var q = SecretChatConsts.QtsInitialValue; q <= watermark; q++)
+                {
+                    visible.ShouldContain(q,
+                        $"{because}, step {step}: watermark {watermark} advertises qts {q} with no visible row");
+                }
+            }
+        }
+    }
+
+    /// <summary>Minimal stored row for sequencer facts; the payload is irrelevant to qts assignment.</summary>
+    private static EncryptedMessageDocument NewRow(string id, long userId, long permAuthKeyId, long randomId) =>
+        new()
+        {
+            Id = id,
+            ChatId = permAuthKeyId,
+            UserId = userId,
+            RecipientUserId = userId,
+            RecipientPermAuthKeyId = permAuthKeyId,
+            Data = [],
+            RandomId = randomId,
+            MessageType = SendMessageType.Text,
+            CreatedAt = DateTime.UtcNow
+        };
 
     /// <summary>
     /// Requirement 12.4, stated as the fan-out itself: each generated update is delivered to an arbitrary

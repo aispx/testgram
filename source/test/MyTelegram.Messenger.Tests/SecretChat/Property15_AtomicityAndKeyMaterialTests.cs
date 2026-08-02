@@ -468,7 +468,7 @@ public class Property15_AtomicityAndKeyMaterialTests
                     PermAuthKeyId = SecretChatTestHarness.AdminPermAuthKeyId,
                     RecipientUserId = SecretChatTestHarness.ParticipantId,
                     RecipientPermAuthKeyId = SecretChatTestHarness.ParticipantPermAuthKeyId,
-                    Data = [1, 2, 3, 4],
+                    Data = SecretChatTestHarness.Payload(1, 2, 3, 4),
                     Date = 1000,
                     MessageType = SendMessageType.Text,
                     RandomId = SeededRandomId
@@ -629,7 +629,7 @@ public static class SecretChatAtomicityArbitraries
             SecretChatFaultExceptionKind.Io);
 
     private static Gen<byte[]> Payload =>
-        from length in Gen.Choose(1, 64)
+        from length in Gen.Choose(SecretChatConsts.MinEncryptedPayloadLength, 96)
         from seed in Gen.Choose(0, 255)
         select BuildPayload(length, seed);
 

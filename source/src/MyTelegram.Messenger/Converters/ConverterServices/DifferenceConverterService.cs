@@ -59,7 +59,7 @@ public class DifferenceConverterService(
     public IDifference ToDifference(
         IRequestWithAccessHashKeyId request,
         GetMessageOutput output, IPtsReadModel? pts, int cachedPts, int limit, IList<IUpdate> updateList,
-        IList<IChat> chatListFromUpdates, IReadOnlyCollection<IEncryptedMessageReadModel>? encryptedMessageReadModels, int secretChatQts = 0, bool encryptedMessagesTruncated = false, int layer = 0)
+        IList<IChat> chatListFromUpdates, IReadOnlyCollection<IEncryptedMessageReadModel>? encryptedMessageReadModels, int secretChatQts = 0, bool encryptedMessagesTruncated = false, bool updatesTruncated = false, int layer = 0)
     {
         var messageList = messageConverterService.ToMessageList(output.SelfUserId, output.MessageList, output.PollList,
             output.ChosenPollOptions, output.UserReactionList, layer);
@@ -86,8 +86,11 @@ public class DifferenceConverterService(
         layeredUpdates = layeredUpdates.Where(u => u != null && !IsInvalidUpdate(u));
 
         // The slice form tells the client "there is more, ask again". Encrypted messages can be cut off
-        // by the same limit independently of the other updates, so they must be able to force it too.
-        if (updateList.Count == limit || encryptedMessagesTruncated)
+        // by the same limit independently of the other updates, so they must be able to force it too —
+        // and once a second non-encrypted stream (the device-scoped secret-chat handshake replay) is
+        // unioned, updateList.Count == limit is unreliable as a truncation signal (overshoot), so the
+        // caller passes an explicit flag for it.
+        if (updateList.Count == limit || encryptedMessagesTruncated || updatesTruncated)
         {
             var differenceSlice = new TDifferenceSlice
             {

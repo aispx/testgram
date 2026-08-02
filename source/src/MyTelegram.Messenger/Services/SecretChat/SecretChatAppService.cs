@@ -303,10 +303,14 @@ public class SecretChatAppService(
     {
         await accessResolver.EnsureUserCallerAsync(input);
 
-        var highestQts = await messageStore.GetHighestQtsAsync(input.UserId, input.PermAuthKeyId);
-        if (maxQts > highestQts)
+        // Validated against the ASSIGNED high-water, not the delivered watermark: a client can already
+        // hold a live-pushed qts whose predecessor is still in flight, and rejecting that ack would be a
+        // spurious MAX_QTS_INVALID. The requirement is worded the same way ("highest qts assigned to the
+        // calling Authorization_Key"). AckAsync only touches rows with Qts > 0, so nothing unassigned acks.
+        var assignedQts = await messageStore.GetAssignedQtsAsync(input.UserId, input.PermAuthKeyId);
+        if (maxQts > assignedQts)
         {
-            // A fresh Authorization_Key has highest == QtsInitialValue - 1.
+            // A fresh Authorization_Key has assigned == QtsInitialValue - 1.
             RpcErrors.RpcErrors400.MaxQtsInvalid.ThrowRpcError();
         }
 
@@ -346,6 +350,16 @@ public class SecretChatAppService(
             {
                 RpcErrors.RpcErrors403.UserDeleted.ThrowRpcError();
             }
+        }
+
+        // The only seq_no-adjacent check a blind relay can make: the outer envelope must at least be
+        // large enough to hold key_fingerprint + msg_key + one AES block. Anything shorter cannot be
+        // decrypted by any client, so relaying it would burn a qts on a message the recipient can only
+        // read as a gap. Divisibility by 16 is deliberately NOT enforced — TDLib truncates a ragged
+        // tail rather than rejecting it, so a stricter rule here could reject what upstream relays.
+        if (data.Length < SecretChatConsts.MinEncryptedPayloadLength)
+        {
+            RpcErrors.RpcErrors400.DataInvalid.ThrowRpcError();
         }
 
         if (data.Length > MaxEncryptedPayloadLength)
@@ -396,6 +410,7 @@ public class SecretChatAppService(
             Data = data.ToArray(),
             File = encryptedFile?.ToBytes(),
             Date = CurrentDate,
+            CreatedAt = DateTime.UtcNow,
             MessageType = messageType,
             RandomId = randomId
         };
@@ -417,6 +432,12 @@ public class SecretChatAppService(
     /// Completes a stored-but-unsequenced message: allocate the recipient's qts, make the row visible,
     /// then push. The order (insert -> allocate -> set -> push) matters — allocating before the insert
     /// would burn a qts on a duplicate-key race and punch a permanent gap in the recipient's sequence.
+    /// <para>
+    /// The ordering alone is not what keeps the recipient's watermark honest: the allocation is registered
+    /// as in-flight by <see cref="ISecretChatMessageStore.AllocateQtsAsync"/> and only released by
+    /// <c>SetQtsAsync</c>, so a concurrent send to the same device cannot advertise a qts over this one
+    /// while the row is still unwritten. Anything that throws in between must release it explicitly.
+    /// </para>
     /// </summary>
     private async Task<MyTelegram.Schema.Messages.ISentEncryptedMessage> AssignQtsAndDispatchAsync(
         IRequestInput input,
@@ -427,7 +448,30 @@ public class SecretChatAppService(
         bool silent)
     {
         var qts = await messageStore.AllocateQtsAsync(document.RecipientUserId, document.RecipientPermAuthKeyId);
-        await messageStore.SetQtsAsync(document.Id, qts, document.RecipientUserId, document.RecipientPermAuthKeyId);
+
+        bool sequenced;
+        try
+        {
+            sequenced = await messageStore.SetQtsAsync(document.Id, qts, document.RecipientUserId,
+                document.RecipientPermAuthKeyId);
+        }
+        catch
+        {
+            // Release the allocation rather than letting the staleness cut do it: an entry left behind
+            // holds this device's watermark down for the whole window.
+            await messageStore.AbandonQtsAsync(qts, document.RecipientUserId, document.RecipientPermAuthKeyId);
+
+            throw;
+        }
+
+        if (!sequenced)
+        {
+            // A concurrent request already sequenced and pushed this row. Report its qts, do not push again.
+            var stored = await messageStore.FindAsync(document.ChatId, document.UserId, document.RandomId);
+
+            return BuildSentResult(stored ?? document, fileConverter);
+        }
+
         document.Qts = qts;
 
         var encryptedFile = DeserializeFile(document);
@@ -522,10 +566,20 @@ public class SecretChatAppService(
             null);
     }
 
+    /// <summary>
+    ///     Generates a secret chat <c>access_hash</c>. chat_id is sequential and therefore guessable, so this
+    ///     value is the only per-chat secret and must come from a CSPRNG rather than <see cref="Random.Shared" />,
+    ///     whose xoshiro256** state is recoverable from a handful of observed outputs.
+    /// </summary>
     private static long NewNonZeroId()
     {
-        var id = Math.Abs(Random.Shared.NextInt64());
-
-        return id == 0 ? 1 : id;
+        while (true)
+        {
+            var id = BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)) & long.MaxValue;
+            if (id != 0)
+            {
+                return id;
+            }
+        }
     }
 }

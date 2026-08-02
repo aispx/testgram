@@ -26,5 +26,6 @@ public interface IDifferenceConverterService
         IReadOnlyCollection<IEncryptedMessageReadModel>? encryptedMessageReadModels,
         int secretChatQts = 0,
         bool encryptedMessagesTruncated = false,
+        bool updatesTruncated = false,
         int layer = 0);
 }

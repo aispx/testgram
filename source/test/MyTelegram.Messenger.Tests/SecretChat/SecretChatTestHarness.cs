@@ -36,6 +36,25 @@ internal static class SecretChatTestHarness
     public const int ChatId = 5;
     public const long AccessHash = 987654321;
 
+    /// <summary>
+    /// A structurally valid opaque send payload: exactly
+    /// <see cref="SecretChatConsts.MinEncryptedPayloadLength"/> bytes, the floor the server enforces for
+    /// key_fingerprint (8) + msg_key (16) + one AES block (16). The leading <paramref name="tag"/> bytes
+    /// keep payloads from different sends distinguishable; the rest is deterministic filler. The server
+    /// is a blind relay, so only the length is ever inspected.
+    /// </summary>
+    public static byte[] Payload(params byte[] tag)
+    {
+        var payload = new byte[SecretChatConsts.MinEncryptedPayloadLength];
+        tag.CopyTo(payload, 0);
+        for (var i = tag.Length; i < payload.Length; i++)
+        {
+            payload[i] = (byte)((i * 31 + tag.Length) % 256);
+        }
+
+        return payload;
+    }
+
     public static byte[] ValidDhValue()
     {
         // 256 bytes with the high byte set: satisfies 2^(2048-64) <= g <= p - 2^(2048-64).
@@ -274,6 +293,9 @@ internal sealed class InMemorySecretChatMessageStore : ISecretChatMessageStore
     private readonly Dictionary<string, int> _counters = new();
     private readonly Dictionary<string, int> _delivered = new();
 
+    /// <summary>Allocated-but-not-yet-committed qts per device, mirroring the Mongo "Inflight" array.</summary>
+    private readonly Dictionary<string, HashSet<int>> _inflight = new();
+
     public Exception? ThrowOnStore { get; set; }
 
     public IReadOnlyCollection<EncryptedMessageDocument> All => _messages.Values;
@@ -309,30 +331,75 @@ internal sealed class InMemorySecretChatMessageStore : ISecretChatMessageStore
         seq++;
         _counters[key] = seq;
 
-        return Task.FromResult(SecretChatConsts.QtsInitialValue - 1 + seq);
+        var qts = SecretChatConsts.QtsInitialValue - 1 + seq;
+
+        // Registered atomically with the increment, exactly as the production pipeline update does.
+        if (!_inflight.TryGetValue(key, out var live))
+        {
+            live = [];
+            _inflight[key] = live;
+        }
+
+        live.Add(qts);
+
+        return Task.FromResult(qts);
     }
 
-    public Task SetQtsAsync(string id, int qts, long recipientUserId, long recipientPermAuthKeyId)
+    public Task<bool> SetQtsAsync(string id, int qts, long recipientUserId, long recipientPermAuthKeyId)
     {
+        var key = $"{recipientUserId}_{recipientPermAuthKeyId}";
+
+        // Conditional on Qts == 0: a row another request already sequenced must not be pushed twice.
         if (_messages.TryGetValue(id, out var doc))
         {
+            if (doc.Qts != 0)
+            {
+                _inflight.GetValueOrDefault(key)?.Remove(qts);
+
+                return Task.FromResult(false);
+            }
+
             doc.Qts = qts;
         }
 
-        // Mirrors the production store: the delivered watermark advances only once the row is visible.
-        var key = $"{recipientUserId}_{recipientPermAuthKeyId}";
+        // Mirrors the production store: the delivered watermark advances and the allocation is released
+        // only once the row is visible.
         _delivered.TryGetValue(key, out var current);
         _delivered[key] = Math.Max(current, qts);
+        _inflight.GetValueOrDefault(key)?.Remove(qts);
+
+        return Task.FromResult(true);
+    }
+
+    public Task AbandonQtsAsync(int qts, long recipientUserId, long recipientPermAuthKeyId)
+    {
+        _inflight.GetValueOrDefault($"{recipientUserId}_{recipientPermAuthKeyId}")?.Remove(qts);
 
         return Task.CompletedTask;
     }
 
     public Task<int> GetHighestQtsAsync(long userId, long permAuthKeyId)
     {
-        // Deliberately the DELIVERED watermark, not the allocator (see ISecretChatMessageStore).
-        _delivered.TryGetValue($"{userId}_{permAuthKeyId}", out var delivered);
+        var key = $"{userId}_{permAuthKeyId}";
+        _delivered.TryGetValue(key, out var delivered);
+        if (delivered == 0)
+        {
+            delivered = SecretChatConsts.QtsInitialValue - 1;
+        }
 
-        return Task.FromResult(delivered == 0 ? SecretChatConsts.QtsInitialValue - 1 : delivered);
+        // Clamped below the lowest live allocation: the delivered watermark is a max, so on its own it
+        // would carry over an earlier allocation whose row is still unwritten. Staleness expiry is not
+        // modelled here — no in-memory test holds an allocation for a minute.
+        var live = _inflight.GetValueOrDefault(key);
+
+        return Task.FromResult(live is { Count: > 0 } ? Math.Min(delivered, live.Min() - 1) : delivered);
+    }
+
+    public Task<int> GetAssignedQtsAsync(long userId, long permAuthKeyId)
+    {
+        _counters.TryGetValue($"{userId}_{permAuthKeyId}", out var seq);
+
+        return Task.FromResult(SecretChatConsts.QtsInitialValue - 1 + seq);
     }
 
     public Task<IReadOnlyList<long>> AckAsync(long userId, long permAuthKeyId, int maxQts)
@@ -355,13 +422,14 @@ internal sealed class InMemorySecretChatMessageStore : ISecretChatMessageStore
     }
 
     public Task<IReadOnlyList<EncryptedMessageDocument>> GetForDifferenceAsync(long userId, long permAuthKeyId,
-        int sinceQts, int limit)
+        int sinceQts, int limit, int maxQts = int.MaxValue)
     {
         var result = _messages.Values
             .Where(d => d.RecipientUserId == userId
                         && d.RecipientPermAuthKeyId == permAuthKeyId
                         && !d.Acked
-                        && d.Qts > sinceQts)
+                        && d.Qts > sinceQts
+                        && d.Qts <= maxQts)
             .OrderBy(d => d.Qts)
             .Take(limit > 0 ? limit : int.MaxValue)
             .ToList();

@@ -566,7 +566,7 @@ public class Property13_EncryptedFileTests
             var sent = (await world.Service.SendEncryptedFileAsync(world.AdminInput,
                 world.Peer,
                 randomId: 5_000 + i,
-                new byte[] { 1, 2, 3 },
+                SecretChatTestHarness.Payload(1, 2, 3),
                 reference,
                 silent: false)).ShouldBeOfType<SchemaMessages.TSentEncryptedFile>();
 
@@ -592,7 +592,7 @@ public class Property13_EncryptedFileTests
                     world.AdminInput,
                     world.Peer,
                     randomId: 6_000 + i,
-                    new byte[] { 4, 5, 6 },
+                    SecretChatTestHarness.Payload(4, 5, 6),
                     broken,
                     silent: false)))
                 .RpcError.ShouldBe(RpcErrors.RpcErrors400.FileEmtpy, because);
@@ -674,7 +674,7 @@ public class Property13_EncryptedFileTests
             var sent = world.Service.SendEncryptedFileAsync(input,
                     world.Peer,
                     @case.SendRandomId,
-                    new byte[] { 7, 7, 7 },
+                    SecretChatTestHarness.Payload(7, 7, 7),
                     reference,
                     @case.Silent)
                 .GetAwaiter().GetResult()
@@ -720,7 +720,7 @@ public class Property13_EncryptedFileTests
                 .SendEncryptedFileAsync(input,
                     world.Peer,
                     @case.SendRandomId,
-                    new byte[] { 7, 7, 7 },
+                    SecretChatTestHarness.Payload(7, 7, 7),
                     reference,
                     @case.Silent)
                 .GetAwaiter().GetResult())

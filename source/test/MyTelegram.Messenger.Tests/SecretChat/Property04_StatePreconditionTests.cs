@@ -265,7 +265,7 @@ public static class SecretChatStatePreconditionArbitraries
         Gen.Elements(ChatState.Waiting, ChatState.Active, ChatState.Discarded);
 
     private static Gen<byte[]> Payload =>
-        from length in Gen.Choose(1, 64)
+        from length in Gen.Choose(SecretChatConsts.MinEncryptedPayloadLength, 96)
         from seed in Gen.Choose(0, 255)
         select BuildPayload(length, seed);
 

@@ -387,8 +387,8 @@ public class Property10_MessageDedupTests
             SecondRequestRandomId: 4243,
             SendRandomId: 990001,
             SecondSendRandomId: 990002,
-            Data: [9, 8, 7, 6, 5],
-            SecondData: [1, 2, 3],
+            Data: SecretChatTestHarness.Payload(9, 8, 7, 6, 5),
+            SecondData: SecretChatTestHarness.Payload(1, 2, 3),
             Silent: false);
     }
 }
@@ -705,7 +705,7 @@ public static class SecretChatDedupGen
             SecretChatDedupOperation.SendEncryptedService);
 
     public static Gen<byte[]> Payload =>
-        from length in Gen.Choose(1, 64)
+        from length in Gen.Choose(SecretChatConsts.MinEncryptedPayloadLength, 96)
         from seed in Gen.Choose(0, 255)
         select BuildPayload(length, seed);
 

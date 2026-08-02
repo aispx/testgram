@@ -310,9 +310,56 @@ public class Property17_FailureCheckOrderTests
     }
 
     /// <summary>
+    /// The last step of the same precedence, pinned at the boundary: with the chat Active and both
+    /// accounts live, an envelope one byte below the structural floor is rejected as DATA_INVALID and
+    /// burns no qts on the recipient's device.
+    /// </summary>
+    [Fact]
+    public void SendEncryptedService_rejects_an_undersized_envelope_as_data_invalid()
+    {
+        var world = new ServiceWorld(new SecretChatServiceFailureCase(ChatState.Active,
+            OtherParticipantDeleted: false,
+            CallerIsAdmin: true,
+            RandomId: 9003,
+            Data: new byte[SecretChatConsts.MinEncryptedPayloadLength - 1]));
+
+        var ex = Should.Throw<RpcException>(() => world.Invoke());
+
+        ex.RpcError.ShouldBe(RpcErrors.RpcErrors400.DataInvalid);
+        world.MessageStore.All.ShouldBeEmpty();
+        world.Dispatcher.Dispatched.ShouldBeEmpty();
+        world.MessageStore
+            .GetHighestQtsAsync(SecretChatTestHarness.ParticipantId,
+                SecretChatTestHarness.ParticipantPermAuthKeyId)
+            .GetAwaiter().GetResult()
+            .ShouldBe(SecretChatConsts.QtsInitialValue - 1);
+    }
+
+    /// <summary>
+    /// The other side of that boundary: exactly <see cref="SecretChatConsts.MinEncryptedPayloadLength"/>
+    /// bytes is the smallest structurally valid envelope and is relayed.
+    /// </summary>
+    [Fact]
+    public void SendEncryptedService_accepts_an_envelope_at_the_structural_floor()
+    {
+        var world = new ServiceWorld(new SecretChatServiceFailureCase(ChatState.Active,
+            OtherParticipantDeleted: false,
+            CallerIsAdmin: true,
+            RandomId: 9004,
+            Data: new byte[SecretChatConsts.MinEncryptedPayloadLength]));
+
+        world.Invoke().ShouldBeOfType<MyTelegram.Schema.Messages.TSentEncryptedMessage>();
+
+        world.MessageStore.All.Count.ShouldBe(1);
+        world.Dispatcher.Dispatched.ShouldHaveSingleItem()
+            .Update.ShouldBeOfType<TUpdateNewEncryptedMessage>();
+    }
+
+    /// <summary>
     /// The RPC error of the earliest violated sendEncryptedService check, derived from the fixed
     /// precedence alone: RequireActive (Waiting -> ENCRYPTION_ID_INVALID, Discarded -> ENCRYPTION_DECLINED)
-    /// -> deleted other participant -> USER_DELETED. <c>null</c> when nothing is violated.
+    /// -> deleted other participant -> USER_DELETED -> undersized envelope -> DATA_INVALID.
+    /// <c>null</c> when nothing is violated.
     /// </summary>
     private static RpcError? ExpectedServiceError(SecretChatServiceFailureCase @case)
     {
@@ -331,6 +378,13 @@ public class Property17_FailureCheckOrderTests
         if (@case.OtherParticipantDeleted)
         {
             return RpcErrors.RpcErrors403.UserDeleted;
+        }
+
+        // (3) Last, the shape of the opaque envelope: too short to hold key_fingerprint + msg_key +
+        // one AES block, so no client could ever decrypt it.
+        if (@case.Data.Length < SecretChatConsts.MinEncryptedPayloadLength)
+        {
+            return RpcErrors.RpcErrors400.DataInvalid;
         }
 
         return null;
@@ -641,8 +695,12 @@ public static class SecretChatFailureOrderArbitraries
         from data in Payload
         select new SecretChatServiceFailureCase(state, otherDeleted, callerIsAdmin, randomId, data);
 
+    /// <summary>
+    /// Straddles <see cref="SecretChatConsts.MinEncryptedPayloadLength"/> (40) on both sides, so the
+    /// draws exercise the DATA_INVALID branch and the delivered branch alike.
+    /// </summary>
     private static Gen<byte[]> Payload =>
-        from length in Gen.Choose(1, 64)
+        from length in Gen.Choose(1, 96)
         from seed in Gen.Choose(0, 255)
         select BuildPayload(length, seed);
 

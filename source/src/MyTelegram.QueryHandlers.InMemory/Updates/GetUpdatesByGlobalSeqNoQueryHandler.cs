@@ -5,9 +5,11 @@ public class GetUpdatesByGlobalSeqNoQueryHandler(IQueryOnlyReadModelStore<Update
 {
     public async Task<IReadOnlyCollection<IUpdatesReadModel>> ExecuteQueryAsync(GetUpdatesByGlobalSeqNoQuery query, CancellationToken cancellationToken)
     {
+        // Parity with the MongoDB handler: EncryptedUpdates marker + device scoping.
         return await store.FindAsync(p => p.OwnerPeerId == query.UserId &&
-                                          p.UpdatesType == UpdatesType.Updates &&
-                                          p.Pts == 0 &&
-                                          p.GlobalSeqNo > query.MinGlobalSeqNo, cancellationToken: cancellationToken);
+                                          p.UpdatesType == UpdatesType.EncryptedUpdates &&
+                                          p.GlobalSeqNo > query.MinGlobalSeqNo &&
+                                          (p.OnlySendToThisAuthKeyId == null || p.OnlySendToThisAuthKeyId == query.PermAuthKeyId) &&
+                                          (p.ExcludeAuthKeyId == null || p.ExcludeAuthKeyId != query.PermAuthKeyId), cancellationToken: cancellationToken);
     }
 }

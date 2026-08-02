@@ -30,6 +30,12 @@ public class EncryptedMessageDocument : IEncryptedMessageReadModel
 
     public int Date { get; set; }
 
+    /// <summary>
+    /// Insertion time, carried as a BSON date purely so the retention TTL index can expire the row
+    /// (<see cref="Date"/> is a unix-seconds int, which MongoDB's TTL cannot use).
+    /// </summary>
+    public DateTime CreatedAt { get; set; }
+
     public SendMessageType MessageType { get; set; }
 
     /// <summary>Recipient-device qts. 0 = not yet assigned (crash between insert and allocation).</summary>

@@ -462,7 +462,7 @@ public class Property06_FanOutAddressingTests
             RandomId: 990001,
             RequestRandomId: 4242,
             MaxDate: 1_700_000_000,
-            Data: [9, 8, 7, 6, 5]);
+            Data: SecretChatTestHarness.Payload(9, 8, 7, 6, 5));
     }
 }
 
@@ -665,7 +665,7 @@ public sealed record SecretChatTypingCase(SecretChatIdentityFixture Ids, bool Ca
             RandomId: 1,
             RequestRandomId: 1,
             MaxDate: 0,
-            Data: [1]);
+            Data: SecretChatTestHarness.Payload(1));
     }
 
     public override string ToString()
@@ -945,7 +945,7 @@ public static class SecretChatFanOutGen
             SecretChatFanOutOperation.SetEncryptedTyping);
 
     public static Gen<byte[]> Payload =>
-        from length in Gen.Choose(1, 64)
+        from length in Gen.Choose(SecretChatConsts.MinEncryptedPayloadLength, 96)
         from seed in Gen.Choose(0, 255)
         select BuildPayload(length, seed);
 

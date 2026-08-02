@@ -49,6 +49,13 @@ public class SecretChatUpdateDispatcher(
     /// Persists the update so updates.getDifference can replay it. Without this an offline device
     /// never learns that a secret chat was requested, accepted or discarded: the live push is only
     /// enqueued for connected sessions, and only updateNewEncryptedMessage has a durable qts box.
+    /// <para>
+    /// Rows are stamped <see cref="UpdatesType.EncryptedUpdates"/> and carry <c>pts = 0</c>, matching
+    /// upstream where <c>updateEncryption</c> has no pts. They are replayed by
+    /// <c>GetUpdatesByGlobalSeqNoQuery</c>, which is scoped to this marker and to the caller's device —
+    /// deliberately NOT by the shared pts box, whose <c>Pts &gt; MinPts</c> filter drops every
+    /// <c>pts = 0</c> row and whose readers cannot honour <c>OnlySendToThisAuthKeyId</c>.
+    /// </para>
     /// </summary>
     private async Task SaveForDifferenceAsync(long ownerPeerId,
         TUpdateShort updateShort,
@@ -64,7 +71,7 @@ public class SecretChatUpdateDispatcher(
                 null,
                 null,
                 onlySendToThisAuthKeyId,
-                UpdatesType.Updates,
+                UpdatesType.EncryptedUpdates,
                 0,
                 null,
                 updateShort.Date,

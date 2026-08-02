@@ -408,7 +408,15 @@ public record GetUpdatesQuery(
 public record GetChannelUpdatesByGlobalSeqNoQuery(List<long> ChannelIdList, long MinGlobalSeqNo, int Limit, long SelfUserId)
     : IQuery<IReadOnlyCollection<IUpdatesReadModel>>;
 
-public record GetUpdatesByGlobalSeqNoQuery(long UserId, long MinGlobalSeqNo)
+/// <summary>
+/// Replays a user's <see cref="UpdatesType.EncryptedUpdates"/> rows (the device-scoped secret-chat
+/// handshake stream: updateEncryption etc.) for updates.getDifference.
+/// Deliberately distinct from the generic updates box: these rows carry <c>pts = 0</c>, so the shared
+/// <see cref="GetUpdatesQuery"/> (filtering <c>Pts &gt; MinPts</c>) can never return them, and they must
+/// be scoped to the caller's Authorization_Key — <c>OnlySendToThisAuthKeyId</c> / <c>ExcludeAuthKeyId</c> —
+/// which the generic path cannot honour.
+/// </summary>
+public record GetUpdatesByGlobalSeqNoQuery(long UserId, long PermAuthKeyId, long MinGlobalSeqNo, int Limit)
     : IQuery<IReadOnlyCollection<IUpdatesReadModel>>;
 
 public record GetReplyToMsgIdListQuery(Peer ToPeer, long SelfUserId, int? ReplyToMsgId)

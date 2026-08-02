@@ -11,9 +11,15 @@ namespace MyTelegram.Messenger.Tests.SecretChat;
 /// <summary>
 /// Feature: secret-chats, Property 21: random field length in messages.getDhConfig.
 ///
-/// For any <c>random_length</c> in [1, 256], <c>messages.getDhConfig</c> returns a <c>random</c> field
+/// For any <c>random_length</c> in [0, 256], <c>messages.getDhConfig</c> returns a <c>random</c> field
 /// containing exactly <c>random_length</c> bytes; outside that range the request is rejected with
-/// RANDOM_LENGTH_INVALID. Independently of the length, the returned Diffie-Hellman parameters are the
+/// RANDOM_LENGTH_INVALID. Zero is inside the accepted interval on purpose: Telegram-iOS issues
+/// <c>getDhConfig(version: 0, random_length: 0)</c> from <c>validatedEncryptionConfig</c>, which every
+/// secret-chat create/accept and both PFS re-key steps (<c>pfsRequestKey</c>, <c>pfsAcceptKey</c>) begin
+/// with, and it retries a 400 forever rather than surfacing it — so rejecting 0 hangs secret chats on iOS
+/// silently. TDLib records that the real server ignores <c>random_length</c> altogether ("always returns
+/// 256 random bytes"), so accepting 0 cannot break a client that asks for more.
+/// Independently of the length, the returned Diffie-Hellman parameters are the
 /// server's fixed 2048-bit configuration: a client whose cached <c>version</c> differs from the server's
 /// current version gets a full <c>messages.dhConfig</c> (g = 3, p = the 256-byte 2048-bit safe prime,
 /// version = 2), and a client already on the current version gets <c>messages.dhConfigNotModified</c>
@@ -21,11 +27,11 @@ namespace MyTelegram.Messenger.Tests.SecretChat;
 /// once and cache the verdict keyed by version — a p that varied per call would either be re-verified
 /// forever or, worse, silently accepted after a single verification.
 ///
-/// Validates: Requirements 2.4 (and the handler's documented RANDOM_LENGTH_INVALID contract).
+/// Validates: Requirements 2.3 and 2.4 (and the handler's documented RANDOM_LENGTH_INVALID contract).
 ///
 /// How this is tested: <see cref="DhConfigCase"/> generates a <c>random_length</c> drawn from
-/// <c>Gen.Choose(1, 256)</c> — with the two extremes (1 and 256) explicitly over-weighted so the closed
-/// interval's endpoints are hit on every run — crossed with a client-supplied <c>version</c> drawn from a
+/// <c>Gen.Choose(0, 256)</c> — with the endpoints (0, 1 and 256) explicitly over-weighted so the closed
+/// interval's boundaries are hit on every run — crossed with a client-supplied <c>version</c> drawn from a
 /// frequency mix of 0 (a fresh client with no cached config), the server's current version (2), stale
 /// versions below it and future versions above it. Every generated case drives the REAL production handler
 /// <c>MyTelegram.Messenger.Handlers.LatestLayer.Messages.GetDhConfigHandler</c>; the type is
@@ -37,10 +43,11 @@ namespace MyTelegram.Messenger.Tests.SecretChat;
 /// literal 3, p against <see cref="AuthConsts.Dh2048P"/> byte-for-byte (and its 256-byte length), and the
 /// advertised version against the literal 2. Stability of p is asserted by invoking a freshly constructed
 /// handler a second time on the same case and comparing the two primes byte-for-byte. The out-of-range
-/// rejections are pinned by an explicit <see cref="Theory"/> over the boundary values 0, -1, 257 and
+/// rejections are pinned by an explicit <see cref="Theory"/> over the boundary values -1, 257 and
 /// <c>int.MaxValue</c> (and <c>int.MinValue</c>), each attempted with both an up-to-date and a stale
-/// version to prove the length check runs before — and independently of — the version branch. The property
-/// executes a minimum of 100 generated cases per run.
+/// version to prove the length check runs before — and independently of — the version branch, and the
+/// iOS-shaped <c>random_length = 0</c> call is pinned as an accepted case on both version branches. The
+/// property executes a minimum of 100 generated cases per run.
 /// </summary>
 public class Property21_GetDhConfigRandomLengthTests
 {
@@ -86,13 +93,11 @@ public class Property21_GetDhConfigRandomLengthTests
     }
 
     /// <summary>
-    /// Lengths outside the closed interval [1, 256] are rejected with RANDOM_LENGTH_INVALID, and the
+    /// Lengths outside the closed interval [0, 256] are rejected with RANDOM_LENGTH_INVALID, and the
     /// rejection precedes the version branch — the same error is raised whether or not the client already
     /// holds the current parameter set.
     /// </summary>
     [Theory]
-    [InlineData(0, 0)]
-    [InlineData(0, ServerVersion)]
     [InlineData(-1, 0)]
     [InlineData(-1, ServerVersion)]
     [InlineData(257, 0)]
@@ -101,15 +106,30 @@ public class Property21_GetDhConfigRandomLengthTests
     [InlineData(int.MaxValue, ServerVersion)]
     [InlineData(int.MinValue, 0)]
     [InlineData(int.MinValue, ServerVersion)]
-    public void GetDhConfig_rejects_a_random_length_outside_1_to_256(int randomLength, int version)
+    public void GetDhConfig_rejects_a_random_length_outside_0_to_256(int randomLength, int version)
     {
         var ex = Should.Throw<RpcException>(() => Invoke(version, randomLength));
 
         ex.RpcError.ShouldBe(RpcErrors.RpcErrors400.RandomLengthInvalid);
     }
 
-    /// <summary>The two endpoints of the accepted interval are valid and produce exactly that many bytes.</summary>
+    /// <summary>
+    /// The iOS-shaped call: <c>random_length = 0</c> is accepted and yields an empty <c>random</c> field on
+    /// both version branches. Telegram-iOS sends exactly this from <c>validatedEncryptionConfig</c>, which
+    /// gates secret-chat creation, acceptance and both PFS re-key steps, and retries a 400 indefinitely
+    /// without ever surfacing it — so a rejection here is an unrecoverable silent hang, not an error.
+    /// </summary>
+    [Fact]
+    public void GetDhConfig_accepts_random_length_zero_as_Telegram_iOS_sends_it()
+    {
+        Invoke(version: 0, randomLength: 0).ShouldBeOfType<TDhConfig>().Random.Length.ShouldBe(0);
+        Invoke(ServerVersion, randomLength: 0).ShouldBeOfType<TDhConfigNotModified>().Random.Length
+            .ShouldBe(0);
+    }
+
+    /// <summary>The endpoints of the accepted interval are valid and produce exactly that many bytes.</summary>
     [Theory]
+    [InlineData(0)]
     [InlineData(1)]
     [InlineData(256)]
     public void GetDhConfig_accepts_both_endpoints_of_the_closed_interval(int randomLength)
@@ -163,7 +183,7 @@ public class Property21_GetDhConfigRandomLengthTests
 
 /// <summary>
 /// One generated getDhConfig case: the requested <c>random_length</c> (always inside the accepted closed
-/// interval [1, 256]) and the parameter-set <c>version</c> the client claims to have cached.
+/// interval [0, 256]) and the parameter-set <c>version</c> the client claims to have cached.
 /// </summary>
 public sealed record DhConfigCase(int RandomLength, int ClientVersion);
 
@@ -176,14 +196,16 @@ public static class DhConfigArbitraries
     public static Arbitrary<DhConfigCase> Case() => Arb.From(CaseGen);
 
     /// <summary>
-    /// Uniform over the whole accepted interval, with the two endpoints over-weighted so 1 and 256 are
-    /// exercised on every run rather than being left to chance in a 256-wide range.
+    /// Uniform over the whole accepted interval, with the boundary values over-weighted so 0, 1 and 256 are
+    /// exercised on every run rather than being left to chance in a 257-wide range. 0 is the value
+    /// Telegram-iOS actually sends, so it carries the same weight as the upper endpoint.
     /// </summary>
     private static Gen<int> RandomLength =>
         Gen.Frequency(
+            Tuple.Create(1, Gen.Constant(0)),
             Tuple.Create(1, Gen.Constant(1)),
             Tuple.Create(1, Gen.Constant(256)),
-            Tuple.Create(6, Gen.Choose(1, 256)));
+            Tuple.Create(6, Gen.Choose(0, 256)));
 
     /// <summary>
     /// The version a client claims to hold: 0 (fresh client), the server's current version (2), a stale

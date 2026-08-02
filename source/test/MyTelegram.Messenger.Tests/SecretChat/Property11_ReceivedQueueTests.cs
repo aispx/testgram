@@ -99,7 +99,7 @@ public class Property11_ReceivedQueueTests
             {
                 case ReceivedQueueOpKind.AdminMessage:
                     fixture.Service
-                        .SendEncryptedAsync(fixture.Admin, fixture.Peer, randomId, new byte[] { 1, (byte)i },
+                        .SendEncryptedAsync(fixture.Admin, fixture.Peer, randomId, SecretChatTestHarness.Payload(1, (byte)i),
                             silent: false)
                         .GetAwaiter().GetResult();
                     participantBox.Add((SecretChatConsts.QtsInitialValue + participantBox.Count, randomId));
@@ -107,7 +107,7 @@ public class Property11_ReceivedQueueTests
 
                 case ReceivedQueueOpKind.AdminServiceMessage:
                     fixture.Service
-                        .SendEncryptedServiceAsync(fixture.Admin, fixture.Peer, randomId, new byte[] { 2, (byte)i })
+                        .SendEncryptedServiceAsync(fixture.Admin, fixture.Peer, randomId, SecretChatTestHarness.Payload(2, (byte)i))
                         .GetAwaiter().GetResult();
                     participantBox.Add((SecretChatConsts.QtsInitialValue + participantBox.Count, randomId));
                     break;
@@ -116,7 +116,7 @@ public class Property11_ReceivedQueueTests
                     // Travels the other way: it belongs to the ADMIN's box and must never be acknowledged by
                     // the participant's receivedQueue.
                     fixture.Service
-                        .SendEncryptedAsync(fixture.Participant, fixture.Peer, randomId, new byte[] { 3, (byte)i },
+                        .SendEncryptedAsync(fixture.Participant, fixture.Peer, randomId, SecretChatTestHarness.Payload(3, (byte)i),
                             silent: false)
                         .GetAwaiter().GetResult();
                     adminBox.Add((SecretChatConsts.QtsInitialValue + adminBox.Count, randomId));
@@ -222,7 +222,7 @@ public class Property11_ReceivedQueueTests
         {
             var randomId = 6_000_000L + i;
             fixture.Service
-                .SendEncryptedAsync(fixture.Admin, fixture.Peer, randomId, new byte[] { 7, (byte)i }, silent: false)
+                .SendEncryptedAsync(fixture.Admin, fixture.Peer, randomId, SecretChatTestHarness.Payload(7, (byte)i), silent: false)
                 .GetAwaiter().GetResult();
             randomIds.Add(randomId);
         }
@@ -389,7 +389,7 @@ public class Property11_ReceivedQueueTests
             {
                 var randomId = 7_000_000L + n;
                 await fixture.Service.SendEncryptedAsync(fixture.Admin, fixture.Peer, randomId,
-                    new byte[] { 4, (byte)n }, silent: false);
+                    SecretChatTestHarness.Payload(4, (byte)n), silent: false);
                 randomIds.Add(randomId);
             }
 
@@ -426,6 +426,59 @@ public class Property11_ReceivedQueueTests
     }
 
     /// <summary>
+    /// The bound updates.getDifference relies on for qts_limit: the page holds at most <c>limit</c> rows,
+    /// takes them from the low end of the unacked range, and stays ordered by qts. The handler computes
+    /// its truncation flag and the advertised qts from exactly this shape — it reports
+    /// <c>encryptedMessages[^1].Qts</c> instead of the global watermark when a full page comes back — so a
+    /// page that overran the limit or arrived out of order would make a client skip the uncovered tail.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task GetForDifference_honours_its_limit_and_returns_the_lowest_qts_rows_in_order()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var store = new SecretChatMessageStore(mongo.Database);
+        var fixture = BuildFixture(store, chatId: 31_000, identityBase: 9_100_000L);
+
+        const int total = 5;
+        var randomIds = new List<long>();
+        for (var n = 0; n < total; n++)
+        {
+            var randomId = 9_200_000L + n;
+            await fixture.Service.SendEncryptedAsync(fixture.Admin, fixture.Peer, randomId,
+                SecretChatTestHarness.Payload(6, (byte)n), silent: false);
+            randomIds.Add(randomId);
+        }
+
+        var first = SecretChatConsts.QtsInitialValue;
+
+        // qts_limit == 1, the shape TDLib's ConfirmPtsQtsQuery ack ping produces.
+        var single = await store.GetForDifferenceAsync(fixture.ParticipantUserId, fixture.ParticipantKeyId,
+            SecretChatConsts.QtsInitialValue - 1, 1);
+        single.Count.ShouldBe(1);
+        single[0].RandomId.ShouldBe(randomIds[0]);
+        single[0].Qts.ShouldBe(first);
+
+        // A partial page: still the lowest rows, still ascending, and the last qts covers exactly them.
+        var partial = await store.GetForDifferenceAsync(fixture.ParticipantUserId, fixture.ParticipantKeyId,
+            SecretChatConsts.QtsInitialValue - 1, 3);
+        partial.Count.ShouldBe(3);
+        partial.Select(d => d.RandomId).ShouldBe(randomIds.Take(3));
+        partial.Select(d => d.Qts).ShouldBe(Enumerable.Range(first, 3));
+        partial[^1].Qts.ShouldBeLessThan(
+            await store.GetHighestQtsAsync(fixture.ParticipantUserId, fixture.ParticipantKeyId));
+
+        // A limit at or above the backlog is not truncation: the whole range comes back.
+        var whole = await store.GetForDifferenceAsync(fixture.ParticipantUserId, fixture.ParticipantKeyId,
+            SecretChatConsts.QtsInitialValue - 1, total);
+        whole.Select(d => d.RandomId).ShouldBe(randomIds);
+
+        // The limit composes with the since-qts cursor rather than replacing it.
+        var resumed = await store.GetForDifferenceAsync(fixture.ParticipantUserId, fixture.ParticipantKeyId,
+            first + 1, 2);
+        resumed.Select(d => d.RandomId).ShouldBe(randomIds.Skip(2).Take(2));
+    }
+
+    /// <summary>
     /// Properties 11 and 12 end to end over real persistence: messages sent through the real
     /// <see cref="SecretChatAppService"/> and stored by the real <see cref="SecretChatMessageStore"/> are
     /// acknowledged exactly once by <c>messages.receivedQueue</c>, a repeat call returns an empty vector, an
@@ -450,7 +503,7 @@ public class Property11_ReceivedQueueTests
             {
                 var randomId = 9_000_000L + n;
                 await fixture.Service.SendEncryptedAsync(fixture.Admin, fixture.Peer, randomId,
-                    new byte[] { 8, (byte)n }, silent: false);
+                    SecretChatTestHarness.Payload(8, (byte)n), silent: false);
                 randomIds.Add(randomId);
             }
 
@@ -511,7 +564,7 @@ public class Property11_ReceivedQueueTests
             PermAuthKeyId = 9,
             RecipientUserId = recipientUserId,
             RecipientPermAuthKeyId = recipientKeyId,
-            Data = [1, 2, 3],
+            Data = SecretChatTestHarness.Payload(1, 2, 3),
             Date = 1000,
             MessageType = SendMessageType.Text,
             RandomId = randomId
