@@ -46,4 +46,7 @@ RUN dotnet publish -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+# Keep a copy of the language packs at a path that is NOT shadowed by the
+# "downloads" bind mount, so the seeder can restore them on a clean install.
+COPY --from=publish /app/publish/downloads/langpacks /app/bundled-langpacks
 ENTRYPOINT ["dotnet", "MyTelegram.DataSeeder.dll"]

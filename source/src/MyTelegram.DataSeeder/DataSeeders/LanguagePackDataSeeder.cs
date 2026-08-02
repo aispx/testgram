@@ -23,6 +23,8 @@ public sealed class LanguagePackDataSeeder(
             DataSeederConsts.RootFolder,
             DataSeederConsts.LanguagePacksRootFolder);
 
+        rootFolder = await EnsureLanguagePacksFolderAsync(rootFolder);
+
         if (!Directory.Exists(rootFolder))
         {
             logger.LogWarning("Language pack folder is missing: {Folder}", rootFolder);
@@ -124,6 +126,55 @@ public sealed class LanguagePackDataSeeder(
         where TReadModel : IMongoDbReadModel
     {
         return readModelDescriptionProvider.GetReadModelDescription<TReadModel>().RootCollectionName.Value;
+    }
+
+    private async Task<string> EnsureLanguagePacksFolderAsync(string rootFolder)
+    {
+        if (Directory.Exists(rootFolder) &&
+            Directory.EnumerateFiles(rootFolder, "*.json", SearchOption.AllDirectories).Any())
+        {
+            return rootFolder;
+        }
+
+        var bundledFolder = Path.Combine(AppContext.BaseDirectory, DataSeederConsts.BundledLanguagePacksRootFolder);
+        if (!Directory.Exists(bundledFolder) ||
+            !Directory.EnumerateFiles(bundledFolder, "*.json", SearchOption.AllDirectories).Any())
+        {
+            logger.LogWarning(
+                "Language pack folder is missing: {Folder} and no bundled language packs found in {BundledFolder}",
+                rootFolder,
+                bundledFolder);
+            return rootFolder;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(rootFolder);
+            var copiedFiles = 0;
+            foreach (var sourceFile in Directory.EnumerateFiles(bundledFolder, "*.json", SearchOption.AllDirectories))
+            {
+                var relativePath = Path.GetRelativePath(bundledFolder, sourceFile);
+                var destinationFile = Path.Combine(rootFolder, relativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+                File.Copy(sourceFile, destinationFile, overwrite: true);
+                copiedFiles++;
+            }
+
+            logger.LogInformation(
+                "Language pack folder was empty or missing: {Folder}. Copied {Count} bundled language pack file(s) from {BundledFolder}",
+                rootFolder,
+                copiedFiles,
+                bundledFolder);
+            return rootFolder;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+        {
+            logger.LogWarning(ex,
+                "Failed to copy bundled language packs from {BundledFolder} to {Folder}. Falling back to reading them directly.",
+                bundledFolder,
+                rootFolder);
+            return bundledFolder;
+        }
     }
 
     private static async Task<LanguagePackSnapshot?> ReadLanguagePackAsync(string fileName)

@@ -377,6 +377,9 @@ scripts/*.session*
 scripts/*_manifest.json
 scripts/reactions_files/
 scripts/stickers/
+
+# Language packs are downloaded at build time from translations.telegram.org
+source/src/MyTelegram.DataSeeder/downloads/langpacks/
 .claude/search-api-keys.json
 
 # Claude Code files
