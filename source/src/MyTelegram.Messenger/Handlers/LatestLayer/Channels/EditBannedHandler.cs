@@ -41,6 +41,13 @@ internal sealed class EditBannedHandler(IPeerHelper peerHelper, ICommandBus comm
 
             var bannedRights = ChatBannedRights.FromValue(obj.BannedRights.Flags, obj.BannedRights.UntilDate);
 
+            var memberUserId = peer.PeerId;
+            if (peer.PeerType == PeerType.Channel)
+            {
+                var sendAsChannelReadModel = await channelAppService.GetAsync(peer.PeerId);
+                memberUserId = sendAsChannelReadModel.CreatorId;
+            }
+
             // Get previous state for admin log
             var channelMember = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channel.PeerId, peer.PeerId));
             var prevParticipant = channelMember != null && channelMember.BannedRights != 0
@@ -71,9 +78,9 @@ internal sealed class EditBannedHandler(IPeerHelper peerHelper, ICommandBus comm
 
             await Helpers.AdminLogHelper.LogEditBanned(mongoDatabase, channel.PeerId, input.UserId, prevParticipant, newParticipant);
 
-            var command = new EditBannedCommand(ChannelMemberId.Create(channel.PeerId, peer.PeerId), input.ToRequestInfo(), input.UserId, channel.PeerId, peer.PeerId, bannedRights);
+            var command = new EditBannedCommand(ChannelMemberId.Create(channel.PeerId, memberUserId), input.ToRequestInfo(), input.UserId, channel.PeerId, memberUserId, bannedRights);
             await commandBus.PublishAsync(command);
-            return null !;
+            return null!;
         }
 
         throw new NotImplementedException();
