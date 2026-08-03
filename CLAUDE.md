@@ -133,7 +133,6 @@ https://github.com/DrKLO/Telegram/search?q=getStickerSet
 - `IUserAppService` - User operations and validation
 - `IMessageAppService` - Send messages (including service messages)
 - `IPeerHelper` - Convert InputUser/InputPeer to Peer objects
-- `IAccessHashHelper` - Validate access hashes
 - `IQueryProcessor` - Execute read model queries
 - `ILogger<T>` - Logging (optional but recommended)
 
@@ -208,7 +207,6 @@ return new TUpdates
 
 4. **Validate Access Hash:**
 ```csharp
-await _accessHashHelper.CheckAccessHashAsync(input, obj.Id);
 var targetPeer = _peerHelper.GetPeer(obj.Id, input.UserId);
 ```
 

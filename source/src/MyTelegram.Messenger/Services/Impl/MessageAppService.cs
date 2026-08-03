@@ -448,7 +448,6 @@ public class MessageAppService(
 
     private async Task<SendMessageItem> CreateSendMessageItemAsync(SendMessageInput input)
     {
-        //await CheckAccessHashAsync(input);
         //await CheckSendAsAsync(input);
         await CheckGlobalPrivacySettingsAsync(input);
         var channelReadModel = await CheckChannelBannedRightsAsync(input);

@@ -128,9 +128,6 @@ private readonly IMessageAppService _messageAppService;
 // Peer conversion
 private readonly IPeerHelper _peerHelper;
 
-// Access hash validation
-private readonly IAccessHashHelper _accessHashHelper;
-
 // Read model queries
 private readonly IQueryProcessor _queryProcessor;
 
