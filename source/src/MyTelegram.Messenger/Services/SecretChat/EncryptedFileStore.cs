@@ -246,11 +246,21 @@ public class EncryptedFileStore(
         return $"{fileId}_{partIndex}";
     }
 
+    /// <summary>
+    ///     Generates an encrypted-file <c>id</c>/<c>access_hash</c> pair. The access hash is the only thing
+    ///     guarding a stored file (see the id + access_hash lookups above), so it must come from a CSPRNG:
+    ///     <see cref="Random.Shared" /> is xoshiro256**, whose state is recoverable from a few observed outputs.
+    /// </summary>
     private static long NewNonZeroId()
     {
-        var id = Math.Abs(Random.Shared.NextInt64());
-
-        return id == 0 ? 1 : id;
+        while (true)
+        {
+            var id = BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)) & long.MaxValue;
+            if (id != 0)
+            {
+                return id;
+            }
+        }
     }
 
     private static EncryptedFileDescriptor ToDescriptor(EncryptedFileDocument document)
