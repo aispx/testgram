@@ -47,7 +47,7 @@ internal sealed class GetParticipantsHandler(IQueryProcessor queryProcessor, ICh
 
                 var joinedChannelIdList = await queryProcessor.ProcessAsync(new GetJoinedChannelIdListQuery(input.UserId, [inputChannel.ChannelId]));
                 // Private group (monoforums don't require joining)
-                if (string.IsNullOrEmpty(channelReadModel.UserName) && joinedChannelIdList.Count == 0 && !channelReadModel.IsMonoforum)
+                if (channelReadModel.LinkedChatId == null && string.IsNullOrEmpty(channelReadModel.UserName) && joinedChannelIdList.Count == 0 && !channelReadModel.IsMonoforum)
                 {
                     RpcErrors.RpcErrors400.ChannelPrivate.ThrowRpcError();
                 }
