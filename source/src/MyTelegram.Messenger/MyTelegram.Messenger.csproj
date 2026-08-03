@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The RPC handlers are internal sealed (they are only ever resolved by ObjectId dispatch), so the
+         test project cannot construct one without this. -->
+    <InternalsVisibleTo Include="MyTelegram.Messenger.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="SixLabors.ImageSharp" />
     <PackageReference Include="System.IO.Hashing" />
     <PackageReference Include="System.Formats.Cbor" />
