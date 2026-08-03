@@ -336,7 +336,18 @@ D9 1B DE C0 09 74 7A 5F 6F 66 66 73 65 74 00 00 A4 DF E0 2B 00 00 00 00 00 20 DC
         //var actualObj = br.Deserialize<RequestGetFile>();
         var actualObj = value.ToTObject<RequestGetFile>();
 
-        actualObj.ShouldBeEquivalentTo(obj);
+        // ShouldBeEquivalentTo cannot structurally compare ReadOnlyMemory<byte> (FileReference), so the
+        // fields are checked individually and the reference bytes are materialised first.
+        actualObj.CdnSupported.ShouldBe(obj.CdnSupported);
+        actualObj.Offset.ShouldBe(obj.Offset);
+        actualObj.Limit.ShouldBe(obj.Limit);
+
+        var actualLocation = actualObj.Location.ShouldBeOfType<TInputDocumentFileLocation>();
+        var expectedLocation = (TInputDocumentFileLocation)obj.Location;
+        actualLocation.Id.ShouldBe(expectedLocation.Id);
+        actualLocation.AccessHash.ShouldBe(expectedLocation.AccessHash);
+        actualLocation.ThumbSize.ShouldBe(expectedLocation.ThumbSize);
+        actualLocation.FileReference.ToArray().ShouldBe(expectedLocation.FileReference.ToArray());
     }
 
     //[Fact]
@@ -432,9 +443,15 @@ F2 60 8B 00 CC 39 62 1A F1 0A AC 25 A6 C7 5F 5D".ToBytes();
         var serializer = new ObjectSerializer<IObject>();
         //var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(value.AsSpan().Slice(20).ToArray()));
         ReadOnlyMemory<byte> buffer = value.AsMemory().Slice(20);
+        var initialLength = buffer.Length;
         var obj = serializer.Deserialize(ref buffer);
-        var consumed = value.Length - buffer.Length;
+
+        // Measure against the sliced buffer, not the full array: the first 20 bytes were never part of it.
+        // client_DH_inner_data occupies 304 bytes here (4 + 16 + 16 + 8 + 259-byte g_b + 1 pad), leaving the
+        // 12 trailing bytes of the fixture unread.
+        var consumed = initialLength - buffer.Length;
         consumed.ShouldBe(value.Length - 12 - 20);
+        obj.ShouldBeOfType<TClientDHInnerData>();
         //reader.Consumed.ShouldBe(value.Length - 12 - 20);
     }
 
@@ -1008,7 +1025,21 @@ public class TestObjectWithNullableProperty : IObject
 
     public void Deserialize(ref ReadOnlyMemory<byte> buffer)
     {
-        throw new NotImplementedException();
+        Flags = SerializerFactory.CreateSerializer<BitArray>().Deserialize(ref buffer);
+        if (Flags[0])
+        {
+            BoolValue1 = buffer.Read();
+        }
+
+        if (Flags[1])
+        {
+            StringValue = buffer.ReadString();
+        }
+
+        if (Flags[2])
+        {
+            IntValue = buffer.ReadInt32();
+        }
     }
 
     //public void Deserialize(ref ReadOnlyMemory<byte> buffer)
