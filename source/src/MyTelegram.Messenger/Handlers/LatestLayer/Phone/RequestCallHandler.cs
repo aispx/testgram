@@ -19,7 +19,8 @@ internal sealed class RequestCallHandler(
     IUserAccessHashKeyCache userAccessHashKeyCache,
     IAccessHashHelper2 accessHashHelper2,
     IBlockCacheAppService blockCacheAppService,
-    IPrivacyAppService privacyAppService)
+    IPrivacyAppService privacyAppService,
+    IUserAppService userAppService)
     : RpcResultObjectHandler<RequestRequestCall, MyTelegram.Schema.Phone.IPhoneCall>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -46,6 +47,29 @@ internal sealed class RequestCallHandler(
         {
             RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
             return null!;
+        }
+
+        // The callee is identified by an InputUser supplied by the client, so its access_hash must be
+        // validated before we act on it - otherwise any user id could be dialled by guessing.
+        await accessHashHelper2.CheckAccessHashAsync(input, obj.UserId);
+
+        // ...and the user has to actually exist and be callable, or we would persist a call session
+        // pointing at nobody and ring into the void.
+        // The long? overload returns null for a missing user; the long overload throws instead.
+        var calleeReadModel = await userAppService.GetAsync((long?)calleeId);
+        if (calleeReadModel == null)
+        {
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+        }
+
+        if (calleeReadModel!.IsDeleted == true)
+        {
+            RpcErrors.RpcErrors400.InputUserDeactivated.ThrowRpcError();
+        }
+
+        if (calleeReadModel.Bot)
+        {
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
         }
 
         ValidateHandshakeProtocol(obj.Protocol);
@@ -75,9 +99,16 @@ internal sealed class RequestCallHandler(
             return null!;
         }
 
+        // Either participant is busy if they are already engaged in a live call in EITHER role. Checking
+        // only the callee-as-callee (a) let one caller open unlimited concurrent outgoing calls and
+        // (b) let a second call be placed to someone who is themselves mid-dial. "requested" counts as
+        // live now that CallSessionExpiryBackgroundService sweeps abandoned sessions.
+        var participants = new[] { input.UserId, calleeId };
         var busyFilter = Builders<CallSessionDocument>.Filter.And(
-            Builders<CallSessionDocument>.Filter.Eq(s => s.CalleeId, calleeId),
-            Builders<CallSessionDocument>.Filter.In(s => s.State, ["received", "accepted", "confirmed"]));
+            Builders<CallSessionDocument>.Filter.In(s => s.State, CallSessionStates.Live),
+            Builders<CallSessionDocument>.Filter.Or(
+                Builders<CallSessionDocument>.Filter.In(s => s.CallerId, participants),
+                Builders<CallSessionDocument>.Filter.In(s => s.CalleeId, participants)));
         if (await _callCollection.Find(busyFilter).AnyAsync())
         {
             RpcErrors.RpcErrors400.CallOccupyFailed.ThrowRpcError();
@@ -107,8 +138,9 @@ internal sealed class RequestCallHandler(
             RandomId = obj.RandomId,
             GAHash = obj.GAHash,
             Video = obj.Video,
-            State = "requested",
+            State = CallSessionStates.Requested,
             Date = currentDate,
+            StateChangedDate = currentDate,
             CallerLibraryVersions = [.. PhoneCallProtocolHelper.GetLibraryVersions(obj.Protocol)],
             CallerConferenceSupported = PhoneCallProtocolHelper.AdvertisesConferenceSupport(obj.Protocol)
         };

@@ -36,7 +36,7 @@ internal sealed class SaveCallLogHandler(
             (!session.HasAccessHashForUser(input.UserId, inputPhoneCall.AccessHash) &&
              !await accessHashHelper2.IsAccessHashValidAsync(input, inputPhoneCall.Id, inputPhoneCall.AccessHash, AccessHashType.Call)) ||
             (session.CallerId != input.UserId && session.CalleeId != input.UserId) ||
-            session.State != "discarded")
+            session.State != CallSessionStates.Discarded)
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return new TBoolTrue();

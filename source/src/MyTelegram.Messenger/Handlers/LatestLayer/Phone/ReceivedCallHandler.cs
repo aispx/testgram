@@ -45,13 +45,13 @@ internal sealed class ReceivedCallHandler(
             return new TBoolTrue();
         }
 
-        if (session.State == "discarded")
+        if (session.State == CallSessionStates.Discarded)
         {
             RpcErrors.RpcErrors400.CallAlreadyDeclined.ThrowRpcError();
             return new TBoolTrue();
         }
 
-        if (session.State != "requested")
+        if (session.State != CallSessionStates.Requested)
         {
             return new TBoolTrue();
         }
@@ -59,7 +59,8 @@ internal sealed class ReceivedCallHandler(
         var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         await _callCollection.UpdateOneAsync(filter,
             Builders<CallSessionDocument>.Update
-                .Set(s => s.State, "received")
+                .Set(s => s.State, CallSessionStates.Received)
+                .Set(s => s.StateChangedDate, currentDate)
                 .Set(s => s.ReceivedDate, currentDate));
 
         var waitingCall = new TPhoneCallWaiting

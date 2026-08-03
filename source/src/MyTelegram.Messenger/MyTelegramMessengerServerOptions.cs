@@ -53,6 +53,95 @@ public class MyTelegramMessengerServerOptions
     public PushConfig Push { get; set; } = new();
     public StatsConfig Stats { get; set; } = new();
     public RatesConfig Rates { get; set; } = new();
+    public CallsConfig Calls { get; set; } = new();
+}
+
+/// <summary>
+/// 1:1 call (<c>phone.*</c>) configuration: the server-side expiry deadlines for abandoned call
+/// sessions, plus the tgcalls runtime knobs returned by <c>phone.getCallConfig</c>.
+/// </summary>
+public class CallsConfig
+{
+    /// <summary>
+    /// Seconds a session may stay in <c>requested</c> before the server discards it as missed.
+    /// Must match <c>call_receive_timeout_ms</c> in <c>help.getConfig</c> (see
+    /// <c>ConfigConverter</c>), which is what the client's own timer runs off.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int ReceiveTimeoutSeconds { get; set; } = 20;
+
+    /// <summary>
+    /// Seconds a session may keep ringing (<c>received</c>) before the server discards it as missed.
+    /// Must match <c>call_ring_timeout_ms</c> in <c>help.getConfig</c>.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int RingTimeoutSeconds { get; set; } = 90;
+
+    /// <summary>
+    /// Seconds an answered call (<c>accepted</c>) may take to connect before the server discards it.
+    /// Must match <c>call_connect_timeout_ms</c> in <c>help.getConfig</c>.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int ConnectTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Backstop for a connected (<c>confirmed</c>) call whose participants both vanished without
+    /// discarding it. Deliberately long - a multi-hour call is legitimate, and this only exists so a
+    /// session cannot mark both users busy forever. No grace period is added to this one.
+    /// </summary>
+    [Range(60, int.MaxValue)]
+    public int MaxCallDurationSeconds { get; set; } = 24 * 60 * 60;
+
+    /// <summary>
+    /// Added to every pre-connect deadline so the server never beats the client's own timer to the
+    /// punch: the client is expected to send <c>phone.discardCall</c> itself, and the sweeper is only
+    /// a fallback for clients that died or lost connectivity.
+    /// </summary>
+    [Range(0, int.MaxValue)]
+    public int ExpiryGraceSeconds { get; set; } = 10;
+
+    /// <summary>Maximum sessions examined per sweep, bounding the work of a single pass.</summary>
+    [Range(1, int.MaxValue)]
+    public int ExpiryBatchSize { get; set; } = 200;
+
+    /// <summary>How often the background worker sweeps for expired sessions.</summary>
+    [Range(1, int.MaxValue)]
+    public int ExpirySweepIntervalSeconds { get; set; } = 10;
+
+    /// <summary>The tgcalls runtime knobs served by <c>phone.getCallConfig</c>.</summary>
+    public CallRuntimeConfig RuntimeConfig { get; set; } = new();
+}
+
+/// <summary>
+/// The tgcalls runtime configuration served as the <c>dataJSON</c> payload of
+/// <c>phone.getCallConfig</c>. Keys are looked up by tgcalls itself (<c>Instance.ServerConfig</c> in
+/// the Android client) under fixed snake_case names; unrecognised keys are ignored by clients.
+/// Defaults mirror what the clients fall back to when the server says nothing.
+/// </summary>
+public class CallRuntimeConfig
+{
+    /// <summary>Use the platform noise suppressor rather than WebRTC's (<c>use_system_ns</c>).</summary>
+    public bool UseSystemNs { get; set; } = true;
+
+    /// <summary>Use the platform echo canceller rather than WebRTC's (<c>use_system_aec</c>).</summary>
+    public bool UseSystemAec { get; set; } = true;
+
+    /// <summary>Mark STUN packets for QoS (<c>voip_enable_stun_marking</c>). Off by default: it needs
+    /// network support and misbehaves on some carriers.</summary>
+    public bool EnableStunMarking { get; set; }
+
+    /// <summary>Seconds the hangup UI lingers after the call ends (<c>hangup_ui_timeout</c>).</summary>
+    [Range(0.0, 600.0)]
+    public double HangupUiTimeout { get; set; } = 5;
+
+    public bool EnableVp8Encoder { get; set; } = true;
+    public bool EnableVp8Decoder { get; set; } = true;
+    public bool EnableVp9Encoder { get; set; } = true;
+    public bool EnableVp9Decoder { get; set; } = true;
+    public bool EnableH264Encoder { get; set; } = true;
+    public bool EnableH264Decoder { get; set; } = true;
+    public bool EnableH265Encoder { get; set; } = true;
+    public bool EnableH265Decoder { get; set; } = true;
 }
 
 /// <summary>

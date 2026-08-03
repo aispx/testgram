@@ -126,7 +126,7 @@ public class CallLifecyclePropertyTests
         });
 
         var requestHandler = CreateHandler("RequestCallHandler",
-            database, userConverter.Object, sender, messageAppService, accessHashKeyCache, accessHashHelper, block.Object, privacy.Object);
+            database, userConverter.Object, sender, messageAppService, accessHashKeyCache, accessHashHelper, block.Object, privacy.Object, FakeUserAppService.AllCallable());
         var receivedHandler = CreateHandler("ReceivedCallHandler",
             database, userConverter.Object, sender, accessHashHelper);
         var acceptHandler = CreateHandler("AcceptCallHandler",
@@ -157,7 +157,12 @@ public class CallLifecyclePropertyTests
         // Establish the call (state = requested).
         var requestCall = new RequestRequestCall
         {
-            UserId = new TInputUser { UserId = CalleeId, AccessHash = 0 },
+            UserId = new TInputUser
+            {
+                UserId = CalleeId,
+                AccessHash = accessHashHelper.GenerateAccessHash(
+                    callerInput.UserId, callerInput.AccessHashKeyId, CalleeId, AccessHashType.User)
+            },
             RandomId = Random.Shared.Next(1, int.MaxValue),
             GAHash = gaHash,
             Protocol = Protocol(),
@@ -274,6 +279,6 @@ public class CallLifecyclePropertyTests
     {
         var assembly = typeof(CallSessionDocument).Assembly;
         var type = assembly.GetType($"MyTelegram.Messenger.Handlers.LatestLayer.Phone.{handlerTypeName}", throwOnError: true)!;
-        return Activator.CreateInstance(type, args)!;
+        return Activator.CreateInstance(type, PhoneTestFixtures.WithNullLoggers(type, args))!;
     }
 }

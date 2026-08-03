@@ -13,9 +13,10 @@ namespace MyTelegram.Services.Tests.Phone;
 /// Unit tests for <c>GetCallConfigHandler</c> (<c>phone.getCallConfig</c>).
 ///
 /// Covers Requirement 1:
-///   * 1.1 - a <c>dataJSON</c> object carrying the tgcalls call-configuration parameters is returned.
+///   * 1.1 - a <c>dataJSON</c> object carrying the tgcalls call-configuration parameters is returned,
+///           under the snake_case key names tgcalls actually reads (Instance.ServerConfig on Android).
 ///   * 1.2 - the configuration is consistent: the same server options always yield the same config,
-///           and the returned ICE servers reflect the configured WebRTC reflectors.
+///           and the configured values are reflected in the payload.
 ///   * 1.3 - an unauthorized session (auth key not bound to a user, <c>UserId == 0</c>) is rejected
 ///           with <c>AUTH_KEY_UNREGISTERED</c>.
 /// </summary>
@@ -37,45 +38,45 @@ public class GetCallConfigHandlerTests
         using var doc = JsonDocument.Parse(tDataJson.Data);
         var root = doc.RootElement;
 
-        // R1.1: the tgcalls config parameters the client library expects are present.
-        root.TryGetProperty("iceServers", out var iceServers).ShouldBeTrue();
-        iceServers.ValueKind.ShouldBe(JsonValueKind.Array);
-        iceServers.GetArrayLength().ShouldBeGreaterThan(0);
+        // R1.1: the keys tgcalls looks up (Instance.ServerConfig in the Android client) are present,
+        // defaulting to the same values the clients fall back to.
+        root.GetProperty("use_system_ns").GetBoolean().ShouldBeTrue();
+        root.GetProperty("use_system_aec").GetBoolean().ShouldBeTrue();
+        root.GetProperty("voip_enable_stun_marking").GetBoolean().ShouldBeFalse();
+        root.GetProperty("hangup_ui_timeout").GetDouble().ShouldBe(5);
 
-        root.GetProperty("defaultProtocol").GetString().ShouldBe("udp");
-        root.GetProperty("udpP2P").GetBoolean().ShouldBeTrue();
-        root.GetProperty("udpReflector").GetBoolean().ShouldBeTrue();
-        root.GetProperty("minLayer").GetInt32().ShouldBe(65);
-        root.GetProperty("maxLayer").GetInt32().ShouldBe(92);
+        foreach (var codecKey in new[]
+                 {
+                     "enable_vp8_encoder", "enable_vp8_decoder",
+                     "enable_vp9_encoder", "enable_vp9_decoder",
+                     "enable_h264_encoder", "enable_h264_decoder",
+                     "enable_h265_encoder", "enable_h265_decoder"
+                 })
+        {
+            root.GetProperty(codecKey).GetBoolean().ShouldBeTrue(codecKey);
+        }
     }
 
     [Fact]
-    public async Task GetCallConfig_IceServersReflectConfiguredReflectors()
+    public async Task GetCallConfig_ReflectsConfiguredRuntimeValues()
     {
-        // A STUN-only reflector and a TURN reflector with credentials.
-        var options = OptionsWith(new List<WebRtcConnection>
-        {
-            new() { Ip = "1.2.3.4", Port = 3478, Stun = true },
-            new() { Ip = "5.6.7.8", Port = 5349, Turn = true, UserName = "turnuser", Password = "turnpass" }
-        });
-        var handler = CreateHandler(options);
+        var options = DefaultOptions();
+        options.Calls.RuntimeConfig.UseSystemAec = false;
+        options.Calls.RuntimeConfig.EnableStunMarking = true;
+        options.Calls.RuntimeConfig.EnableH265Encoder = false;
+        options.Calls.RuntimeConfig.HangupUiTimeout = 12.5;
 
-        var dataJson = await InvokeAsync(handler, AuthorizedUserId);
+        var dataJson = await InvokeAsync(CreateHandler(options), AuthorizedUserId);
+
         using var doc = JsonDocument.Parse(((TDataJSON)dataJson).Data);
-        var iceServers = doc.RootElement.GetProperty("iceServers");
+        var root = doc.RootElement;
 
-        // R1.2: the STUN reflector is surfaced as a stun: url.
-        var stunUrls = AllUrls(iceServers);
-        stunUrls.ShouldContain("stun:1.2.3.4:3478");
-
-        // R1.2: the TURN reflector is surfaced as udp + tcp turn: urls with its credentials.
-        stunUrls.ShouldContain("turn:5.6.7.8:5349?transport=udp");
-        stunUrls.ShouldContain("turn:5.6.7.8:5349?transport=tcp");
-
-        var turnServer = EnumerateServers(iceServers)
-            .Single(s => s.GetProperty("urls").EnumerateArray().Any(u => u.GetString()!.StartsWith("turn:")));
-        turnServer.GetProperty("username").GetString().ShouldBe("turnuser");
-        turnServer.GetProperty("credential").GetString().ShouldBe("turnpass");
+        root.GetProperty("use_system_aec").GetBoolean().ShouldBeFalse();
+        root.GetProperty("voip_enable_stun_marking").GetBoolean().ShouldBeTrue();
+        root.GetProperty("enable_h265_encoder").GetBoolean().ShouldBeFalse();
+        root.GetProperty("hangup_ui_timeout").GetDouble().ShouldBe(12.5);
+        // Untouched knobs keep their defaults.
+        root.GetProperty("enable_vp8_encoder").GetBoolean().ShouldBeTrue();
     }
 
     [Fact]
@@ -101,25 +102,21 @@ public class GetCallConfigHandlerTests
     }
 
     [Fact]
-    public async Task GetCallConfig_NoReflectorsConfigured_ThrowsConfigurationError()
+    public async Task GetCallConfig_NoReflectorsConfigured_StillReturnsConfig()
     {
-        // With no WebRTC reflectors configured the handler surfaces the deployment error clearly
-        // rather than returning an empty iceServers list.
+        // This method carries tgcalls runtime knobs, not media endpoints (those are handed out as
+        // phoneConnectionWebrtc by phone.confirmCall), so an empty reflector list is irrelevant here.
+        // It must not fail: TDLib issues phone.getCallConfig from CallActor::start_up and discards the
+        // call outright if it errors.
         var handler = CreateHandler(OptionsWith(new List<WebRtcConnection>()));
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(() => InvokeAsync(handler, AuthorizedUserId));
-        ex.Message.ShouldContain("WebRtcConnections");
+        var dataJson = await InvokeAsync(handler, AuthorizedUserId);
+
+        using var doc = JsonDocument.Parse(((TDataJSON)dataJson).Data);
+        doc.RootElement.GetProperty("enable_vp8_encoder").GetBoolean().ShouldBeTrue();
     }
 
     // ---- helpers ---------------------------------------------------------------------------------
-
-    private static IReadOnlyList<string> AllUrls(JsonElement iceServers)
-        => EnumerateServers(iceServers)
-            .SelectMany(s => s.GetProperty("urls").EnumerateArray().Select(u => u.GetString()!))
-            .ToList();
-
-    private static IEnumerable<JsonElement> EnumerateServers(JsonElement iceServers)
-        => iceServers.EnumerateArray();
 
     private static MyTelegramMessengerServerOptions DefaultOptions()
         => OptionsWith(new List<WebRtcConnection>

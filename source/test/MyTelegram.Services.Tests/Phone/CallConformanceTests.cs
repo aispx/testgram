@@ -61,8 +61,8 @@ public class CallConformanceTests
 
         // The full ordered push sequence emitted across the whole flow.
         var pushes = sender.Pushes;
-        pushes.Count.ShouldBe(6,
-            "expected exactly 6 pushed updates across request→received→accept(x2)→confirm→discard, got: " +
+        pushes.Count.ShouldBe(7,
+            "expected exactly 7 pushed updates across request→received→accept(x2)→confirm→discard(x2), got: " +
             Describe(pushes));
 
         // 1. requestCall → callee learns of the incoming call: updatePhoneCall{ phoneCallRequested }.
@@ -87,9 +87,14 @@ public class CallConformanceTests
         AssertPhoneCallPush(pushes[4], CalleeId, typeof(MyTelegram.Schema.TPhoneCall));
         pushes[4].ExcludeAuthKeyId.ShouldBeNull();
 
-        // 5. discardCall (by caller) → the other party (callee) receives updatePhoneCall{ phoneCallDiscarded }.
+        // 5a. discardCall (by caller) → the other party (callee) receives updatePhoneCall{ phoneCallDiscarded }.
         AssertPhoneCallPush(pushes[5], CalleeId, typeof(TPhoneCallDiscarded));
         pushes[5].ExcludeAuthKeyId.ShouldBeNull();
+
+        // 5b. discardCall → the discarding user's OWN other devices also receive phoneCallDiscarded so
+        //     they stop ringing, excluding the device that issued the request (it has the RPC result).
+        AssertPhoneCallPush(pushes[6], CallerId, typeof(TPhoneCallDiscarded));
+        pushes[6].ExcludeAuthKeyId.ShouldBe(harness.CallerInput.AuthKeyId);
     }
 
     // ---- group-call full flow -------------------------------------------------------------------
@@ -235,7 +240,7 @@ public class CallConformanceTests
     {
         var assembly = typeof(CallSessionDocument).Assembly;
         var type = assembly.GetType($"MyTelegram.Messenger.Handlers.LatestLayer.Phone.{handlerTypeName}", throwOnError: true)!;
-        return Activator.CreateInstance(type, args)!;
+        return Activator.CreateInstance(type, PhoneTestFixtures.WithNullLoggers(type, args))!;
     }
 
     // ---- 1:1 harness ----------------------------------------------------------------------------
@@ -262,6 +267,7 @@ public class CallConformanceTests
             var messageAppService = new FakeMessageAppService();
             var accessHashKeyCache = new FakeUserAccessHashKeyCache();
             var accessHashHelper = new FakeAccessHashHelper2();
+            _accessHashHelper = accessHashHelper;
 
             var userConverter = new Mock<IUserConverterService>();
             userConverter
@@ -303,7 +309,7 @@ public class CallConformanceTests
             });
 
             _requestHandler = CreateHandler("RequestCallHandler",
-                Database, userConverter.Object, Sender, messageAppService, accessHashKeyCache, accessHashHelper, block.Object, privacy.Object);
+                Database, userConverter.Object, Sender, messageAppService, accessHashKeyCache, accessHashHelper, block.Object, privacy.Object, FakeUserAppService.AllCallable());
             _receivedHandler = CreateHandler("ReceivedCallHandler",
                 Database, userConverter.Object, Sender, accessHashHelper);
             _acceptHandler = CreateHandler("AcceptCallHandler",
@@ -320,6 +326,8 @@ public class CallConformanceTests
             GbBytes = ValidDhValue(offset: 7);
             GaHash = SHA256.HashData(GaBytes);
         }
+
+        private readonly FakeAccessHashHelper2 _accessHashHelper;
 
         public IMongoDatabase Database { get; }
         public IMongoCollection<CallSessionDocument> Sessions { get; }
@@ -355,7 +363,12 @@ public class CallConformanceTests
         {
             var request = new RequestRequestCall
             {
-                UserId = new TInputUser { UserId = CalleeId, AccessHash = 0 },
+                UserId = new TInputUser
+                {
+                    UserId = CalleeId,
+                    AccessHash = _accessHashHelper.GenerateAccessHash(
+                        CallerInput.UserId, CallerInput.AccessHashKeyId, CalleeId, AccessHashType.User)
+                },
                 RandomId = 100_001,
                 GAHash = GaHash,
                 Protocol = Protocol(),

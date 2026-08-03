@@ -14,9 +14,23 @@ public static class PhoneCallProtocolHelper
         return protocol is { UdpP2p: true, UdpReflector: true };
     }
 
+    /// <summary>
+    /// Returns <c>true</c> when the peer's <c>[min_layer, max_layer]</c> window is well-formed and overlaps
+    /// the window this server supports (<see cref="LegacyMinLayer"/>..<see cref="LegacyMaxLayer"/>).
+    /// </summary>
+    /// <remarks>
+    /// This deliberately checks for an overlap rather than exact equality. The official apps send 65/92
+    /// (Android <c>VoIPService.CALL_MIN_LAYER</c> + <c>Instance.getConnectionMaxLayer()</c>; tdesktop
+    /// <c>kMinLayer</c> + <c>tgcalls::Meta::MaxLayer()</c>), but TDLib's <c>CallProtocol</c> defaults to
+    /// <c>min_layer = max_layer = 65</c>, and an equality check would reject every stock TDLib client with
+    /// <c>CALL_PROTOCOL_LAYER_INVALID</c>.
+    /// </remarks>
     public static bool HasValidLegacyLayers(IPhoneCallProtocol? protocol)
     {
-        return protocol is { MinLayer: LegacyMinLayer, MaxLayer: LegacyMaxLayer };
+        return protocol != null
+               && protocol.MinLayer <= protocol.MaxLayer
+               && protocol.MinLayer <= LegacyMaxLayer
+               && protocol.MaxLayer >= LegacyMinLayer;
     }
 
     public static IReadOnlyList<string> GetLibraryVersions(IPhoneCallProtocol? protocol)
@@ -37,9 +51,27 @@ public static class PhoneCallProtocolHelper
     }
 
     /// <summary>
-    /// Attempts to select the negotiated tgcalls version supported by both peers, following the callee's
-    /// preference order (the callee is the side that finalises the negotiation in <c>phone.acceptCall</c>).
+    /// Attempts to select the negotiated tgcalls version supported by both peers: the greatest version in
+    /// the intersection under <see cref="StringComparer.Ordinal"/>.
     /// </summary>
+    /// <remarks>
+    /// Both official clients treat <c>library_versions[0]</c> of the server's reply as <em>the</em> version
+    /// to instantiate — tdesktop <c>Call::createAndStartController</c> reads
+    /// <c>vlibrary_versions().value(0, "2.4.4")</c> and fails the call outright when
+    /// <c>tgcalls::Meta::Create</c> does not know it; Android passes
+    /// <c>privateCall.protocol.library_versions.get(0)</c> straight to <c>Instance.makeInstance</c>.
+    /// <para>
+    /// Ordinal ordering is not arbitrary: it is the same scale the clients themselves rank versions on.
+    /// Android gates video availability on
+    /// <c>"2.7.7".compareTo(library_versions.get(0)) &lt;= 0</c> (a lexicographic <c>String.compareTo</c>),
+    /// destroying the video capturer and reporting <c>isVideoAvailable = false</c> when it fails. Since
+    /// <c>tgcalls::Meta::Versions()</c> enumerates a <c>std::map</c>, Android advertises
+    /// <c>["10.0.0", "11.0.0", "12.0.0", "13.0.0", "2.4.4", "2.7.7", "5.0.0", ...]</c>; picking the callee's
+    /// first entry would select <c>"10.0.0"</c> and silently downgrade every video call to audio. Ordinal
+    /// max selects <c>"9.0.0"</c>, which clears Android's gate and is also tdesktop's own top preference
+    /// (it advertises <c>Meta::Versions()</c> reversed).
+    /// </para>
+    /// </remarks>
     public static bool TryGetCommonLibraryVersion(
         IEnumerable<string>? callerLibraryVersions,
         IEnumerable<string>? calleeLibraryVersions,
@@ -49,7 +81,9 @@ public static class PhoneCallProtocolHelper
             NormalizeVersions(callerLibraryVersions),
             StringComparer.Ordinal);
         commonVersion = NormalizeVersions(calleeLibraryVersions)
-            .FirstOrDefault(callerVersions.Contains);
+            .Where(callerVersions.Contains)
+            .OrderByDescending(version => version, StringComparer.Ordinal)
+            .FirstOrDefault();
         return commonVersion != null;
     }
 

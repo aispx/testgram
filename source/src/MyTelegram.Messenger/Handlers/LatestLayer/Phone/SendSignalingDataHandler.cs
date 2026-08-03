@@ -40,12 +40,12 @@ internal sealed class SendSignalingDataHandler(
             return new TBoolTrue();
         }
 
-        if (session.State == "discarded")
+        if (session.State == CallSessionStates.Discarded)
         {
             return new TBoolTrue();
         }
 
-        if (session.State is not ("accepted" or "confirmed"))
+        if (session.State is not (CallSessionStates.Accepted or CallSessionStates.Confirmed))
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return new TBoolTrue();

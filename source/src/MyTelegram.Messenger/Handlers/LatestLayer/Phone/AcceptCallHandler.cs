@@ -60,27 +60,28 @@ internal sealed class AcceptCallHandler(
             return null!;
         }
 
-        if (session.State == "accepted" || session.State == "confirmed")
+        if (session.State == CallSessionStates.Accepted || session.State == CallSessionStates.Confirmed)
         {
             RpcErrors.RpcErrors400.CallAlreadyAccepted.ThrowRpcError();
             return null!;
         }
 
-        if (session.State == "discarded")
+        if (session.State == CallSessionStates.Discarded)
         {
             RpcErrors.RpcErrors400.CallAlreadyDeclined.ThrowRpcError();
             return null!;
         }
 
+        var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
         var update = Builders<CallSessionDocument>.Update
             .Set(s => s.GB, obj.GB)
             .Set(s => s.CalleeLibraryVersions, [.. PhoneCallProtocolHelper.GetLibraryVersions(obj.Protocol)])
             .Set(s => s.CalleeConferenceSupported, PhoneCallProtocolHelper.AdvertisesConferenceSupport(obj.Protocol))
-            .Set(s => s.State, "accepted");
+            .Set(s => s.State, CallSessionStates.Accepted)
+            .Set(s => s.StateChangedDate, currentDate);
 
         await _callCollection.UpdateOneAsync(filter, update);
-
-        var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         var phoneCallAcceptedForCaller = CreatePhoneCallAccepted(
             session,

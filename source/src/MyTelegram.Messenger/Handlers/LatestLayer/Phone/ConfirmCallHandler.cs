@@ -15,7 +15,8 @@ internal sealed class ConfirmCallHandler(
     IObjectMessageSender objectMessageSender,
     IOptions<MyTelegramMessengerServerOptions> optionsAccessor,
     IAccessHashHelper2 accessHashHelper2,
-    IPrivacyAppService privacyAppService)
+    IPrivacyAppService privacyAppService,
+    ILogger<ConfirmCallHandler> logger)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestConfirmCall, MyTelegram.Schema.Phone.IPhoneCall>
 {
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
@@ -46,13 +47,13 @@ internal sealed class ConfirmCallHandler(
             return null!;
         }
 
-        if (session.State == "discarded")
+        if (session.State == CallSessionStates.Discarded)
         {
             RpcErrors.RpcErrors400.CallAlreadyDeclined.ThrowRpcError();
             return null!;
         }
 
-        if (session.State != "accepted")
+        if (session.State != CallSessionStates.Accepted)
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return null!;
@@ -75,13 +76,6 @@ internal sealed class ConfirmCallHandler(
             RpcErrors.RpcErrors400.CallProtocolFlagsInvalid.ThrowRpcError();
             return null!;
         }
-
-        var update = Builders<CallSessionDocument>.Update
-            .Set(s => s.GA, obj.GA)
-            .Set(s => s.KeyFingerprint, obj.KeyFingerprint)
-            .Set(s => s.State, "confirmed");
-
-        await _callCollection.UpdateOneAsync(filter, update);
 
         var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
@@ -134,7 +128,15 @@ internal sealed class ConfirmCallHandler(
 
         if (connections.Count == 0)
         {
-            throw new InvalidOperationException("WebRTC connections not configured. Please configure App__WebRtcConnections in .env file.");
+            // The server cannot allocate media endpoints for this call. Surface it as an RPC error the
+            // client understands instead of an unhandled exception (which reaches the client as an
+            // opaque internal error), and do it BEFORE the session is moved to "confirmed" so a
+            // misconfigured server leaves the call recoverable rather than wedged.
+            logger.LogError(
+                "Cannot confirm call {CallId}: no WebRTC connections configured. Set App__WebRtcConnections in .env",
+                session.CallId);
+            RpcErrors.RpcErrors500.CallOccupyFailed.ThrowRpcError();
+            return null!;
         }
 
         if (!PhoneCallProtocolHelper.HasCommonLibraryVersion(session.CallerLibraryVersions, session.CalleeLibraryVersions))
@@ -142,6 +144,15 @@ internal sealed class ConfirmCallHandler(
             RpcErrors.RpcErrors406.CallProtocolCompatLayerInvalid.ThrowRpcError();
             return null!;
         }
+
+        // Every failure mode is behind us - only now commit the state transition.
+        var update = Builders<CallSessionDocument>.Update
+            .Set(s => s.GA, obj.GA)
+            .Set(s => s.KeyFingerprint, obj.KeyFingerprint)
+            .Set(s => s.State, CallSessionStates.Confirmed)
+            .Set(s => s.StateChangedDate, currentDate);
+
+        await _callCollection.UpdateOneAsync(filter, update);
 
         var protocol = PhoneCallProtocolHelper.Negotiate(session.CallerLibraryVersions, session.CalleeLibraryVersions);
         var conferenceSupported = session.CallerConferenceSupported && session.CalleeConferenceSupported;

@@ -2,6 +2,8 @@ using MongoDB.Bson;
 using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MyTelegram.Abstractions;
 using MyTelegram.Core;
@@ -33,6 +35,42 @@ namespace MyTelegram.Services.Tests.Phone;
 /// </summary>
 public static class PhoneTestFixtures
 {
+
+    /// <summary>
+    /// Fills in a <see cref="NullLogger{T}"/> for every <c>ILogger&lt;T&gt;</c> constructor parameter the
+    /// handler declares, so tests only pass the dependencies they actually exercise. Returns
+    /// <paramref name="args"/> unchanged when the caller already supplied every parameter.
+    /// </summary>
+    public static object[] WithNullLoggers(Type handlerType, object[] args)
+    {
+        var constructor = handlerType.GetConstructors()
+            .OrderByDescending(c => c.GetParameters().Length)
+            .First();
+        var parameters = constructor.GetParameters();
+        if (parameters.Length == args.Length)
+        {
+            return args;
+        }
+
+        var filled = new object[parameters.Length];
+        var next = 0;
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var parameterType = parameters[i].ParameterType;
+            if (parameterType.IsGenericType && parameterType.GetGenericTypeDefinition() == typeof(ILogger<>))
+            {
+                var nullLogger = typeof(NullLogger<>).MakeGenericType(parameterType.GetGenericArguments()[0]);
+                // NullLogger<T>.Instance is a static field, not a property.
+                filled[i] = nullLogger.GetField("Instance")!.GetValue(null)!;
+            }
+            else
+            {
+                filled[i] = args[next++];
+            }
+        }
+
+        return filled;
+    }
     public const string CallSessionsCollectionName = "call_sessions";
     public const string GroupCallsCollectionName = "group_calls";
 
@@ -563,4 +601,35 @@ public sealed class FakeMessageAppService : IMessageAppService
 
     private static NotSupportedException NotUsed([System.Runtime.CompilerServices.CallerMemberName] string? member = null)
         => new($"{nameof(FakeMessageAppService)}.{member} is not used by the Phone handlers.");
+}
+
+/// <summary>
+/// A <see cref="IUserAppService"/> stub for the call handlers, which look the callee up to reject calls to
+/// missing, deleted or bot accounts. By default every user id resolves to a plain, callable human.
+/// </summary>
+public static class FakeUserAppService
+{
+    /// <summary>Every user id resolves to a callable user.</summary>
+    public static IUserAppService AllCallable() => For(_ => Callable());
+
+    /// <summary>Resolves user ids through <paramref name="resolver"/>; return null to make one missing.</summary>
+    public static IUserAppService For(Func<long, IUserReadModel?> resolver)
+    {
+        var mock = new Mock<IUserAppService>();
+        mock.Setup(x => x.GetAsync(It.IsAny<long?>()))
+            .Returns((long? id) => Task.FromResult(id.HasValue ? resolver(id.Value) : null));
+        mock.Setup(x => x.GetAsync(It.IsAny<long>()))
+            .Returns((long id) => Task.FromResult(
+                resolver(id) ?? throw new ArgumentException($"UserReadModel with id {id} not exists")));
+        return mock.Object;
+    }
+
+    /// <summary>A user who can be called.</summary>
+    public static IUserReadModel Callable(bool isDeleted = false, bool isBot = false)
+    {
+        var mock = new Mock<IUserReadModel>();
+        mock.SetupGet(x => x.IsDeleted).Returns(isDeleted);
+        mock.SetupGet(x => x.Bot).Returns(isBot);
+        return mock.Object;
+    }
 }

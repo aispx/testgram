@@ -120,9 +120,85 @@ public class CallLifecycleHandlerTests
         PhoneCallOf(discardPush).ShouldBeOfType<TPhoneCallDiscarded>();
     }
 
+    // ---- callee validation (R2.x) ----------------------------------------------------------------
+
+    [Fact]
+    public async Task RequestCall_WithWrongCalleeAccessHash_ThrowsUserIdInvalid()
+    {
+        var harness = new CallHarness();
+
+        // The InputUser comes from the client, so its access_hash has to be checked - otherwise any
+        // user id could be dialled by guessing.
+        var request = new RequestRequestCall
+        {
+            UserId = new TInputUser { UserId = CalleeId, AccessHash = 999_999 },
+            RandomId = 100_001,
+            GAHash = harness.GaHash,
+            Protocol = CallHarness.ProtocolForTests(),
+            Video = false
+        };
+
+        var ex = await Should.ThrowAsync<RpcException>(() => harness.InvokeRequestCallAsync(request));
+        ex.Message.ShouldBe("USER_ID_INVALID");
+
+        (await harness.Sessions.CountDocumentsAsync(Builders<CallSessionDocument>.Filter.Empty)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task RequestCall_WhenCalleeDoesNotExist_ThrowsUserIdInvalid()
+    {
+        var harness = new CallHarness(userAppService: FakeUserAppService.For(_ => null));
+
+        var ex = await Should.ThrowAsync<RpcException>(() => harness.RequestCallAsync());
+        ex.Message.ShouldBe("USER_ID_INVALID");
+
+        // Nothing was persisted, so the callee is not left "busy" against a call that cannot ring.
+        (await harness.Sessions.CountDocumentsAsync(Builders<CallSessionDocument>.Filter.Empty)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task RequestCall_WhenCalleeIsDeleted_ThrowsInputUserDeactivated()
+    {
+        var harness = new CallHarness(
+            userAppService: FakeUserAppService.For(_ => FakeUserAppService.Callable(isDeleted: true)));
+
+        var ex = await Should.ThrowAsync<RpcException>(() => harness.RequestCallAsync());
+        ex.Message.ShouldBe("INPUT_USER_DEACTIVATED");
+    }
+
+    [Fact]
+    public async Task RequestCall_WhenCalleeIsABot_ThrowsUserIdInvalid()
+    {
+        var harness = new CallHarness(
+            userAppService: FakeUserAppService.For(_ => FakeUserAppService.Callable(isBot: true)));
+
+        var ex = await Should.ThrowAsync<RpcException>(() => harness.RequestCallAsync());
+        ex.Message.ShouldBe("USER_ID_INVALID");
+    }
+
+    // ---- server misconfiguration ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ConfirmCall_WithNoWebRtcConnections_ThrowsRpcErrorAndLeavesCallAccepted()
+    {
+        var harness = new CallHarness(webRtcConnections: []);
+
+        await harness.RequestCallAsync();
+        await harness.ReceivedCallAsync();
+        await harness.AcceptCallAsync();
+
+        // An unconfigured server must surface an RPC error rather than an unhandled exception...
+        var ex = await Should.ThrowAsync<RpcException>(() => harness.ConfirmCallAsync());
+        ex.Message.ShouldBe("CALL_OCCUPY_FAILED");
+
+        // ...and must not have moved the session to "confirmed" on its way out.
+        (await FirstSessionAsync(harness.Sessions)).State.ShouldBe("accepted");
+    }
+
     // ---- busy / occupy rejection (R2.6, R6.2) ----------------------------------------------------
 
     [Theory]
+    [InlineData("requested")]
     [InlineData("received")]
     [InlineData("accepted")]
     [InlineData("confirmed")]
@@ -132,7 +208,11 @@ public class CallLifecycleHandlerTests
 
         // Establish an existing call to the callee and drive it into a busy state.
         await harness.RequestCallAsync();
-        await harness.ReceivedCallAsync();
+        if (busyState != "requested")
+        {
+            await harness.ReceivedCallAsync();
+        }
+
         if (busyState is "accepted" or "confirmed")
         {
             await harness.AcceptCallAsync();
@@ -153,21 +233,38 @@ public class CallLifecycleHandlerTests
     }
 
     [Fact]
-    public async Task RequestCall_WhenCalleeOnlyHasWaitingCall_IsNotBusy()
+    public async Task RequestCall_WhenCalleeIsAlreadyBeingDialled_ThrowsCallOccupyFailed()
     {
         var harness = new CallHarness();
 
-        // The first call is only in 'requested' (not received/accepted/confirmed), so the callee is
-        // not yet "busy": R6.2 only guards received/accepted/confirmed states.
+        // A callee whose phone is already ringing from someone else is busy: leaving 'requested' out of
+        // the busy set let two callers ring the same person at once, and abandoned sessions used to pile
+        // up forever. CallSessionExpiryService is what keeps this from wedging the callee permanently.
         await harness.RequestCallAsync();
         (await FirstSessionAsync(harness.Sessions)).State.ShouldBe("requested");
 
         var otherCaller = PhoneTestFixtures.RequestInput(OtherCallerId).Build();
-        await harness.RequestCallAsync(otherCaller, CalleeId, randomId: 999_002);
+        var ex = await Should.ThrowAsync<RpcException>(() =>
+            harness.RequestCallAsync(otherCaller, CalleeId, randomId: 999_002));
+        ex.Message.ShouldBe("CALL_OCCUPY_FAILED");
 
-        // Two independent sessions now exist to the same callee.
+        // No second session was persisted.
         var count = await harness.Sessions.CountDocumentsAsync(Builders<CallSessionDocument>.Filter.Empty);
-        count.ShouldBe(2);
+        count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RequestCall_WhenCallerIsAlreadyInACall_ThrowsCallOccupyFailed()
+    {
+        var harness = new CallHarness();
+
+        // Busy applies in either role: a caller with a live outgoing call cannot open a second one.
+        await harness.RequestCallAsync();
+        await harness.ReceivedCallAsync();
+
+        var ex = await Should.ThrowAsync<RpcException>(() =>
+            harness.RequestCallAsync(harness.CallerInput, calleeId: OtherCallerId, randomId: 999_003));
+        ex.Message.ShouldBe("CALL_OCCUPY_FAILED");
     }
 
     // ---- duplicate random_id rejection (R2.7) ----------------------------------------------------
@@ -232,7 +329,9 @@ public class CallLifecycleHandlerTests
         private readonly object _confirmHandler;
         private readonly object _discardHandler;
 
-        public CallHarness()
+        public CallHarness(
+            IUserAppService? userAppService = null,
+            List<WebRtcConnection>? webRtcConnections = null)
         {
             Database = PhoneTestFixtures.CreateDatabase(out _);
             Sessions = Database.GetCollection<CallSessionDocument>(PhoneTestFixtures.CallSessionsCollectionName);
@@ -241,6 +340,7 @@ public class CallLifecycleHandlerTests
             var messageAppService = new FakeMessageAppService();
             var accessHashKeyCache = new FakeUserAccessHashKeyCache();
             var accessHashHelper = new FakeAccessHashHelper2();
+            _accessHashHelper = accessHashHelper;
 
             var userConverter = new Mock<IUserConverterService>();
             userConverter
@@ -268,7 +368,7 @@ public class CallLifecycleHandlerTests
 
             var options = Options.Create(new MyTelegramMessengerServerOptions
             {
-                WebRtcConnections =
+                WebRtcConnections = webRtcConnections ??
                 [
                     new WebRtcConnection
                     {
@@ -284,7 +384,8 @@ public class CallLifecycleHandlerTests
             });
 
             _requestHandler = CreateHandler("RequestCallHandler",
-                Database, userConverter.Object, Sender, messageAppService, accessHashKeyCache, accessHashHelper, block.Object, privacy.Object);
+                Database, userConverter.Object, Sender, messageAppService, accessHashKeyCache, accessHashHelper, block.Object, privacy.Object,
+                userAppService ?? FakeUserAppService.AllCallable());
             _receivedHandler = CreateHandler("ReceivedCallHandler",
                 Database, userConverter.Object, Sender, accessHashHelper);
             _acceptHandler = CreateHandler("AcceptCallHandler",
@@ -301,6 +402,8 @@ public class CallLifecycleHandlerTests
             GbBytes = ValidDhValue(offset: 7);
             GaHash = SHA256.HashData(GaBytes);
         }
+
+        private readonly FakeAccessHashHelper2 _accessHashHelper;
 
         public IMongoDatabase Database { get; }
         public IMongoCollection<CallSessionDocument> Sessions { get; }
@@ -332,6 +435,13 @@ public class CallLifecycleHandlerTests
             return new TInputPhoneCall { Id = session.CallId, AccessHash = session.GetAccessHashForUser(CalleeId) };
         }
 
+        /// <summary>The protocol the harness sends, exposed so tests can build bespoke requests.</summary>
+        public static IPhoneCallProtocol ProtocolForTests() => Protocol();
+
+        /// <summary>Invokes phone.requestCall with a caller-supplied request object.</summary>
+        public Task<IObject> InvokeRequestCallAsync(RequestRequestCall request)
+            => InvokeAsync(_requestHandler, CallerInput, request);
+
         public Task<IObject> RequestCallAsync(int randomId = 100_001)
             => RequestCallAsync(CallerInput, CalleeId, randomId);
 
@@ -339,7 +449,12 @@ public class CallLifecycleHandlerTests
         {
             var request = new RequestRequestCall
             {
-                UserId = new TInputUser { UserId = calleeId, AccessHash = 0 },
+                UserId = new TInputUser
+                {
+                    UserId = calleeId,
+                    AccessHash = _accessHashHelper.GenerateAccessHash(
+                        caller.UserId, caller.AccessHashKeyId, calleeId, AccessHashType.User)
+                },
                 RandomId = randomId,
                 GAHash = GaHash,
                 Protocol = Protocol(),
@@ -391,7 +506,7 @@ public class CallLifecycleHandlerTests
         {
             var assembly = typeof(CallSessionDocument).Assembly;
             var type = assembly.GetType($"MyTelegram.Messenger.Handlers.LatestLayer.Phone.{handlerTypeName}", throwOnError: true)!;
-            return Activator.CreateInstance(type, args)!;
+            return Activator.CreateInstance(type, PhoneTestFixtures.WithNullLoggers(type, args))!;
         }
 
         /// <summary>Big-endian unsigned DH value guaranteed to sit inside the valid safety range.</summary>

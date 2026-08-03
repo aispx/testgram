@@ -64,12 +64,25 @@ public class PhoneCallProtocolNegotiationTests
     }
 
     [Theory]
-    [InlineData(64, 92)]  // min below supported
-    [InlineData(65, 91)]  // max below supported
-    [InlineData(66, 92)]  // min above supported
-    [InlineData(65, 93)]  // max above supported
-    [InlineData(0, 0)]    // unset
-    public void HasValidLegacyLayers_WrongRange_IsRejected(int minLayer, int maxLayer)
+    [InlineData(65, 92)]   // the window the official apps advertise
+    [InlineData(65, 65)]   // stock TDLib: CallProtocol defaults min_layer = max_layer = 65
+    [InlineData(64, 92)]   // starts below our window but overlaps it
+    [InlineData(65, 93)]   // extends above our window but overlaps it
+    [InlineData(66, 92)]   // strictly inside our window
+    [InlineData(1, 200)]   // superset of our window
+    [InlineData(92, 92)]   // touches the upper bound only
+    public void HasValidLegacyLayers_OverlappingRange_IsAccepted(int minLayer, int maxLayer)
+    {
+        var protocol = new TPhoneCallProtocol { MinLayer = minLayer, MaxLayer = maxLayer };
+        PhoneCallProtocolHelper.HasValidLegacyLayers(protocol).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(0, 0)]     // unset
+    [InlineData(1, 64)]    // entirely below our window
+    [InlineData(93, 120)]  // entirely above our window
+    [InlineData(92, 65)]   // malformed: min > max
+    public void HasValidLegacyLayers_NonOverlappingOrMalformedRange_IsRejected(int minLayer, int maxLayer)
     {
         var protocol = new TPhoneCallProtocol { MinLayer = minLayer, MaxLayer = maxLayer };
         PhoneCallProtocolHelper.HasValidLegacyLayers(protocol).ShouldBeFalse();
@@ -84,10 +97,10 @@ public class PhoneCallProtocolNegotiationTests
     // ---- Common-version selection (R3.4) ---------------------------------------------------------
 
     [Fact]
-    public void TryGetCommonLibraryVersion_SharedVersions_SelectsCalleePreferenceOrder()
+    public void TryGetCommonLibraryVersion_SharedVersions_SelectsOrdinalGreatest()
     {
-        // The callee finalises negotiation, so the FIRST callee version that the caller also supports
-        // is selected (callee preference order), not the caller's order.
+        // The greatest common version under ordinal comparison is selected, regardless of the order
+        // either peer advertised its list in.
         var found = PhoneCallProtocolHelper.TryGetCommonLibraryVersion(
             callerLibraryVersions: ["v1", "v2", "v3"],
             calleeLibraryVersions: ["v3", "v2"],
@@ -137,7 +150,7 @@ public class PhoneCallProtocolNegotiationTests
     // For arbitrary caller/callee library_versions lists:
     //   * negotiation succeeds iff the caller and callee lists intersect;
     //   * when it succeeds, the confirmed call's negotiated version is a single value present in BOTH
-    //     lists (selected in callee preference order);
+    //     lists (the ordinal-greatest common version);
     //   * when the intersection is empty, no call reaches `confirmed` (the compat gate rejects it).
 
     /// <summary>
@@ -156,8 +169,10 @@ public class PhoneCallProtocolNegotiationTests
             .Sample((caller, callee) =>
             {
                 var callerSet = caller.ToHashSet(StringComparer.Ordinal);
-                // Expected intersection in callee preference order (the callee finalises negotiation).
-                var expectedIntersection = callee.Where(callerSet.Contains).ToList();
+                // The negotiated version is the ordinal-greatest member of the intersection.
+                var expectedIntersection = callee.Where(callerSet.Contains)
+                    .OrderByDescending(v => v, StringComparer.Ordinal)
+                    .ToList();
 
                 var hasCommon = PhoneCallProtocolHelper.HasCommonLibraryVersion(caller, callee);
                 var tryCommon = PhoneCallProtocolHelper.TryGetCommonLibraryVersion(caller, callee, out var selected);
@@ -179,7 +194,7 @@ public class PhoneCallProtocolNegotiationTests
 
                 // R3.4: the negotiated version is a single value present in both peers' lists.
                 selected.ShouldNotBeNull();
-                selected.ShouldBe(expectedIntersection[0]); // callee preference order
+                selected.ShouldBe(expectedIntersection[0]); // ordinal-greatest common version
                 callerSet.ShouldContain(selected!);
                 callee.ShouldContain(selected!);
 

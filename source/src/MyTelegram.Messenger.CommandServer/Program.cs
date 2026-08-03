@@ -126,6 +126,8 @@ builder.ConfigureServices((ctx,
     services.AddHostedService<ChannelViewsBackgroundService>();
     services.AddHostedService<StoryArchiveBackgroundService>();
     services.AddHostedService<SuggestedPostSettlementBackgroundService>();
+    services.AddSingleton<MyTelegram.Messenger.Services.Phone.CallSessionExpiryService>();
+    services.AddHostedService<CallSessionExpiryBackgroundService>();
     services.AddHostedService<MyTelegram.Messenger.Services.ScheduledMessageSender>();
 
     services.Configure<HostOptions>(options =>

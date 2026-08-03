@@ -34,7 +34,7 @@ internal sealed class SaveCallDebugHandler(
         }
 
         if ((session.CallerId != input.UserId && session.CalleeId != input.UserId) ||
-            session.State != "discarded")
+            session.State != CallSessionStates.Discarded)
         {
             RpcErrors.RpcErrors400.CallPeerInvalid.ThrowRpcError();
             return new TBoolTrue();

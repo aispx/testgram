@@ -50,7 +50,7 @@ internal sealed class DiscardCallHandler(
 
         // Requirement 7.9: idempotent re-discard - return the existing phoneCallDiscarded
         // without mutating recorded state and without re-pushing updates / service messages.
-        if (session.State == "discarded")
+        if (session.State == CallSessionStates.Discarded)
         {
             var existingDiscardedCall = new Schema.TPhoneCallDiscarded
             {
@@ -76,11 +76,12 @@ internal sealed class DiscardCallHandler(
 
         // Requirement 7.4/7.5: rating/debug policy - a call is rateable/debuggable only if it
         // reached the connected (confirmed) state; rating additionally requires a non-zero duration.
-        var needRating = session.State == "confirmed" && obj.Duration > 0;
-        var needDebug = session.State == "confirmed";
+        var needRating = session.State == CallSessionStates.Confirmed && obj.Duration > 0;
+        var needDebug = session.State == CallSessionStates.Confirmed;
 
         var update = Builders<CallSessionDocument>.Update
-            .Set(s => s.State, "discarded")
+            .Set(s => s.State, CallSessionStates.Discarded)
+            .Set(s => s.StateChangedDate, currentDate)
             .Set(s => s.Duration, obj.Duration)
             .Set(s => s.DiscardReason, reason)
             .Set(s => s.DiscardReasonSlug, reasonSlug)
@@ -112,6 +113,20 @@ internal sealed class DiscardCallHandler(
                 Chats = new TVector<IChat>(),
                 Date = currentDate
             });
+
+        // The discarding user's OTHER devices must stop ringing / tear down their controller too, so they
+        // get the same phoneCallDiscarded. The device that issued phone.discardCall already has the result
+        // of this very request and is excluded via excludeAuthKeyId (same pattern as AcceptCallHandler).
+        var selfPeer = new Peer(PeerType.User, input.UserId);
+        await objectMessageSender.PushMessageToPeerAsync(selfPeer,
+            new TUpdates
+            {
+                Updates = new TVector<IUpdate> { new TUpdatePhoneCall { PhoneCall = discardedCall } },
+                Users = usersVector,
+                Chats = new TVector<IChat>(),
+                Date = currentDate
+            },
+            excludeAuthKeyId: input.AuthKeyId);
 
         await SendCallDiscardedServiceMessageAsync(
             input,

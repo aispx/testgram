@@ -14,9 +14,18 @@ public class CallSessionDocument
     public byte[]? GA { get; set; }
     public byte[]? GB { get; set; }
     public long KeyFingerprint { get; set; }
-    public string State { get; set; } = "requested";
+    public string State { get; set; } = CallSessionStates.Requested;
     public bool Video { get; set; }
     public int Date { get; set; }
+
+    /// <summary>
+    /// Unix time of the most recent <see cref="State"/> transition. Expiry deadlines are measured from
+    /// here rather than from <see cref="Date"/>, because e.g. the connect deadline for <c>accepted</c>
+    /// starts when the call was answered, not when it was placed. Null on documents written before this
+    /// field existed, in which case <see cref="Date"/> is used.
+    /// </summary>
+    public int? StateChangedDate { get; set; }
+
     public int? ReceivedDate { get; set; }
     public int Duration { get; set; }
     public string? DiscardReason { get; set; }
@@ -36,6 +45,9 @@ public class CallSessionDocument
     public int? LogFileParts { get; set; }
     public string? LogFileName { get; set; }
     public string? LogFileMd5Checksum { get; set; }
+
+    /// <summary>Unix time the session entered its current <see cref="State"/>.</summary>
+    public int StateSince => StateChangedDate ?? Date;
 
     public bool IsParticipant(long userId)
     {
