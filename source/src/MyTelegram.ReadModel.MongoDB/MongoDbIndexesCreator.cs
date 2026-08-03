@@ -61,6 +61,24 @@ public class MongoDbIndexesCreator(
         await CreateIndexAsync<EncryptedChatReadModel>(p => p.AdminId);
         await CreateIndexAsync<EncryptedChatReadModel>(p => p.ParticipantId);
 
+        // updates.getDifference reads this collection on every call, three times over (the pts box, the
+        // channel stream and the secret-chat handshake replay), and it is append-only and never pruned.
+        // These were previously declared only in QueryServerMongoDbIndexesCreator, which nothing ever
+        // invokes - CreateAllIndexesAsync is called from the data seeder alone, and the seeder resolves
+        // THIS creator - so the collection ran unindexed.
+        await CreateIndexAsync<UpdatesReadModel>(p => p.OwnerPeerId);
+        await CreateIndexAsync<UpdatesReadModel>(p => p.ChannelId);
+        await CreateIndexAsync<UpdatesReadModel>(p => p.Pts);
+        await CreateIndexAsync<UpdatesReadModel>(p => p.GlobalSeqNo);
+
+        // The handshake replay (GetUpdatesByGlobalSeqNoQuery) filters OwnerPeerId + UpdatesType and then
+        // ranges and sorts on GlobalSeqNo. The single-field indexes above cannot serve that shape: measured
+        // against a 84k-row collection, OwnerPeerId_1 alone still fetched 13k documents and blocked on an
+        // in-memory sort (61ms), while this compound index answers it from the index (0 documents, 1ms).
+        // Field order matters - the two equality fields must precede the range/sort field.
+        await CreateCompoundIndexAsync<UpdatesReadModel>("idx_updates_owner_type_seq",
+            p => p.OwnerPeerId, p => p.UpdatesType, p => p.GlobalSeqNo);
+
         await CreateIndexAsync<PtsForAuthKeyIdReadModel>(p => p.PeerId);
         await CreateIndexAsync<PtsForAuthKeyIdReadModel>(p => p.PermAuthKeyId);
         await CreateIndexAsync<PtsForAuthKeyIdReadModel>(p => p.GlobalSeqNo);
