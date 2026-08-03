@@ -40,6 +40,7 @@
     <Project Path="src/MyTelegram.ReadModel/MyTelegram.ReadModel.csproj" />
   </Folder>
   <Folder Name="/test/">
+    <Project Path="test/MyTelegram.AuthServer.Tests/MyTelegram.AuthServer.Tests.csproj" />
     <Project Path="test/MyTelegram.Domain.IntegrationTests/MyTelegram.Domain.IntegrationTests.csproj" />
     <Project Path="test/MyTelegram.Domain.Tests/MyTelegram.Domain.Tests.csproj" />
     <Project Path="test/MyTelegram.Messenger.Tests/MyTelegram.Messenger.Tests.csproj" />

@@ -669,8 +669,9 @@ public class BotFatherBotService(
 
     private static string GenerateToken()
     {
-        var bytes = new byte[32];
-        Random.Shared.NextBytes(bytes);
+        // A bot token is a bearer credential for the bot account, so it must be unguessable:
+        // Random.Shared is xoshiro256**, whose state can be recovered from previously issued tokens.
+        var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
         return Convert.ToBase64String(bytes).Replace("+", "-").Replace("/", "_").Replace("=", "");
     }
 

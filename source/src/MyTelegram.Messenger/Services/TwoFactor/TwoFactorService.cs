@@ -55,8 +55,11 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
             Salt2 = salt2,
             PasswordHash = passwordHash,
             Hint = hint,
-            G = existing?.G ?? SrpConstants.G,
-            P = existing?.P ?? SrpConstants.P2048,
+            // The verifier the client just sent was derived from the g/p advertised as new_algo by
+            // account.getPassword, i.e. the current constants - carrying over the previously stored pair
+            // would persist a verifier that can never verify against it.
+            G = SrpConstants.G,
+            P = SrpConstants.P2048,
             RecoveryEmail = existing?.RecoveryEmail,
             RecoveryEmailCode = existing?.RecoveryEmailCode,
             RecoveryEmailCodeExpire = existing?.RecoveryEmailCodeExpire,
@@ -117,7 +120,24 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
         var g = new BigInteger(doc.G);
         var v = new BigInteger(doc.PasswordHash, isUnsigned: true, isBigEndian: true);
         var b = new BigInteger(session.B, isUnsigned: true, isBigEndian: true);
+
+        // A is a 2048-bit number, so anything longer is malformed. Bounding it before the BigInteger
+        // multiplication below also keeps a client from forcing arbitrarily expensive arithmetic.
+        if (aBytes.Length > 256)
+        {
+            return false;
+        }
+
         var a = new BigInteger(aBytes, isUnsigned: true, isBigEndian: true);
+
+        // A mod p == 0 (A = 0, A = p, A = 2p, ...) collapses S to zero no matter what the verifier v is,
+        // which makes K = SHA256(0^256) a public constant. Every other M1 input (p, g, salt1, salt2, srp_B)
+        // is handed to the client by account.getPassword, so without this check anyone could forge M1 and
+        // pass 2FA without knowing the password. https://corefork.telegram.org/api/srp
+        if ((a % p).IsZero)
+        {
+            return false;
+        }
 
         var pBytes = ToPaddedBytes(p, 256);
         var gBytes = ToPaddedBytes(g, 256);
@@ -127,8 +147,12 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
         var srpB = ((k * v % p) + gb) % p;
         var srpBBytes = ToPaddedBytes(srpB, 256);
 
+        // Clients hash the zero-padded 256-byte A, so normalise before hashing rather than using the wire
+        // bytes verbatim - a client that stripped leading zeros would otherwise fail a legitimate login.
+        var paddedABytes = ToPaddedBytes(a, 256);
+
         // u = H(A | B)
-        var u = new BigInteger(SHA256.HashData([.. aBytes, .. srpBBytes]), isUnsigned: true, isBigEndian: true);
+        var u = new BigInteger(SHA256.HashData([.. paddedABytes, .. srpBBytes]), isUnsigned: true, isBigEndian: true);
 
         // S = (A * v^u mod p)^b mod p
         var vu = BigInteger.ModPow(v, u, p);
@@ -146,14 +170,16 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
             .. hpXorHg,
             .. SHA256.HashData(doc.Salt1),
             .. SHA256.HashData(doc.Salt2),
-            .. aBytes,
+            .. paddedABytes,
             .. srpBBytes,
             .. kA
         ]);
 
-        var ok = expectedM1.SequenceEqual(m1Bytes);
-        if (ok) await cacheManager.RemoveAsync($"srp:{srpId}");
-        return ok;
+        // Burn the session on every outcome: srp_B (and therefore b) must not be reused across attempts,
+        // otherwise a wrong guess costs the attacker nothing and yields another sample against the same b.
+        await cacheManager.RemoveAsync($"srp:{srpId}");
+
+        return CryptographicOperations.FixedTimeEquals(expectedM1, m1Bytes);
     }
 
     public async Task SetRecoveryEmailAsync(long userId, string email, string code)

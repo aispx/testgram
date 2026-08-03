@@ -1,9 +1,18 @@
 namespace MyTelegram.Messenger.Services.TwoFactor;
 
-// Standard 2048-bit safe prime used by Telegram SRP (RFC 5054 group 14)
+// The 2048-bit safe prime Telegram uses for SRP - byte-for-byte the same value as the MTProto
+// AuthConsts.Dh2048P handshake prime.
 public static class SrpConstants
 {
-    public const int G = 2;
+    // g must satisfy the generator condition the security guidelines state for this prime, because official
+    // clients enforce it: TDLib runs mtproto::DhHandshake::check_config(g, p) from both
+    // calc_password_srp_hash and get_input_check_password, and returns inputCheckPasswordEmpty when it fails.
+    //
+    // For this prime p mod 8 == 3, so 2 is a quadratic non-residue: it generates the whole group of order
+    // p-1 = 2q instead of the order-q subgroup, which leaks the Legendre symbol of g^a and fails the
+    // client-side check outright. p mod 3 == 2 holds, so 3 is the correct generator - it is also what
+    // Telegram itself advertises. https://corefork.telegram.org/mtproto/security_guidelines
+    public const int G = 3;
 
     public static readonly byte[] P2048 =
     [

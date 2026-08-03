@@ -13,6 +13,20 @@ public class SetClientDhParamsHandler(
     )
     {
         var dto = await step3ServerHelper.SetClientDhParamsAnswerAsync(obj);
+
+        // A handshake that failed one of the checks in
+        // https://corefork.telegram.org/mtproto/security_guidelines gets an authenticated dh_gen_fail and
+        // nothing else: no auth key is cached and no AuthKeyCreatedIntegrationEvent is published.
+        if (dto.Rejected)
+        {
+            logger.LogWarning(
+                "Rejected set_client_DH_params, connectionId: {ConnectionId}, reqMsgId: {ReqMsgId}",
+                input.ConnectionId,
+                input.ReqMsgId);
+
+            return dto.SetClientDhParamsAnswer;
+        }
+
         logger.HandshakeStep3(dto.IsPermanent ? "Perm" : "Temp", input.ConnectionId, input.AuthKeyId, input.ReqMsgId, input.ConnectionType == ConnectionType.Media);
 
         // Cached authentication data expires in 120 seconds

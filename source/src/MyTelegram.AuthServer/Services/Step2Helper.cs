@@ -6,7 +6,8 @@ public class Step2Helper(
     IMtpHelper mtpHelper,
     IMyRsaHelper myRsaHelper,
     ICacheManager<AuthCacheItem> cacheManager,
-    IRsaKeyProvider rsaKeyProvider
+    IRsaKeyProvider rsaKeyProvider,
+    IFingerprintHelper fingerprintHelper
 ) : Step1To3Helper, IStep2Helper, ISingletonDependency
 {
     public async Task<Step2Output> GetServerDhParamsAsync(RequestReqDHParams req)
@@ -21,6 +22,16 @@ public class Step2Helper(
         }
 
         #region check request
+
+        // The client tells us which server public key it encrypted encrypted_data with; it must be one we
+        // actually hold, otherwise the RSA step is not bound to this server's key at all.
+        var expectedFingerprint = fingerprintHelper.GetFingerprint();
+        if (req.PublicKeyFingerprint != expectedFingerprint)
+        {
+            throw new DhHandshakeRejectedException(
+                $"Unknown public key fingerprint: {req.PublicKeyFingerprint:x}."
+            );
+        }
 
         CheckRequestData(cachedAuthKey.Nonce, req.Nonce);
         CheckRequestData(cachedAuthKey.ServerNonce, req.ServerNonce);
@@ -88,15 +99,21 @@ public class Step2Helper(
         string privateKey
     )
     {
-        // It needs to be converted into a 256-byte array.
-        // sometimes the auth key data length is only 255, and 0 needs to be added to the first position.
-        var innerDataWithHash = myRsaHelper.Decrypt(reqDhParams.EncryptedData, privateKey);
-        if (innerDataWithHash.Length == 256)
+        // RSA output is always modulus-width, but MyRsaHelper returns a BigInteger encoding with leading
+        // zeroes stripped. Normalise back to 256 bytes so the encoding width - which is what distinguishes
+        // the two payload formats - survives.
+        var innerDataWithHash = myRsaHelper.Decrypt(reqDhParams.EncryptedData, privateKey).ToBytes256();
+
+        // New-style RSA_PAD payloads occupy all 256 bytes. The legacy SHA1(data)+data+padding encoding is
+        // 255 bytes wide, so it is always zero-prefixed - only then is the legacy fallback even possible.
+        try
         {
             return ParsePqInnerData(innerDataWithHash);
         }
-
-        return ParsePqInnerDataOld(innerDataWithHash);
+        catch (DhHandshakeRejectedException) when (innerDataWithHash[0] == 0)
+        {
+            return ParsePqInnerDataOld(innerDataWithHash.AsSpan(1).ToArray());
+        }
     }
 
     private IPQInnerData ParsePqInnerDataOld(byte[] innerDataWithHash)
@@ -112,9 +129,15 @@ public class Step2Helper(
 
         Span<byte> calcHash = stackalloc byte[20];
         SHA1.HashData(realInnerData, calcHash);
-        if (!shaHash.SequenceEqual(calcHash))
+
+        // https://corefork.telegram.org/mtproto/security_guidelines
+        // "the first 20 bytes of answer_with_hash must be equal to SHA1 of the remainder" - a mismatch has
+        // to reject the handshake. Logging and carrying on would leave the check with no effect at all.
+        if (!CryptographicOperations.FixedTimeEquals(shaHash, calcHash))
         {
             logger.LogWarning("PQInnerData SHA1 hash mismatch");
+
+            throw new DhHandshakeRejectedException("PQInnerData SHA1 hash mismatch");
         }
 
         return tPqInnerData;
@@ -140,7 +163,7 @@ public class Step2Helper(
     private IPQInnerData ParsePqInnerData(ReadOnlySpan<byte> keyAesEncryptedBytes)
     {
         const int tempKeyLength = 32;
-        var tempBytes = ArrayPool<byte>.Shared.Rent(keyAesEncryptedBytes.Length + 32 + 32);
+        var tempBytes = ArrayPool<byte>.Shared.Rent(keyAesEncryptedBytes.Length + 32 + 32 + 32);
 
         try
         {
@@ -167,14 +190,18 @@ public class Step2Helper(
             hasher.AppendData(dataWithPadding);
             hasher.GetHashAndReset(calculatedHash);
 
-            if (!hash.SequenceEqual(calculatedHash))
+            if (!CryptographicOperations.FixedTimeEquals(hash, calculatedHash))
             {
                 logger.LogWarning("PQInnerData hash mismatch");
 
-                throw new ArgumentException("PQInnerData hash mismatch");
+                throw new DhHandshakeRejectedException("PQInnerData hash mismatch");
             }
 
-            var tPqInnerData = tempBytes.ToTObject<IPQInnerData>();
+            // Deserialize strictly from the recovered data_with_padding block. The rented buffer is
+            // wider than the plaintext and ArrayPool.Rent does not clear it, so passing the whole array
+            // would let an oversized TL length header read leftover bytes from an earlier handshake.
+            ReadOnlyMemory<byte> payload = tempBytes.AsMemory(0, dataWithPadding.Length);
+            var tPqInnerData = payload.Read<IPQInnerData>();
 
             return tPqInnerData;
         }
@@ -223,6 +250,13 @@ public class Step2Helper(
             SHA1.HashData(writer.WrittenSpan, sha1Hash);
             sha1Hash.CopyTo(answerWithHashSpan);
             writer.WrittenSpan.CopyTo(answerWithHashSpan.Slice(20));
+
+            // "the encrypted data is padded with random bytes to a length divisible by 16 immediately prior
+            // to encryption" - https://corefork.telegram.org/mtproto/auth_key
+            // The buffer comes from ArrayPool and is not zeroed, so without this the alignment padding would
+            // be recycled heap contents, encrypted and handed to the client.
+            RandomNumberGenerator.Fill(answerWithHashSpan[(20 + writtenCount)..]);
+
             var aesKey = new byte[32];
             Span<byte> aesIv = stackalloc byte[32];
             mtpHelper.CalcTempAesKeyData(newNonce, serverNonce, aesKey, aesIv);

@@ -1,4 +1,4 @@
-﻿namespace MyTelegram.AuthServer.Services;
+namespace MyTelegram.AuthServer.Services;
 
 public class Step3Helper(
     IAesHelper aesHelper,
@@ -9,6 +9,9 @@ public class Step3Helper(
     ICacheManager<AuthCacheItem> cacheManager
 ) : Step1To3Helper, IStep3Helper, ISingletonDependency
 {
+    /// <summary>g_b is a 2048-bit value, so it can never need more than 256 bytes on the wire.</summary>
+    private const int MaxDhValueLength = 256;
+
     public async Task<Step3Output> SetClientDhParamsAnswerAsync(RequestSetClientDHParams req)
     {
         var cacheKey = GetAuthCacheKey(req.ServerNonce);
@@ -25,6 +28,10 @@ public class Step3Helper(
             throw new ArgumentNullException(nameof(cachedAuthKey.NewNonce));
         }
 
+        // The handshake state (which holds the server's secret exponent `a`) is single-use: drop it before
+        // doing anything else so that the same `a` can never be probed with a second, different g_b.
+        await cacheManager.RemoveAsync(cacheKey);
+
         CheckRequestData(cachedAuthKey.Nonce, req.Nonce, "Nonce");
         CheckRequestData(cachedAuthKey.ServerNonce, req.ServerNonce, "ServerNonce");
 
@@ -40,13 +47,52 @@ public class Step3Helper(
 
         CheckRequestData(cachedAuthKey.Nonce, dhInnerData.Nonce, "Nonce");
         CheckRequestData(cachedAuthKey.ServerNonce, dhInnerData.ServerNonce, "ServerNonce");
+
+        // Because the handshake state is single-use there is never a live previous attempt to retry against,
+        // so retry_id must always be 0. See https://corefork.telegram.org/mtproto/auth_key
+        if (dhInnerData.RetryId != 0)
+        {
+            throw new DhHandshakeRejectedException(
+                $"Unexpected retry_id {dhInnerData.RetryId}, expected 0."
+            );
+        }
+
         var a = cachedAuthKey.A;
         var gb = dhInnerData.GB;
 
+        // https://corefork.telegram.org/mtproto/security_guidelines#g-a-and-g-b-validation
+        // Both sides must check that g_b is greater than 1 and less than dh_prime - 1, and (recommended)
+        // that it lies within [2^{2048-64}, dh_prime - 2^{2048-64}]. Without this a client can send
+        // g_b in {0, 1, dh_prime - 1} and pin the resulting auth key to a publicly known constant.
+        if (gb == null || gb.Length == 0 || gb.Length > MaxDhValueLength)
+        {
+            throw new DhHandshakeRejectedException(
+                $"Invalid g_b length: {gb?.Length.ToString() ?? "null"}."
+            );
+        }
+
+        var gbValue = gb.ToBigEndianBigInteger();
         var authKeyBytes = BigInteger
-            .ModPow(gb.ToBigEndianBigInteger(), a.ToBigEndianBigInteger(), AuthConsts.DhPrime)
+            .ModPow(gbValue, a.ToBigEndianBigInteger(), AuthConsts.DhPrime)
             .ToByteArray(true, true)
             .ToBytes256();
+
+        if (!IsGoodGaOrGb(gbValue, AuthConsts.DhPrime))
+        {
+            logger.LogWarning("Rejecting handshake: g_b is out of the allowed range.");
+
+            // The client still gets an authenticated failure (new_nonce_hash3 is bound to the candidate key),
+            // but the key is never registered.
+            return new Step3Output(
+                0,
+                [],
+                0,
+                cachedAuthKey.IsPermanent,
+                CreateDhGenFailAnswer(req, cachedAuthKey.NewNonce, authKeyBytes),
+                cachedAuthKey.DcId,
+                true
+            );
+        }
 
         var dto = new Step3Output(
             authKeyIdHelper.GetAuthKeyId(authKeyBytes),
@@ -85,14 +131,23 @@ public class Step3Helper(
             var obj = buffer.Read<TClientDHInnerData>();
             var consumed = oldLength-buffer.Length;
             var paddingCount = (int)(answer.Length - consumed);
+
+            // answer_with_hash := SHA1(answer) + answer + (0-15 random bytes)
+            if (paddingCount is < 0 or > 15)
+            {
+                throw new DhHandshakeRejectedException(
+                    $"Invalid answer_with_hash padding length: {paddingCount}, expected 0-15."
+                );
+            }
+
             var data = answer[..^paddingCount];
             var calcHash = tempSpan[^20..];
             SHA1.HashData(data, calcHash);
-            if (!hash.SequenceEqual(calcHash))
+            if (!CryptographicOperations.FixedTimeEquals(hash, calcHash))
             {
                 logger.LogWarning("Answer sha1 hash mismatch.");
 
-                throw new ArgumentException($"Answer sha1 hash mismatch.");
+                throw new DhHandshakeRejectedException("Answer sha1 hash mismatch.");
             }
 
             return obj;
@@ -119,17 +174,24 @@ public class Step3Helper(
         };
     }
 
-    //private TDhGenRetry CreateDhGenRetryRetryAnswer(RequestSetClientDHParams req, byte[] newNonce, byte[] authKey)
-    //{
-    //    var newNonceHash2 = CreateNewNonceHash(newNonce, authKey, 2);
+    // dh_gen_retry is deliberately not produced: the handshake state is single-use (the cache entry is
+    // dropped at the top of SetClientDhParamsAnswerAsync), so there is never a live attempt for the client
+    // to retry against. A client that wants another go restarts from req_pq.
+    private TDhGenFail CreateDhGenFailAnswer(
+        RequestSetClientDHParams req,
+        byte[] newNonce,
+        byte[] authKey
+    )
+    {
+        var newNonceHash3 = CreateNewNonceHash(newNonce, authKey, 3);
 
-    //    return new TDhGenRetry
-    //    {
-    //        Nonce = req.Nonce,
-    //        ServerNonce = req.ServerNonce,
-    //        NewNonceHash2 = newNonceHash2
-    //    };
-    //}
+        return new TDhGenFail
+        {
+            Nonce = req.Nonce,
+            ServerNonce = req.ServerNonce,
+            NewNonceHash3 = newNonceHash3
+        };
+    }
 
     private byte[] CreateNewNonceHash(byte[] newNonce, byte[] authKey, byte n)
     {

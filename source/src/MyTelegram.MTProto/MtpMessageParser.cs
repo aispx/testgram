@@ -10,6 +10,13 @@ public class MtpMessageParser(
 {
     private const int ConnectionStartPrefixSize = 64;
     private const int MaxPacketLength = 1024 * 1024 * 10;
+
+    /// <summary>
+    ///     Every frame starts with an 8-byte auth_key_id, which <see cref="TryParse" /> reads before it can
+    ///     decide between the encrypted and unencrypted parsers.
+    /// </summary>
+    private const int MinPacketLength = 8;
+
     private const int UnObfuscationFirstPacketLength = 4;
 
     public void ProcessFirstUnencryptedPacket(ref ReadOnlySequence<byte> buffer,
@@ -225,15 +232,21 @@ public class MtpMessageParser(
         }
 
         var packetLength = GetPacketLength(buffer, clientData, out var skipCount);
-        if (packetLength > MaxPacketLength)
+
+        // A length outside [MinPacketLength, MaxPacketLength] can never become valid by waiting for more
+        // data, so the frame is unusable and the connection is torn down. Negative values are reachable:
+        // the intermediate transport reads a signed int32 and the quick-ack bit sets the sign bit, which
+        // would otherwise slip past both bounds and reach ReadOnlySequence.Slice.
+        if (packetLength < MinPacketLength || packetLength > MaxPacketLength)
         {
             logger.LogWarning(
-                "[ConnectionId: {ConnectionId}] Packet length is greater than the max value({MaxPacketLength})",
+                "[ConnectionId: {ConnectionId}] Invalid packet length: {PacketLength}, allowed range is {MinPacketLength}..{MaxPacketLength}",
                 clientData.ConnectionId,
+                packetLength,
+                MinPacketLength,
                 MaxPacketLength);
 
-            data = default;
-            return false;
+            throw new InvalidOperationException($"Invalid packet length: {packetLength}.");
         }
 
         if (reader.Remaining < packetLength)

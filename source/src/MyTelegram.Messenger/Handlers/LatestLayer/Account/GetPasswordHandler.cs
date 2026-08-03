@@ -3,13 +3,14 @@ using MyTelegram.Messenger.Services.TwoFactor;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 
-internal sealed class GetPasswordHandler(ITwoFactorService twoFactorService, IRandomHelper randomHelper)
+internal sealed class GetPasswordHandler(ITwoFactorService twoFactorService)
     : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetPassword, MyTelegram.Schema.Account.IPassword>
 {
     protected override async Task<IPassword> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetPassword obj)
     {
-        var secureRandom = new byte[256];
-        randomHelper.NextBytes(secureRandom);
+        // Clients use secure_random as salt entropy for the Passport secure secret, so it has to come from a
+        // CSPRNG - the same rule the security guidelines state for DH entropy.
+        var secureRandom = RandomNumberGenerator.GetBytes(256);
 
         var doc = await twoFactorService.GetPasswordAsync(input.UserId);
 

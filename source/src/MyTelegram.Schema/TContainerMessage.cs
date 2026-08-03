@@ -37,6 +37,15 @@ public sealed class TContainerMessage : IObject
         MsgId = buffer.ReadInt64();
         SeqNo = buffer.ReadInt32();
         Bytes = buffer.ReadInt32();
+
+        // `bytes` declares the size of the nested body. Reject a value that cannot fit in what is left
+        // so a malformed container is refused here rather than dragging the reader past the buffer.
+        if (Bytes < 4 || Bytes > buffer.Length)
+        {
+            throw new InvalidOperationException(
+                $"Invalid container message body length: {Bytes}, remaining buffer: {buffer.Length}.");
+        }
+
         Body = buffer.Read<IObject>();
     }
 

@@ -18,9 +18,23 @@ public class TMsgContainer : IRequest<IObject>
         }
     }
 
+    /// <summary>
+    ///     Smallest possible on-wire msg_container entry: msg_id(8) + seqno(4) + bytes(4) + constructor id(4).
+    /// </summary>
+    private const int MinEntrySize = 20;
+
     public void Deserialize(ref ReadOnlyMemory<byte> buffer)
     {
         var length = buffer.ReadInt32();
+
+        // The entry count is attacker-controlled. Allocating on it before checking that the remaining
+        // buffer could even hold that many entries lets a few bytes request a multi-gigabyte array.
+        if (length < 0 || (long)length * MinEntrySize > buffer.Length)
+        {
+            throw new InvalidOperationException(
+                $"Invalid msg_container length: {length}, remaining buffer: {buffer.Length}.");
+        }
+
         if (length > 0)
         {
             Messages = new TContainerMessage[length];

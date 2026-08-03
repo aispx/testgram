@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\MyTelegram.Core\MyTelegram.Core.csproj" />
     <ProjectReference Include="..\..\src\MyTelegram.MTProto\MyTelegram.MTProto.csproj" />
     <ProjectReference Include="..\..\src\MyTelegram.TestBase\MyTelegram.TestBase.csproj" />
   </ItemGroup>

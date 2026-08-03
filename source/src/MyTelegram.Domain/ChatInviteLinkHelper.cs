@@ -1,4 +1,5 @@
 ﻿using System.Buffers.Text;
+using System.Security.Cryptography;
 
 namespace MyTelegram.Domain;
 
@@ -6,8 +7,10 @@ public class ChatInviteLinkHelper : IChatInviteLinkHelper
 {
     public string GenerateInviteLink()
     {
-        var bytes = new byte[12];
-        Random.Shared.NextBytes(bytes);
+        // The hash is the whole secret of a "+"-style invite link - anyone holding it can join the chat -
+        // so it must be unguessable. Random.Shared is xoshiro256**, whose state is recoverable from a
+        // handful of previously issued links, which would let an attacker predict later invite hashes.
+        var bytes = RandomNumberGenerator.GetBytes(12);
 
         return Base64Url.EncodeToString(bytes);
     }
