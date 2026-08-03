@@ -77,12 +77,20 @@ chmod -R a+w ./data/mytelegram
 docker compose up -d
 ```
 
+> **Только для ARM-хостов:** если вы разворачиваете на ARM-архитектуре (Apple Silicon,
+> Raspberry Pi, AWS Graviton и т.п.), добавьте `DOCKER_PLATFORM=linux/arm64` в `.env`
+> **до** первого запуска `docker compose up`. Иначе встроенные сторонние образы
+> (redis, rabbitmq, mongodb, minio, coturn, mediamtx, ...) будут работать через
+> эмуляцию linux/amd64 и заметно медленнее. На обычных x86_64 серверах ничего делать
+> не нужно — по умолчанию используется `linux/amd64`.
+
 ### Конфигурация
 
 Основные параметры `.env`:
 
 | Переменная | Описание |
 |------------|----------|
+| `DOCKER_PLATFORM` | Архитектура для сторонних образов: `linux/amd64` (по умолчанию) или `linux/arm64` для ARM-хостов |
 | `App__DcOptions__0__IpAddress` | Публичный IP сервера |
 | `RabbitMQ__Connections__Default__Password` | Пароль RabbitMQ |
 | `App__AccessHashSecretKey` | Случайный секретный ключ |
