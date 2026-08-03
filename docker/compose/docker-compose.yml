@@ -6,6 +6,7 @@ services:
   ### Redis
   redis:
     image: redis:8-alpine
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: always
     networks:
       - tg-net
@@ -27,6 +28,7 @@ services:
   ### RabbitMq
   rabbitmq:
     image: rabbitmq:3-management-alpine
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: always
     networks:
       - tg-net
@@ -48,6 +50,7 @@ services:
   ### MongoDb
   mongodb:
     image: mongo:8
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: always
     networks:
       - tg-net
@@ -69,6 +72,7 @@ services:
   ### Minio
   minio:
     image: minio/minio:latest
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: always
     networks:
       - tg-net
@@ -96,6 +100,7 @@ services:
   # empty 200 so the SDK stops crashing. All other traffic passes through untouched.
   minio-proxy:
     image: nginx:alpine
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: always
     networks:
       - tg-net
@@ -109,6 +114,7 @@ services:
   ### Coturn (STUN/TURN server for WebRTC calls)
   coturn:
     image: coturn/coturn:latest
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: always
     networks:
       - tg-net
@@ -136,6 +142,7 @@ services:
   ### RTMP server for group calls and live stories
   rtmp-server:
     image: bluenviron/mediamtx:latest
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: always
     networks:
       - tg-net
@@ -151,6 +158,7 @@ services:
   ### Call system init (setup indexes)
   call-init:
     image: mongo:8
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     networks:
       - tg-net
     environment:
@@ -167,6 +175,7 @@ services:
 
   business-init:
     image: mongo:8
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     networks:
       - tg-net
     configs:
@@ -180,6 +189,7 @@ services:
 
   botfather-init:
     image: mongo:8
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     networks:
       - tg-net
     configs:
