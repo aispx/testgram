@@ -60,7 +60,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IPeerHelper peerHelper, IMessageAppService messageAppService, IDataEncryptionHelper dataEncryptionHelper, IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender, IMessageConverterService messageConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
+internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IPeerHelper peerHelper, IMessageAppService messageAppService, IDataEncryptionHelper dataEncryptionHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender, IMessageConverterService messageConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
 {
     private static byte[]? _encryptionKey;
     private static KeyConfig? _keyConfig;
@@ -90,6 +92,20 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         if (messageReadModel == null)
         {
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+        }
+
+        if (messageReadModel.SenderUserId != input.UserId)
+        {
+            switch (messageReadModel.ToPeerType)
+            {
+                case PeerType.Channel:
+                    await channelAdminRightsChecker.CheckAdminRightAsync(messageReadModel.ToPeerId, input.UserId,
+                        p => p.EditMessages);
+                    break;
+                default:
+                    RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+                    break;
+            }
         }
 
         var message = messageReadModel.Message;
