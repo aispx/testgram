@@ -82,8 +82,10 @@ public class ObjectSerializerTests
     public ObjectSerializerTests(ITestOutputHelper outputHelper)
     {
         _outputHelper = outputHelper;
-        // Only need this code when tl object and serializer in different assembly
-        //SerializerObjectMappings.CreateConstructIdToTypeMappingsFromAssembly(Assembly.GetExecutingAssembly());
+        // The fixtures below (SubObject, Level2SubObject, TestObjectWithTVectorOfInterface, ...) carry
+        // [TlObject] attributes but live in this test assembly, while SerializerObjectMappings only scans
+        // MyTelegram.Schema. Without this the dispatcher cannot resolve their constructor ids.
+        SerializerObjectMappings.CreateConstructIdToTypeMappingsFromAssembly(Assembly.GetExecutingAssembly());
     }
 
     //    [Fact]
