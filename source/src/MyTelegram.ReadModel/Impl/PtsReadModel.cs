@@ -11,6 +11,12 @@ public class PtsReadModel : IPtsReadModel,
     public virtual long PeerId { get; private set; }
     public virtual int Pts { get; private set; }
     public virtual int Qts { get; private set; }
+
+    /// <summary>
+    /// Counts the update batches applied to this box. Derived from the event stream rather than
+    /// carried on the events themselves, so it stays deterministic across a read-model replay.
+    /// </summary>
+    public virtual int Seq { get; private set; }
     public virtual int UnreadCount { get; private set; }
     public virtual long? Version { get; set; }
 
@@ -37,6 +43,7 @@ public class PtsReadModel : IPtsReadModel,
         PeerId = domainEvent.AggregateEvent.PeerId;
         Pts = domainEvent.AggregateEvent.NewPts;
         Date = domainEvent.AggregateEvent.Date;
+        Seq++;
 
         UnreadCount += domainEvent.AggregateEvent.ChangedUnreadCount;
         if (domainEvent.AggregateEvent.MessageId.HasValue && domainEvent.AggregateEvent.MessageId > MaxMessageId)
@@ -58,6 +65,7 @@ public class PtsReadModel : IPtsReadModel,
         PeerId = domainEvent.AggregateEvent.PeerId;
         Qts = domainEvent.AggregateEvent.NewQts;
         Date = domainEvent.AggregateEvent.Date;
+        Seq++;
 
 
         return Task.CompletedTask;

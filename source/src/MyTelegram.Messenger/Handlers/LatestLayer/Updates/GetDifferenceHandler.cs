@@ -39,10 +39,28 @@ internal sealed class GetDifferenceHandler(IMessageAppService messageAppService,
         var cachedPts = ptsHelper.GetCachedPts(userId);
         var ptsReadModel = await queryProcessor.ProcessAsync(new GetPtsByPeerIdQuery(userId));
         var ptsForAuthKeyIdReadModel = await queryProcessor.ProcessAsync(new GetPtsByPermAuthKeyIdQuery(userId, input.PermAuthKeyId));
-        var globalSeqNo = ptsForAuthKeyIdReadModel?.GlobalSeqNo ?? 0;
+        // A device with no cursor row of its own must not replay the channel stream from sequence 0:
+        // that returns the entire history, truncated to a full page, which is reported as a slice
+        // forever while the cursor stays absent — the client polls getDifference without converging.
+        // The user's own box sequence is the correct "current as of now" starting point.
+        var globalSeqNo = ptsForAuthKeyIdReadModel?.GlobalSeqNo ?? ptsReadModel?.GlobalSeqNo ?? 0;
         var joinedChannelIdList = await queryProcessor.ProcessAsync(new GetChannelIdListByMemberUserIdQuery(input.UserId));
         var limit = obj.PtsTotalLimit ?? MyTelegramConsts.DefaultPtsTotalLimit;
         limit = Math.Min(limit, MyTelegramConsts.DefaultPtsTotalLimit);
+
+        // A session that is further behind than a page-by-page catch-up can realistically close is
+        // told to resync from scratch. Paging only advances the server cursor once the client acks
+        // the page it was sent, so a gap this wide otherwise means hundreds of slice round-trips that
+        // restart on any dropped ack — the client polls getDifference forever without progressing.
+        //
+        // pts = 0 means the caller holds no state at all. It cannot be used as a lower bound (the
+        // read-model filter is skipped for it and the whole box comes back, truncated to a full page
+        // that forever re-reports itself as a slice), so it takes the same resync path.
+        var boxPts = Math.Max(ptsReadModel?.Pts ?? 0, cachedPts);
+        if (boxPts > 0 && (obj.Pts <= 0 || boxPts - obj.Pts > MyTelegramConsts.DifferenceTooLongPtsGap))
+        {
+            return new TDifferenceTooLong { Pts = boxPts };
+        }
 
         // Secret-chat handshake updates (updateEncryption etc.). They carry pts = 0 and are device-scoped,
         // so they live outside the pts box and are replayed by GlobalSeqNo instead. A caller with no

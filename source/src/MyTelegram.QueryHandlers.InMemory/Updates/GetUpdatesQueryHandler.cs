@@ -9,7 +9,9 @@ public class GetUpdatesQueryHandler(IQueryOnlyReadModelStore<UpdatesReadModel> s
         predicate =
             predicate
             //.WhereIf(query.Date > 0, p => p.Date > query.Date)
-            .WhereIf(query.MinPts > 0, p => p.Pts > query.MinPts);
+            // MinPts is a lower bound, so it applies even at 0 — see the MongoDB handler for why
+            // skipping it there let a stateless client loop on getDifference forever.
+            .And(p => p.Pts > query.MinPts);
 
         return await store.FindAsync(predicate,
             0,

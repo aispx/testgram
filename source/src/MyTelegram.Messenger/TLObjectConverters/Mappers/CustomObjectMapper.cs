@@ -86,6 +86,10 @@ public class CustomObjectMapper : ILayeredMapper,
         destination.Pts = source.Pts;
         destination.Qts = source.Qts;
         destination.UnreadCount = source.UnreadCount;
+        // Clients reject a state whose seq moved backwards and immediately re-issue
+        // updates.getDifference, so leaving this at 0 spins them in a tight sync loop. Rows written
+        // before Seq existed have no value stored, hence the floor of 1.
+        destination.Seq = Math.Max(source.Seq, 1);
 
         return destination;
     }

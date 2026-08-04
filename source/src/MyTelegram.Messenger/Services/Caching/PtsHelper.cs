@@ -25,7 +25,7 @@ public class PtsHelper(IQueryProcessor queryProcessor) : IPtsHelper, ISingletonD
             if (ptsReadModel != null)
             {
                 ptsCacheItem = new PtsCacheItem(ptsReadModel.PeerId, ptsReadModel.Pts, ptsReadModel.Qts,
-                    ptsReadModel.Date);
+                    ptsReadModel.Date, ptsReadModel.Seq);
             }
             else
             {

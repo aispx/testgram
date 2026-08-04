@@ -57,6 +57,19 @@ public class MyTelegramConsts
     public const int ClearHistoryDefaultPageSize = 500;
     public const int UnPinAllMessagesDefaultPageSize = 500;
     public const int DefaultPtsTotalLimit = 500;
+
+    /// <summary>
+    /// How far a client's pts may fall behind the box before <c>updates.getDifference</c> answers
+    /// with <c>differenceTooLong</c> instead of paging.
+    ///
+    /// <para>A page is capped at <see cref="DefaultPtsTotalLimit"/> rows and the server-side cursor
+    /// only advances once the client acks the page it was sent. A session that is further behind than
+    /// this would otherwise need hundreds of slice round-trips to catch up, and any dropped ack
+    /// restarts it — the client ends up polling getDifference forever. Telling it to resync from
+    /// scratch is bounded work instead.</para>
+    /// </summary>
+    public const int DifferenceTooLongPtsGap = DefaultPtsTotalLimit * 20;
+
     public const int MaxTimeDiffSeconds = 300;
     public const int LeftChannelUid = -1;
     public const int MaxBotCount = 20;

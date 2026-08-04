@@ -27,7 +27,7 @@ internal sealed class GetStateHandler(IPtsHelper ptsHelper, ISecretChatMessageSt
             Date = CurrentDate,
             Pts = cacheItem.Pts,
             Qts = Math.Max(cacheItem.Qts, secretChatQts),
-            Seq = 1,
+            Seq = cacheItem.Seq,
             UnreadCount = cacheItem.UnreadCount,
         };
         return state;
