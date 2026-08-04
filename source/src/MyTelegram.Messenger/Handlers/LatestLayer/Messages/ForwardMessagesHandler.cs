@@ -71,7 +71,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
+public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
 {
     public async Task<IUpdates> HandleAsync(IRequestInput input, RequestForwardMessages obj)
     {
@@ -226,6 +226,7 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
         var messageMap = messagesToCheck.ToDictionary(m => m.SenderMessageId == 0 ? int.Parse(m.Id.Split('-', StringSplitOptions.RemoveEmptyEntries).Last()) : m.SenderMessageId);
         var inputs = new List<SendMessageInput>();
+        var effect = await messageEffectAppService.ValidateEffectAsync(obj.Effect, input.UserId, toPeer.PeerType);
         var seenMessageIds = new HashSet<int>();
         for (var i = 0; i < obj.Id.Count; i++)
         {
@@ -277,7 +278,7 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                 topMsgId: obj.TopMsgId,
                 sendAs: null,
                 inputQuickReplyShortcut: obj.QuickReplyShortcut,
-                effect: obj.Effect,
+                effect: effect,
                 silent: obj.Silent,
                 scheduleDate: obj.ScheduleDate,
                 paidMessageStars: paidMessageStars,

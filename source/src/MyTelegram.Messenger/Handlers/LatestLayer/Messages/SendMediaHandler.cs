@@ -121,7 +121,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
+internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMedia obj)
     {
@@ -247,8 +247,10 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             paidMessageStars = chargedStars ?? paidMessageStars;
         }
 
+        var effect = await messageEffectAppService.ValidateEffectAsync(obj.Effect, input.UserId, toPeer.PeerType);
+
         var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), obj.Message, obj.RandomId, clearDraft: obj.ClearDraft, entities: obj.Entities, media: media, //replyToMsgId: replyToMsgId,
- inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, messageId: preallocatedMessageId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
+ inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, messageId: preallocatedMessageId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
         await messageAppService.SendMessageAsync([sendMessageInput]);
 
         if (obj.Media is TInputMediaPaidMedia paidInput && paidMediaItems != null && preallocatedMessageId.HasValue)

@@ -87,7 +87,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IBotFatherBotService botFatherBotService, IObjectMessageSender objectMessageSender, IPrivacyAppService privacyAppService, ILogger<SendMessageHandler> logger) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
+internal sealed class SendMessageHandler(IMessageAppService messageAppService, IPeerHelper peerHelper, IChannelAppService channelAppService, IOptions<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IConnectionMultiplexer redis, IMongoDatabase mongoDatabase, IBotFatherBotService botFatherBotService, IObjectMessageSender objectMessageSender, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService, ILogger<SendMessageHandler> logger) : RpcResultObjectHandler<RequestSendMessage, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMessage obj)
     {
@@ -215,7 +215,9 @@ internal sealed class SendMessageHandler(IMessageAppService messageAppService, I
             }
         }
 
-        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod, savedPeerId: savedPeerId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
+        var effect = await messageEffectAppService.ValidateEffectAsync(obj.Effect, input.UserId, toPeer.PeerType);
+
+        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, toPeer, obj.Message, obj.RandomId, obj.Entities, obj.ReplyTo, obj.ClearDraft, media: media, replyMarkup: obj.ReplyMarkup, topMsgId: topMsgId, sendAs: sendAs, effect: effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, ttlPeriod: ttlPeriod, savedPeerId: savedPeerId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
         await messageAppService.SendMessageAsync([sendMessageInput]);
 
         // Send updateBotNewBusinessMessage to connected business bots

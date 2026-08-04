@@ -47,7 +47,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService, IMediaHelper mediaHelper, //IRequestCacheAppService requestCacheAppService,
- IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
+ IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
 {
     //private readonly IRequestCacheAppService _requestCacheAppService;
     //_requestCacheAppService = requestCacheAppService;
@@ -130,12 +130,13 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
         }
 
         var sendAs = peerHelper.GetPeer(obj.SendAs, input.UserId);
+        var effect = await messageEffectAppService.ValidateEffectAsync(obj.Effect, input.UserId, toPeerForPaid.PeerType);
         var inputs = new List<SendMessageInput>();
         foreach (var inputSingleMedia in obj.MultiMedia)
         {
             var media = await mediaHelper.SaveMediaAsync(inputSingleMedia.Media);
             var sendMessageInput = new SendMessageInput(requestInfo, input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), inputSingleMedia.Message, inputSingleMedia.RandomId, clearDraft: obj.ClearDraft, entities: inputSingleMedia.Entities, media: media, //replyToMsgId: replyToMsgId,
- inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), groupId: groupId, groupItemCount: groupItemCount, topMsgId: topMsgId, sendAs: sendAs, effect: obj.Effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, isSendGroupedMessage: true, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, noForwards: obj.Noforwards);
+ inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), groupId: groupId, groupItemCount: groupItemCount, topMsgId: topMsgId, sendAs: sendAs, effect: effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, isSendGroupedMessage: true, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, noForwards: obj.Noforwards);
             inputs.Add(sendMessageInput);
         //await _messageAppService.SendMessageAsync(sendMessageInput);
         //_requestCacheAppService.AddRequest(input.ReqMsgId, input.AuthKeyId, input.RequestSessionId, input.SeqNumber);

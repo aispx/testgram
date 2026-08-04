@@ -13,7 +13,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SaveDraftHandler(ICommandBus commandBus, IPeerHelper peerHelper, IMediaHelper mediaHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSaveDraft, IBool>
+internal sealed class SaveDraftHandler(ICommandBus commandBus, IPeerHelper peerHelper, IMediaHelper mediaHelper, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSaveDraft, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestSaveDraft obj)
     {
@@ -41,7 +41,9 @@ internal sealed class SaveDraftHandler(ICommandBus commandBus, IPeerHelper peerH
             media = await mediaHelper.SaveMediaAsync(obj.Media);
         }
 
-        var saveDraftCommand = new SaveDraftCommand(dialogId, input.ToRequestInfo(), new Draft(obj.NoWebpage, obj.InvertMedia, replyToMsgId, obj.Message, CurrentDate, entities2: obj.Entities, media: media, effect: obj.Effect, media2: obj.Media, replyTo: obj.ReplyTo, suggestedPost: obj.SuggestedPost), null);
+        var effect = await messageEffectAppService.ValidateEffectAsync(obj.Effect, input.UserId, peer.PeerType);
+
+        var saveDraftCommand = new SaveDraftCommand(dialogId, input.ToRequestInfo(), new Draft(obj.NoWebpage, obj.InvertMedia, replyToMsgId, obj.Message, CurrentDate, entities2: obj.Entities, media: media, effect: effect, media2: obj.Media, replyTo: obj.ReplyTo, suggestedPost: obj.SuggestedPost), null);
         await commandBus.PublishAsync(saveDraftCommand);
         return new TBoolTrue();
     }
