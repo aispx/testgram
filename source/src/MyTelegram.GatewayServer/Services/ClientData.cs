@@ -31,4 +31,5 @@ public class ClientData : IClientData
     public byte[] ReceiveIv { get; set; } = [];
     public ulong ReceiveCount { get; set; }
     public ulong SendCount { get; set; }
+    public bool QuickAckRequested { get; set; }
 }

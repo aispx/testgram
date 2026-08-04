@@ -19,6 +19,12 @@ public class MtpMessageParser(
 
     private const int UnObfuscationFirstPacketLength = 4;
 
+    /// <summary>
+    ///     Quick-ack marker: the MSB of the transport envelope's length field.
+    ///     https://corefork.telegram.org/mtproto/mtproto-transports#quick-ack
+    /// </summary>
+    private const uint QuickAckMask = 0x80000000;
+
     public void ProcessFirstUnencryptedPacket(ref ReadOnlySequence<byte> buffer,
         IClientData d)
     {
@@ -111,8 +117,15 @@ public class MtpMessageParser(
           Payload: the MTProto payload
         */
         const int maxFirstByteValue = 0x7f;
+        const byte quickAckFlag = 0x80;
         Span<byte> firstBytes = [data.FirstSpan[0]]; //data.First[..1];
         DecryptBytes(firstBytes, d);
+
+        // The abridged transport signals quick-ack by adding 0x80 to the length byte, so the flag
+        // must be read before masking it off. See IClientData.QuickAckRequested for why we only
+        // record it here instead of replying with an ack token.
+        d.QuickAckRequested = (firstBytes[0] & quickAckFlag) != 0;
+
         var firstByte = firstBytes[0] & maxFirstByteValue;
 
         int packetLength;
@@ -170,7 +183,15 @@ public class MtpMessageParser(
          */
         Span<byte> lengthBytes = [data.FirstSpan[0], data.FirstSpan[1], data.FirstSpan[2], data.FirstSpan[3]];
         DecryptBytes(lengthBytes, d);
-        var packetLength = BinaryPrimitives.ReadInt32LittleEndian(lengthBytes);
+        var rawLength = BinaryPrimitives.ReadUInt32LittleEndian(lengthBytes);
+
+        // The intermediate transport signals quick-ack by OR'ing 0x80000000 into the length. Read
+        // the field as unsigned and strip that bit: interpreted as the signed int32 the length
+        // really is, the flag would make it negative and the frame would be rejected as malformed
+        // (see TryParseData), tearing down a perfectly valid connection. See
+        // IClientData.QuickAckRequested for why we only record the flag here.
+        d.QuickAckRequested = (rawLength & QuickAckMask) != 0;
+        var packetLength = (int)(rawLength & ~QuickAckMask);
 
         skipCount = 4;
         return packetLength;
@@ -234,9 +255,11 @@ public class MtpMessageParser(
         var packetLength = GetPacketLength(buffer, clientData, out var skipCount);
 
         // A length outside [MinPacketLength, MaxPacketLength] can never become valid by waiting for more
-        // data, so the frame is unusable and the connection is torn down. Negative values are reachable:
-        // the intermediate transport reads a signed int32 and the quick-ack bit sets the sign bit, which
-        // would otherwise slip past both bounds and reach ReadOnlySequence.Slice.
+        // data, so the frame is unusable and the connection is torn down. The quick-ack bit is
+        // stripped from the length before it reaches here (see GetIntermediatePacketLength and
+        // GetAbridgedPacketLength), so a client requesting a quick ack no longer trips this check;
+        // only a genuinely malformed length does. The lower bound still matters: it keeps a bogus
+        // length from reaching ReadOnlySequence.Slice.
         if (packetLength < MinPacketLength || packetLength > MaxPacketLength)
         {
             logger.LogWarning(

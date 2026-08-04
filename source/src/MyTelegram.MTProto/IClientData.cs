@@ -19,6 +19,21 @@ public interface IClientData
 
     public ulong ReceiveCount { get; set; }
     public ulong SendCount { get; set; }
+
+    /// <summary>
+    ///     True when the frame currently being parsed had the quick-ack bit set in its transport
+    ///     envelope (the MSB of the length field). See
+    ///     https://corefork.telegram.org/mtproto/mtproto-transports#quick-ack.
+    ///     <para>
+    ///     The ack token itself - the first 4 bytes of the SHA256 that also yields msg_key, with
+    ///     the top bit set, byte-swapped for the abridged transport - is deliberately NOT computed
+    ///     here: it requires the auth key and the decrypted payload, and this repository's gateway
+    ///     never decrypts (it forwards [auth_key_id][msg_key][ciphertext] onward). Emitting the
+    ///     token is the session layer's job. This flag exists so the bit is recognised rather than
+    ///     misread as part of the length, and as the extension point if that layer ever lands here.
+    ///     </para>
+    /// </summary>
+    public bool QuickAckRequested { get; set; }
 }
 
 public interface IClientData<T> : IClientData
