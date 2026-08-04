@@ -21,7 +21,8 @@ public class UserDomainEventHandler(
         ISubscribeSynchronousTo<UserAggregate, UserId, UserProfileUpdatedEvent>,
         ISubscribeSynchronousTo<UserAggregate, UserId, UserNameUpdatedEvent>,
         ISubscribeSynchronousTo<UserAggregate, UserId, UserProfilePhotoChangedEvent>,
-        ISubscribeSynchronousTo<UserAggregate, UserId, UserProfilePhotoUploadedEvent>
+        ISubscribeSynchronousTo<UserAggregate, UserId, UserProfilePhotoUploadedEvent>,
+        ISubscribeSynchronousTo<UserAggregate, UserId, UserColorUpdatedEvent>
 {
     public async Task HandleAsync(IDomainEvent<UserAggregate, UserId, UserCreatedEvent> domainEvent,
         CancellationToken cancellationToken)
@@ -100,5 +101,28 @@ public class UserDomainEventHandler(
         var userId = domainEvent.AggregateEvent.RequestInfo.UserId;
         var user = await userConverterService.GetUserAsync(domainEvent.AggregateEvent.RequestInfo, userId, layer: domainEvent.AggregateEvent.RequestInfo.Layer);
         await SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, user, domainEvent.AggregateEvent.UserId);
+    }
+
+    /// <summary>
+    /// Notifies the user's other sessions about a changed
+    /// <a href="https://core.telegram.org/api/colors">peer color</a>. There is no per-field color
+    /// update constructor in the schema, so the generic updateUser plus the re-converted user is
+    /// the update clients expect here.
+    /// </summary>
+    public async Task HandleAsync(IDomainEvent<UserAggregate, UserId, UserColorUpdatedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        var userId = domainEvent.AggregateEvent.UserId;
+        var user = await userConverterService.GetUserAsync(domainEvent.AggregateEvent.RequestInfo, userId, layer: domainEvent.AggregateEvent.RequestInfo.Layer);
+
+        var updates = new TUpdates
+        {
+            Updates = new TVector<IUpdate>(new TUpdateUser { UserId = userId }),
+            Users = new TVector<IUser>(user),
+            Chats = new TVector<IChat>(),
+            Date = DateTime.UtcNow.ToTimestamp()
+        };
+
+        await PushUpdatesToPeerAsync(new Peer(PeerType.User, userId), updates);
     }
 }

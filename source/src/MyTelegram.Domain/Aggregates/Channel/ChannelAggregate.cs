@@ -459,7 +459,8 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
             _state.EmojiStickerSetId,
             _state.EmojiStatus,
             _state.ParticipantsHidden,
-            _state.JoinRequest
+            _state.JoinRequest,
+            _state.ProfileColor
         ));
     }
     protected override Task LoadSnapshotAsync(ChannelSnapshot snapshot,

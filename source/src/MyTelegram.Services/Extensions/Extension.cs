@@ -252,7 +252,32 @@ public static class Extension
 
     public static IPeerColor? ToPeerColor(this PeerColor? peerColor)
     {
-        if (peerColor == null || (!peerColor.Color.HasValue && !peerColor.BackgroundEmojiId.HasValue))
+        if (peerColor == null)
+        {
+            return default;
+        }
+
+        // Collectible peer color, taken from a unique star gift.
+        // See https://core.telegram.org/api/colors
+        if (peerColor.CollectibleId.HasValue)
+        {
+            return new TPeerColorCollectible
+            {
+                CollectibleId = peerColor.CollectibleId.Value,
+                GiftEmojiId = peerColor.GiftEmojiId ?? 0,
+                BackgroundEmojiId = peerColor.BackgroundEmojiId ?? 0,
+                AccentColor = peerColor.AccentColor ?? 0,
+                Colors = peerColor.Colors == null
+                    ? new TVector<int>()
+                    : new TVector<int>(peerColor.Colors),
+                DarkAccentColor = peerColor.DarkAccentColor,
+                DarkColors = peerColor.DarkColors == null
+                    ? null
+                    : new TVector<int>(peerColor.DarkColors)
+            };
+        }
+
+        if (!peerColor.Color.HasValue && !peerColor.BackgroundEmojiId.HasValue)
         {
             return default;
         }

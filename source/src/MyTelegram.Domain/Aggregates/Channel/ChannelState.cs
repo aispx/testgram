@@ -67,6 +67,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
     public bool SignatureEnabled { get; private set; }
     public int ParticipantCount { get; private set; }
     public PeerColor? Color { get; private set; }
+    public PeerColor? ProfileColor { get; private set; }
     public bool HasLink { get; private set; }
     public bool IsDeleted { get; private set; }
     public long? WallPaperId { get; private set; }
@@ -126,7 +127,14 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
 
     public void Apply(ChannelColorUpdatedEvent aggregateEvent)
     {
-        Color = aggregateEvent.Color;
+        if (aggregateEvent.ForProfile)
+        {
+            ProfileColor = aggregateEvent.Color;
+        }
+        else
+        {
+            Color = aggregateEvent.Color;
+        }
     }
 
     public void Apply(ChannelCreatedEvent aggregateEvent)
@@ -323,6 +331,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
 
         ParticipantCount = snapshot.ParticipantCount;
         Color = snapshot.Color;
+        ProfileColor = snapshot.ProfileColor;
         HasLink = snapshot.HasLink;
         IsDeleted = snapshot.IsDeleted;
 

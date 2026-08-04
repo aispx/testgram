@@ -44,7 +44,8 @@ public class ChannelSnapshot(
     long? emojiStickerSetId,
     EmojiStatus? emojiStatus,
     bool participantsHidden,
-    bool joinRequest
+    bool joinRequest,
+    PeerColor? profileColor = null
 )
     : ISnapshot
 {
@@ -104,4 +105,5 @@ public class ChannelSnapshot(
     public EmojiStatus? EmojiStatus { get; } = emojiStatus;
     public bool ParticipantsHidden { get; } = participantsHidden;
     public bool JoinRequest { get; } = joinRequest;
+    public PeerColor? ProfileColor { get; } = profileColor;
 }

@@ -51,6 +51,46 @@ public static class AdminLogHelper
         await LogEventAsync(database, channelId, adminUserId, action);
     }
 
+    /// <summary>
+    /// Logs a change of the channel's message accent
+    /// <a href="https://core.telegram.org/api/colors">peer color</a>.
+    /// </summary>
+    public static async Task LogChangePeerColor(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IPeerColor? prevValue,
+        IPeerColor? newValue)
+    {
+        // PrevValue/NewValue are non-nullable in the schema and always serialized,
+        // so an unset color is represented by an empty TPeerColor.
+        var action = new TChannelAdminLogEventActionChangePeerColor
+        {
+            PrevValue = prevValue ?? new TPeerColor(),
+            NewValue = newValue ?? new TPeerColor()
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs a change of the channel's profile page
+    /// <a href="https://core.telegram.org/api/colors">peer color</a>.
+    /// </summary>
+    public static async Task LogChangeProfilePeerColor(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IPeerColor? prevValue,
+        IPeerColor? newValue)
+    {
+        var action = new TChannelAdminLogEventActionChangeProfilePeerColor
+        {
+            PrevValue = prevValue ?? new TPeerColor(),
+            NewValue = newValue ?? new TPeerColor()
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
     public static async Task LogToggleInvites(
         IMongoDatabase database,
         long channelId,

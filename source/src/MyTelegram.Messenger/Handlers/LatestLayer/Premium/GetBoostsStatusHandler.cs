@@ -19,13 +19,16 @@ internal sealed class GetBoostsStatusHandler : RpcResultObjectHandler<MyTelegram
 {
     private readonly IMongoDatabase _mongoDatabase;
     private readonly IPeerHelper _peerHelper;
+    private readonly IBoostLevelCalculator _boostLevelCalculator;
 
     public GetBoostsStatusHandler(
         IMongoDatabase mongoDatabase,
-        IPeerHelper peerHelper)
+        IPeerHelper peerHelper,
+        IBoostLevelCalculator boostLevelCalculator)
     {
         _mongoDatabase = mongoDatabase;
         _peerHelper = peerHelper;
+        _boostLevelCalculator = boostLevelCalculator;
     }
 
     protected override async Task<IBoostsStatus> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Premium.RequestGetBoostsStatus obj)
@@ -56,9 +59,9 @@ internal sealed class GetBoostsStatusHandler : RpcResultObjectHandler<MyTelegram
         var boosts = await collection.Find(Builders<BsonDocument>.Filter.Eq("ChannelId", channelId)).ToListAsync();
         var totalBoosts = boosts.Sum(b => b.Contains("Multiplier") ? b["Multiplier"].AsInt32 : 1);
 
-        var level = CalculateLevel(totalBoosts);
-        var currentLevelBoosts = GetBoostsForLevel(level);
-        var nextLevelBoosts = GetBoostsForLevel(level + 1);
+        var level = _boostLevelCalculator.CalculateLevel(totalBoosts);
+        var currentLevelBoosts = _boostLevelCalculator.GetBoostsForLevel(level);
+        var nextLevelBoosts = _boostLevelCalculator.GetBoostsForLevel(level + 1);
 
         // Filter out system boosts (UserId = 0) for user-specific checks
         var userBoostsOnly = boosts.Where(b =>
@@ -175,40 +178,6 @@ internal sealed class GetBoostsStatusHandler : RpcResultObjectHandler<MyTelegram
             BoostUrl = boostUrl,
             PrepaidGiveaways = prepaidGiveaways,
             MyBoostSlots = myBoostSlots
-        };
-    }
-
-    private static int CalculateLevel(int boosts)
-    {
-        if (boosts < 1) return 0;
-        if (boosts < 2) return 1;
-        if (boosts < 5) return 2;
-        if (boosts < 10) return 3;
-        if (boosts < 25) return 4;
-        if (boosts < 50) return 5;
-        if (boosts < 100) return 6;
-        if (boosts < 200) return 7;
-        if (boosts < 500) return 8;
-        if (boosts < 1000) return 9;
-        return 10;
-    }
-
-    private static int GetBoostsForLevel(int level)
-    {
-        return level switch
-        {
-            0 => 0,
-            1 => 1,
-            2 => 2,
-            3 => 5,
-            4 => 10,
-            5 => 25,
-            6 => 50,
-            7 => 100,
-            8 => 200,
-            9 => 500,
-            10 => 1000,
-            _ => 1000
         };
     }
 }

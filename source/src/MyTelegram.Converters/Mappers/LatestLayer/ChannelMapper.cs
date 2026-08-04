@@ -54,13 +54,10 @@ internal sealed class ChannelMapper
         destination.ProfileColor = source.ProfileColor.ToPeerColor();
         destination.Forum = source.Forum;
 
-        if (source.BackgroundEmojiId.HasValue)
-        {
-            destination.EmojiStatus = new TEmojiStatus
-            {
-                DocumentId = source.BackgroundEmojiId.Value
-            };
-        }
+        // NOTE: source.BackgroundEmojiId is the peer color's pattern emoji
+        // (https://core.telegram.org/api/colors) and is already exposed to clients
+        // inside destination.Color / destination.ProfileColor. It must NOT be mapped
+        // onto destination.EmojiStatus, which is the channel's status emoji badge.
 
         destination.Level = 10;
 

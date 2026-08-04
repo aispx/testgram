@@ -98,6 +98,8 @@ internal sealed class GetAdminLogHandler(
                 eventTypes.Add("TChannelAdminLogEventActionChangeAbout");
                 eventTypes.Add("TChannelAdminLogEventActionChangeUsername");
                 eventTypes.Add("TChannelAdminLogEventActionChangePhoto");
+                eventTypes.Add("TChannelAdminLogEventActionChangePeerColor");
+                eventTypes.Add("TChannelAdminLogEventActionChangeProfilePeerColor");
             }
             if (filter.Settings)
             {
