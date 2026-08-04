@@ -12,6 +12,8 @@ public class MongoDbIndexesCreator(
     {
         await CreateIndexAsync<DialogReadModel>(p => p.OwnerId);
         await CreateIndexAsync<DialogReadModel>(p => p.Pinned);
+        // bots.getBotRecommendations resolves a bot's user base by scanning dialogs pointing at it.
+        await CreateIndexAsync<DialogReadModel>(p => p.ToPeerId);
 
         await CreateIndexAsync<MessageReadModel>(p => p.MessageId);
         await CreateIndexAsync<MessageReadModel>(p => p.OwnerPeerId);
@@ -20,6 +22,8 @@ public class MongoDbIndexesCreator(
         await CreateIndexAsync<MessageReadModel>(p => p.Pts);
         await CreateIndexAsync<MessageReadModel>(p => p.ToPeerType);
         await CreateIndexAsync<MessageReadModel>(p => p.SendMessageType);
+        // Resolves a poll back to the message carrying it.
+        await CreateIndexAsync<MessageReadModel>(p => p.PollId);
 
         await CreateIndexAsync<UserReadModel>(p => p.UserId);
         await CreateIndexAsync<UserReadModel>(p => p.PhoneNumber);
@@ -92,8 +96,13 @@ public class MongoDbIndexesCreator(
         await CreateIndexAsync<DialogFilterReadModel>(p => p.OwnerUserId);
         await CreateIndexAsync<PollReadModel>(p => p.ToPeerId);
         await CreateIndexAsync<PollReadModel>(p => p.PollId);
+        // Scanned by the poll auto-close background service.
+        await CreateIndexAsync<PollReadModel>(p => p.CloseDate);
         await CreateIndexAsync<PollAnswerVoterReadModel>(p => p.PollId);
         await CreateIndexAsync<PollAnswerVoterReadModel>(p => p.Option);
+        await CreateIndexAsync<PollAnswerVoterReadModel>(p => p.VoterPeerId);
+        // Recent voters are read newest-first.
+        await CreateIndexAsync<PollAnswerVoterReadModel>(p => p.Date);
 
         await CreateIndexAsync<LanguageReadModel>(p => p.LanguageCode);
         await CreateIndexAsync<LanguageTextReadModel>(p => p.LanguageCode);
