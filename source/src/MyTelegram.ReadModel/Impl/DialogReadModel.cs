@@ -23,7 +23,11 @@ public class DialogReadModel : IDialogReadModel,
     IAmReadModelFor<DialogAggregate, DialogId, ReadOutboxMaxIdUpdatedEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, TopMessageIdUpdatedEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, UpdateReadChannelInboxEvent>,
-    IAmReadModelFor<DialogAggregate, DialogId, DialogFolderUpdatedEvent>
+    IAmReadModelFor<DialogAggregate, DialogId, DialogFolderUpdatedEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, UnreadReactionCreatedEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, UnreadReactionsReadEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, PollVoteCreatedEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, PollVotesReadEvent>
 {
     public virtual int ChannelHistoryMinId { get; private set; }
     public virtual DateTime CreationTime { get; private set; }
@@ -62,8 +66,27 @@ public class DialogReadModel : IDialogReadModel,
     public int? TtlPeriod { get; set; }
     public int UnreadMentionsCount { get; private set; }
     public int UnreadReactionsCount { get; private set; }
+    public int UnreadPollVotesCount { get; private set; }
     public int? FolderId { get; private set; }
     public bool ViewForumAsMessages { get; private set; }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, PollVoteCreatedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        UnreadPollVotesCount = domainEvent.AggregateEvent.UnreadPollVotesCount;
+
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, PollVotesReadEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        UnreadPollVotesCount = 0;
+
+        return Task.CompletedTask;
+    }
 
     public Task ApplyAsync(IReadModelContext context,
         IDomainEvent<DialogAggregate, DialogId, ChannelHistoryClearedEvent> domainEvent,
@@ -96,6 +119,22 @@ public class DialogReadModel : IDialogReadModel,
         CancellationToken cancellationToken)
     {
         Pinned = domainEvent.AggregateEvent.Pinned;
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, UnreadReactionCreatedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        UnreadReactionsCount = domainEvent.AggregateEvent.UnreadReactionsCount;
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, UnreadReactionsReadEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        UnreadReactionsCount = domainEvent.AggregateEvent.UnreadReactionsCount;
         return Task.CompletedTask;
     }
 

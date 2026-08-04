@@ -91,11 +91,54 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
         Emit(new MentionCreatedEvent(ownerUserId, _state.ToPeer, messageId, unreadMentionsCount));
     }
 
+    /// <summary>
+    /// Bumps <c>unread_poll_votes_count</c> after someone votes on a poll the dialog owner
+    /// created. Only fired for non-anonymous polls.
+    /// </summary>
+    public void CreatePollVote(int messageId)
+    {
+        var unreadPollVotesCount = _state.UnreadPollVotesCount + 1;
+        var ownerUserId = _state.OwnerId;
+        Emit(new PollVoteCreatedEvent(ownerUserId, _state.ToPeer, messageId, unreadPollVotesCount));
+    }
+
+    /// <summary>
+    /// Clears <c>unread_poll_votes_count</c> when the owner reads the votes.
+    /// </summary>
+    public void ReadPollVotes()
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        var ownerUserId = _state.OwnerId;
+        Emit(new PollVotesReadEvent(ownerUserId, _state.ToPeer));
+    }
+
     public void MarkDialogAsUnread(bool unread)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
         var unreadMark = unread;
         Emit(new DialogUnreadMarkChangedEvent(unreadMark));
+    }
+
+    /// <summary>
+    /// Increments the unread reaction counter shown as a badge in the dialog list.
+    /// See https://corefork.telegram.org/api/reactions#notifications-about-reactions
+    /// </summary>
+    public void CreateUnreadReaction(int messageId)
+    {
+        var unreadReactionsCount = _state.UnreadReactionsCount + 1;
+        var ownerUserId = _state.OwnerId;
+        Emit(new UnreadReactionCreatedEvent(ownerUserId, _state.ToPeer, messageId, unreadReactionsCount));
+    }
+
+    /// <summary>
+    /// Clears the unread reaction counter, called from messages.readReactions.
+    /// </summary>
+    public void ReadUnreadReactions()
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        var ownerUserId = _state.OwnerId;
+        var unreadReactionsCount = 0;
+        Emit(new UnreadReactionsReadEvent(ownerUserId, _state.ToPeer, unreadReactionsCount));
     }
 
     public void OutboxMessageHasRead(RequestInfo requestInfo,
@@ -300,7 +343,9 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
             _state.ChannelHistoryMinId,
             _state.Draft,
             _state.UnreadMentionsCount,
-            _state.FolderId
+            _state.FolderId,
+            _state.UnreadReactionsCount,
+            _state.UnreadPollVotesCount
         ));
     }
 

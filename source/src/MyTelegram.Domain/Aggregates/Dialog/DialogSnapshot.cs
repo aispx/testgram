@@ -12,7 +12,9 @@ public class DialogSnapshot(
     int channelHistoryMinId,
     Draft? draft,
     int unreadMentionsCount,
-    int? folderId
+    int? folderId,
+    int unreadReactionsCount = 0,
+    int unreadPollVotesCount = 0
     )
     : ISnapshot
 {
@@ -20,6 +22,13 @@ public class DialogSnapshot(
 
     public Draft? Draft { get; } = draft;
     public int UnreadMentionsCount { get; } = unreadMentionsCount;
+
+    /// <summary>
+    /// Both counters default to 0 so snapshots written before they existed stay deserializable; the
+    /// counts are rebuilt from events replayed after the snapshot.
+    /// </summary>
+    public int UnreadReactionsCount { get; } = unreadReactionsCount;
+    public int UnreadPollVotesCount { get; } = unreadPollVotesCount;
     public int? FolderId { get; } = folderId;
 
     public long OwnerId { get; } = ownerId;
