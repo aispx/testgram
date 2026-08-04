@@ -24,7 +24,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class RequestWebViewHandler(
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
+    IAccessHashHelper2 accessHashHelper,
     IWebViewSessionStore webViewSessionStore,
     ILayeredService<IWebViewResultUrlResponseConverter> webViewResultsLayeredService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestRequestWebView, MyTelegram.Schema.IWebViewResult>
 {

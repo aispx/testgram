@@ -13,7 +13,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class ProlongWebViewHandler(
     IQueryProcessor queryProcessor,
-    IAccessHashHelper accessHashHelper,
+    IAccessHashHelper2 accessHashHelper,
     IWebViewSessionStore webViewSessionStore) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestProlongWebView, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestProlongWebView obj)

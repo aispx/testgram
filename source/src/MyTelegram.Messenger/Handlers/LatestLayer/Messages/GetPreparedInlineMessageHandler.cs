@@ -17,7 +17,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class GetPreparedInlineMessageHandler(
     IMongoDatabase mongoDatabase,
     IUserAppService userAppService,
-    IAccessHashHelper accessHashHelper,
+    IAccessHashHelper2 accessHashHelper,
     IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetPreparedInlineMessage, MyTelegram.Schema.Messages.IPreparedInlineMessage>
 {
     private const string Collection = "prepared_inline_messages";

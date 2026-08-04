@@ -11,7 +11,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class SendWebViewDataHandler(
     IQueryProcessor queryProcessor,
-    IAccessHashHelper accessHashHelper,
+    IAccessHashHelper2 accessHashHelper,
     IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendWebViewData, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSendWebViewData obj)

@@ -24,7 +24,7 @@ internal sealed class GetInlineBotResultsHandler(
     IMongoDatabase mongoDatabase,
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
-    IAccessHashHelper accessHashHelper,
+    IAccessHashHelper2 accessHashHelper,
     IUserAppService userAppService,
     IBotUpdatesSender botUpdatesSender,
     IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetInlineBotResults, MyTelegram.Schema.Messages.IBotResults>
