@@ -95,10 +95,49 @@ public class UserAggregate : MyInMemorySnapshotAggregateRoot<UserAggregate, User
         Emit(new UserColorUpdatedEvent(requestInfo, _state.UserId, color, forProfile));
     }
 
+    /// <summary>
+    /// Sets the user's <a href="https://core.telegram.org/api/emoji-status">emoji status</a>, via
+    /// <c>account.updateEmojiStatus</c> or <c>bots.updateUserEmojiStatus</c>. A null
+    /// <paramref name="emojiStatus"/> clears it (<c>emojiStatusEmpty</c>).
+    /// </summary>
+    public void UpdateEmojiStatus(RequestInfo requestInfo, EmojiStatus? emojiStatus)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new UserEmojiStatusUpdatedEvent(requestInfo, _state.UserId, emojiStatus));
+    }
+
+    /// <summary>
+    /// Clears the recently used emoji statuses, via <c>account.clearRecentEmojiStatuses</c>.
+    /// </summary>
+    public void ClearRecentEmojiStatuses(RequestInfo requestInfo)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new UserRecentEmojiStatusesClearedEvent(requestInfo, _state.UserId));
+    }
+
     public void UpdateGlobalPrivacySettings(RequestInfo requestInfo, GlobalPrivacySettings globalPrivacySettings)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
         Emit(new UserGlobalPrivacySettingsChangedEvent(requestInfo, globalPrivacySettings));
+    }
+
+    /// <summary>
+    /// Account self-destruction period in days, set via <c>account.setAccountTTL</c>.
+    /// </summary>
+    public void UpdateAccountTtl(RequestInfo requestInfo, int accountTtl)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new UserAccountTtlUpdatedEvent(requestInfo, _state.UserId, accountTtl));
+    }
+
+    /// <summary>
+    /// Whether to notify the user when one of their contacts signs up, set via
+    /// <c>account.setContactSignUpNotification</c>.
+    /// </summary>
+    public void UpdateContactSignUpNotification(RequestInfo requestInfo, bool showContactSignUpNotification)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new UserContactSignUpNotificationUpdatedEvent(requestInfo, _state.UserId, showContactSignUpNotification));
     }
 
     public void UpdateProfile(RequestInfo requestInfo,
@@ -197,7 +236,8 @@ public class UserAggregate : MyInMemorySnapshotAggregateRoot<UserAggregate, User
             _state.Birthday,
             _state.ProfilePhotoUpdateDate,
             _state.UserNameUpdateDate,
-            _state.Verified
+            _state.Verified,
+            _state.EmojiStatusCollectibleId
         ));
     }
 

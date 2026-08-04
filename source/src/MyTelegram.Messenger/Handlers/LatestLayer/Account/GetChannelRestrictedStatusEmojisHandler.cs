@@ -6,10 +6,21 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetChannelRestrictedStatusEmojisHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetChannelRestrictedStatusEmojis, MyTelegram.Schema.IEmojiList>
+internal sealed class GetChannelRestrictedStatusEmojisHandler(
+    IChannelEmojiStatusValidator channelEmojiStatusValidator)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetChannelRestrictedStatusEmojis, MyTelegram.Schema.IEmojiList>
 {
-    protected override Task<MyTelegram.Schema.IEmojiList> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetChannelRestrictedStatusEmojis obj)
+    protected override async Task<MyTelegram.Schema.IEmojiList> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetChannelRestrictedStatusEmojis obj)
     {
-        return Task.FromResult<MyTelegram.Schema.IEmojiList>(new TEmojiList { DocumentId = [], });
+        // Read from the channel_restricted_status_emojis collection: empty on a server that
+        // restricts nothing, which is the correct answer rather than a stub.
+        var documentIds = await channelEmojiStatusValidator.GetRestrictedDocumentIdsAsync();
+        var hash = EmojiStatusesHelper.CalculateHash(documentIds);
+        if (obj.Hash != 0 && obj.Hash == hash)
+        {
+            return new TEmojiListNotModified();
+        }
+
+        return new TEmojiList { DocumentId = new TVector<long>(documentIds) };
     }
 }

@@ -39,6 +39,7 @@ public class ChannelDomainEventHandler(
         ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelNoForwardsChangedEvent>,
         ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelSignatureChangedEvent>,
         ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelColorUpdatedEvent>,
+        ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelEmojiStatusUpdatedEvent>,
         ISubscribeSynchronousTo<ChatInviteAggregate, ChatInviteId, ChatInviteCreatedEvent>,
         //ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChatInviteRequestPendingUpdatedEvent>,
         //ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChatJoinRequestHiddenEvent>,
@@ -87,6 +88,36 @@ public class ChannelDomainEventHandler(
             Date = DateTime.UtcNow.ToTimestamp()
         };
         await PushMessageToPeerAsync(domainEvent.AggregateEvent.UserId.ToUserPeer(), updates);
+    }
+
+    /// <summary>
+    /// Tells the invoker and every channel member about the new
+    /// <a href="https://core.telegram.org/api/emoji-status">emoji status</a>.
+    /// </summary>
+    public async Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, ChannelEmojiStatusUpdatedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        var requestInfo = domainEvent.AggregateEvent.RequestInfo;
+        var item = await GetChannelAndPhotoAsync(domainEvent.AggregateEvent.ChannelId);
+
+        // The background expiration service publishes the same command with no client behind it;
+        // NotifyUpdateChannelAsync would try to answer a request that never existed, so in that case
+        // only the member push is performed.
+        if (string.IsNullOrEmpty(requestInfo.ConnectionId))
+        {
+            var updates = updatesConverterService.ToChannelUpdates(RequestInfo.Empty,
+                item.Item1, item.Item2, 0);
+            await PushUpdatesToPeerAsync(new Peer(PeerType.Channel, domainEvent.AggregateEvent.ChannelId),
+                updates);
+
+            return;
+        }
+
+        await NotifyUpdateChannelAsync(requestInfo, domainEvent.AggregateEvent.ChannelId,
+            0,
+            item.Item1,
+            item.Item2
+        );
     }
 
     public async Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, ChannelColorUpdatedEvent> domainEvent,

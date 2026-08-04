@@ -12,6 +12,8 @@ public class UserDomainEventHandler(
     IPhotoAppService photoAppService,
     ILayeredService<IPhotoConverter> photoLayeredConverter,
     ILayeredService<IAuthorizationConverter> layeredAuthorizationService,
+    IQueryProcessor queryProcessor,
+    IEmojiStatusResolver emojiStatusResolver,
     IUserConverterService userConverterService)
     : DomainEventHandlerBase(objectMessageSender,
             commandBus,
@@ -22,6 +24,8 @@ public class UserDomainEventHandler(
         ISubscribeSynchronousTo<UserAggregate, UserId, UserNameUpdatedEvent>,
         ISubscribeSynchronousTo<UserAggregate, UserId, UserProfilePhotoChangedEvent>,
         ISubscribeSynchronousTo<UserAggregate, UserId, UserProfilePhotoUploadedEvent>,
+        ISubscribeSynchronousTo<UserAggregate, UserId, UserEmojiStatusUpdatedEvent>,
+        ISubscribeSynchronousTo<UserAggregate, UserId, UserRecentEmojiStatusesClearedEvent>,
         ISubscribeSynchronousTo<UserAggregate, UserId, UserColorUpdatedEvent>
 {
     public async Task HandleAsync(IDomainEvent<UserAggregate, UserId, UserCreatedEvent> domainEvent,
@@ -103,6 +107,77 @@ public class UserDomainEventHandler(
         await SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, user, domainEvent.AggregateEvent.UserId);
     }
 
+    /// <summary>
+    /// Delivers <c>updateUserEmojiStatus</c> to the user's own sessions and to everyone who has them
+    /// in their contact list, so a new
+    /// <a href="https://core.telegram.org/api/emoji-status">emoji status</a> shows up without a
+    /// forced refetch. The RPC result of the triggering method is sent as well.
+    /// </summary>
+    public async Task HandleAsync(IDomainEvent<UserAggregate, UserId, UserEmojiStatusUpdatedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        var requestInfo = domainEvent.AggregateEvent.RequestInfo;
+        var userId = domainEvent.AggregateEvent.UserId;
+        var emojiStatus = await emojiStatusResolver.ResolveAsync(domainEvent.AggregateEvent.EmojiStatus,
+            requestInfo.Layer);
+
+        var updates = new TUpdates
+        {
+            Updates = new TVector<IUpdate>(new TUpdateUserEmojiStatus
+            {
+                UserId = userId,
+                EmojiStatus = emojiStatus ?? new TEmojiStatusEmpty()
+            }),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = DateTime.UtcNow.ToTimestamp()
+        };
+
+        // The background expiration service publishes the same command with no client behind it, so
+        // the rpc result is only sent when the change came from an actual request.
+        if (!string.IsNullOrEmpty(requestInfo.ConnectionId))
+        {
+            await SendRpcMessageToClientAsync(requestInfo, new TBoolTrue(), userId);
+        }
+
+        await PushUpdatesToPeerAsync(new Peer(PeerType.User, userId), updates);
+
+        // The recent list changed too, but only the owner cares about it.
+        await PushUpdatesToPeerAsync(new Peer(PeerType.User, userId), new TUpdates
+        {
+            Updates = new TVector<IUpdate>(new TUpdateRecentEmojiStatuses()),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = DateTime.UtcNow.ToTimestamp()
+        });
+
+        var contactUserIds = await queryProcessor.ProcessAsync(
+            new GetContactSelfUserIdListByTargetUserIdQuery(userId), cancellationToken);
+        foreach (var contactUserId in contactUserIds.Where(p => p != userId).Distinct())
+        {
+            await PushUpdatesToPeerAsync(new Peer(PeerType.User, contactUserId), updates);
+        }
+    }
+
+    /// <summary>
+    /// Tells the user's other sessions that the recently used
+    /// <a href="https://core.telegram.org/api/emoji-status">emoji statuses</a> were cleared.
+    /// </summary>
+    public async Task HandleAsync(IDomainEvent<UserAggregate, UserId, UserRecentEmojiStatusesClearedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        var requestInfo = domainEvent.AggregateEvent.RequestInfo;
+        var userId = domainEvent.AggregateEvent.UserId;
+
+        await SendRpcMessageToClientAsync(requestInfo, new TBoolTrue(), userId);
+        await PushUpdatesToPeerAsync(new Peer(PeerType.User, userId), new TUpdates
+        {
+            Updates = new TVector<IUpdate>(new TUpdateRecentEmojiStatuses()),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = DateTime.UtcNow.ToTimestamp()
+        });
+    }
     /// <summary>
     /// Notifies the user's other sessions about a changed
     /// <a href="https://core.telegram.org/api/colors">peer color</a>. There is no per-field color

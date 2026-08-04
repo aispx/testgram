@@ -2,6 +2,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Messenger.Services.Impl;
+using MyTelegram.Messenger.Services.Privacy;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
@@ -21,6 +22,7 @@ public class UserConverterService(
     ILayeredService<IUserConverter> userLayeredService,
     ILayeredService<IUserFullConverter> userFullLayeredService,
     ILayeredService<IEmojiStatusConverter> emojiStatusLayeredService,
+    IEmojiStatusResolver emojiStatusResolver,
     ILayeredService<IPhotoConverter> photoLayeredService,
     IMongoDatabase mongoDatabase) : IUserConverterService, ITransientDependency
 {
@@ -30,7 +32,7 @@ public class UserConverterService(
         mongoDatabase.GetCollection<BotVerificationDocument>("bot-verifications");
 
     public async Task<ILayeredUser> GetUserAsync(IRequestWithAccessHashKeyId request, long userId, bool skipSetContactProperties = true,
-        bool skipCheckPrivacy = true, int layer = 0)
+        bool skipCheckPrivacy = false, int layer = 0)
     {
         var userReadModel = await userAppService.GetAsync(userId);
         if (userReadModel == null)
@@ -41,7 +43,9 @@ public class UserConverterService(
         IReadOnlyCollection<IPrivacyReadModel>? privacyReadModels = null;
         IContactReadModel? myContactReadModel = null;
         IContactReadModel? targetUserContactReadModel = null;
-        if (!skipSetContactProperties)
+        // Contacts are also required when evaluating privacy: without them the viewer looks
+        // like a stranger and allowContacts rules would hide data from actual contacts.
+        if (!skipSetContactProperties || !skipCheckPrivacy)
         {
             var contactReadModels =
                 await queryProcessor.ProcessAsync(new GetContactListBySelfIdAndTargetUserIdQuery(request.UserId, userId));
@@ -63,13 +67,13 @@ public class UserConverterService(
 
     public async Task<List<ILayeredUser>> GetUserListAsync(IRequestWithAccessHashKeyId request, List<long> userIds,
         bool skipSetContactProperties = true,
-        bool skipCheckPrivacy = true, int layer = 0)
+        bool skipCheckPrivacy = false, int layer = 0)
     {
         var userReadModels = await userAppService.GetListAsync(userIds);
         var photoReadModels = await photoAppService.GetPhotosAsync(userReadModels);
         IReadOnlyCollection<IPrivacyReadModel>? privacyReadModels = null;
         IReadOnlyCollection<IContactReadModel>? contactReadModels = null;
-        if (!skipSetContactProperties)
+        if (!skipSetContactProperties || !skipCheckPrivacy)
         {
             contactReadModels = await queryProcessor.ProcessAsync(new GetContactListQuery(request.UserId, userIds));
         }
@@ -381,18 +385,16 @@ public class UserConverterService(
         }
 
         user.Status = userStatusCacheAppService.GetUserStatus(user.Id);
-        var emojiStatus = GetLatestEmojiStatusFields(userReadModel);
-        if (emojiStatus.CollectibleId.HasValue && emojiStatus.DocumentId.HasValue)
+        // The read model is kept up to date by UserEmojiStatusUpdatedEvent, so it is the single
+        // source of truth here; expired statuses and collectible decoration are handled by the resolver.
+        if (userReadModel.EmojiStatusDocumentId is { } emojiStatusDocumentId)
         {
-            user.EmojiStatus = BuildCollectibleEmojiStatus(
-                emojiStatus.CollectibleId.Value,
-                emojiStatus.DocumentId.Value,
-                emojiStatus.Until);
-        }
-        else if (emojiStatus.DocumentId != null)
-        {
-            var status = new EmojiStatus(emojiStatus.DocumentId.Value, emojiStatus.Until);
-            user.EmojiStatus = emojiStatusLayeredService.GetConverter(layer).ToEmojiStatus(status);
+            user.EmojiStatus = emojiStatusResolver.Resolve(
+                new EmojiStatus(
+                    emojiStatusDocumentId,
+                    userReadModel.EmojiStatusValidUntil,
+                    userReadModel.EmojiStatusCollectibleId),
+                layer);
         }
         var contactType = contactHelper.GetContactType(myContactReadModel, targetUserContactReadModel);
         var photos = photoReadModels ?? [];
@@ -400,11 +402,6 @@ public class UserConverterService(
         SetContactPersonalProfilePhoto(user, photos, myContactReadModel, layer);
         SetMutualContact(user, contactType);
         ApplyPrivacyToUser(request.UserId, userReadModel, user, photos, contactType, privacyReadModels, layer);
-
-        if (!user.Self && contactType != ContactType.Mutual)
-        {
-            user.Phone = null;
-        }
 
         return user;
     }
@@ -420,62 +417,6 @@ public class UserConverterService(
         }
 
         user.BotVerificationIcon = verification.Icon;
-    }
-
-    private (long? DocumentId, int? Until, long? CollectibleId) GetLatestEmojiStatusFields(IUserReadModel userReadModel)
-    {
-        var userDoc = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
-            .Find(Builders<BsonDocument>.Filter.Eq("UserId", userReadModel.UserId))
-            .Project(Builders<BsonDocument>.Projection
-                .Include("EmojiStatusDocumentId")
-                .Include("EmojiStatusValidUntil")
-                .Include("EmojiStatusCollectibleId"))
-            .FirstOrDefault();
-
-        if (userDoc == null)
-        {
-            return (
-                userReadModel.EmojiStatusDocumentId,
-                userReadModel.EmojiStatusValidUntil,
-                userReadModel.EmojiStatusCollectibleId);
-        }
-
-        return (
-            GetNullableInt64(userDoc, "EmojiStatusDocumentId"),
-            GetNullableInt32(userDoc, "EmojiStatusValidUntil"),
-            GetNullableInt64(userDoc, "EmojiStatusCollectibleId"));
-    }
-
-    private static long? GetNullableInt64(BsonDocument document, string fieldName)
-    {
-        if (!document.TryGetValue(fieldName, out var value) || value.IsBsonNull)
-        {
-            return null;
-        }
-
-        return value.BsonType switch
-        {
-            BsonType.Int64 => value.AsInt64,
-            BsonType.Int32 => value.AsInt32,
-            BsonType.Double => (long)value.AsDouble,
-            _ => null
-        };
-    }
-
-    private static int? GetNullableInt32(BsonDocument document, string fieldName)
-    {
-        if (!document.TryGetValue(fieldName, out var value) || value.IsBsonNull)
-        {
-            return null;
-        }
-
-        return value.BsonType switch
-        {
-            BsonType.Int32 => value.AsInt32,
-            BsonType.Int64 => (int)value.AsInt64,
-            BsonType.Double => (int)value.AsDouble,
-            _ => null
-        };
     }
 
     private void ApplyPrivacyToUserFull(long selfUserId,
@@ -532,46 +473,44 @@ public class UserConverterService(
         Dictionary<long, IPhotoReadModel> photos, ContactType contactType,
         IReadOnlyCollection<IPrivacyReadModel>? privacyReadModels, int layer)
     {
-        if (selfUserId != userReadModel.UserId && privacyReadModels?.Count > 0)
+        if (selfUserId == userReadModel.UserId)
         {
-            photos.TryGetValue(userReadModel.FallbackPhotoId ?? 0, out var fallbackPhotoReadModel);
+            return;
+        }
 
-            foreach (var privacy in privacyReadModels)
+        photos.TryGetValue(userReadModel.FallbackPhotoId ?? 0, out var fallbackPhotoReadModel);
+        var phoneNumberRuleEvaluated = false;
+
+        foreach (var privacy in privacyReadModels ?? [])
+        {
+            switch (privacy.PrivacyType)
             {
-                switch (privacy.PrivacyType)
-                {
-                    case PrivacyType.StatusTimestamp:
-                        privacyHelper.ApplyPrivacy(privacy,
-                            _ =>
-                            {
-                                switch (user.Status)
-                                {
-                                    case TUserStatusOnline:
-                                        break;
-                                    case TUserStatusRecently:
-                                        break;
-                                    case TUserStatusOffline:
-                                        user.Status = new TUserStatusRecently();
-                                        break;
-                                    default:
-                                        user.Status = new TUserStatusRecently();
-                                        break;
-                                }
-                            },
-                            selfUserId,
-                            contactType);
-                        break;
-                    case PrivacyType.ProfilePhoto:
-                        privacyHelper.ApplyPrivacy(privacy,
-                            _ => user.Photo = photoLayeredService.GetConverter(layer)
-                                .ToProfilePhoto(fallbackPhotoReadModel), selfUserId,
-                            contactType);
-                        break;
-                    case PrivacyType.PhoneNumber:
-                        privacyHelper.ApplyPrivacy(privacy, _ => user.Phone = null, selfUserId, contactType);
-                        break;
-                }
+                case PrivacyType.StatusTimestamp:
+                    privacyHelper.ApplyPrivacy(privacy,
+                        _ => PrivacyMaskingHelper.HideStatusTimestamp(user),
+                        selfUserId,
+                        contactType);
+                    break;
+                case PrivacyType.ProfilePhoto:
+                    privacyHelper.ApplyPrivacy(privacy,
+                        _ => user.Photo = photoLayeredService.GetConverter(layer)
+                            .ToProfilePhoto(fallbackPhotoReadModel), selfUserId,
+                        contactType);
+                    break;
+                case PrivacyType.PhoneNumber:
+                    phoneNumberRuleEvaluated = true;
+                    privacyHelper.ApplyPrivacy(privacy, _ => user.Phone = null, selfUserId, contactType);
+                    break;
             }
+        }
+
+        // The phone number used to be cleared unconditionally for anyone who was not a mutual
+        // contact, which made an explicit "phone number: everybody" rule have no effect. The
+        // rule above now decides; when the user never set one we fall back to Telegram's
+        // documented default for this key (allowContacts) instead of the old mutual-only rule.
+        if (!phoneNumberRuleEvaluated && contactType is not (ContactType.Mutual or ContactType.ContactOfTargetUser))
+        {
+            user.Phone = null;
         }
     }
 
@@ -606,24 +545,6 @@ public class UserConverterService(
                 }
             }
         }
-    }
-
-    private IEmojiStatus? BuildCollectibleEmojiStatus(long collectibleId, long documentId, int? until)
-    {
-        var doc = mongoDatabase.GetCollection<UniqueStarGiftDocument>("unique-star-gifts")
-            .Find(d => d.UniqueId == collectibleId && !d.Burned)
-            .FirstOrDefault();
-
-        if (doc == null)
-        {
-            return new TEmojiStatus { DocumentId = documentId, Until = until };
-        }
-
-        return CollectibleEmojiStatusHelper.ToEmojiStatus(
-            doc,
-            documentId,
-            until,
-            patternDocumentId => CollectibleEmojiStatusHelper.DocumentExists(mongoDatabase, patternDocumentId));
     }
 
     private void SetUserProfilePhoto(IUserReadModel userReadModel,

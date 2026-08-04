@@ -22,6 +22,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
     //IApply<ChatJoinRequestHiddenEvent>,
     IApply<ChannelSignatureChangedEvent>,
     IApply<ChannelColorUpdatedEvent>,
+    IApply<ChannelEmojiStatusUpdatedEvent>,
     //IApply<ChatInviteRequestPendingUpdatedEvent>,
     IApply<LinkedChannelChangedEvent>,
     IApply<ChannelDeletedEvent>,
@@ -123,6 +124,11 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
                 BotUserIdList.Add(aggregateEvent.UserId);
             }
         }
+    }
+
+    public void Apply(ChannelEmojiStatusUpdatedEvent aggregateEvent)
+    {
+        EmojiStatus = aggregateEvent.EmojiStatus;
     }
 
     public void Apply(ChannelColorUpdatedEvent aggregateEvent)

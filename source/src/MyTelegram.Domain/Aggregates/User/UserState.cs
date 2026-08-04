@@ -10,7 +10,11 @@ public class UserState : AggregateState<UserAggregate, UserId, UserState>,
     IApply<UserProfilePhotoChangedEvent>,
     IApply<UserProfilePhotoUploadedEvent>,
     IApply<UserColorUpdatedEvent>,
+    IApply<UserEmojiStatusUpdatedEvent>,
+    IApply<UserRecentEmojiStatusesClearedEvent>,
     IApply<UserGlobalPrivacySettingsChangedEvent>,
+    IApply<UserAccountTtlUpdatedEvent>,
+    IApply<UserContactSignUpNotificationUpdatedEvent>,
     IApply<UserPremiumStatusChangedEvent>,
     IApply<PersonalChannelUpdatedEvent>,
     IApply<BirthdayUpdatedEvent>,
@@ -34,9 +38,21 @@ public class UserState : AggregateState<UserAggregate, UserId, UserState>,
     //public bool IsPremium { get; private set; }
     public long? EmojiStatusDocumentId { get; private set; }
     public int? EmojiStatusValidUntil { get; private set; }
+    /// <summary>
+    /// Set when the current emoji status comes from a collectible gift, see
+    /// <a href="https://core.telegram.org/api/emoji-status">emoji statuses</a>.
+    /// </summary>
+    public long? EmojiStatusCollectibleId { get; private set; }
     public long? PhotoId { get; private set; }
     public long? FallbackPhotoId { get; private set; }
-    public CircularBuffer<long> RecentEmojiStatus { get; private set; } = new(10);
+    /// <summary>
+    /// Recently used emoji statuses, most recent first, capped at <see cref="MaxRecentEmojiStatuses"/>.
+    /// Served by <c>account.getRecentEmojiStatuses</c>.
+    /// </summary>
+    public List<long> RecentEmojiStatus { get; private set; } = [];
+
+    /// <summary>How many recent emoji statuses are kept, matching the official server.</summary>
+    public const int MaxRecentEmojiStatuses = 10;
     //public int Color { get; private set; }
     //public long? BackgroundEmojiId { get; private set; }
 
@@ -48,6 +64,8 @@ public class UserState : AggregateState<UserAggregate, UserId, UserState>,
     public Birthday? Birthday { get; private set; }
     public int? ProfilePhotoUpdateDate { get; private set; }
     public int? UserNameUpdateDate { get; private set; }
+    public int AccountTtl { get; private set; }
+    public bool ShowContactSignUpNotification { get; private set; }
 
     public void Apply(CheckUserStatusCompletedEvent aggregateEvent)
     {
@@ -125,7 +143,8 @@ public class UserState : AggregateState<UserAggregate, UserId, UserState>,
 
         EmojiStatusDocumentId = snapshot.EmojiStatusDocumentId;
         EmojiStatusValidUntil = snapshot.EmojiStatusValidUntil;
-        RecentEmojiStatus = new CircularBuffer<long>(10, snapshot.RecentEmojiStatuses.ToArray());
+        EmojiStatusCollectibleId = snapshot.EmojiStatusCollectibleId;
+        RecentEmojiStatus = snapshot.RecentEmojiStatuses.Take(MaxRecentEmojiStatuses).ToList();
 
         PhotoId = snapshot.PhotoId;
         FallbackPhotoId = snapshot.FallbackPhotoId;
@@ -145,6 +164,34 @@ public class UserState : AggregateState<UserAggregate, UserId, UserState>,
         PhotoId = aggregateEvent.PhotoId;
     }
 
+    public void Apply(UserEmojiStatusUpdatedEvent aggregateEvent)
+    {
+        var emojiStatus = aggregateEvent.EmojiStatus;
+        EmojiStatusDocumentId = emojiStatus?.DocumentId;
+        EmojiStatusValidUntil = emojiStatus?.Until;
+        EmojiStatusCollectibleId = emojiStatus?.CollectibleId;
+
+        if (emojiStatus == null)
+        {
+            return;
+        }
+
+        // Most recent first, without duplicates: re-picking a status must move it up the list
+        // rather than fill the list with copies of itself.
+        RecentEmojiStatus.RemoveAll(p => p == emojiStatus.DocumentId);
+        RecentEmojiStatus.Insert(0, emojiStatus.DocumentId);
+        if (RecentEmojiStatus.Count > MaxRecentEmojiStatuses)
+        {
+            RecentEmojiStatus.RemoveRange(MaxRecentEmojiStatuses,
+                RecentEmojiStatus.Count - MaxRecentEmojiStatuses);
+        }
+    }
+
+    public void Apply(UserRecentEmojiStatusesClearedEvent aggregateEvent)
+    {
+        RecentEmojiStatus.Clear();
+    }
+
     public void Apply(UserColorUpdatedEvent aggregateEvent)
     {
         if (aggregateEvent.ForProfile)
@@ -159,6 +206,14 @@ public class UserState : AggregateState<UserAggregate, UserId, UserState>,
     public void Apply(UserGlobalPrivacySettingsChangedEvent aggregateEvent)
     {
         GlobalPrivacySettings= aggregateEvent.GlobalPrivacySettings;
+    }
+    public void Apply(UserAccountTtlUpdatedEvent aggregateEvent)
+    {
+        AccountTtl = aggregateEvent.AccountTtl;
+    }
+    public void Apply(UserContactSignUpNotificationUpdatedEvent aggregateEvent)
+    {
+        ShowContactSignUpNotification = aggregateEvent.ShowContactSignUpNotification;
     }
     public void Apply(UserPremiumStatusChangedEvent aggregateEvent)
     {

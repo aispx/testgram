@@ -23,6 +23,7 @@ public class ChatConverterService(
     ILayeredService<IChatAdminRightsConverter> chatAdminRightsLayeredService,
     IChatInviteExportedConverterService chatInviteExportedConverterService,
     ILayeredService<IEmojiStatusConverter> emojiStatusLayeredService,
+    IEmojiStatusResolver emojiStatusResolver,
     ILayeredService<IChatBannedRightsConverter> chatBannedRightsLayeredService,
     IMongoDatabase mongoDatabase)
     : IChatConverterService, ITransientDependency
@@ -276,7 +277,7 @@ public class ChatConverterService(
         var channel = channelLayeredService.GetConverter(layer).ToChannel(channelReadModel);
         channel.Creator = channelReadModel.CreatorId == request.UserId;
         channel.Photo = photoLayeredService.GetConverter(layer).ToChatPhoto(photoReadModel);
-        channel.EmojiStatus = emojiStatusLayeredService.GetConverter(layer).ToEmojiStatus(channelReadModel.EmojiStatus);
+        channel.EmojiStatus = emojiStatusResolver.Resolve(channelReadModel.EmojiStatus, layer);
         channel.Left = false;
         channel.AccessHash = accessHash;
 

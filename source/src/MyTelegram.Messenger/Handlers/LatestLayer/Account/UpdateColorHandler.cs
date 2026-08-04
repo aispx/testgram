@@ -65,6 +65,21 @@ internal sealed class UpdateColorHandler(
         await commandBus.PublishAsync(command, CancellationToken.None);
         userAppService.InvalidateCache(input.UserId);
 
+        // A collectible profile palette and a collectible emoji status both repaint the profile page
+        // and are mutually exclusive, so applying one clears the other.
+        if (obj.ForProfile && color?.CollectibleId != null)
+        {
+            var user = await userAppService.GetAsync(input.UserId);
+            if (user?.EmojiStatusCollectibleId != null)
+            {
+                await commandBus.PublishAsync(new UpdateEmojiStatusCommand(
+                    UserId.Create(input.UserId),
+                    input.ToRequestInfo() with { ReqMsgId = 0 },
+                    null));
+                userAppService.InvalidateCache(input.UserId);
+            }
+        }
+
         return new TBoolTrue();
     }
 }

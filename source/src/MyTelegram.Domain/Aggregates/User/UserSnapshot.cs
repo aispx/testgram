@@ -25,7 +25,8 @@ public class UserSnapshot(
     Birthday? birthday,
     int? profilePhotoUpdateDate,
     int? userNameUpdateDate,
-    bool verified = false
+    bool verified = false,
+    long? emojiStatusCollectibleId = null
     )
     : ISnapshot
 {
@@ -43,6 +44,8 @@ public class UserSnapshot(
     public bool IsDeleted { get; } = isDeleted;
     public long? EmojiStatusDocumentId { get; } = emojiStatusDocumentId;
     public int? EmojiStatusValidUntil { get; } = emojiStatusValidUntil;
+    /// <summary>Set when the emoji status comes from a collectible gift.</summary>
+    public long? EmojiStatusCollectibleId { get; } = emojiStatusCollectibleId;
     public List<long> RecentEmojiStatuses { get; } = recentEmojiStatuses;
     public long? PhotoId { get; } = photoId;
     public long? FallbackPhotoId { get; } = fallbackPhotoId;

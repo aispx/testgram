@@ -91,6 +91,27 @@ public static class AdminLogHelper
         await LogEventAsync(database, channelId, adminUserId, action);
     }
 
+    /// <summary>
+    /// Logs a change of the channel's
+    /// <a href="https://core.telegram.org/api/emoji-status">emoji status</a>.
+    /// </summary>
+    public static async Task LogChangeEmojiStatus(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IEmojiStatus? prevValue,
+        IEmojiStatus? newValue)
+    {
+        // PrevValue/NewValue are non-nullable in the schema and always serialized,
+        // so an unset status is represented by emojiStatusEmpty.
+        var action = new TChannelAdminLogEventActionChangeEmojiStatus
+        {
+            PrevValue = prevValue ?? new TEmojiStatusEmpty(),
+            NewValue = newValue ?? new TEmojiStatusEmpty()
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
     public static async Task LogToggleInvites(
         IMongoDatabase database,
         long channelId,

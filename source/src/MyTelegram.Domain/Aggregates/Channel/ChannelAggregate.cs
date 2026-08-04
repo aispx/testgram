@@ -396,6 +396,14 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
         Emit(new ChannelColorUpdatedEvent(requestInfo, _state.ChannelId, color, backgroundEmojiId, forProfile));
     }
 
+    public void UpdateChannelEmojiStatus(RequestInfo requestInfo, EmojiStatus? emojiStatus)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        CheckAdminRights(requestInfo, rights => rights.ChangeInfo);
+        var oldEmojiStatus = _state.EmojiStatus;
+        Emit(new ChannelEmojiStatusUpdatedEvent(requestInfo, _state.ChannelId, emojiStatus, oldEmojiStatus));
+    }
+
     public void UpdateChannelUserName(RequestInfo requestInfo,
             string userName)
     {

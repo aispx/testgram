@@ -1,6 +1,3 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
-
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// Clears list of recently used <a href="https://corefork.telegram.org/api/emoji-status">emoji statuses</a>
@@ -9,15 +6,19 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ClearRecentEmojiStatusesHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestClearRecentEmojiStatuses, IBool>
+internal sealed class ClearRecentEmojiStatusesHandler(
+    ICommandBus commandBus,
+    IUserAppService userAppService) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestClearRecentEmojiStatuses, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestClearRecentEmojiStatuses obj)
     {
-        var col = mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel");
-        var filter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
-        var update = Builders<BsonDocument>.Update.Set("RecentEmojiStatuses", new BsonArray());
-        await col.UpdateOneAsync(filter, update);
+        await commandBus.PublishAsync(new ClearRecentEmojiStatusesCommand(
+            UserId.Create(input.UserId),
+            input.ToRequestInfo()));
+        userAppService.InvalidateCache(input.UserId);
 
-        return new TBoolTrue();
+        // The rpc result and the updateRecentEmojiStatuses push telling the other sessions are
+        // emitted by UserDomainEventHandler once UserRecentEmojiStatusesClearedEvent is committed.
+        return null!;
     }
 }

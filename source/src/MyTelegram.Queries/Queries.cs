@@ -95,6 +95,13 @@ public record GetContactsByUserIdQuery(long UserId) : IQuery<IReadOnlyCollection
 
 public record GetContactUserIdListQuery(long SelfUserId) : IQuery<IReadOnlyCollection<long>>;
 
+/// <summary>
+/// The users who have the given user in their contact list, i.e. the audience that must be told
+/// about their profile changes such as a new
+/// <a href="https://core.telegram.org/api/emoji-status">emoji status</a>.
+/// </summary>
+public record GetContactSelfUserIdListByTargetUserIdQuery(long TargetUserId) : IQuery<IReadOnlyCollection<long>>;
+
 public record GetContactUserIdListByTargetUserIdListQuery(long SelfUserId, List<long> TargetUserIdList)
     : IQuery<IReadOnlyCollection<long>>;
 
@@ -216,7 +223,15 @@ public record GetMessagesQuery(
     bool UsersOnly = false,
     List<long>? Tokens = null,
     long FilterSenderUserId = 0,
-    Peer? SavedPeerId = null
+    Peer? SavedPeerId = null,
+    // A filter maps to a set of message types, not a single one - see MessageFilterHelper.
+    List<MessageType>? MessageTypes = null,
+    int MinDate = 0,
+    int MaxDate = 0,
+    int MinId = 0,
+    int MaxId = 0,
+    // messages.searchGlobal pages by (date, message id) instead of message id alone.
+    int OffsetRate = 0
 )
     : IQuery<IReadOnlyCollection<IMessageReadModel>>
 {

@@ -20,7 +20,11 @@ public class UserReadModel : IUserReadModel,
     IAmReadModelFor<UserAggregate, UserId, UserProfilePhotoChangedEvent>,
     IAmReadModelFor<UserAggregate, UserId, UserProfilePhotoUploadedEvent>,
     IAmReadModelFor<UserAggregate, UserId, UserColorUpdatedEvent>,
+    IAmReadModelFor<UserAggregate, UserId, UserEmojiStatusUpdatedEvent>,
+    IAmReadModelFor<UserAggregate, UserId, UserRecentEmojiStatusesClearedEvent>,
     IAmReadModelFor<UserAggregate, UserId, UserGlobalPrivacySettingsChangedEvent>,
+    IAmReadModelFor<UserAggregate, UserId, UserAccountTtlUpdatedEvent>,
+    IAmReadModelFor<UserAggregate, UserId, UserContactSignUpNotificationUpdatedEvent>,
     IAmReadModelFor<UserAggregate, UserId, UserPremiumStatusChangedEvent>,
     IAmReadModelFor<UserAggregate, UserId, PersonalChannelUpdatedEvent>,
     IAmReadModelFor<UserAggregate, UserId, BirthdayUpdatedEvent>,
@@ -211,6 +215,35 @@ public class UserReadModel : IUserReadModel,
         return Task.CompletedTask;
     }
 
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<UserAggregate, UserId, UserEmojiStatusUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        var emojiStatus = domainEvent.AggregateEvent.EmojiStatus;
+        EmojiStatusDocumentId = emojiStatus?.DocumentId;
+        EmojiStatusValidUntil = emojiStatus?.Until;
+        EmojiStatusCollectibleId = emojiStatus?.CollectibleId;
+
+        if (emojiStatus != null)
+        {
+            // Mirrors UserState: most recent first, no duplicates, capped at 10.
+            RecentEmojiStatuses.RemoveAll(p => p == emojiStatus.DocumentId);
+            RecentEmojiStatuses.Insert(0, emojiStatus.DocumentId);
+            if (RecentEmojiStatuses.Count > UserState.MaxRecentEmojiStatuses)
+            {
+                RecentEmojiStatuses.RemoveRange(UserState.MaxRecentEmojiStatuses,
+                    RecentEmojiStatuses.Count - UserState.MaxRecentEmojiStatuses);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<UserAggregate, UserId, UserRecentEmojiStatusesClearedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        RecentEmojiStatuses.Clear();
+
+        return Task.CompletedTask;
+    }
+
     public Task ApplyAsync(IReadModelContext context, IDomainEvent<UserAggregate, UserId, UserColorUpdatedEvent> domainEvent, CancellationToken cancellationToken)
     {
         if (domainEvent.AggregateEvent.ForProfile)
@@ -228,6 +261,20 @@ public class UserReadModel : IUserReadModel,
     public Task ApplyAsync(IReadModelContext context, IDomainEvent<UserAggregate, UserId, UserGlobalPrivacySettingsChangedEvent> domainEvent, CancellationToken cancellationToken)
     {
         GlobalPrivacySettings = domainEvent.AggregateEvent.GlobalPrivacySettings;
+
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<UserAggregate, UserId, UserAccountTtlUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        AccountTtl = domainEvent.AggregateEvent.AccountTtl;
+
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<UserAggregate, UserId, UserContactSignUpNotificationUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        ShowContactSignUpNotification = domainEvent.AggregateEvent.ShowContactSignUpNotification;
 
         return Task.CompletedTask;
     }

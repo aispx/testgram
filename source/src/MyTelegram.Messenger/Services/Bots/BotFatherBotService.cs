@@ -620,6 +620,7 @@ public class BotFatherBotService(
             { "Email", BsonNull.Value },
             { "EmojiStatusDocumentId", BsonNull.Value },
             { "EmojiStatusValidUntil", BsonNull.Value },
+            { "EmojiStatusCollectibleId", BsonNull.Value },
             { "FallbackPhotoId", BsonNull.Value },
             { "GlobalPrivacySettings", new BsonDocument {
                 { "ArchiveAndMuteNewNoncontactPeers", false },

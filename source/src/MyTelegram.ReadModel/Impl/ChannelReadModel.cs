@@ -21,6 +21,7 @@ public class ChannelReadModel : IChannelReadModel,
     IAmReadModelFor<ChannelAggregate, ChannelId, ChannelNoForwardsChangedEvent>,
     IAmReadModelFor<ChannelAggregate, ChannelId, ChannelSignatureChangedEvent>,
     IAmReadModelFor<ChannelAggregate, ChannelId, ChannelColorUpdatedEvent>,
+    IAmReadModelFor<ChannelAggregate, ChannelId, ChannelEmojiStatusUpdatedEvent>,
     IAmReadModelFor<ChannelAggregate, ChannelId, LinkedChannelChangedEvent>,
 
     IAmReadModelFor<DeleteChannelMessagesSaga, DeleteChannelMessagesSagaId, DeleteChannelMessagesCompletedSagaEvent>,
@@ -358,6 +359,13 @@ public class ChannelReadModel : IChannelReadModel,
 
         return Task.CompletedTask;
     }
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<ChannelAggregate, ChannelId, ChannelEmojiStatusUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        EmojiStatus = domainEvent.AggregateEvent.EmojiStatus;
+
+        return Task.CompletedTask;
+    }
+
     public Task ApplyAsync(IReadModelContext context, IDomainEvent<ChannelAggregate, ChannelId, ChannelColorUpdatedEvent> domainEvent, CancellationToken cancellationToken)
     {
         if (domainEvent.AggregateEvent.ForProfile)

@@ -1,6 +1,3 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
-
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// Get a list of default suggested <a href="https://corefork.telegram.org/api/emoji-status">channel emoji statuses</a>.
@@ -9,21 +6,16 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetChannelDefaultEmojiStatusesHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetChannelDefaultEmojiStatuses, MyTelegram.Schema.Account.IEmojiStatuses>
+internal sealed class GetChannelDefaultEmojiStatusesHandler(
+    IChannelEmojiStatusValidator channelEmojiStatusValidator)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetChannelDefaultEmojiStatuses, MyTelegram.Schema.Account.IEmojiStatuses>
 {
     protected override async Task<MyTelegram.Schema.Account.IEmojiStatuses> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetChannelDefaultEmojiStatuses obj)
     {
-        var set = await mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel")
-            .Find(Builders<BsonDocument>.Filter.Or(
-                Builders<BsonDocument>.Filter.Eq("Slug", "emoji_channel_statuses"),
-                Builders<BsonDocument>.Filter.Eq("ShortName", "StatusPack")))
-            .FirstOrDefaultAsync();
-        var statuses = new TVector<IEmojiStatus>();
-        if (set?.TryGetValue("DocumentIds", out var ids) == true && ids.IsBsonArray)
-        {
-            foreach (var id in ids.AsBsonArray)
-                statuses.Add(new TEmojiStatus { DocumentId = id.ToInt64() });
-        }
-        return new TEmojiStatuses { Statuses = statuses };
+        // Only emoji from sets flagged channel_emoji_status may be used as a channel status, and the
+        // restricted ones are filtered out, so this is exactly the set channels can pick from.
+        var documentIds = await channelEmojiStatusValidator.GetAllowedDocumentIdsAsync();
+
+        return EmojiStatusesHelper.ToEmojiStatuses(documentIds, obj.Hash);
     }
 }
