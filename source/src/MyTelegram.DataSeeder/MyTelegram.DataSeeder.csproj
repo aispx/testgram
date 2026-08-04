@@ -19,6 +19,9 @@
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <!-- The .gitkeep inside downloads/langpacks is matched by this glob on purpose: it keeps the
+         folder present in the build and publish output even when no language pack has been
+         downloaded yet, so the data-seeder Dockerfile can COPY that path. -->
     <Content Include="downloads\langpacks\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

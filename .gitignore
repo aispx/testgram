@@ -378,8 +378,11 @@ scripts/*_manifest.json
 scripts/reactions_files/
 scripts/stickers/
 
-# Language packs are downloaded at build time from translations.telegram.org
-source/src/MyTelegram.DataSeeder/downloads/langpacks/
+# Language packs are downloaded at build time from translations.telegram.org.
+# The folder itself must stay tracked (via .gitkeep) so that `dotnet publish` creates
+# downloads/langpacks and the data-seeder Dockerfile COPY of that path does not fail.
+source/src/MyTelegram.DataSeeder/downloads/langpacks/*
+!source/src/MyTelegram.DataSeeder/downloads/langpacks/.gitkeep
 .claude/search-api-keys.json
 
 # Claude Code files
