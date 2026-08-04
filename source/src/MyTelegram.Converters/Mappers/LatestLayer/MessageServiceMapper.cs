@@ -34,7 +34,6 @@ internal sealed class MessageServiceMapper
         destination.PeerId = peer.ToPeer();
 
         destination.ReplyTo = source.ReplyTo.ToMessageReplyHeader();
-        destination.ReplyTo = source.ReplyTo.ToMessageReplyHeader();
         destination.Date = source.Date;
         destination.Action = source.MessageAction ?? source.MessageActionData?.ToBytes().ToTObject<IMessageAction>() ?? new TMessageActionEmpty();
         //destination.Reactions = source.Reactions;

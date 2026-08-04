@@ -1,75 +1,86 @@
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Mark one or more items of a <a href="https://corefork.telegram.org/api/todo">todo list »</a> as completed or not completed.
 /// Possible errors
 /// Code Type Description
+/// 400 MESSAGE_ID_INVALID The provided message id is invalid.
 /// 400 PEER_ID_INVALID The provided peer id is invalid.
+/// 403 CHAT_WRITE_FORBIDDEN You can't write in this chat.
 /// <para><c>See <a href="https://corefork.telegram.org/method/messages.toggleTodoCompleted"/> </c></para>
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ToggleTodoCompletedHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestToggleTodoCompleted, MyTelegram.Schema.IUpdates>
+internal sealed class ToggleTodoCompletedHandler(
+    IQueryProcessor queryProcessor,
+    ICommandBus commandBus,
+    IMessageAppService messageAppService,
+    IPeerHelper peerHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestToggleTodoCompleted, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestToggleTodoCompleted obj)
     {
-        var peer = obj.Peer.ToPeer(input.UserId);
-        var ownerPeerId = peer.PeerId;
-        if (peer.PeerType != PeerType.Channel)
-        {
-            ownerPeerId = input.UserId;
-        }
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
 
-        var messageReadModel = await queryProcessor.ProcessAsync(new GetMessageByIdQuery(MessageId.Create(ownerPeerId, obj.MsgId).Value));
+        var messageReadModel = await queryProcessor.ProcessAsync(
+            new GetMessageByPeerIdAndMessageIdQuery(ownerPeerId, obj.MsgId));
         if (messageReadModel == null)
         {
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
         }
 
-        var media = messageReadModel!.Media2;
-        if (media is TMessageMediaToDo messageMediaToDo)
+        if (messageReadModel!.Media2 is not TMessageMediaToDo messageMediaToDo)
         {
-            if (messageReadModel.SenderUserId != input.UserId && !messageMediaToDo.Todo.OthersCanComplete)
-            {
-                RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
-            }
-
-            var completions = messageMediaToDo.Completions?.ToList() ?? new List<ITodoCompletion>();
-            var currentDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-            // Mark items as completed
-            foreach (var itemId in obj.Completed)
-            {
-                // Remove from completions if already there (toggle)
-                var existing = completions.FirstOrDefault(c => c.Id == itemId);
-                if (existing == null)
-                {
-                    completions.Add(new TTodoCompletion
-                    {
-                        Id = itemId,
-                        CompletedBy = new TPeerUser { UserId = input.UserId },
-                        Date = currentDate
-                    });
-                }
-            }
-
-            // Mark items as not completed (remove from completions)
-            foreach (var itemId in obj.Incompleted)
-            {
-                var existing = completions.FirstOrDefault(c => c.Id == itemId);
-                if (existing != null)
-                {
-                    completions.Remove(existing);
-                }
-            }
-
-            messageMediaToDo.Completions = new TVector<ITodoCompletion>(completions);
+            // Not a checklist — refuse instead of silently rewriting an unrelated message.
+            RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+            return null!;
         }
 
-        var command = new EditOutboxMessageCommand(MessageId.Create(ownerPeerId, obj.MsgId), input.ToRequestInfo(), obj.MsgId, string.Empty, CurrentDate, null, media, null, false, null);
-        await commandBus.PublishAsync(command);
+        if (messageReadModel.SenderUserId != input.UserId && !messageMediaToDo.Todo.OthersCanComplete)
+        {
+            RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
+        }
 
-        // Send service message about completion changes
+        var completions = TodoMediaFactory.ToCompletionItems(messageMediaToDo.Completions);
+        var completedBy = await ResolveCompletedByAsync(input.UserId, peer);
+        var currentDate = CurrentDate;
+
+        // Only ids that actually exist in the list may be completed; TDLib drops unknown
+        // completions when parsing messageMediaToDo, so accepting them would desync the clients.
+        var knownIds = messageMediaToDo.Todo.List.Select(p => p.Id).ToHashSet();
+
+        var changed = false;
+        foreach (var itemId in obj.Completed)
+        {
+            if (!knownIds.Contains(itemId) || completions.Any(p => p.Id == itemId))
+            {
+                continue;
+            }
+
+            completions.Add(new TodoCompletionItem(itemId, completedBy, currentDate));
+            changed = true;
+        }
+
+        foreach (var itemId in obj.Incompleted)
+        {
+            changed |= completions.RemoveAll(p => p.Id == itemId) > 0;
+        }
+
+        // The update is published even for a no-op so the caller always gets its RPC reply, which is
+        // delivered from the domain event handler. TODO_NOT_MODIFIED is only documented for
+        // messages.appendTodoList, so a no-op here is not an error — it just emits no service message.
+        await TodoUpdatePublisher.PublishToAllCopiesAsync(commandBus, queryProcessor, messageReadModel,
+            input.ToRequestInfo(), messageMediaToDo.Todo, completions);
+
+        if (!changed)
+        {
+            return null!;
+        }
+
+        // Service message about completion changes, attributed to the same peer as the completions.
         var action = new TMessageActionTodoCompletions
         {
             Completed = obj.Completed,
@@ -83,10 +94,28 @@ internal sealed class ToggleTodoCompletedHandler(IQueryProcessor queryProcessor,
             Random.Shared.NextInt64(),
             sendMessageType: SendMessageType.MessageService,
             messageType: MessageType.Text,
-            messageAction: action
+            messageAction: action,
+            inputReplyTo: new TInputReplyToMessage { ReplyToMsgId = obj.MsgId }
         );
         await messageAppService.SendMessageAsync([sendInput]);
 
         return null!;
+    }
+
+    /// <summary>
+    /// Completions are attributed to the acting user, except for anonymous group admins, whose
+    /// completions are attributed to the group itself — see
+    /// https://corefork.telegram.org/api/todo (layer 217+).
+    /// </summary>
+    private async Task<Peer> ResolveCompletedByAsync(long userId, Peer peer)
+    {
+        if (peer.PeerType != PeerType.Channel)
+        {
+            return userId.ToUserPeer();
+        }
+
+        var sendAs = await messageAppService.GetAnonymousSendAsPeerAsync(peer.PeerId, userId);
+
+        return sendAs ?? userId.ToUserPeer();
     }
 }

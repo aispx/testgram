@@ -35,6 +35,25 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
         Emit(new MessageReactionsUpdatedEvent(requestInfo, _state.MessageItem, reactions, oldReactions));
     }
 
+    /// <summary>
+    /// Update the <a href="https://corefork.telegram.org/api/todo">todo list »</a> attached to this
+    /// message (append items / toggle completions).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT go through <see cref="EditOutboxMessage"/>: that path requires
+    /// <c>IsOut</c> and enforces <see cref="MyTelegramConsts.EditTimeLimit"/>, which would make it
+    /// impossible for the recipient of a checklist to ever tick an item (and would kill the list
+    /// after 48 hours). Collaborative editing is authorized by the <c>others_can_append</c> /
+    /// <c>others_can_complete</c> flags, checked by the request handlers — same reasoning as
+    /// <see cref="UpdateMessageReactions"/>.
+    /// </remarks>
+    [DoNotInheritRequestCommand]
+    public void UpdateTodoList(RequestInfo requestInfo, ITodoList todo, List<TodoCompletionItem> completions)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new MessageTodoUpdatedEvent(requestInfo, _state.MessageItem, todo, completions));
+    }
+
     public void AddInboxItemsToOutboxMessage(List<InboxItem> inboxItems)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);

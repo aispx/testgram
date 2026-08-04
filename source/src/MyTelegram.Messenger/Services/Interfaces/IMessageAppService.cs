@@ -6,6 +6,12 @@ public interface IMessageAppService
 
     Task CheckSendAsAsync(long requestUserId, Peer toPeer, Peer? sendAs);
 
+    /// <summary>
+    /// Returns the channel peer to attribute an action to when the user acts as an anonymous admin
+    /// of that channel, or <c>null</c> when the action should be attributed to the user themselves.
+    /// </summary>
+    Task<Peer?> GetAnonymousSendAsPeerAsync(long channelId, long userId);
+
     Task<GetMessageOutput> GetChannelDifferenceAsync(GetDifferenceInput input);
     Task<GetMessageOutput> GetDifferenceAsync(GetDifferenceInput input);
     Task<GetMessageOutput> GetHistoryAsync(GetHistoryInput input);

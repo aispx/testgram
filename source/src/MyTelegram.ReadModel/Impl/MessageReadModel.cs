@@ -26,7 +26,8 @@ public class MessageReadModel : IMessageReadModel,
     IAmReadModelFor<MessageAggregate, MessageId, MessagePinnedUpdatedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageViewsIncrementedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageViewsIncrementedEvent2>,
-    IAmReadModelFor<MessageAggregate, MessageId, MessageReactionsUpdatedEvent>
+    IAmReadModelFor<MessageAggregate, MessageId, MessageReactionsUpdatedEvent>,
+    IAmReadModelFor<MessageAggregate, MessageId, MessageTodoUpdatedEvent>
 {
     public int Date { get; private set; }
     public int? EditDate { get; private set; }
@@ -473,6 +474,17 @@ public class MessageReadModel : IMessageReadModel,
         }).ToList();
 
         TopReactors = BuildTopReactors(reactions);
+
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<MessageAggregate, MessageId, MessageTodoUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        var e = domainEvent.AggregateEvent;
+        Media2 = TodoMediaFactory.Create(e.Todo, e.Completions);
+        // Media2 takes precedence over the legacy serialized Media column when mapping to TL
+        // (see MessageMapper: source.Media2 ?? source.Media), so the stale blob must be dropped.
+        Media = null;
 
         return Task.CompletedTask;
     }

@@ -540,13 +540,14 @@ public class MediaHelper(
             or TInputMediaDocumentExternal;
     }
 
+    /// <summary>
+    /// Builds the media for a freshly sent checklist, which by definition has no completions yet.
+    /// Editing an existing checklist must NOT go through here — it has to carry the previous
+    /// completions over (see EditMessageHandler), otherwise every edit would clear all the ticks.
+    /// </summary>
     private IMessageMedia CreateMediaTodo(TInputMediaTodo inputMediaTodo)
     {
-        return new TMessageMediaToDo
-        {
-            Todo = inputMediaTodo.Todo,
-            Completions = new TVector<ITodoCompletion>()
-        };
+        return TodoMediaFactory.Create(inputMediaTodo.Todo, []);
     }
 
     private IMessageMedia CreateMediaInvoice(TInputMediaInvoice inputMediaInvoice)

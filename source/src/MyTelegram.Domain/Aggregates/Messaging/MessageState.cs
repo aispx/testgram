@@ -31,7 +31,8 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
     IApply<MessagePinnedUpdatedEvent>,
     IApply<OutboxMessageEditedEventV2>,
     IApply<InboxMessageEditedEventV2>,
-    IApply<MessageReactionsUpdatedEvent>
+    IApply<MessageReactionsUpdatedEvent>,
+    IApply<MessageTodoUpdatedEvent>
 {
     public int EditDate { get; private set; }
     //public bool EditHide { get; private set; }
@@ -227,5 +228,13 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
                         : (IReaction)new TReactionEmoji { Emoticon = r.Emoticon },
                     1, r.Emoticon, r.CustomEmojiDocumentId);
         }
+    }
+
+    public void Apply(MessageTodoUpdatedEvent aggregateEvent)
+    {
+        MessageItem = MessageItem with
+        {
+            Media = TodoMediaFactory.Create(aggregateEvent.Todo, aggregateEvent.Completions)
+        };
     }
 }

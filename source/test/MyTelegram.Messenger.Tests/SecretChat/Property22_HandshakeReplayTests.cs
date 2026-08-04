@@ -632,6 +632,8 @@ internal sealed class StubMessageAppService : IMessageAppService
 
     public Task CheckSendAsAsync(long requestUserId, Peer toPeer, Peer? sendAs) => throw new NotSupportedException();
 
+    public Task<Peer?> GetAnonymousSendAsPeerAsync(long channelId, long userId) => throw new NotSupportedException();
+
     public Task<GetMessageOutput> GetDifferenceAsync(GetDifferenceInput input) => throw new NotSupportedException();
 
     public Task<GetMessageOutput> GetHistoryAsync(GetHistoryInput input) => throw new NotSupportedException();

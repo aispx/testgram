@@ -136,6 +136,9 @@ public static class Extension
                 ReplyToMsgId = inputReplyToMessage.ReplyToMsgId,
                 ReplyToTopId = inputReplyToMessage.TopMsgId,
                 ReplyToPeerId = inputReplyToMessage.ReplyToPeerId?.ToPeer().ToPeer(),
+                // Replies can target a single item of a checklist rather than the whole message —
+                // see https://corefork.telegram.org/api/todo
+                TodoItemId = inputReplyToMessage.TodoItemId > 0 ? inputReplyToMessage.TodoItemId : null,
             },
             TInputReplyToStory inputReplyToStory => new TMessageReplyStoryHeader
             {

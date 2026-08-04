@@ -1,6 +1,7 @@
 using System.Text;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -89,6 +90,11 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
                 // null keeps EditOutboxMessageCommand from overwriting the stored media —
                 // renderers always read the live poll state from the read model anyway.
             }
+            else if (obj.Media is TInputMediaTodo)
+            {
+                // Handled after the message is loaded: the previous completions have to be
+                // carried over, so the new media can only be built once the old one is known.
+            }
             else
             {
                 media = await mediaHelper.SaveMediaAsync(obj.Media);
@@ -135,6 +141,27 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
                     await CreateStopPollAdminLogAsync(input, peer, messageReadModel);
                 }
             }
+        }
+
+        // Editing a checklist replaces the item list, but the completion history of the items that
+        // survive the edit (same ids) must be preserved — see https://corefork.telegram.org/api/todo.
+        if (obj.Media is TInputMediaTodo editTodo)
+        {
+            if (messageReadModel!.Media2 is not TMessageMediaToDo oldTodoMedia)
+            {
+                // TDLib: "There is no checklist in the message to edit".
+                RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
+                return null!;
+            }
+
+            TodoListHelper.ValidateTodoList(editTodo.Todo);
+
+            var remainingIds = editTodo.Todo.List.Select(p => p.Id).ToHashSet();
+            var keptCompletions = TodoMediaFactory.ToCompletionItems(oldTodoMedia.Completions)
+                .Where(p => remainingIds.Contains(p.Id))
+                .ToList();
+
+            media = TodoMediaFactory.Create(editTodo.Todo, keptCompletions);
         }
 
         var message = messageReadModel.Message;

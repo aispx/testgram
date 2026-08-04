@@ -577,6 +577,8 @@ public sealed class FakeMessageAppService : IMessageAppService
 
     public Task CheckSendAsAsync(long requestUserId, Peer toPeer, Peer? sendAs) => Task.CompletedTask;
 
+    public Task<Peer?> GetAnonymousSendAsPeerAsync(long channelId, long userId) => Task.FromResult<Peer?>(null);
+
     public Task<bool> CanSendAsPeerAsync(long channelId, long userId) => Task.FromResult(true);
 
     public Task<bool> IsValidSendAsPeerAsync(long requestUserId, Peer toPeer, Peer? sendAsPeer) => Task.FromResult(true);
