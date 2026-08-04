@@ -161,10 +161,10 @@ public class TempAggregate : AggregateRoot<TempAggregate, TempId>, ISkipAggregat
 
     public void StartForwardMessages(RequestInfo requestInfo, bool silent, bool background, bool withMyScore, bool dropAuthor,
         bool dropMediaCaptions, bool noForwards, Peer fromPeer, Peer toPeer,
-        List<int> messageIds, List<long> randomIds, int? scheduleDate, Peer? sendAs, bool forwardFromLinkedChannel, bool post)
+        List<int> messageIds, List<long> randomIds, int? scheduleDate, Peer? sendAs, bool forwardFromLinkedChannel, bool post,
+        Dictionary<long, string>? fromNames)
     {
         int? ttlPeriod = null;
-        Dictionary<long, string>? fromNames = null;
         Emit(new ForwardMessagesStartedEvent(requestInfo, silent, background, withMyScore, dropAuthor, dropMediaCaptions,
             noForwards, fromPeer, toPeer, messageIds, randomIds, scheduleDate, sendAs, forwardFromLinkedChannel, post, ttlPeriod, fromNames));
     }

@@ -17,6 +17,7 @@ internal sealed class SendPaymentFormHandler(
     IPeerHelper peerHelper,
     IQueryProcessor queryProcessor,
     IObjectMessageSender objectMessageSender,
+    IPrivacyAppService privacyAppService,
     ILogger<SendPaymentFormHandler> logger)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestSendPaymentForm, MyTelegram.Schema.Payments.IPaymentResult>
 {
@@ -236,6 +237,59 @@ internal sealed class SendPaymentFormHandler(
         return paymentMethodId;
     }
 
+    /// <summary>
+    /// Rejects a gift the recipient has opted out of via
+    /// <c>globalPrivacySettings.disallowed_gifts</c>.
+    /// See https://corefork.telegram.org/api/privacy
+    /// </summary>
+    private async Task ThrowIfGiftDisallowedAsync(Peer recipientPeer, StarGiftDocument gift, long selfUserId)
+    {
+        if (recipientPeer.PeerType != PeerType.User || recipientPeer.PeerId == selfUserId)
+        {
+            return;
+        }
+
+        var gps = await queryProcessor.ProcessAsync(new GetGlobalPrivacySettingsQuery(recipientPeer.PeerId));
+        if (gps == null)
+        {
+            return;
+        }
+
+        // A gift is "limited" when its supply is capped, "unlimited" otherwise; the premium
+        // flag is carried separately by the gift itself.
+        var disallowed = gift switch
+        {
+            { RequirePremium: true } when gps.DisallowPremiumGifts => true,
+            { Limited: true } when gps.DisallowLimitedStargifts => true,
+            { Limited: false } when gps.DisallowUnlimitedStargifts => true,
+            _ => false
+        };
+
+        if (disallowed)
+        {
+            RpcErrors.RpcErrors400.StargiftInvalid.ThrowRpcError();
+        }
+    }
+
+    /// <summary>
+    /// Whether the gift should be pinned to the recipient's profile immediately, per their
+    /// <c>privacyKeyStarGiftsAutoSave</c> rule.
+    /// </summary>
+    private async Task<bool> IsStarGiftAutoSaveAllowedAsync(long selfUserId, Peer recipientPeer)
+    {
+        if (recipientPeer.PeerType != PeerType.User || recipientPeer.PeerId == selfUserId)
+        {
+            return false;
+        }
+
+        var autoSave = true;
+        await privacyAppService.ApplyPrivacyAsync(selfUserId, recipientPeer.PeerId,
+            _ => autoSave = false,
+            [PrivacyType.StarGiftsAutoSave]);
+
+        return autoSave;
+    }
+
     private async Task<IPaymentResult> HandleStarGiftSendAsync(IRequestInput input, TInputInvoiceStarGift invoice)
     {
         // Get gift from MongoDB
@@ -280,6 +334,15 @@ internal sealed class SendPaymentFormHandler(
         if (recipientPeer == null)
             throw new RpcException(new RpcError(400, "STARGIFT_PEER_INVALID"));
 
+        // globalPrivacySettings.disallowed_gifts was surfaced to clients via userFull but never
+        // enforced, so a client that ignored it could still deliver an unwanted gift. Checked
+        // before any stars move so a rejected gift costs nothing.
+        await ThrowIfGiftDisallowedAsync(recipientPeer, gift, input.UserId);
+
+        // Whether the gift lands on the recipient's profile right away is theirs to decide via
+        // privacyKeyStarGiftsAutoSave; it used to be hardcoded to "not saved".
+        var autoSaveToProfile = await IsStarGiftAutoSaveAllowedAsync(input.UserId, recipientPeer);
+
         // Deduct stars from sender
         await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -totalStars);
         await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -totalStars,
@@ -322,7 +385,7 @@ internal sealed class SendPaymentFormHandler(
             ConvertStars = gift.ConvertStars,
             UpgradeStars = gift.UpgradeStars,
             NameHidden = invoice.HideName,
-            Saved = false, // Not saved to profile by default
+            Saved = autoSaveToProfile,
             Date = now,
             MessageText = (invoice.Message as TTextWithEntities)?.Text,
             RandomId = randomId,

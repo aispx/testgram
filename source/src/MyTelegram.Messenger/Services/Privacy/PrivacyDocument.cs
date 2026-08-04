@@ -21,6 +21,10 @@ public class PrivacyRuleEntry
 
     public bool IsSupportedByEvaluator => IsSupportedByEvaluatorValueType(ValueType);
 
+    /// <summary>
+    /// Rule kinds the evaluator understands. Anything outside this set is treated as a deny,
+    /// so a rule must only be listed here once <c>PrivacyHelper</c> can actually evaluate it.
+    /// </summary>
     public static bool IsSupportedByEvaluatorValueType(PrivacyValueType valueType)
     {
         return valueType is PrivacyValueType.AllowContacts
@@ -28,6 +32,12 @@ public class PrivacyRuleEntry
             or PrivacyValueType.AllowUsers
             or PrivacyValueType.DisallowContacts
             or PrivacyValueType.DisallowAll
-            or PrivacyValueType.DisallowUsers;
+            or PrivacyValueType.DisallowUsers
+            or PrivacyValueType.AllowPremium
+            or PrivacyValueType.AllowCloseFriends
+            or PrivacyValueType.AllowBots
+            or PrivacyValueType.DisallowBots
+            or PrivacyValueType.AllowChatParticipants
+            or PrivacyValueType.DisallowChatParticipants;
     }
 }

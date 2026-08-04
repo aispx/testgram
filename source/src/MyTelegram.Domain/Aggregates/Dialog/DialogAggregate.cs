@@ -231,11 +231,17 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
         long ownerPeerId,
         Peer toPeer)
     {
+        // IsNew tells subscribers this inbox message created the dialog, which is what
+        // globalPrivacySettings.archive_and_mute_new_noncontact_peers keys off: only the
+        // first message from a stranger triggers auto-archiving, later ones must not
+        // re-archive a chat the user pulled out of the archive.
+        var isNewDialog = IsNew;
         Emit(new InboxMessageReceivedEvent(
             requestInfo,
             messageId,
             ownerPeerId,
-            toPeer
+            toPeer,
+            isNewDialog
         ));
     }
 

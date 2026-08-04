@@ -16,9 +16,22 @@ public class PrivacyService(IMongoDatabase mongoDatabase) : IPrivacyService, ISi
     public async Task<List<IPrivacyRule>> GetPrivacyRulesAsync(long userId, PrivacyType type)
     {
         var doc = await Collection.Find(p => p.UserId == userId && p.PrivacyType == type).FirstOrDefaultAsync();
-        if (doc == null) return [];
-        return doc.Rules.Where(p => p.IsSupportedByEvaluator).Select(ToTlRule).ToList();
+        if (doc == null) return [GetDefaultRule(type)];
+        var rules = doc.Rules.Where(p => p.IsSupportedByEvaluator).Select(PrivacyMapper.ToTlRule).ToList();
+        return rules.Count == 0 ? [GetDefaultRule(type)] : rules;
     }
+
+    /// <summary>
+    /// Rule reported when the user never configured this key. Returning an empty rule list
+    /// instead leaves clients guessing, and for the phone number the documented default is
+    /// stricter than "everybody".
+    /// See https://corefork.telegram.org/api/privacy
+    /// </summary>
+    public static IPrivacyRule GetDefaultRule(PrivacyType type) => type switch
+    {
+        PrivacyType.PhoneNumber => new TPrivacyValueAllowContacts(),
+        _ => new TPrivacyValueAllowAll()
+    };
 
     public async Task SetPrivacyRulesAsync(long userId, PrivacyType type, List<PrivacyRuleEntry> rules)
     {
@@ -34,15 +47,4 @@ public class PrivacyService(IMongoDatabase mongoDatabase) : IPrivacyService, ISi
             doc,
             new ReplaceOptions { IsUpsert = true });
     }
-
-    private static IPrivacyRule ToTlRule(PrivacyRuleEntry r) => r.ValueType switch
-    {
-        PrivacyValueType.AllowAll => new TPrivacyValueAllowAll(),
-        PrivacyValueType.AllowContacts => new TPrivacyValueAllowContacts(),
-        PrivacyValueType.DisallowAll => new TPrivacyValueDisallowAll(),
-        PrivacyValueType.DisallowContacts => new TPrivacyValueDisallowContacts(),
-        PrivacyValueType.AllowUsers => new TPrivacyValueAllowUsers { Users = new TVector<long>(r.UserIds ?? []) },
-        PrivacyValueType.DisallowUsers => new TPrivacyValueDisallowUsers { Users = new TVector<long>(r.UserIds ?? []) },
-        _ => new TPrivacyValueDisallowAll()
-    };
 }

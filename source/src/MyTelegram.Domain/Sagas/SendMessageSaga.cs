@@ -325,7 +325,10 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
             null,
             outboxMessageItem.SendAs,
             true,
-            false
+            false,
+            // Auto-forwarding a broadcast post to its linked discussion group is attributed to
+            // the channel, not to a user whose forward privacy could apply.
+            null
         );
         Publish(command);
     }

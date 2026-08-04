@@ -71,7 +71,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
+public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper, IBlockCacheAppService blockCacheAppService, IPrivacyAppService privacyAppService, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
 {
     public async Task<IUpdates> HandleAsync(IRequestInput input, RequestForwardMessages obj)
     {
@@ -85,6 +85,18 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
         var toPeer = peerHelper.GetPeer(obj.ToPeer, input.UserId);
         var sendAs = peerHelper.GetPeer(obj.SendAs, input.UserId);
         messageAppService.CheckBotPermission(input.UserId, toPeer);
+
+        // The documented USER_IS_BLOCKED / YOU_BLOCKED_USER errors above were unreachable:
+        // forwarding was the one send path that never consulted the blocklist, so a block
+        // could be bypassed simply by forwarding instead of sending. Checked in both
+        // directions, matching SendMessageHandler / SendMediaHandler.
+        if (toPeer.PeerType == PeerType.User && toPeer.PeerId != input.UserId)
+        {
+            if (await blockCacheAppService.IsBlockedAsync(toPeer.PeerId, input.UserId))
+                RpcErrors.RpcErrors403.UserIsBlocked.ThrowRpcError();
+            if (await blockCacheAppService.IsBlockedAsync(input.UserId, toPeer.PeerId))
+                RpcErrors.RpcErrors400.YouBlockedUser.ThrowRpcError();
+        }
 
         var post = false;
         IChannelReadModel? targetChannelReadModel = null;
@@ -154,27 +166,9 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
             targetNoForwards = await IsPrivateChatNoForwardsEnabledAsync(input.UserId, toPeer.PeerId);
         }
 
-        long? paidMessageStars = null;
-        if (toPeer.PeerType == PeerType.User)
-        {
-            var targetGps = await queryProcessor.ProcessAsync(new GetGlobalPrivacySettingsQuery(toPeer.PeerId));
-            var requiredStars = targetGps?.NoncontactPeersPaidStars ?? 0;
-            if (requiredStars > 0)
-            {
-                if ((obj.AllowPaidStars ?? 0) < requiredStars)
-                    RpcErrors.RpcErrors403.AllowPaymentRequiredX.ThrowRpcError((int)requiredStars);
-                var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
-                if (balance < requiredStars)
-                    RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
-                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
-                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, toPeer.PeerId, requiredStars);
-                var paidMsgCount = (int)Math.Max(1, requiredStars);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId, paidMessages: paidMsgCount);
-                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId, paidMessages: paidMsgCount);
-                paidMessageStars = requiredStars;
-            }
-        }
-
+        // Loaded before charging for paid messages: the voice-note privacy check below can
+        // reject the whole request, and doing that after stars have been deducted would
+        // leave the sender paying for a forward that never happened.
         var ownerPeerId = fromPeer.PeerType == PeerType.User ? input.UserId : fromPeer.PeerId;
         var messagesToCheck = await queryProcessor.ProcessAsync(new GetMessagesQuery(
             ownerPeerId,
@@ -197,6 +191,39 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
             0
         ));
 
+        // privacyKeyVoiceMessages was enforced on the send paths only, so forwarding was a
+        // way to deliver a voice note to someone who disallowed them.
+        if (toPeer.PeerType == PeerType.User
+            && toPeer.PeerId != input.UserId
+            && messagesToCheck.Any(VoiceMessageHelper.IsVoiceMessage))
+        {
+            await privacyAppService.ApplyPrivacyAsync(input.UserId, toPeer.PeerId,
+                _ => RpcErrors.RpcErrors403.VoiceMessagesForbidden.ThrowRpcError(),
+                [PrivacyType.VoiceMessages]);
+        }
+
+        long? paidMessageStars = null;
+        if (toPeer.PeerType == PeerType.User)
+        {
+            var targetGps = await queryProcessor.ProcessAsync(new GetGlobalPrivacySettingsQuery(toPeer.PeerId));
+            var requiredStars = targetGps?.NoncontactPeersPaidStars ?? 0;
+            if (requiredStars > 0)
+            {
+                if ((obj.AllowPaidStars ?? 0) < requiredStars)
+                    RpcErrors.RpcErrors403.AllowPaymentRequiredX.ThrowRpcError((int)requiredStars);
+                var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+                if (balance < requiredStars)
+                    RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
+                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -requiredStars);
+                await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, toPeer.PeerId, requiredStars);
+                var paidMsgCount = (int)Math.Max(1, requiredStars);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -requiredStars, peerUserId: toPeer.PeerId, paidMessages: paidMsgCount);
+                await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, toPeer.PeerId, requiredStars, peerUserId: input.UserId, paidMessages: paidMsgCount);
+                paidMessageStars = requiredStars;
+            }
+        }
+
+
         foreach (var msg in messagesToCheck)
         {
             if (msg.SendMessageType == SendMessageType.MessageService)
@@ -207,9 +234,11 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
         await ThrowIfForwardingRestrictedAsync(input.UserId, fromPeer, messagesToCheck);
 
+        var fromNames = await BuildAnonymousFromNamesAsync(input.UserId, messagesToCheck);
+
         if (!isMonoforum)
         {
-            var command = new StartForwardMessagesCommand(TempId.New, input.ToRequestInfo(), obj.Silent, obj.Background, obj.WithMyScore, obj.DropAuthor, obj.DropMediaCaptions, obj.Noforwards || targetNoForwards, fromPeer, toPeer, obj.Id.ToList(), obj.RandomId.ToList(), obj.ScheduleDate, sendAs, false, post);
+            var command = new StartForwardMessagesCommand(TempId.New, input.ToRequestInfo(), obj.Silent, obj.Background, obj.WithMyScore, obj.DropAuthor, obj.DropMediaCaptions, obj.Noforwards || targetNoForwards, fromPeer, toPeer, obj.Id.ToList(), obj.RandomId.ToList(), obj.ScheduleDate, sendAs, false, post, fromNames);
             await commandBus.PublishAsync(command);
             return null!;
         }
@@ -302,6 +331,54 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
         await messageAppService.SendMessageAsync(inputs);
         return null!;
+    }
+
+    /// <summary>
+    /// Original senders whose <c>privacyKeyForwards</c> rule disallows the forwarder from
+    /// linking back to them, mapped to the plain name to show instead.
+    /// See https://corefork.telegram.org/api/privacy
+    /// </summary>
+    /// <remarks>
+    /// The forward saga already knows how to anonymise an author: when a name is present it
+    /// clears <c>fwd_from.from_id</c> and attributes the message to the anonymous peer. It
+    /// just never received any names, so the rule had no effect anywhere.
+    /// </remarks>
+    private async Task<Dictionary<long, string>?> BuildAnonymousFromNamesAsync(
+        long selfUserId,
+        IReadOnlyCollection<IMessageReadModel> messages)
+    {
+        var senderUserIds = messages
+            .Select(p => p.SenderUserId)
+            .Where(p => p > 0 && p != selfUserId)
+            .Distinct()
+            .ToList();
+
+        if (senderUserIds.Count == 0)
+        {
+            return null;
+        }
+
+        var restrictedUserIds = new List<long>();
+        await privacyAppService.ApplyPrivacyListAsync(selfUserId, senderUserIds,
+            (_, restrictedUserId) => restrictedUserIds.Add(restrictedUserId),
+            [PrivacyType.Forwards]);
+
+        if (restrictedUserIds.Count == 0)
+        {
+            return null;
+        }
+
+        var fromNames = new Dictionary<long, string>();
+        foreach (var userReadModel in await userAppService.GetListAsync(restrictedUserIds.Distinct().ToList()))
+        {
+            var name = $"{userReadModel.FirstName} {userReadModel.LastName}".Trim();
+            if (name.Length > 0)
+            {
+                fromNames[userReadModel.UserId] = name;
+            }
+        }
+
+        return fromNames.Count == 0 ? null : fromNames;
     }
 
     private async Task ThrowIfForwardingRestrictedAsync(

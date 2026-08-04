@@ -47,7 +47,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService, IMediaHelper mediaHelper, //IRequestCacheAppService requestCacheAppService,
- IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
+ IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
 {
     //private readonly IRequestCacheAppService _requestCacheAppService;
     //_requestCacheAppService = requestCacheAppService;
@@ -66,6 +66,18 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
             if (await blocksCol.Find(blockedByUsFilter).Limit(1).AnyAsync())
                 RpcErrors.RpcErrors400.YouBlockedUser.ThrowRpcError();
         }
+
+        // Albums bypassed privacyKeyVoiceMessages: only sendMedia checked it, so bundling a
+        // voice note into a multi-media send delivered it regardless of the recipient's rule.
+        if (toPeerForPaid.PeerType == PeerType.User
+            && toPeerForPaid.PeerId != input.UserId
+            && VoiceMessageHelper.ContainsVoiceMedia(obj.MultiMedia))
+        {
+            await privacyAppService.ApplyPrivacyAsync(input.UserId, toPeerForPaid.PeerId,
+                _ => RpcErrors.RpcErrors403.ChatSendVoicesForbidden.ThrowRpcError(),
+                [PrivacyType.VoiceMessages]);
+        }
+
 
         var channelForMonoforum = toPeerForPaid.PeerType == PeerType.Channel
             ? await queryProcessor.ProcessAsync(new GetChannelByIdQuery(toPeerForPaid.PeerId))

@@ -6,10 +6,17 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetContactSignUpNotificationHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSetContactSignUpNotification, IBool>
+internal sealed class SetContactSignUpNotificationHandler(ICommandBus commandBus) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSetContactSignUpNotification, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSetContactSignUpNotification obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSetContactSignUpNotification obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        // The TL flag is inverted with respect to what we store and what
+        // account.getContactSignUpNotification returns: silent = do not notify.
+        await commandBus.PublishAsync(new UpdateContactSignUpNotificationCommand(
+            UserId.Create(input.UserId),
+            input.ToRequestInfo(),
+            !obj.Silent));
+
+        return new TBoolTrue();
     }
 }

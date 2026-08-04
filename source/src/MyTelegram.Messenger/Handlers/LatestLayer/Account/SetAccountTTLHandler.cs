@@ -9,10 +9,26 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetAccountTTLHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSetAccountTTL, IBool>
+internal sealed class SetAccountTTLHandler(ICommandBus commandBus) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSetAccountTTL, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSetAccountTTL obj)
+    // Range accepted by the official server. Values outside it are rejected rather than
+    // silently clamped, so the client can surface TTL_DAYS_INVALID.
+    private const int MinTtlDays = 30;
+    private const int MaxTtlDays = 730;
+
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSetAccountTTL obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        var days = obj.Ttl.Days;
+        if (days is < MinTtlDays or > MaxTtlDays)
+        {
+            RpcErrors.RpcErrors400.TtlDaysInvalid.ThrowRpcError();
+        }
+
+        await commandBus.PublishAsync(new UpdateAccountTtlCommand(
+            UserId.Create(input.UserId),
+            input.ToRequestInfo(),
+            days));
+
+        return new TBoolTrue();
     }
 }

@@ -1,5 +1,6 @@
 ﻿using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Privacy;
+using MyTelegram.Messenger.Services.Stories;
 
 namespace MyTelegram.Messenger.Services.Impl;
 
@@ -9,10 +10,12 @@ public class PrivacyAppService(
     IMongoDatabase mongoDatabase,
     IPrivacyService privacyService,
     IContactHelper contactHelper,
+    IUserAppService userAppService,
     IPrivacyHelper privacyHelper)
     : BaseAppService, IPrivacyAppService, ITransientDependency
 {
     private IMongoCollection<PrivacyDocument> PrivacyCollection => mongoDatabase.GetCollection<PrivacyDocument>("privacy-readmodel");
+    private IMongoCollection<CloseFriendDocument> CloseFriendCollection => mongoDatabase.GetCollection<CloseFriendDocument>("close_friends");
 
     public async Task<IReadOnlyCollection<IPrivacyReadModel>> GetPrivacyListAsync(IReadOnlyList<long> userIds)
     {
@@ -51,13 +54,15 @@ public class PrivacyAppService(
         List<PrivacyType> privacyTypes)
     {
         if (targetUserIdList.Count == 0) return;
+        var viewerContext = await BuildViewerContextAsync(selfUserId, targetUserIdList);
         foreach (var targetUserId in targetUserIdList)
         {
             var contactType = await GetContactTypeAsync(selfUserId, targetUserId);
             foreach (var privacyType in privacyTypes)
             {
                 var privacy = await GetPrivacyReadModelAsync(targetUserId, privacyType);
-                privacyHelper.ApplyPrivacy(privacy, pvt => executeOnPrivacyNotMatch(pvt, targetUserId), selfUserId, contactType);
+                privacyHelper.ApplyPrivacy(privacy, pvt => executeOnPrivacyNotMatch(pvt, targetUserId), selfUserId,
+                    contactType, viewerContext(targetUserId));
             }
         }
     }
@@ -95,6 +100,8 @@ public class PrivacyAppService(
 
     public PrivacyValueData GetPrivacyValueData(IInputPrivacyRule rule)
     {
+        // Routed through the shared mapper so newly supported rule kinds (premium, bots,
+        // close friends, chat participants) do not silently degrade to Unknown here.
         return rule switch
         {
             TInputPrivacyValueAllowAll => new PrivacyValueData(PrivacyValueType.AllowAll),
@@ -103,6 +110,12 @@ public class PrivacyAppService(
             TInputPrivacyValueDisallowContacts => new PrivacyValueData(PrivacyValueType.DisallowContacts),
             TInputPrivacyValueAllowUsers r => new PrivacyValueData(PrivacyValueType.AllowUsers, SerializeInputUsers(r.Users)),
             TInputPrivacyValueDisallowUsers r => new PrivacyValueData(PrivacyValueType.DisallowUsers, SerializeInputUsers(r.Users)),
+            TInputPrivacyValueAllowPremium => new PrivacyValueData(PrivacyValueType.AllowPremium),
+            TInputPrivacyValueAllowCloseFriends => new PrivacyValueData(PrivacyValueType.AllowCloseFriends),
+            TInputPrivacyValueAllowBots => new PrivacyValueData(PrivacyValueType.AllowBots),
+            TInputPrivacyValueDisallowBots => new PrivacyValueData(PrivacyValueType.DisallowBots),
+            TInputPrivacyValueAllowChatParticipants r => new PrivacyValueData(PrivacyValueType.AllowChatParticipants, SerializeIds(r.Chats)),
+            TInputPrivacyValueDisallowChatParticipants r => new PrivacyValueData(PrivacyValueType.DisallowChatParticipants, SerializeIds(r.Chats)),
             _ => new PrivacyValueData(PrivacyValueType.Unknown)
         };
     }
@@ -132,11 +145,41 @@ public class PrivacyAppService(
     public async Task ApplyPrivacyAsync(long selfUserId, long targetUserId, Action<PrivacyValueType> executeOnPrivacyNotMatch, List<PrivacyType> privacyTypes)
     {
         var contactType = await GetContactTypeAsync(selfUserId, targetUserId);
+        var viewerContext = await BuildViewerContextAsync(selfUserId, [targetUserId]);
         foreach (var privacyType in privacyTypes)
         {
             var privacy = await GetPrivacyReadModelAsync(targetUserId, privacyType);
-            privacyHelper.ApplyPrivacy(privacy, executeOnPrivacyNotMatch, selfUserId, contactType);
+            privacyHelper.ApplyPrivacy(privacy, executeOnPrivacyNotMatch, selfUserId, contactType, viewerContext(targetUserId));
         }
+    }
+
+    /// <summary>
+    /// Collects the viewer facts the newer privacy rules need, once per call rather than per
+    /// rule, and returns a lookup keyed by target user (close-friend status is per target).
+    /// </summary>
+    private async Task<Func<long, PrivacyViewerContext>> BuildViewerContextAsync(long selfUserId, IReadOnlyList<long> targetUserIdList)
+    {
+        var viewer = await userAppService.GetAsync(selfUserId);
+        var joinedChatIds = await queryProcessor.ProcessAsync(new GetAllJoinedChannelIdListQuery(selfUserId));
+
+        var closeFriendDocs = await CloseFriendCollection
+            .Find(Builders<CloseFriendDocument>.Filter.In(p => p.SelfUserId, targetUserIdList))
+            .ToListAsync();
+        // A target counts the viewer as a close friend only if the viewer is on that target's list.
+        var targetsWithViewerAsCloseFriend = closeFriendDocs
+            .Where(p => p.UserIds.Contains(selfUserId))
+            .Select(p => p.SelfUserId)
+            .ToHashSet();
+
+        var chatIds = joinedChatIds.ToHashSet();
+        var isPremium = viewer?.Premium == true;
+        var isBot = viewer?.Bot == true;
+
+        return targetUserId => new PrivacyViewerContext(
+            isPremium,
+            isBot,
+            targetsWithViewerAsCloseFriend.Contains(targetUserId),
+            chatIds);
     }
 
     private async Task<IPrivacyReadModel?> GetPrivacyReadModelAsync(long userId, PrivacyType privacyType)
@@ -170,65 +213,26 @@ public class PrivacyAppService(
         return rule.ValueType switch
         {
             PrivacyValueType.AllowUsers or PrivacyValueType.DisallowUsers => new PrivacyValueData(rule.ValueType, SerializeIds(rule.UserIds)),
+            // Chat-participant rules carry chat ids in their own field; serialising UserIds here
+            // would hand the evaluator an empty list and the rule would never match.
+            PrivacyValueType.AllowChatParticipants or PrivacyValueType.DisallowChatParticipants => new PrivacyValueData(rule.ValueType, SerializeIds(rule.ChatIds)),
             _ => new PrivacyValueData(rule.ValueType)
         };
     }
 
     private static PrivacyRuleEntry ToPrivacyRuleEntry(IInputPrivacyRule rule)
     {
-        switch (rule)
-        {
-            case TInputPrivacyValueAllowAll:
-                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowAll };
-            case TInputPrivacyValueAllowContacts:
-                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowContacts };
-            case TInputPrivacyValueDisallowAll:
-                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowAll };
-            case TInputPrivacyValueDisallowContacts:
-                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowContacts };
-            case TInputPrivacyValueAllowUsers r:
-                return new PrivacyRuleEntry { ValueType = PrivacyValueType.AllowUsers, UserIds = GetInputUserIds(r.Users) };
-            case TInputPrivacyValueDisallowUsers r:
-                return new PrivacyRuleEntry { ValueType = PrivacyValueType.DisallowUsers, UserIds = GetInputUserIds(r.Users) };
-            default:
-                RpcErrors.RpcErrors400.PrivacyValueInvalid.ThrowRpcError();
-                return new PrivacyRuleEntry { ValueType = PrivacyValueType.Unknown };
-        }
+        return PrivacyMapper.ToPrivacyRuleEntry(rule);
     }
 
-    private static PrivacyType ToPrivacyType(IInputPrivacyKey key) => key switch
+    private static PrivacyType ToPrivacyType(IInputPrivacyKey key)
     {
-        TInputPrivacyKeyStatusTimestamp => PrivacyType.StatusTimestamp,
-        TInputPrivacyKeyChatInvite => PrivacyType.ChatInvite,
-        TInputPrivacyKeyPhoneCall => PrivacyType.PhoneCall,
-        TInputPrivacyKeyPhoneP2P => PrivacyType.PhoneP2P,
-        TInputPrivacyKeyForwards => PrivacyType.Forwards,
-        TInputPrivacyKeyProfilePhoto => PrivacyType.ProfilePhoto,
-        TInputPrivacyKeyPhoneNumber => PrivacyType.PhoneNumber,
-        TInputPrivacyKeyAddedByPhone => PrivacyType.AddedByPhone,
-        TInputPrivacyKeyVoiceMessages => PrivacyType.VoiceMessages,
-        TInputPrivacyKeyAbout => PrivacyType.About,
-        TInputPrivacyKeyBirthday => PrivacyType.Birthday,
-        TInputPrivacyKeyStarGiftsAutoSave => PrivacyType.StarGiftsAutoSave,
-        TInputPrivacyKeyNoPaidMessages => PrivacyType.NoPaidMessages,
-        TInputPrivacyKeySavedMusic => PrivacyType.SavedMusic,
-        _ => ThrowPrivacyKeyInvalid()
-    };
-
-    private static PrivacyType ThrowPrivacyKeyInvalid()
-    {
-        RpcErrors.RpcErrors400.PrivacyKeyInvalid.ThrowRpcError();
-        return PrivacyType.StatusTimestamp;
+        return PrivacyMapper.ToPrivacyType(key);
     }
 
     private static string? SerializeInputUsers(IEnumerable<IInputUser>? users)
     {
-        return SerializeIds(GetInputUserIds(users));
-    }
-
-    private static List<long> GetInputUserIds(IEnumerable<IInputUser>? users)
-    {
-        return users?.OfType<TInputUser>().Select(p => p.UserId).Distinct().ToList() ?? [];
+        return SerializeIds(PrivacyMapper.GetInputUserIds(users));
     }
 
     private static string? SerializeIds(IEnumerable<long>? ids)

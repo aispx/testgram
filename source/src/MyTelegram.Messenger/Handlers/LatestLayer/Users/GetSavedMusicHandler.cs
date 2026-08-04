@@ -17,6 +17,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 internal sealed class GetSavedMusicHandler(
     IPeerHelper peerHelper,
     IUserAppService userAppService,
+    IPrivacyAppService privacyAppService,
     IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetSavedMusic, MyTelegram.Schema.Users.ISavedMusic>, IObjectHandler
 {
     protected override async Task<MyTelegram.Schema.Users.ISavedMusic> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetSavedMusic obj)
@@ -32,6 +33,25 @@ internal sealed class GetSavedMusicHandler(
         if (userReadModel == null)
         {
             RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+        }
+
+        // privacyKeySavedMusic hides the profile playlist from disallowed viewers. An empty
+        // result is the documented outcome here — the official server does not raise an error.
+        if (targetUserId != input.UserId)
+        {
+            var allowed = true;
+            await privacyAppService.ApplyPrivacyAsync(input.UserId, targetUserId,
+                _ => allowed = false,
+                [PrivacyType.SavedMusic]);
+
+            if (!allowed)
+            {
+                return new TSavedMusic
+                {
+                    Count = 0,
+                    Documents = new TVector<MyTelegram.Schema.IDocument>()
+                };
+            }
         }
 
         // Query saved music from MongoDB

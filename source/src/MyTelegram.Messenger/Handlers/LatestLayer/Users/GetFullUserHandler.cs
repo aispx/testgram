@@ -54,7 +54,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetBotVerificationAsync(targetUserId, 0, userFull, user);
         await SetBotInfoAsync(targetUserId, userFull);
         await SetUserStoriesAsync(targetUserId, userFull, input.UserId);
-        await SetSavedMusicAsync(targetUserId, userFull);
+        await SetSavedMusicAsync(targetUserId, userFull, input.UserId);
         await SetChatThemeAsync(input.UserId, targetUserId, userFull);
         await SetNoForwardsAsync(input.UserId, targetUserId, userFull);
         await SetStarRefProgramAsync(targetUserId, userFull);
@@ -387,10 +387,26 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         }
     }
 
-    private async Task SetSavedMusicAsync(long targetUserId, IUserFull userFull)
+    private async Task SetSavedMusicAsync(long targetUserId, IUserFull userFull, long selfUserId)
     {
         try
         {
+            // privacyKeySavedMusic: leave userFull.saved_music unset for disallowed viewers,
+            // otherwise the pinned song leaks through the profile even though users.getSavedMusic
+            // would refuse to list it.
+            if (targetUserId != selfUserId)
+            {
+                var allowed = true;
+                await privacyAppService.ApplyPrivacyAsync(selfUserId, targetUserId,
+                    _ => allowed = false,
+                    [PrivacyType.SavedMusic]);
+
+                if (!allowed)
+                {
+                    return;
+                }
+            }
+
             // Query saved music from MongoDB
             var collection = mongoDatabase.GetCollection<BsonDocument>("saved_music");
             var filter = Builders<BsonDocument>.Filter.Eq("UserId", targetUserId);
