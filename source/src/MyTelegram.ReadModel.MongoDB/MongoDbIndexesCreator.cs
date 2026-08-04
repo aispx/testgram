@@ -15,6 +15,17 @@ public class MongoDbIndexesCreator(
         // bots.getBotRecommendations resolves a bot's user base by scanning dialogs pointing at it.
         await CreateIndexAsync<DialogReadModel>(p => p.ToPeerId);
 
+        // The same method's two shapes: the bot's audience (ToPeerId + ToPeerType + IsDeleted, sorted by
+        // OwnerId) and the overlap aggregation ($in on OwnerId + ToPeerType + IsDeleted, grouped by
+        // ToPeerId). Without these, every private dialog of a popular bot is fetched to re-check flags.
+        // IsDeleted is matched with $ne (a range, not an equality), so it must come *after* the sort
+        // field: measured on this mongod, putting it before OwnerId still forced an in-memory SORT stage,
+        // while this order serves the sort from the index.
+        await CreateCompoundIndexAsync<DialogReadModel>("idx_dialog_topeer_type_owner_deleted",
+            p => p.ToPeerId, p => p.ToPeerType, p => p.OwnerId, p => p.IsDeleted);
+        await CreateCompoundIndexAsync<DialogReadModel>("idx_dialog_owner_type_deleted_topeer",
+            p => p.OwnerId, p => p.ToPeerType, p => p.IsDeleted, p => p.ToPeerId);
+
         await CreateIndexAsync<MessageReadModel>(p => p.MessageId);
         await CreateIndexAsync<MessageReadModel>(p => p.OwnerPeerId);
         await CreateIndexAsync<MessageReadModel>(p => p.MessageType);
@@ -34,6 +45,17 @@ public class MongoDbIndexesCreator(
         await CreateIndexAsync<ChannelMemberReadModel>(p => p.UserId);
         await CreateIndexAsync<ChannelMemberReadModel>(p => p.Kicked);
         await CreateIndexAsync<ChannelMemberReadModel>(p => p.IsBot);
+
+        // channels.getChannelRecommendations runs two shapes over this collection on every call: the
+        // audience sample (ChannelId + Left/Kicked/IsBot, sorted by UserId) and the overlap aggregation
+        // ($in on UserId + Left/Kicked, grouped by ChannelId). The single-field indexes above make each
+        // one fetch every membership row of the channel just to re-check the boolean flags; these two
+        // cover the filters outright. The flags are matched with $ne (a range), so the sort/group field
+        // has to precede them - with the flags first, mongod still added an in-memory SORT stage.
+        await CreateCompoundIndexAsync<ChannelMemberReadModel>("idx_channelmember_channel_user_flags",
+            p => p.ChannelId, p => p.UserId, p => p.Left, p => p.Kicked, p => p.IsBot);
+        await CreateCompoundIndexAsync<ChannelMemberReadModel>("idx_channelmember_user_flags_channel",
+            p => p.UserId, p => p.Left, p => p.Kicked, p => p.ChannelId);
         //await CreateIndexAsync<AuthKeyReadModel>(p => p.TempAuthKeyId);
 
         await CreateIndexAsync<DeviceReadModel>(p => p.PermAuthKeyId);
