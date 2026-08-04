@@ -1,6 +1,7 @@
 using StackExchange.Redis;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
+using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.PaidMedia;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -121,27 +122,13 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
+internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMedia obj)
     {
-        var needCheckAudioMessagePrivacy = false;
-        switch (obj.Media)
-        {
-            case Schema.TInputMediaUploadedDocument inputMediaUploadedDocument:
-                if (inputMediaUploadedDocument.Attributes.Any(p => p is TDocumentAttributeAudio))
-                {
-                    needCheckAudioMessagePrivacy = true;
-                }
-
-                break;
-                //case Schema.Layer197.TInputMediaUploadedDocument inputMediaUploadedDocumentLayer197:
-                //    if (inputMediaUploadedDocumentLayer197.Attributes.Any(p => p is TDocumentAttributeAudio))
-                //    {
-                //        needCheckAudioMessagePrivacy = true;
-                //    }
-                //    break;
-        }
+        // Only voice notes are covered by privacyKeyVoiceMessages. This used to match any
+        // TDocumentAttributeAudio, which also blocked ordinary music uploads.
+        var needCheckAudioMessagePrivacy = VoiceMessageHelper.IsVoiceMedia(obj.Media);
 
         if (needCheckAudioMessagePrivacy && obj.Peer is TInputPeerUser inputPeerUser)
         {
@@ -206,7 +193,17 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
 
         if (obj.Media is TInputMediaTodo inputMediaTodo)
         {
-            ValidateTodoList(inputMediaTodo.Todo);
+            // Checklist creation is Premium-only, and they cannot be posted to broadcast channels
+            // or to channel direct messages (monoforums) — see https://corefork.telegram.org/api/todo
+            // and TDLib MessageContent.cpp (MessageContentType::ToDoList).
+            await userAppService.CheckAccountPremiumStatusAsync(input.UserId);
+
+            if (isMonoforum || channelForMonoforum?.Broadcast == true)
+            {
+                RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
+            }
+
+            TodoListHelper.ValidateTodoList(inputMediaTodo.Todo);
         }
 
         var ownerPeerId = toPeer.PeerType == PeerType.Channel ? toPeer.PeerId : input.UserId;
@@ -358,50 +355,5 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             poll.ShuffleAnswers,
             poll.HideResultsUntilClose);
         await commandBus.PublishAsync(command);
-    }
-
-    private void ValidateTodoList(ITodoList todoList)
-    {
-        const int TODO_TITLE_LENGTH_MAX = 255;
-        const int TODO_ITEM_LENGTH_MAX = 200;
-        const int TODO_ITEMS_MAX = 30;
-
-        // Validate title length
-        if (todoList.Title.Text.Length > TODO_TITLE_LENGTH_MAX)
-        {
-            RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
-        }
-
-        // Validate items count
-        if (todoList.List.Count == 0)
-        {
-            RpcErrors.RpcErrors400.TodoItemsEmpty.ThrowRpcError();
-        }
-
-        if (todoList.List.Count > TODO_ITEMS_MAX)
-        {
-            RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
-        }
-
-        // Validate item IDs are unique and positive
-        var ids = new HashSet<int>();
-        foreach (var item in todoList.List)
-        {
-            if (item.Id <= 0)
-            {
-                RpcErrors.RpcErrors400.TodoItemDuplicate.ThrowRpcError();
-            }
-
-            if (!ids.Add(item.Id))
-            {
-                RpcErrors.RpcErrors400.TodoItemDuplicate.ThrowRpcError();
-            }
-
-            // Validate item title length
-            if (item.Title.Text.Length > TODO_ITEM_LENGTH_MAX)
-            {
-                RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
-            }
-        }
     }
 }

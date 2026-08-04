@@ -120,6 +120,16 @@ public class MessageAppService(
         }
     }
 
+    public async Task<Peer?> GetAnonymousSendAsPeerAsync(long channelId, long userId)
+    {
+        var channelReadModel = await channelAppService.GetAsync(channelId);
+        var admin = channelReadModel?.AdminList.FirstOrDefault(p => p.UserId == userId);
+
+        return admin is { AdminRights.Anonymous: true }
+            ? channelId.ToChannelPeer()
+            : null;
+    }
+
     public async Task<GetMessageOutput> GetChannelDifferenceAsync(GetDifferenceInput input)
     {
         return await GetMessagesInternalAsync(new GetMessagesQuery(input.OwnerPeerId,
@@ -462,13 +472,16 @@ public class MessageAppService(
     /// <summary>
     /// True when the message being sent is a poll, so the <c>send_polls</c> banned right
     /// applies. Covers both freshly created polls and forwarded ones.
+    /// Checklists are governed by the same right — see TDLib
+    /// <c>MessageContent.cpp</c>: <c>MessageContentType::ToDoList</c> requires
+    /// <c>permissions.can_send_polls()</c>.
     /// </summary>
     private static bool IsPoll(SendMessageInput input)
     {
         return input.MessageType == MessageType.Poll
                || input.PollId != null
-               || input.Media is TMessageMediaPoll
-               || input.InputMedia is TInputMediaPoll;
+               || input.Media is TMessageMediaPoll or TMessageMediaToDo
+               || input.InputMedia is TInputMediaPoll or TInputMediaTodo;
     }
 
     /// <summary>
@@ -584,6 +597,35 @@ public class MessageAppService(
         return null;
     }
 
+    /// <summary>
+    /// A reply may target a single checklist item via <c>todo_item_id</c>. If the message being
+    /// replied to is not a checklist, the field is meaningless and is dropped, so clients never
+    /// receive a task reference pointing at a message without tasks — matching TDLib, which resets
+    /// <c>checklist_task_id</c> in the same situation.
+    /// See https://corefork.telegram.org/api/todo
+    /// </summary>
+    private async Task ClearTodoItemIdIfNotChecklistAsync(SendMessageInput input, long ownerPeerId, int? replyToMsgId)
+    {
+        if (input.InputReplyTo is not TInputReplyToMessage { TodoItemId: > 0 } replyToMessage)
+        {
+            return;
+        }
+
+        if (replyToMsgId is not > 0)
+        {
+            replyToMessage.TodoItemId = null;
+            return;
+        }
+
+        var repliedMessage = await queryProcessor.ProcessAsync(
+            new GetMessageByPeerIdAndMessageIdQuery(ownerPeerId, replyToMsgId.Value));
+        if (repliedMessage?.Media2 is not TMessageMediaToDo todoMedia ||
+            todoMedia.Todo.List.All(p => p.Id != replyToMessage.TodoItemId))
+        {
+            replyToMessage.TodoItemId = null;
+        }
+    }
+
     private async Task<SendMessageItem> CreateSendMessageItemAsync(SendMessageInput input)
     {
         //await CheckSendAsAsync(input);
@@ -609,6 +651,7 @@ public class MessageAppService(
         }
         var ownerPeerId = input.ToPeer.PeerType == PeerType.Channel ? input.ToPeer.PeerId : input.SenderUserId;
         var replyToMsgId = input.InputReplyTo.ToReplyToMsgId();
+        await ClearTodoItemIdIfNotChecklistAsync(input, ownerPeerId, replyToMsgId);
 
         // Reply to group: ToPeerId=input.ToPeerId,SenderUserId=input.UserId
         // Reply to user:  ToPeerId=Input.UserId,OwnerPeerId=input.ToPeerId,MessageId=replyToMsgId
