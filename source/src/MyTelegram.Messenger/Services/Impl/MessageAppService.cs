@@ -163,14 +163,127 @@ public class MessageAppService(
         return GetMessagesCoreAsync(input);
     }
 
-    public Task<GetMessageOutput> SearchAsync(SearchInput input)
+    public async Task<GetMessageOutput> SearchAsync(SearchInput input)
     {
-        return GetMessagesCoreAsync(input);
+        var output = await GetMessagesCoreAsync(input);
+        if (input.MyMentionsOnly)
+        {
+            output = await FilterMyMentionsAsync(output, input.SelfUserId);
+        }
+
+        if (input.SavedReaction?.Count > 0)
+        {
+            output = FilterBySavedReaction(output, input.SavedReaction);
+        }
+
+        return output;
     }
 
-    public Task<GetMessageOutput> SearchGlobalAsync(SearchGlobalInput input)
+    /// <summary>
+    /// Applies saved_reaction (saved messages tags). Reactions are stored as a nested polymorphic
+    /// list, which cannot be matched inside the read model query, so the tag filter runs after the
+    /// query. As with mentions, a page can come back shorter than the requested limit.
+    /// See https://corefork.telegram.org/api/saved-messages#tags
+    /// </summary>
+    private static GetMessageOutput FilterBySavedReaction(GetMessageOutput output,
+        TVector<IReaction> savedReactions)
     {
-        return GetMessagesCoreAsync(input);
+        if (output.MessageList.Count == 0)
+        {
+            return output;
+        }
+
+        var emoticons = savedReactions.OfType<TReactionEmoji>().Select(p => p.Emoticon).ToHashSet(StringComparer.Ordinal);
+        var customEmojiIds = savedReactions.OfType<TReactionCustomEmoji>().Select(p => p.DocumentId).ToHashSet();
+
+        output.MessageList = output.MessageList
+            .Where(p => p.Reactions?.Any(r =>
+                (r.Emoticon != null && emoticons.Contains(r.Emoticon)) ||
+                (r.CustomEmojiDocumentId.HasValue && customEmojiIds.Contains(r.CustomEmojiDocumentId.Value))) == true)
+            .ToList();
+
+        return output;
+    }
+
+    public async Task<GetMessageOutput> SearchGlobalAsync(SearchGlobalInput input)
+    {
+        var output = await GetMessagesCoreAsync(input);
+        return input.MyMentionsOnly ? await FilterMyMentionsAsync(output, input.SelfUserId) : output;
+    }
+
+    /// <summary>
+    /// Applies inputMessagesFilterMyMentions. There is no indexed "mentions me" flag on the read
+    /// model, so mentions are resolved from message entities after the query runs. Consequence: a
+    /// page can come back shorter than the requested limit (the client keeps paging by offset_id).
+    /// </summary>
+    private async Task<GetMessageOutput> FilterMyMentionsAsync(GetMessageOutput output, long selfUserId)
+    {
+        if (output.MessageList.Count == 0)
+        {
+            return output;
+        }
+
+        var selfUser = await userAppService.GetAsync(selfUserId);
+        var userName = selfUser?.UserName;
+        var activeUserNames = selfUser?.Usernames?.Where(p => p.Active).Select(p => p.Username).ToList() ?? [];
+
+        var mentioned = output.MessageList
+            .Where(p => MentionsUser(p, selfUserId, userName, activeUserNames))
+            .ToList();
+
+        output.MessageList = mentioned;
+        return output;
+    }
+
+    private static bool MentionsUser(IMessageReadModel message, long selfUserId, string? userName,
+        List<string> activeUserNames)
+    {
+        if (message.Entities2 != null)
+        {
+            foreach (var entity in message.Entities2)
+            {
+                switch (entity)
+                {
+                    case TMessageEntityMentionName mentionName when mentionName.UserId == selfUserId:
+                        return true;
+
+                    // messageEntityMention only carries offset/length, so the username has to be
+                    // read back out of the message text.
+                    case TMessageEntityMention mention:
+                        if (ContainsOwnUserName(message.Message, mention.Offset, mention.Length, userName,
+                                activeUserNames))
+                        {
+                            return true;
+                        }
+
+                        break;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsOwnUserName(string? text, int offset, int length, string? userName,
+        List<string> activeUserNames)
+    {
+        if (string.IsNullOrEmpty(text) || offset < 0 || length <= 0 || offset + length > text.Length)
+        {
+            return false;
+        }
+
+        var mentioned = text.Substring(offset, length).TrimStart('@');
+        if (mentioned.Length == 0)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(userName) && mentioned.Equals(userName, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return activeUserNames.Any(p => mentioned.Equals(p, StringComparison.OrdinalIgnoreCase));
     }
     public async Task SendMessageAsync(List<SendMessageInput> inputs)
     {

@@ -111,7 +111,13 @@ public class CustomObjectMapper : ILayeredMapper,
                 BroadcastsOnly: source.BroadcastsOnly,
                 GroupsOnly: source.GroupsOnly,
                 UsersOnly: source.UsersOnly,
-                Tokens: source.Tokens
+                Tokens: source.Tokens,
+                MessageTypes: source.MessageTypes,
+                MinDate: source.MinDate,
+                MaxDate: source.MaxDate,
+                MinId: source.MinId,
+                MaxId: source.MaxId,
+                OffsetRate: source.OffsetRate
             )
         {
             IsSearchGlobal = source.IsSearchGlobal,
@@ -140,7 +146,12 @@ public class CustomObjectMapper : ILayeredMapper,
             ReplyToMsgId: source.TopMsgId,
             Tokens: source.Tokens,
             FilterSenderUserId: source.FilterSenderUserId,
-            SavedPeerId: source.SavedPeerId
+            SavedPeerId: source.SavedPeerId,
+            MessageTypes: source.MessageTypes,
+            MinDate: source.MinDate,
+            MaxDate: source.MaxDate,
+            MinId: source.MinId,
+            MaxId: source.MaxId
             );
     }
 }

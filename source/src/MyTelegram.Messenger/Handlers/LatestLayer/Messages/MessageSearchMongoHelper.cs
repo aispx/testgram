@@ -31,13 +31,14 @@ internal static class MessageSearchMongoHelper
         var (peer, savedPeer, ownerPeerId) = ResolveScope(peerHelper, input, peerInput, savedPeerInput);
         var filterDef = builder.And(
             builder.Eq("OwnerPeerId", ownerPeerId),
-            builder.Eq("ToPeerType", peer.PeerType.ToString()),
+            // Enums are persisted as their numeric value, not as their name.
+            builder.Eq("ToPeerType", (int)peer.PeerType),
             builder.Eq("ToPeerId", peer.PeerId)
         );
 
         if (savedPeer != null)
         {
-            filterDef &= builder.Eq("SavedPeerId.PeerType", savedPeer.PeerType.ToString());
+            filterDef &= builder.Eq("SavedPeerId.PeerType", (int)savedPeer.PeerType);
             filterDef &= builder.Eq("SavedPeerId.PeerId", savedPeer.PeerId);
         }
         else if (topMsgId.HasValue)
@@ -55,44 +56,20 @@ internal static class MessageSearchMongoHelper
             filterDef &= builder.Lte("Date", offsetDate.Value);
         }
 
-        var messageType = GetMessageType(filter);
-        if (messageType == MessageType.Pinned)
+        if (MessageFilterHelper.IsPinnedFilter(filter))
         {
             filterDef &= builder.Eq("Pinned", true);
         }
-        else if (messageType != MessageType.Unknown)
+        else
         {
-            filterDef &= builder.Eq("MessageType", messageType.ToString());
+            var messageTypes = MessageFilterHelper.GetMessageTypes(filter);
+            if (messageTypes.Count > 0)
+            {
+                filterDef &= builder.In("MessageType", messageTypes.Select(p => (int)p));
+            }
         }
 
         return filterDef;
-    }
-
-    public static MessageType GetMessageType(IMessagesFilter? filter)
-    {
-        return filter switch
-        {
-            null => MessageType.Unknown,
-            TInputMessagesFilterChatPhotos => MessageType.Photo,
-            TInputMessagesFilterContacts => MessageType.Contacts,
-            TInputMessagesFilterDocument => MessageType.Document,
-            TInputMessagesFilterEmpty => MessageType.Unknown,
-            TInputMessagesFilterGeo => MessageType.Geo,
-            TInputMessagesFilterGif => MessageType.Photo,
-            TInputMessagesFilterMusic => MessageType.Music,
-            TInputMessagesFilterMyMentions => MessageType.Unknown,
-            TInputMessagesFilterPhoneCalls => MessageType.PhoneCall,
-            TInputMessagesFilterPhotos => MessageType.Photo,
-            TInputMessagesFilterPhotoVideo => MessageType.Video,
-            TInputMessagesFilterPinned => MessageType.Pinned,
-            TInputMessagesFilterPoll => MessageType.Poll,
-            TInputMessagesFilterRoundVideo => MessageType.Video,
-            TInputMessagesFilterRoundVoice => MessageType.Voice,
-            TInputMessagesFilterUrl => MessageType.Url,
-            TInputMessagesFilterVideo => MessageType.Video,
-            TInputMessagesFilterVoice => MessageType.Voice,
-            _ => MessageType.Unknown
-        };
     }
 
     public static long CalcHash(long hash, long id)

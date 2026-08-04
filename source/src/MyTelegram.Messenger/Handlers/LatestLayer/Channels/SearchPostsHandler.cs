@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Globally search for posts from public <a href="https://corefork.telegram.org/api/channel">channels »</a> (<em>including</em> those we aren't a member of) containing either a specific hashtag, <em>or</em> a full text query.Exactly one of <code>query</code> and <code>hashtag</code> must be set.
@@ -10,28 +13,38 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokenizer tokenizer, IChatConverterService chatConverterService, IUserConverterService userConverterService, IMessageConverterService messageConverterService, IPeerHelper peerHelper, IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSearchPosts, MyTelegram.Schema.Messages.IMessages>
+internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokenizer tokenizer, IChatConverterService chatConverterService, IUserConverterService userConverterService, IMessageConverterService messageConverterService, IPeerHelper peerHelper, IMessageAppService messageAppService, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSearchPosts, MyTelegram.Schema.Messages.IMessages>
 {
     private const int MinTextSearchLength = 2;
     private const int MaxSearchLimit = 100;
 
     protected override async Task<MyTelegram.Schema.Messages.IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestSearchPosts obj)
     {
-        //if (string.IsNullOrEmpty(obj.Hashtag))
-        //{
-        //    RpcErrors.RpcErrors400.HashtagInvalid.ThrowRpcError();
-        //}
         var peer = peerHelper.GetPeer(obj.OffsetPeer);
         var query = NormalizeQuery(obj.Query);
-        var hashtag = NormalizeQuery(obj.Hashtag);
+        var hashtag = NormalizeQuery(obj.Hashtag).TrimStart('#');
+
+        // Exactly one of query/hashtag must be set.
+        // See https://corefork.telegram.org/method/channels.searchPosts
+        if ((query.Length > 0) == (hashtag.Length > 0))
+        {
+            if (query.Length == 0)
+            {
+                RpcErrors.RpcErrors400.SearchQueryEmpty.ThrowRpcError();
+            }
+
+            RpcErrors.RpcErrors400.HashtagInvalid.ThrowRpcError();
+        }
+
         if (query.Length is > 0 and < MinTextSearchLength)
         {
             RpcErrors.RpcErrors400.QueryTooShort.ThrowRpcError();
         }
 
-        if (query.Length == 0 && hashtag.Length == 0)
+        // The first page consumes quota; paging through an already-paid search must stay free.
+        if (obj.OffsetId == 0 && obj.OffsetRate == 0)
         {
-            RpcErrors.RpcErrors400.SearchQueryEmpty.ThrowRpcError();
+            await ChargeSearchAsync(input, obj);
         }
 
         var limit = NormalizeLimit(obj.Limit);
@@ -70,6 +83,35 @@ internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokeni
     private static int NormalizeLimit(int limit)
     {
         return limit <= 0 ? 20 : Math.Min(limit, MaxSearchLimit);
+    }
+
+    /// <summary>
+    /// Spends one free daily search, or charges Stars once the free quota is used up. Clients learn
+    /// the price from <c>channels.checkSearchPostsFlood</c> and confirm it via <c>allow_paid_stars</c>.
+    /// </summary>
+    private async Task ChargeSearchAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestSearchPosts obj)
+    {
+        if (await SearchPostsFloodHelper.TryConsumeFreeSearchAsync(mongoDatabase, input.UserId))
+        {
+            return;
+        }
+
+        var price = SearchPostsFloodHelper.StarsAmount;
+
+        // The client has to acknowledge the price before we may spend the user's Stars.
+        if (obj.AllowPaidStars is null || obj.AllowPaidStars < price)
+        {
+            RpcErrors.RpcErrors400.StarsPaymentRequired.ThrowRpcError();
+        }
+
+        var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+        if (balance < price)
+        {
+            RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
+        }
+
+        await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -price);
+        await StarsBalanceHelper.AddTransactionAsync(mongoDatabase, input.UserId, -price);
     }
 
     private static string NormalizeQuery(string? query)

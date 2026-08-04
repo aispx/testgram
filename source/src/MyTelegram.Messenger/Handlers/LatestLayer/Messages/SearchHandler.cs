@@ -29,19 +29,23 @@ internal sealed class SearchHandler(IMessageAppService messageAppService, IToken
     protected override async Task<IMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSearch obj)
     {
         var q = NormalizeQuery(obj.Q);
-        var messageType = GetMessageType(obj.Filter);
-        if (q.Length == 0 && messageType == MessageType.Unknown)
+        var messageTypes = MessageFilterHelper.GetMessageTypes(obj.Filter);
+        var isPinned = MessageFilterHelper.IsPinnedFilter(obj.Filter);
+        var myMentionsOnly = MessageFilterHelper.IsMyMentionsFilter(obj.Filter);
+        var hasFilter = messageTypes.Count > 0 || isPinned || myMentionsOnly;
+
+        if (q.Length == 0 && !hasFilter)
         {
             RpcErrors.RpcErrors400.SearchQueryEmpty.ThrowRpcError();
         }
 
-        if (q.Length is > 0 and < MinTextSearchLength && messageType == MessageType.Unknown)
-        {
-            RpcErrors.RpcErrors400.QueryTooShort.ThrowRpcError();
-        }
-
         if (q.Length is > 0 and < MinTextSearchLength)
         {
+            if (!hasFilter)
+            {
+                RpcErrors.RpcErrors400.QueryTooShort.ThrowRpcError();
+            }
+
             q = string.Empty;
         }
 
@@ -65,12 +69,28 @@ internal sealed class SearchHandler(IMessageAppService messageAppService, IToken
             MaxId = obj.MaxId,
             MinDate = obj.MinDate,
             MinId = obj.MinId,
-            MessageType = messageType,
+            MessageType = isPinned ? MessageType.Pinned : MessageType.Unknown,
+            MessageTypes = messageTypes,
+            MyMentionsOnly = myMentionsOnly,
             Tokens = tokens,
             FilterSenderUserId = fromPeer?.PeerType == PeerType.User ? fromPeer.PeerId : 0,
             SavedPeerId = savedPeer,
+            SavedReaction = savedPeer != null ? obj.SavedReaction : null,
             TopMsgId = obj.TopMsgId ?? 0
         });
+
+        // hash covers the returned message ids so unchanged result sets can be short-circuited.
+        // See https://corefork.telegram.org/api/offsets#hash-generation
+        if (obj.Hash != 0)
+        {
+            var hash = getMessageOutput.MessageList.Aggregate(0L,
+                (current, message) => MessageSearchMongoHelper.CalcHash(current, message.MessageId));
+            if (hash == obj.Hash)
+            {
+                return new TMessagesNotModified { Count = getMessageOutput.MessageList.Count };
+            }
+        }
+
         return getHistoryConverterService.ToMessages(input, getMessageOutput, input.Layer);
     }
 
@@ -84,72 +104,5 @@ internal sealed class SearchHandler(IMessageAppService messageAppService, IToken
         return query?.Trim() ?? string.Empty;
     }
 
-    private static MessageType GetMessageType(IMessagesFilter? filter)
-    {
-        if (filter != null)
-        {
-            var messageType = MessageType.Unknown;
-            switch (filter)
-            {
-                case TInputMessagesFilterChatPhotos:
-                    messageType = MessageType.Photo;
-                    break;
-                case TInputMessagesFilterContacts:
-                    messageType = MessageType.Contacts;
-                    break;
-                case TInputMessagesFilterDocument:
-                    messageType = MessageType.Document;
-                    break;
-                case TInputMessagesFilterEmpty:
-                    break;
-                case TInputMessagesFilterGeo:
-                    messageType = MessageType.Geo;
-                    break;
-                case TInputMessagesFilterGif:
-                    messageType = MessageType.Photo;
-                    break;
-                case TInputMessagesFilterMusic:
-                    messageType = MessageType.Music;
-                    break;
-                case TInputMessagesFilterMyMentions:
-                    break;
-                case TInputMessagesFilterPhoneCalls:
-                    messageType = MessageType.PhoneCall;
-                    break;
-                case TInputMessagesFilterPoll:
-                    messageType = MessageType.Poll;
-                    break;
-                case TInputMessagesFilterPhotos:
-                    messageType = MessageType.Photo;
-                    break;
-                case TInputMessagesFilterPhotoVideo:
-                    messageType = MessageType.Video;
-                    break;
-                case TInputMessagesFilterPinned:
-                    messageType = MessageType.Pinned;
-                    break;
-                case TInputMessagesFilterRoundVideo:
-                    messageType = MessageType.Video;
-                    break;
-                case TInputMessagesFilterRoundVoice:
-                    messageType = MessageType.Voice;
-                    break;
-                case TInputMessagesFilterUrl:
-                    messageType = MessageType.Url;
-                    break;
-                case TInputMessagesFilterVideo:
-                    messageType = MessageType.Video;
-                    break;
-                case TInputMessagesFilterVoice:
-                    messageType = MessageType.Voice;
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(filter));
-            }
 
-            return messageType;
-        }
-
-        return MessageType.Unknown;
-    }
 }

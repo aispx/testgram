@@ -54,12 +54,17 @@ internal sealed class GetHistoryConverterService(IUserConverterService userConve
 
         if (messages.Count == output.Limit)
         {
+            // next_rate is the paging cursor for messages.searchGlobal: the date of the oldest
+            // message in this page, which the client sends back as offset_rate.
+            // See https://corefork.telegram.org/method/messages.searchGlobal
+            var nextRate = output.MessageList.Min(p => p.Date);
+
             return new TMessagesSlice
             {
                 Chats = [.. channels],
                 Count = messages.Count,
                 Inexact = true,
-                NextRate = DateTime.UtcNow.AddSeconds(3).ToTimestamp(),
+                NextRate = nextRate,
                 Messages = [.. messages],
                 Users = [.. users],
                 OffsetIdOffset = offsetId,

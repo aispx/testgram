@@ -11,6 +11,13 @@ internal sealed class GetSearchResultsPositionsHandler(
 {
     protected override async Task<MyTelegram.Schema.Messages.ISearchResultsPositions> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSearchResultsPositions obj)
     {
+        // inputMessagesFilterEmpty and inputMessagesFilterMyMentions are not supported here.
+        // See https://corefork.telegram.org/method/messages.getSearchResultsPositions
+        if (!MessageFilterHelper.IsSupportedByPositionsAndCalendar(obj.Filter))
+        {
+            RpcErrors.RpcErrors400.FilterNotSupported.ThrowRpcError();
+        }
+
         var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
         var filter = MessageSearchMongoHelper.BuildFilter(input, peerHelper, obj.Peer, obj.SavedPeerId, null, obj.Filter, obj.OffsetId);
         var count = (int)await collection.CountDocumentsAsync(filter);
@@ -21,14 +28,25 @@ internal sealed class GetSearchResultsPositionsHandler(
             .Limit(limit)
             .ToListAsync();
 
+        // offset is the absolute index of the message within the whole filtered history, so paging
+        // has to account for the messages newer than offset_id that were skipped by the filter.
+        var skipped = 0;
+        if (obj.OffsetId > 0)
+        {
+            var newerFilter = MessageSearchMongoHelper.BuildFilter(input, peerHelper, obj.Peer, obj.SavedPeerId,
+                null, obj.Filter);
+            newerFilter &= Builders<BsonDocument>.Filter.Gte("MessageId", obj.OffsetId);
+            skipped = (int)await collection.CountDocumentsAsync(newerFilter);
+        }
+
         return new TSearchResultsPositions
         {
-            Count = count,
+            Count = count + skipped,
             Positions = new TVector<ISearchResultsPosition>(docs.Select((d, i) => (ISearchResultsPosition)new TSearchResultPosition
             {
                 MsgId = d["MessageId"].AsInt32,
                 Date = d["Date"].AsInt32,
-                Offset = i
+                Offset = skipped + i
             }))
         };
     }

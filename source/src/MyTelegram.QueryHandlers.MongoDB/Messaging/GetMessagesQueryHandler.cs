@@ -42,13 +42,16 @@ public class
                 .WhereIf(
                     query.MessageType != MessageType.Unknown && query.MessageType != MessageType.Pinned,
                     p => p.MessageType == query.MessageType)
+                .WhereIf(query.MessageTypes?.Count > 0, p => query.MessageTypes!.Contains(p.MessageType))
+                .WhereIf(query.MinDate > 0, p => p.Date >= query.MinDate)
+                .WhereIf(query.MaxDate > 0, p => p.Date <= query.MaxDate)
+                .WhereIf(query.MinId > 0, p => p.MessageId > query.MinId)
+                .WhereIf(query.MaxId > 0, p => p.MessageId < query.MaxId)
+                .WhereIf(query.OffsetRate > 0, p => p.Date < query.OffsetRate)
                 .WhereIf(query.MessageType == MessageType.Pinned, p => p.Pinned)
                 .WhereIf(query.MessageIdList?.Count > 0, p => query.MessageIdList!.Contains(p.MessageId))
                 .WhereIf(query.ChannelHistoryMinId > 0, p => p.MessageId > query.ChannelHistoryMinId)
-                //.WhereIf(query.Offset?.LoadType == LoadType.Forward, p => p.MessageId > query.Offset!.FromId)
-                //.WhereIf(query.Offset?.MaxId > 0, p => p.MessageId < query.Offset!.MaxId)
                 .WhereIf(query.Offset is { LoadType: LoadType.Backward, MaxId: > 0 }, p => p.MessageId < query.Offset!.MaxId)
-                //.WhereIf(query.Offset is { LoadType: LoadType.AroundMessage, MaxId: > 0 }, p => p.MessageId < query.Offset!.MaxId)
                 .WhereIf(query.Offset?.LoadType == LoadType.Forward, p => p.MessageId > query.Offset!.FromId)
                 .WhereIf(query.Pts > 0, p => p.Pts > query.Pts)
                 .WhereIf(query.Peer != null && query.Peer.PeerType != PeerType.Empty,
@@ -131,6 +134,12 @@ public class
                     query.MessageType != MessageType.Unknown && query.MessageType != MessageType.Pinned,
                     p => p.MessageType == query.MessageType)
                 .WhereIf(query.MessageType == MessageType.Pinned, p => p.Pinned)
+                .WhereIf(query.MessageTypes?.Count > 0, p => query.MessageTypes!.Contains(p.MessageType))
+                .WhereIf(query.MinDate > 0, p => p.Date >= query.MinDate)
+                .WhereIf(query.MaxDate > 0, p => p.Date <= query.MaxDate)
+                .WhereIf(query.MinId > 0, p => p.MessageId > query.MinId)
+                .WhereIf(query.MaxId > 0, p => p.MessageId < query.MaxId)
+                .WhereIf(query.OffsetRate > 0, p => p.Date < query.OffsetRate)
                 .WhereIf(query.MessageIdList?.Count > 0, p => query.MessageIdList!.Contains(p.MessageId))
                 .WhereIf(query.ChannelHistoryMinId > 0, p => p.MessageId > query.ChannelHistoryMinId)
                 //.WhereIf(query.Offset?.LoadType == LoadType.Forward, p => p.MessageId > query.Offset!.FromId)

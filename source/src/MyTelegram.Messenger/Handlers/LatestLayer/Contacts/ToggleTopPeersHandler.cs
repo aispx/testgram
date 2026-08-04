@@ -1,3 +1,5 @@
+using MongoDB.Driver;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Contacts;
 /// <summary>
 /// Enable/disable <a href="https://corefork.telegram.org/api/top-rating">top peers</a>
@@ -6,10 +8,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Contacts;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ToggleTopPeersHandler : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestToggleTopPeers, IBool>
+internal sealed class ToggleTopPeersHandler(IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestToggleTopPeers, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Contacts.RequestToggleTopPeers obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Contacts.RequestToggleTopPeers obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        await TopPeerRatingHelper.SetDisabledAsync(mongoDatabase, input.UserId, !obj.Enabled);
+        return new TBoolTrue();
     }
 }

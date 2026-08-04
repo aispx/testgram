@@ -20,19 +20,50 @@ internal sealed class SearchGlobalHandler(IMessageAppService messageAppService, 
     {
         var userId = input.UserId;
         var q = NormalizeQuery(obj.Q);
-        if (q.Length == 0)
+        var messageTypes = MessageFilterHelper.GetMessageTypes(obj.Filter);
+        var myMentionsOnly = MessageFilterHelper.IsMyMentionsFilter(obj.Filter);
+        var hasFilter = messageTypes.Count > 0 || myMentionsOnly || MessageFilterHelper.IsPinnedFilter(obj.Filter);
+
+        // The media/links/files/music/voice tabs of global search are pre-populated with an empty
+        // query plus a filter, so an empty query is only an error when no filter narrows the search.
+        // See https://corefork.telegram.org/api/search#global-search
+        if (q.Length == 0 && !hasFilter)
         {
             RpcErrors.RpcErrors400.SearchQueryEmpty.ThrowRpcError();
         }
 
         if (q.Length is > 0 and < MinTextSearchLength)
         {
-            RpcErrors.RpcErrors400.QueryTooShort.ThrowRpcError();
+            if (!hasFilter)
+            {
+                RpcErrors.RpcErrors400.QueryTooShort.ThrowRpcError();
+            }
+
+            // Too short to tokenize, but the filter alone still yields a meaningful result set.
+            q = string.Empty;
         }
 
         var allJoinedChannelIdList = await queryProcessor.ProcessAsync(new GetAllJoinedChannelIdListQuery(input.UserId));
         var tokens = tokenizer.BuildSearchTokens(q);
-        var getMessageOutput = await messageAppService.SearchGlobalAsync(new SearchGlobalInput { OwnerPeerId = userId, SelfUserId = userId, Limit = NormalizeLimit(obj.Limit), Q = q, FolderId = obj.FolderId, OffsetId = obj.OffsetId, JoinedChannelList = allJoinedChannelIdList.ToList(), BroadcastsOnly = obj.BroadcastsOnly, GroupsOnly = obj.GroupsOnly, UsersOnly = obj.UsersOnly, Tokens = tokens });
+        var getMessageOutput = await messageAppService.SearchGlobalAsync(new SearchGlobalInput
+        {
+            OwnerPeerId = userId,
+            SelfUserId = userId,
+            Limit = NormalizeLimit(obj.Limit),
+            Q = q,
+            FolderId = obj.FolderId,
+            OffsetId = obj.OffsetId,
+            JoinedChannelList = allJoinedChannelIdList.ToList(),
+            BroadcastsOnly = obj.BroadcastsOnly,
+            GroupsOnly = obj.GroupsOnly,
+            UsersOnly = obj.UsersOnly,
+            Tokens = tokens,
+            MessageTypes = messageTypes,
+            MyMentionsOnly = myMentionsOnly,
+            MinDate = obj.MinDate,
+            MaxDate = obj.MaxDate,
+            OffsetRate = obj.OffsetRate
+        });
         return getHistoryConverterService.ToMessages(input, getMessageOutput, input.Layer);
     }
 
