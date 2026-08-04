@@ -10,6 +10,7 @@ internal sealed class StartLiveHandler(
     IIdGenerator idGenerator,
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IStoryAccessService storyAccessService,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<RequestStartLive, IUpdates>
 {
@@ -22,6 +23,9 @@ internal sealed class StartLiveHandler(
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestStartLive obj)
     {
+        // Starting a live story posts a story as the peer, so it needs the same right as sendStory.
+        await storyAccessService.ResolveOwnedPeerAsync(obj.Peer, input.UserId, StoryRight.Post);
+
         var ownerPeer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (ownerPeer == null)
         {
@@ -58,7 +62,8 @@ internal sealed class StartLiveHandler(
             }
         }
 
-        var storyId = await idGenerator.NextIdAsync(IdType.StoryId, input.UserId);
+        // Story ids belong to the owner peer, not to the admin who started the stream.
+        var storyId = await idGenerator.NextIdAsync(IdType.StoryId, ownerPeer.PeerId);
         var groupCallId = await idGenerator.NextIdAsync(IdType.MessageId, input.UserId);
         var groupCallAccessHash = GroupCallStateHelper.CreateAccessHash();
         var streamId = GroupCallRtmpHelper.GetStreamId(ownerPeer.PeerId, (int)ownerPeer.PeerType, liveStory: true);
@@ -88,7 +93,8 @@ internal sealed class StartLiveHandler(
             ? savedRtmpStream?.Key
             : null;
 
-        var isCloseFriends = obj.PrivacyRules?.Any(p => p is TInputPrivacyValueAllowCloseFriends) ?? false;
+        var privacyRules = StoryHelper.ParsePrivacyRules(obj.PrivacyRules);
+        var isCloseFriends = privacyRules.Any(r => r.Type == StoryPrivacyRuleType.AllowCloseFriends);
         var messagesEnabled = obj.MessagesEnabled ?? true;
 
         var storyDocument = new StoryDocument
@@ -101,6 +107,8 @@ internal sealed class StartLiveHandler(
             ExpireDate = expireDate,
             Caption = obj.Caption,
             Pinned = obj.Pinned,
+            // Like any other story, a live story is archived on creation.
+            Archived = true,
             NoForwards = obj.Noforwards,
             MediaDcId = 2,
             ViewsCount = 0,
@@ -108,6 +116,7 @@ internal sealed class StartLiveHandler(
             ReactionsCount = 0,
             Period = (int)period,
             IsLive = true,
+            PrivacyRules = privacyRules,
             CloseFriends = isCloseFriends,
             RtmpStream = obj.RtmpStream,
             MessagesEnabled = messagesEnabled,

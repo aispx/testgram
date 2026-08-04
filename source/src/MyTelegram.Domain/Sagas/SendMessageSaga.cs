@@ -290,8 +290,11 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
                     // Sending to a monoforum topic is not a thread/discussion reply:
                     // the target topic is carried by SavedPeerId/MonoforumPeerId instead.
                     return false;
-                case TInputReplyToStory inputReplyToStory:
-                    break;
+                case TInputReplyToStory:
+                    // Replying to a story is not a thread/discussion reply either: the story reference
+                    // travels on the message as messageReplyStoryHeader (see
+                    // Extension.ToMessageReplyHeader), so no reply-to-message id must be assigned here.
+                    return false;
                 default:
                     return false;
             }
@@ -361,9 +364,8 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
                 case TInputReplyToMessage inputReplyToMessage:
                     inputReplyToMessage.ReplyToMsgId = replyToMsgId;
                     break;
-                case TInputReplyToStory inputReplyToStory:
-                    inputReplyToStory.StoryId = replyToMsgId;
-                    break;
+                // A story reply carries the story id, which is the same for every recipient; it must not
+                // be rewritten to the per-recipient inbox message id.
             }
         }
 

@@ -1,42 +1,56 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Messages;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 
+/// <summary>
+/// Obtain a list of channels where the user can post <a href="https://corefork.telegram.org/api/stories">stories</a>.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stories.getChatsToSend"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+/// <para>
+/// Membership alone is not enough: a channel is only offered when the caller actually holds the
+/// post-stories admin right there.
+/// </para>
+/// </remarks>
 internal sealed class GetChatsToSendHandler(
-    IMongoDatabase mongoDatabase,
     IQueryProcessor queryProcessor,
-    IChatConverterService chatConverterService)
+    IChatConverterService chatConverterService,
+    IStoryAccessService storyAccessService)
     : RpcResultObjectHandler<MyTelegram.Schema.Stories.RequestGetChatsToSend, IChats>
 {
-    private readonly IMongoCollection<BsonDocument> _channelMembersCollection =
-        mongoDatabase.GetCollection<BsonDocument>("channel_members");
-
-    protected override async Task<IChats> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stories.RequestGetChatsToSend obj)
+    protected override async Task<IChats> HandleCoreAsync(
+        IRequestInput input,
+        MyTelegram.Schema.Stories.RequestGetChatsToSend obj)
     {
-        var memberFilter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("userId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("isMember", true)
-        );
-        
-        var members = await _channelMembersCollection.Find(memberFilter).ToListAsync();
-        var channelIds = members.Select(m => m["channelId"].AsInt64).Distinct().ToList();
-        
-        if (channelIds.Count == 0)
+        var channelIds = await queryProcessor.ProcessAsync(new GetChannelIdListByUserIdQuery(input.UserId));
+
+        var allowedChannelIds = new List<long>();
+        foreach (var channelId in channelIds.Distinct())
+        {
+            if (await storyAccessService.CanActAsPeerAsync(
+                    channelId, StoryHelper.PeerTypeChannel, input.UserId, StoryRight.Post))
+            {
+                allowedChannelIds.Add(channelId);
+            }
+        }
+
+        if (allowedChannelIds.Count == 0)
         {
             return new TChats { Chats = new TVector<IChat>() };
         }
-        
+
         var channelMemberReadModels = await queryProcessor.ProcessAsync(
-            new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIds));
+            new GetChannelMemberListByChannelIdListQuery(input.UserId, allowedChannelIds));
+
         var chats = await chatConverterService.GetChannelListAsync(
             input,
-            channelIds,
+            allowedChannelIds,
             channelMemberReadModels,
             input.Layer);
-        
+
         return new TChats { Chats = new TVector<IChat>(chats) };
     }
 }

@@ -1,5 +1,3 @@
-using System.Text.Json;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
@@ -7,7 +5,26 @@ using MyTelegram.Schema.Stories;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 
-internal sealed class EditStoryHandler(IMongoDatabase mongoDatabase)
+/// <summary>
+/// Edit an uploaded <a href="https://corefork.telegram.org/api/stories">story</a>.
+/// Possible errors
+/// Code Type Description
+/// 400 PEER_ID_INVALID The provided peer id is invalid.
+/// 400 STORY_ID_EMPTY You specified no story IDs.
+/// 400 STORY_NOT_MODIFIED The new story information you passed is equal to the previous story information, thus it wasn't modified.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stories.editStory"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
+/// </remarks>
+internal sealed class EditStoryHandler(
+    IMongoDatabase mongoDatabase,
+    IUserAppService userAppService,
+    ITokenizer tokenizer,
+    IStoryAccessService storyAccessService,
+    IStoryConfigProvider storyConfigProvider,
+    IStoryMediaService storyMediaService,
+    IStoryUpdatesSender storyUpdatesSender)
     : RpcResultObjectHandler<RequestEditStory, IUpdates>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
@@ -15,7 +32,13 @@ internal sealed class EditStoryHandler(IMongoDatabase mongoDatabase)
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestEditStory obj)
     {
-        var (ownerPeerId, ownerPeerType) = StoryHelper.ResolvePeer(obj.Peer, input.UserId);
+        var (ownerPeerId, ownerPeerType) =
+            await storyAccessService.ResolveOwnedPeerAsync(obj.Peer, input.UserId, StoryRight.Edit);
+
+        if (obj.Id <= 0)
+        {
+            RpcErrors.RpcErrors400.StoryIdEmpty.ThrowRpcError();
+        }
 
         var filter = Builders<StoryDocument>.Filter.And(
             Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, ownerPeerId),
@@ -24,129 +47,120 @@ internal sealed class EditStoryHandler(IMongoDatabase mongoDatabase)
             Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false)
         );
 
-        var updateDef = new List<UpdateDefinition<StoryDocument>>();
+        var story = await _storyCollection.Find(filter).FirstOrDefaultAsync();
+        if (story == null)
+        {
+            RpcErrors.RpcErrors400.StoryIdInvalid.ThrowRpcError();
+        }
+
+        var updates = new List<UpdateDefinition<StoryDocument>>();
 
         if (obj.Caption != null)
         {
-            updateDef.Add(Builders<StoryDocument>.Update.Set(s => s.Caption, obj.Caption));
+            var userReadModel = await userAppService.GetAsync((long?)input.UserId);
+            var isPremium = userReadModel?.Premium ?? false;
+
+            if (obj.Caption.Length > storyConfigProvider.GetCaptionLengthLimit(isPremium))
+            {
+                RpcErrors.RpcErrors400.MediaCaptionTooLong.ThrowRpcError();
+            }
+
+            var hashtags = StoryHelper.ExtractHashtags(obj.Caption);
+
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.Caption, obj.Caption));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.Hashtags, hashtags));
+            updates.Add(Builders<StoryDocument>.Update.Set(
+                s => s.HashtagTokens,
+                hashtags.Count > 0 ? tokenizer.BuildSearchTokens(string.Join(' ', hashtags)) ?? [] : []));
         }
 
         if (obj.Media != null)
         {
-            if (obj.Media is TInputMediaUploadedPhoto photoMedia && photoMedia.File is TInputFile photoFile)
-            {
-                updateDef.Add(Builders<StoryDocument>.Update.Set(s => s.MediaType, 1));
-                updateDef.Add(Builders<StoryDocument>.Update.Set(s => s.MediaFileId, photoFile.Id));
-            }
-            else if (obj.Media is TInputMediaUploadedDocument docMedia && docMedia.File is TInputFile docFile)
-            {
-                updateDef.Add(Builders<StoryDocument>.Update.Set(s => s.MediaType, 2));
-                updateDef.Add(Builders<StoryDocument>.Update.Set(s => s.MediaFileId, docFile.Id));
-            }
+            // Resolve the media the same way sendStory does: storing the upload's InputFile.Id would
+            // leave the story pointing at an id that cannot be downloaded.
+            var media = await storyMediaService.SaveStoryMediaAsync(obj.Media);
+
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MediaType, media.MediaType));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MediaFileId, media.FileId));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MediaAccessHash, media.AccessHash));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MediaFileReference, media.FileReference));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MediaDcId, media.DcId));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MediaSize, media.Size));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MediaMimeType, media.MimeType));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.VideoWidth, media.VideoWidth));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.VideoHeight, media.VideoHeight));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.VideoDuration, media.VideoDuration));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.VideoThumbBytes, media.VideoThumbBytes));
         }
 
-        if (obj.Entities != null && obj.Entities.Count > 0)
+        if (obj.Entities != null)
         {
-            var entitiesData = obj.Entities.Select(e =>
-            {
-                var data = new Dictionary<string, object>
-                {
-                    { "constructorId", e.ConstructorId },
-                    { "offset", e.Offset },
-                    { "length", e.Length }
-                };
-
-                if (e is TMessageEntityTextUrl textUrlEntity)
-                    data["url"] = textUrlEntity.Url;
-                else if (e is TMessageEntityMentionName mentionNameEntity)
-                    data["userId"] = mentionNameEntity.UserId;
-                else if (e is TMessageEntityPre preEntity)
-                {
-                    data["language"] = preEntity.Language;
-                }
-
-                return data;
-            }).ToList();
-
-            var entitiesJson = System.Text.Json.JsonSerializer.Serialize(entitiesData);
-            updateDef.Add(Builders<StoryDocument>.Update.Set(s => s.Entities, entitiesJson));
+            updates.Add(Builders<StoryDocument>.Update.Set(
+                s => s.Entities, StoryHelper.SerializeEntities(obj.Entities)));
         }
 
-        if (obj.PrivacyRules != null && obj.PrivacyRules.Count > 0)
+        if (obj.MediaAreas != null)
         {
-            var privacyRules = obj.PrivacyRules.Select(pr =>
-            {
-                int type = 0;
-                long? userId = null;
-                long? chatId = null;
-
-                if (pr is TInputPrivacyValueAllowAll) type = 0;
-                else if (pr is TInputPrivacyValueAllowContacts) type = 1;
-                else if (pr is TInputPrivacyValueAllowCloseFriends) type = 4;
-                else if (pr is TInputPrivacyValueDisallowAll) type = 2;
-                else if (pr is TInputPrivacyValueDisallowContacts) type = 3;
-                else if (pr is TInputPrivacyValueDisallowUsers privacyDisallowUsers)
-                {
-                    type = 5;
-                    var users = privacyDisallowUsers.Users;
-                    if (users != null && users.Count > 0 && users[0] is TInputUser tInputUser)
-                        userId = tInputUser.UserId;
-                }
-                else if (pr is TInputPrivacyValueAllowUsers privacyAllowUsers)
-                {
-                    type = 6;
-                    var users = privacyAllowUsers.Users;
-                    if (users != null && users.Count > 0 && users[0] is TInputUser tInputUser)
-                        userId = tInputUser.UserId;
-                }
-
-                return new StoryPrivacyRule
-                {
-                    Type = type,
-                    UserId = userId,
-                    ChatId = chatId
-                };
-            }).ToList();
-
-            updateDef.Add(Builders<StoryDocument>.Update.Set(s => s.PrivacyRules, privacyRules));
+            updates.Add(Builders<StoryDocument>.Update.Set(
+                s => s.MediaAreas, StoryMediaAreaHelper.Parse(obj.MediaAreas)));
         }
 
-        IStoryItem? updatedStoryItem = null;
-
-        if (updateDef.Count > 0)
+        if (obj.PrivacyRules is { Count: > 0 })
         {
-            var update = Builders<StoryDocument>.Update.Combine(updateDef);
-            await _storyCollection.UpdateOneAsync(filter, update);
-
-            var updatedStory = await _storyCollection.Find(filter).FirstOrDefaultAsync();
-            if (updatedStory != null)
-            {
-                updatedStoryItem = StoryHelper.ConvertToStoryItem(updatedStory, input.UserId);
-            }
-        }
-        else
-        {
-            var existingStory = await _storyCollection.Find(filter).FirstOrDefaultAsync();
-            if (existingStory != null)
-            {
-                updatedStoryItem = StoryHelper.ConvertToStoryItem(existingStory, input.UserId);
-            }
+            var privacyRules = StoryHelper.ParsePrivacyRules(obj.PrivacyRules);
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.PrivacyRules, privacyRules));
+            updates.Add(Builders<StoryDocument>.Update.Set(
+                s => s.CloseFriends,
+                privacyRules.Any(r => r.Type == StoryPrivacyRuleType.AllowCloseFriends)));
         }
 
-        var updates = new List<IUpdate>();
-        if (updatedStoryItem != null)
+        if (obj.Music is TInputDocument music)
         {
-            var updateStory = new TUpdateStory
-            {
-                Peer = StoryHelper.CreatePeer(ownerPeerType, ownerPeerId),
-                Story = updatedStoryItem
-            };
-            updates.Add(updateStory);
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MusicDocumentId, music.Id));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.MusicAccessHash, music.AccessHash));
         }
+
+        if (updates.Count == 0)
+        {
+            RpcErrors.RpcErrors400.StoryNotModified.ThrowRpcError();
+        }
+
+        updates.Add(Builders<StoryDocument>.Update.Set(s => s.Edited, true));
+
+        await _storyCollection.UpdateOneAsync(filter, Builders<StoryDocument>.Update.Combine(updates));
+
+        var updatedStory = await _storyCollection.Find(filter).FirstOrDefaultAsync() ?? story!;
+
+        var peer = StoryHelper.CreatePeer(ownerPeerType, ownerPeerId);
+
+        await storyUpdatesSender.PushStoryUpdateAsync(
+            updatedStory,
+            new TUpdates
+            {
+                Updates = new TVector<IUpdate>
+                {
+                    new TUpdateStory
+                    {
+                        Peer = peer,
+                        Story = StoryHelper.ConvertToStoryItem(updatedStory)
+                    }
+                },
+                Chats = new TVector<IChat>(),
+                Users = new TVector<IUser>(),
+                Date = CurrentDate
+            },
+            excludeUserId: input.UserId);
 
         return new TUpdates
         {
-            Updates = new TVector<IUpdate>(updates),
+            Updates = new TVector<IUpdate>
+            {
+                new TUpdateStory
+                {
+                    Peer = peer,
+                    Story = StoryHelper.ConvertToStoryItem(updatedStory, input.UserId, includePrivacy: true)
+                }
+            },
             Chats = new TVector<IChat>(),
             Users = new TVector<IUser>(),
             Date = CurrentDate

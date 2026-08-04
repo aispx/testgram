@@ -1,12 +1,44 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using MyTelegram.Schema;
+// EventFlow also ships a JsonSerializer; disambiguate to the BCL one.
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace MyTelegram.Messenger.Services.Stories;
 
-public static class StoryHelper
+/// <summary>
+/// Pure conversion and privacy-evaluation helpers for
+/// <a href="https://corefork.telegram.org/api/stories">stories</a>. Anything needing I/O lives in
+/// <see cref="IStoryAccessService"/> instead, so this class stays directly unit-testable.
+/// </summary>
+public static partial class StoryHelper
 {
-    public static IStoryItem ConvertToStoryItem(StoryDocument doc, long requestingUserId = 0)
+    /// <summary>Story-document owner peer type values (see <see cref="ToStoryPeerType"/>).</summary>
+    public const int PeerTypeUser = 0;
+    public const int PeerTypeChat = 1;
+    public const int PeerTypeChannel = 2;
+
+    [GeneratedRegex(@"#[\p{L}\p{N}_]+", RegexOptions.CultureInvariant)]
+    private static partial Regex HashtagRegex();
+
+    /// <summary>
+    /// Converts a stored story to its TL form.
+    /// </summary>
+    /// <param name="doc">The stored story.</param>
+    /// <param name="requestingUserId">Who is reading; drives the <c>out</c> and <c>min</c> flags.</param>
+    /// <param name="sentReaction">
+    /// The requesting user's own reaction, when known. Loaded in batch by the callers rather than
+    /// per-story, so it is passed in instead of being fetched here.
+    /// </param>
+    /// <param name="includePrivacy">
+    /// Whether to include the story's privacy rules. Only the owner may see them — they are the
+    /// owner's private configuration, not viewer-facing data.
+    /// </param>
+    public static IStoryItem ConvertToStoryItem(
+        StoryDocument doc,
+        long requestingUserId = 0,
+        IReaction? sentReaction = null,
+        bool includePrivacy = false)
     {
         if (doc.Deleted || doc.ExpireDate < DateTimeOffset.UtcNow.ToUnixTimeSeconds())
         {
@@ -18,13 +50,17 @@ public static class StoryHelper
 
         if (doc.IsLive)
         {
-            return ConvertToLiveStoryItem(doc, requestingUserId);
+            return ConvertToLiveStoryItem(doc, requestingUserId, sentReaction, includePrivacy);
         }
 
-        return ConvertToStoryItemInternal(doc, requestingUserId);
+        return ConvertToStoryItemInternal(doc, requestingUserId, sentReaction, includePrivacy);
     }
 
-    private static IStoryItem ConvertToLiveStoryItem(StoryDocument doc, long requestingUserId = 0)
+    private static IStoryItem ConvertToLiveStoryItem(
+        StoryDocument doc,
+        long requestingUserId,
+        IReaction? sentReaction,
+        bool includePrivacy)
     {
         if (doc.GroupCallId == 0 || doc.GroupCallAccessHash == 0)
         {
@@ -38,7 +74,9 @@ public static class StoryHelper
             };
         }
 
-        return new TStoryItem
+        var isOwner = IsOwner(doc, requestingUserId);
+
+        var item = new TStoryItem
         {
             Id = doc.StoryId,
             Date = (int)doc.Date,
@@ -46,9 +84,9 @@ public static class StoryHelper
             Caption = doc.Caption,
             Pinned = doc.Pinned,
             Noforwards = doc.NoForwards,
-            Out = doc.OwnerPeerId == requestingUserId,
+            Out = isOwner,
             Edited = doc.Edited,
-            CloseFriends = doc.CloseFriends,
+            Min = !isOwner,
             Media = new TMessageMediaVideoStream
             {
                 RtmpStream = doc.RtmpStream,
@@ -57,11 +95,24 @@ public static class StoryHelper
                     Id = doc.GroupCallId,
                     AccessHash = doc.GroupCallAccessHash
                 }
-            }
+            },
+            FromId = CreatePeerOrNull(doc.OwnerPeerType, doc.OwnerPeerId),
+            SentReaction = sentReaction,
+            MediaAreas = StoryMediaAreaHelper.ToMediaAreas(doc.MediaAreas),
+            Albums = doc.AlbumIds is { Count: > 0 } ? new TVector<int>(doc.AlbumIds) : null,
+            Views = BuildViews(doc)
         };
+
+        ApplyPrivacy(item, doc, includePrivacy);
+
+        return item;
     }
 
-    private static IStoryItem ConvertToStoryItemInternal(StoryDocument doc, long requestingUserId = 0)
+    private static IStoryItem ConvertToStoryItemInternal(
+        StoryDocument doc,
+        long requestingUserId,
+        IReaction? sentReaction,
+        bool includePrivacy)
     {
         if (doc.MediaType == 0 || doc.MediaFileId == 0)
         {
@@ -71,97 +122,16 @@ public static class StoryHelper
             };
         }
 
-        IMessageMedia media;
-
-        if (doc.MediaType == 1 && doc.MediaFileId > 0)
+        IMessageMedia media = doc.MediaType switch
         {
-            media = new TMessageMediaPhoto
-            {
-                Photo = new TPhoto
-                {
-                    Id = doc.MediaFileId,
-                    AccessHash = doc.MediaAccessHash,
-                    FileReference = doc.MediaFileReference ?? [],
-                    Date = (int)doc.Date,
-                    Sizes = new TVector<IPhotoSize>
-                    {
-                        new TPhotoSize { Type = "x", W = 720, H = 1280, Size = doc.MediaSize > 0 ? (int)doc.MediaSize : 100000 },
-                        new TPhotoSize { Type = "m", W = 360, H = 640, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 4) : 25000 },
-                        new TPhotoSize { Type = "s", W = 180, H = 320, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 8) : 6000 }
-                    },
-                    DcId = doc.MediaDcId > 0 ? doc.MediaDcId : 2
-                }
-            };
-        }
-        else if (doc.MediaType == 2 && doc.MediaFileId > 0)
-        {
-            var attributes = new TVector<IDocumentAttribute>();
-            if (doc.VideoWidth.HasValue || doc.VideoHeight.HasValue || doc.VideoDuration.HasValue)
-            {
-                attributes.Add(new TDocumentAttributeVideo
-                {
-                    W = doc.VideoWidth ?? 720,
-                    H = doc.VideoHeight ?? 1280,
-                    Duration = doc.VideoDuration ?? 0,
-                    RoundMessage = false,
-                    SupportsStreaming = true
-                });
-            }
+            1 => new TMessageMediaPhoto { Photo = BuildPhoto(doc) },
+            2 => new TMessageMediaDocument { Document = BuildDocument(doc) },
+            _ => new TMessageMediaEmpty()
+        };
 
-            var thumbs = new TVector<IPhotoSize>();
-            if (doc.VideoThumbBytes != null && doc.VideoThumbBytes.Length > 0)
-            {
-                thumbs.Add(new TPhotoStrippedSize { Type = "i", Bytes = doc.VideoThumbBytes });
-            }
+        var isOwner = IsOwner(doc, requestingUserId);
 
-            media = new TMessageMediaDocument
-            {
-                Document = new TDocument
-                {
-                    Id = doc.MediaFileId,
-                    AccessHash = doc.MediaAccessHash,
-                    FileReference = doc.MediaFileReference ?? [],
-                    Date = (int)doc.Date,
-                    MimeType = doc.MediaMimeType ?? "video/mp4",
-                    Size = doc.MediaSize,
-                    DcId = doc.MediaDcId,
-                    Attributes = attributes,
-                    Thumbs = thumbs
-                }
-            };
-        }
-        else
-        {
-            media = new TMessageMediaEmpty();
-        }
-
-        var isOut = doc.OwnerPeerId == requestingUserId;
-
-        IPrivacyRule[]? privacyRules = null;
-        if (doc.PrivacyRules != null && doc.PrivacyRules.Count > 0)
-        {
-            privacyRules = ConvertPrivacyRules(doc.PrivacyRules);
-        }
-
-        TVector<IMessageEntity>? entities = null;
-        if (!string.IsNullOrEmpty(doc.Entities))
-        {
-            entities = ParseEntities(doc.Entities);
-        }
-
-        IStoryFwdHeader? fwdHeader = null;
-        if (doc.FwdFromPeerId > 0 && doc.FwdFromStoryId.HasValue)
-        {
-            fwdHeader = new TStoryFwdHeader
-            {
-                From = CreatePeer(0, doc.FwdFromPeerId),
-                StoryId = doc.FwdFromStoryId.Value
-            };
-        }
-
-        var fromId = CreateFromPeer(doc);
-
-        return new TStoryItem
+        var item = new TStoryItem
         {
             Id = doc.StoryId,
             Date = (int)doc.Date,
@@ -169,153 +139,144 @@ public static class StoryHelper
             Caption = doc.Caption,
             Pinned = doc.Pinned,
             Noforwards = doc.NoForwards,
-            Out = isOut,
+            Out = isOwner,
             Edited = doc.Edited,
+            Min = !isOwner,
             Media = media,
-            FromId = fromId,
-            FwdFrom = fwdHeader,
-            Entities = entities,
-            Privacy = privacyRules != null ? new TVector<IPrivacyRule>(privacyRules) : null,
-            Views = new TStoryViews
-            {
-                ViewsCount = doc.ViewsCount,
-                ForwardsCount = doc.ForwardsCount,
-                ReactionsCount = doc.ReactionsCount
-            }
+            FromId = CreatePeerOrNull(doc.OwnerPeerType, doc.OwnerPeerId),
+            FwdFrom = BuildFwdHeader(doc),
+            Entities = ParseEntities(doc.Entities),
+            MediaAreas = StoryMediaAreaHelper.ToMediaAreas(doc.MediaAreas),
+            Albums = doc.AlbumIds is { Count: > 0 } ? new TVector<int>(doc.AlbumIds) : null,
+            Music = BuildMusic(doc),
+            SentReaction = sentReaction,
+            Views = BuildViews(doc)
         };
+
+        ApplyPrivacy(item, doc, includePrivacy);
+
+        return item;
     }
 
-    private static IPeer? CreateFromPeer(StoryDocument doc)
+    private static bool IsOwner(StoryDocument doc, long requestingUserId)
     {
-        return doc.OwnerPeerType switch
+        return doc.OwnerPeerType == PeerTypeUser && doc.OwnerPeerId == requestingUserId;
+    }
+
+    private static TStoryViews BuildViews(StoryDocument doc)
+    {
+        return new TStoryViews
         {
-            0 => new TPeerUser { UserId = doc.OwnerPeerId },
-            1 => new TPeerChat { ChatId = doc.OwnerPeerId },
-            2 => new TPeerChannel { ChannelId = doc.OwnerPeerId },
-            _ => null
+            ViewsCount = doc.ViewsCount,
+            ForwardsCount = doc.ForwardsCount > 0 ? doc.ForwardsCount : null,
+            ReactionsCount = doc.ReactionsCount > 0 ? doc.ReactionsCount : null
         };
     }
 
-    private static IPrivacyRule[] ConvertPrivacyRules(List<StoryPrivacyRule> rules)
+    /// <summary>
+    /// Sets the audience flags every viewer needs (so clients can render "close friends only" etc.)
+    /// and, for the owner only, the full privacy rule list.
+    /// </summary>
+    private static void ApplyPrivacy(TStoryItem item, StoryDocument doc, bool includePrivacy)
     {
-        var result = new List<IPrivacyRule>();
+        var rules = doc.PrivacyRules;
+
+        if (rules == null || rules.Count == 0)
+        {
+            // No rules stored means the story was never restricted.
+            item.Public = true;
+            item.CloseFriends = doc.CloseFriends;
+            return;
+        }
+
         foreach (var rule in rules)
         {
             switch (rule.Type)
             {
-                case 0:
-                    result.Add(new TPrivacyValueAllowAll());
+                case StoryPrivacyRuleType.AllowAll:
+                    item.Public = true;
                     break;
-                case 1:
-                    result.Add(new TPrivacyValueAllowContacts());
+                case StoryPrivacyRuleType.AllowContacts:
+                    item.Contacts = true;
                     break;
-                case 2:
-                    result.Add(new TPrivacyValueDisallowAll());
+                case StoryPrivacyRuleType.AllowCloseFriends:
+                    item.CloseFriends = true;
                     break;
-                case 3:
-                    result.Add(new TPrivacyValueDisallowContacts());
-                    break;
-                case 4:
-                    result.Add(new TPrivacyValueAllowCloseFriends());
-                    break;
-                case 5:
-                    if (rule.UserId.HasValue)
-                        result.Add(new TPrivacyValueDisallowUsers { Users = new TVector<long> { rule.UserId.Value } });
-                    break;
-                case 6:
-                    if (rule.UserId.HasValue)
-                        result.Add(new TPrivacyValueAllowUsers { Users = new TVector<long> { rule.UserId.Value } });
+                case StoryPrivacyRuleType.AllowUsers:
+                    item.SelectedContacts = true;
                     break;
             }
         }
-        return result.ToArray();
-    }
 
-    private static TVector<IMessageEntity>? ParseEntities(string entitiesJson)
-    {
-        try
+        // Live stories carry close_friends on the document itself.
+        if (doc.CloseFriends)
         {
-            var entitiesData = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, System.Text.Json.JsonElement>>>(entitiesJson);
-            if (entitiesData == null) return null;
+            item.CloseFriends = true;
+        }
 
-            var result = new TVector<IMessageEntity>();
-            foreach (var e in entitiesData)
+        if (includePrivacy)
+        {
+            var converted = ConvertPrivacyRules(rules);
+            if (converted.Count > 0)
             {
-                if (!e.TryGetValue("constructorId", out var constructorIdElem)) continue;
-                var constructorId = constructorIdElem.GetInt64();
-
-                if (!e.TryGetValue("offset", out var offsetElem) || !e.TryGetValue("length", out var lengthElem))
-                    continue;
-
-                var offset = offsetElem.GetInt32();
-                var length = lengthElem.GetInt32();
-
-                if (constructorId == 0xbb92a445)
-                {
-                    if (e.TryGetValue("url", out var urlElem))
-                    {
-                        result.Add(new TMessageEntityTextUrl { Offset = offset, Length = length, Url = urlElem.GetString() });
-                    }
-                }
-                else if (constructorId == 0x3cca7d2)
-                {
-                    if (e.TryGetValue("userId", out var userIdElem))
-                    {
-                        result.Add(new TMessageEntityMentionName { Offset = offset, Length = length, UserId = userIdElem.GetInt64() });
-                    }
-                }
-                else if (constructorId == 0x73924e66)
-                {
-                    var entity = new TMessageEntityPre { Offset = offset, Length = length };
-                    if (e.TryGetValue("language", out var langElem))
-                    {
-                        entity.Language = langElem.GetString();
-                    }
-                    result.Add(entity);
-                }
-                else
-                {
-                    result.Add(new TMessageEntityUnknown { Offset = offset, Length = length });
-                }
+                item.Privacy = converted;
             }
-            return result;
-        }
-        catch
-        {
-            return null;
         }
     }
 
-    public static IPhoto? BuildAlbumIconPhoto(StoryDocument? doc)
+    private static IStoryFwdHeader? BuildFwdHeader(StoryDocument doc)
     {
-        if (doc == null || doc.MediaType != 1 || doc.MediaFileId == 0)
+        if (doc.FwdFromPeerId == 0 || !doc.FwdFromStoryId.HasValue)
         {
             return null;
         }
 
+        return new TStoryFwdHeader
+        {
+            From = CreatePeer(doc.FwdFromPeerType, doc.FwdFromPeerId),
+            StoryId = doc.FwdFromStoryId.Value,
+            Modified = doc.FwdModified
+        };
+    }
+
+    private static IDocument? BuildMusic(StoryDocument doc)
+    {
+        if (!doc.MusicDocumentId.HasValue || doc.MusicDocumentId.Value == 0)
+        {
+            return null;
+        }
+
+        return new TDocument
+        {
+            Id = doc.MusicDocumentId.Value,
+            AccessHash = doc.MusicAccessHash ?? 0,
+            FileReference = ReadOnlyMemory<byte>.Empty,
+            Date = (int)doc.Date,
+            MimeType = "audio/mpeg",
+            Size = 0,
+            DcId = doc.MediaDcId > 0 ? doc.MediaDcId : 2,
+            Attributes = new TVector<IDocumentAttribute>(),
+            Thumbs = new TVector<IPhotoSize>()
+        };
+    }
+
+    /// <summary>Builds the photo for a photo story or an album cover.</summary>
+    public static IPhoto BuildPhoto(StoryDocument doc)
+    {
         return new TPhoto
         {
             Id = doc.MediaFileId,
             AccessHash = doc.MediaAccessHash,
             FileReference = doc.MediaFileReference ?? [],
             Date = (int)doc.Date,
-            Sizes = new TVector<IPhotoSize>
-            {
-                new TPhotoSize { Type = "x", W = 720, H = 1280, Size = doc.MediaSize > 0 ? (int)doc.MediaSize : 100000 },
-                new TPhotoSize { Type = "m", W = 360, H = 640, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 4) : 25000 },
-                new TPhotoSize { Type = "s", W = 180, H = 320, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 8) : 6000 }
-            },
+            Sizes = BuildPhotoSizes(doc),
             DcId = doc.MediaDcId > 0 ? doc.MediaDcId : 2
         };
     }
 
-    public static IDocument? BuildAlbumIconVideo(StoryDocument? doc)
+    /// <summary>Builds the document for a video story or an album cover.</summary>
+    public static IDocument BuildDocument(StoryDocument doc)
     {
-        if (doc == null || doc.MediaType != 2 || doc.MediaFileId == 0)
-        {
-            return null;
-        }
-
         var attributes = new TVector<IDocumentAttribute>();
         if (doc.VideoWidth.HasValue || doc.VideoHeight.HasValue || doc.VideoDuration.HasValue)
         {
@@ -330,7 +291,7 @@ public static class StoryHelper
         }
 
         var thumbs = new TVector<IPhotoSize>();
-        if (doc.VideoThumbBytes != null && doc.VideoThumbBytes.Length > 0)
+        if (doc.VideoThumbBytes is { Length: > 0 })
         {
             thumbs.Add(new TPhotoStrippedSize { Type = "i", Bytes = doc.VideoThumbBytes });
         }
@@ -339,7 +300,9 @@ public static class StoryHelper
         {
             Id = doc.MediaFileId,
             AccessHash = doc.MediaAccessHash,
-            FileReference = doc.MediaFileReference != null ? new ReadOnlyMemory<byte>(doc.MediaFileReference) : ReadOnlyMemory<byte>.Empty,
+            FileReference = doc.MediaFileReference != null
+                ? new ReadOnlyMemory<byte>(doc.MediaFileReference)
+                : ReadOnlyMemory<byte>.Empty,
             Date = (int)doc.Date,
             MimeType = doc.MediaMimeType ?? "video/mp4",
             Size = doc.MediaSize,
@@ -349,138 +312,523 @@ public static class StoryHelper
         };
     }
 
+    private static TVector<IPhotoSize> BuildPhotoSizes(StoryDocument doc)
+    {
+        return new TVector<IPhotoSize>
+        {
+            new TPhotoSize { Type = "x", W = 720, H = 1280, Size = doc.MediaSize > 0 ? (int)doc.MediaSize : 100000 },
+            new TPhotoSize { Type = "m", W = 360, H = 640, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 4) : 25000 },
+            new TPhotoSize { Type = "s", W = 180, H = 320, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 8) : 6000 }
+        };
+    }
+
+    /// <summary>Album cover photo, or null when the story is not a photo story.</summary>
+    public static IPhoto? BuildAlbumIconPhoto(StoryDocument? doc)
+    {
+        if (doc == null || doc.MediaType != 1 || doc.MediaFileId == 0)
+        {
+            return null;
+        }
+
+        return BuildPhoto(doc);
+    }
+
+    /// <summary>Album cover video, or null when the story is not a video story.</summary>
+    public static IDocument? BuildAlbumIconVideo(StoryDocument? doc)
+    {
+        if (doc == null || doc.MediaType != 2 || doc.MediaFileId == 0)
+        {
+            return null;
+        }
+
+        return BuildDocument(doc);
+    }
+
+    /// <summary>
+    /// Parses the input privacy rules of stories.sendStory/editStory into their stored form, keeping
+    /// every listed user/chat (not just the first).
+    /// </summary>
+    public static List<StoryPrivacyRule> ParsePrivacyRules(IEnumerable<IInputPrivacyRule>? rules)
+    {
+        var result = new List<StoryPrivacyRule>();
+        if (rules == null)
+        {
+            return result;
+        }
+
+        foreach (var rule in rules)
+        {
+            switch (rule)
+            {
+                case TInputPrivacyValueAllowAll:
+                    result.Add(new StoryPrivacyRule { Type = StoryPrivacyRuleType.AllowAll });
+                    break;
+                case TInputPrivacyValueAllowContacts:
+                    result.Add(new StoryPrivacyRule { Type = StoryPrivacyRuleType.AllowContacts });
+                    break;
+                case TInputPrivacyValueDisallowAll:
+                    result.Add(new StoryPrivacyRule { Type = StoryPrivacyRuleType.DisallowAll });
+                    break;
+                case TInputPrivacyValueDisallowContacts:
+                    result.Add(new StoryPrivacyRule { Type = StoryPrivacyRuleType.DisallowContacts });
+                    break;
+                case TInputPrivacyValueAllowCloseFriends:
+                    result.Add(new StoryPrivacyRule { Type = StoryPrivacyRuleType.AllowCloseFriends });
+                    break;
+                case TInputPrivacyValueAllowPremium:
+                    result.Add(new StoryPrivacyRule { Type = StoryPrivacyRuleType.AllowPremium });
+                    break;
+                case TInputPrivacyValueAllowBots:
+                    result.Add(new StoryPrivacyRule { Type = StoryPrivacyRuleType.AllowBots });
+                    break;
+                case TInputPrivacyValueDisallowBots:
+                    result.Add(new StoryPrivacyRule { Type = StoryPrivacyRuleType.DisallowBots });
+                    break;
+                case TInputPrivacyValueAllowUsers allowUsers:
+                    result.Add(new StoryPrivacyRule
+                    {
+                        Type = StoryPrivacyRuleType.AllowUsers,
+                        UserIds = ExtractUserIds(allowUsers.Users)
+                    });
+                    break;
+                case TInputPrivacyValueDisallowUsers disallowUsers:
+                    result.Add(new StoryPrivacyRule
+                    {
+                        Type = StoryPrivacyRuleType.DisallowUsers,
+                        UserIds = ExtractUserIds(disallowUsers.Users)
+                    });
+                    break;
+                case TInputPrivacyValueAllowChatParticipants allowChats:
+                    result.Add(new StoryPrivacyRule
+                    {
+                        Type = StoryPrivacyRuleType.AllowChatParticipants,
+                        ChatIds = allowChats.Chats?.ToList() ?? []
+                    });
+                    break;
+                case TInputPrivacyValueDisallowChatParticipants disallowChats:
+                    result.Add(new StoryPrivacyRule
+                    {
+                        Type = StoryPrivacyRuleType.DisallowChatParticipants,
+                        ChatIds = disallowChats.Chats?.ToList() ?? []
+                    });
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    private static List<long> ExtractUserIds(IEnumerable<IInputUser>? users)
+    {
+        var result = new List<long>();
+        if (users == null)
+        {
+            return result;
+        }
+
+        foreach (var user in users)
+        {
+            switch (user)
+            {
+                case TInputUser inputUser:
+                    result.Add(inputUser.UserId);
+                    break;
+                case TInputUserFromMessage fromMessage:
+                    result.Add(fromMessage.UserId);
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    public static TVector<IPrivacyRule> ConvertPrivacyRules(List<StoryPrivacyRule> rules)
+    {
+        var result = new TVector<IPrivacyRule>();
+
+        foreach (var rule in rules)
+        {
+            switch (rule.Type)
+            {
+                case StoryPrivacyRuleType.AllowAll:
+                    result.Add(new TPrivacyValueAllowAll());
+                    break;
+                case StoryPrivacyRuleType.AllowContacts:
+                    result.Add(new TPrivacyValueAllowContacts());
+                    break;
+                case StoryPrivacyRuleType.DisallowAll:
+                    result.Add(new TPrivacyValueDisallowAll());
+                    break;
+                case StoryPrivacyRuleType.DisallowContacts:
+                    result.Add(new TPrivacyValueDisallowContacts());
+                    break;
+                case StoryPrivacyRuleType.AllowCloseFriends:
+                    result.Add(new TPrivacyValueAllowCloseFriends());
+                    break;
+                case StoryPrivacyRuleType.AllowPremium:
+                    result.Add(new TPrivacyValueAllowPremium());
+                    break;
+                case StoryPrivacyRuleType.AllowBots:
+                    result.Add(new TPrivacyValueAllowBots());
+                    break;
+                case StoryPrivacyRuleType.DisallowBots:
+                    result.Add(new TPrivacyValueDisallowBots());
+                    break;
+                case StoryPrivacyRuleType.AllowUsers:
+                    if (rule.UserIds.Count > 0)
+                    {
+                        result.Add(new TPrivacyValueAllowUsers { Users = new TVector<long>(rule.UserIds) });
+                    }
+                    break;
+                case StoryPrivacyRuleType.DisallowUsers:
+                    if (rule.UserIds.Count > 0)
+                    {
+                        result.Add(new TPrivacyValueDisallowUsers { Users = new TVector<long>(rule.UserIds) });
+                    }
+                    break;
+                case StoryPrivacyRuleType.AllowChatParticipants:
+                    if (rule.ChatIds.Count > 0)
+                    {
+                        result.Add(new TPrivacyValueAllowChatParticipants { Chats = new TVector<long>(rule.ChatIds) });
+                    }
+                    break;
+                case StoryPrivacyRuleType.DisallowChatParticipants:
+                    if (rule.ChatIds.Count > 0)
+                    {
+                        result.Add(new TPrivacyValueDisallowChatParticipants { Chats = new TVector<long>(rule.ChatIds) });
+                    }
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Extracts normalized hashtags (lowercase, no leading '#', de-duplicated) from a story caption,
+    /// for stories.searchPosts.
+    /// </summary>
+    public static List<string> ExtractHashtags(string? caption)
+    {
+        if (string.IsNullOrWhiteSpace(caption))
+        {
+            return [];
+        }
+
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (Match match in HashtagRegex().Matches(caption))
+        {
+            // The match includes the leading '#'.
+            var tag = match.Value[1..].ToLowerInvariant();
+            if (tag.Length > 0 && seen.Add(tag))
+            {
+                result.Add(tag);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Normalizes a search hashtag the same way <see cref="ExtractHashtags"/> stores them.</summary>
+    public static string NormalizeHashtag(string? hashtag)
+    {
+        return string.IsNullOrWhiteSpace(hashtag)
+            ? string.Empty
+            : hashtag.Trim().TrimStart('#').ToLowerInvariant();
+    }
+
+    public static TVector<IMessageEntity>? ParseEntities(string? entitiesJson)
+    {
+        if (string.IsNullOrEmpty(entitiesJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            var entitiesData = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(entitiesJson);
+            if (entitiesData == null)
+            {
+                return null;
+            }
+
+            var result = new TVector<IMessageEntity>();
+            foreach (var e in entitiesData)
+            {
+                if (!e.TryGetValue("constructorId", out var constructorIdElem))
+                {
+                    continue;
+                }
+
+                if (!e.TryGetValue("offset", out var offsetElem) || !e.TryGetValue("length", out var lengthElem))
+                {
+                    continue;
+                }
+
+                var constructorId = constructorIdElem.GetUInt32();
+                var offset = offsetElem.GetInt32();
+                var length = lengthElem.GetInt32();
+
+                var entity = BuildEntity(constructorId, offset, length, e);
+                if (entity != null)
+                {
+                    result.Add(entity);
+                }
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static IMessageEntity? BuildEntity(
+        uint constructorId,
+        int offset,
+        int length,
+        Dictionary<string, JsonElement> data)
+    {
+        switch (constructorId)
+        {
+            case 0x76a6d327: // messageEntityTextUrl
+                return data.TryGetValue("url", out var urlElem)
+                    ? new TMessageEntityTextUrl { Offset = offset, Length = length, Url = urlElem.GetString() }
+                    : null;
+
+            case 0xdc7b1140: // messageEntityMentionName
+                return data.TryGetValue("userId", out var userIdElem)
+                    ? new TMessageEntityMentionName { Offset = offset, Length = length, UserId = userIdElem.GetInt64() }
+                    : null;
+
+            case 0x73924be0: // messageEntityPre
+                var pre = new TMessageEntityPre { Offset = offset, Length = length };
+                if (data.TryGetValue("language", out var langElem))
+                {
+                    pre.Language = langElem.GetString();
+                }
+                return pre;
+
+            case 0xc8cf05f8: // messageEntityCustomEmoji
+                return data.TryGetValue("documentId", out var documentIdElem)
+                    ? new TMessageEntityCustomEmoji
+                    {
+                        Offset = offset,
+                        Length = length,
+                        DocumentId = documentIdElem.GetInt64()
+                    }
+                    : null;
+
+            case 0xbd610bc9: return new TMessageEntityBold { Offset = offset, Length = length };
+            case 0x826f8b60: return new TMessageEntityItalic { Offset = offset, Length = length };
+            case 0x9c4e7e8b: return new TMessageEntityUnderline { Offset = offset, Length = length };
+            case 0xbf0693d4: return new TMessageEntityStrike { Offset = offset, Length = length };
+            case 0x28a20571: return new TMessageEntityCode { Offset = offset, Length = length };
+            case 0xf1ccaaac: return new TMessageEntityBlockquote { Offset = offset, Length = length };
+            case 0x32ca960f: return new TMessageEntitySpoiler { Offset = offset, Length = length };
+            case 0x6f635b0d: return new TMessageEntityHashtag { Offset = offset, Length = length };
+            case 0xfa04579d: return new TMessageEntityMention { Offset = offset, Length = length };
+            case 0x6ed02538: return new TMessageEntityUrl { Offset = offset, Length = length };
+            case 0x64e475c2: return new TMessageEntityEmail { Offset = offset, Length = length };
+
+            default:
+                return new TMessageEntityUnknown { Offset = offset, Length = length };
+        }
+    }
+
+    /// <summary>
+    /// Serializes message entities for storage. Mirrors <see cref="ParseEntities"/>.
+    /// </summary>
+    public static string? SerializeEntities(IEnumerable<IMessageEntity>? entities)
+    {
+        if (entities == null)
+        {
+            return null;
+        }
+
+        var list = new List<Dictionary<string, object?>>();
+
+        foreach (var e in entities)
+        {
+            var data = new Dictionary<string, object?>
+            {
+                ["constructorId"] = e.ConstructorId,
+                ["offset"] = e.Offset,
+                ["length"] = e.Length
+            };
+
+            switch (e)
+            {
+                case TMessageEntityTextUrl textUrl:
+                    data["url"] = textUrl.Url;
+                    break;
+                case TMessageEntityMentionName mentionName:
+                    data["userId"] = mentionName.UserId;
+                    break;
+                case TMessageEntityPre pre:
+                    data["language"] = pre.Language;
+                    break;
+                case TMessageEntityCustomEmoji customEmoji:
+                    data["documentId"] = customEmoji.DocumentId;
+                    break;
+            }
+
+            list.Add(data);
+        }
+
+        return list.Count > 0 ? JsonSerializer.Serialize(list) : null;
+    }
+
     public static IPeer CreatePeer(int peerType, long peerId)
     {
         return peerType switch
         {
-            0 => new TPeerUser { UserId = peerId },
-            1 => new TPeerChat { ChatId = peerId },
-            2 => new TPeerChannel { ChannelId = peerId },
+            PeerTypeChat => new TPeerChat { ChatId = peerId },
+            PeerTypeChannel => new TPeerChannel { ChannelId = peerId },
             _ => new TPeerUser { UserId = peerId }
         };
     }
 
-    public static (long peerId, int peerType) ResolvePeer(IInputPeer? peer, long defaultUserId)
+    private static IPeer? CreatePeerOrNull(int peerType, long peerId)
     {
-        long peerId = defaultUserId;
-        int peerType = 0;
-
-        switch (peer)
+        return peerType switch
         {
-            case TInputPeerSelf:
-                peerId = defaultUserId;
-                peerType = 0;
-                break;
-            case TInputPeerUser userPeer:
-                peerId = userPeer.UserId;
-                peerType = 0;
-                break;
-            case TInputPeerChannel channelPeer:
-                peerId = channelPeer.ChannelId;
-                peerType = 2;
-                break;
-            case TInputPeerChat chatPeer:
-                peerId = chatPeer.ChatId;
-                peerType = 1;
-                break;
-        }
-
-        return (peerId, peerType);
+            PeerTypeUser => new TPeerUser { UserId = peerId },
+            PeerTypeChat => new TPeerChat { ChatId = peerId },
+            PeerTypeChannel => new TPeerChannel { ChannelId = peerId },
+            _ => null
+        };
     }
 
-    /// <summary>Story-document owner peer type value for channels (see <see cref="ToStoryPeerType"/>).</summary>
-    public const int PeerTypeChannel = 2;
+    /// <summary>
+    /// Maps an <see cref="IInputPeer"/> to the stored owner-peer pair. This performs no access check —
+    /// callers that mutate or read restricted data must go through <see cref="IStoryAccessService"/>.
+    /// </summary>
+    public static (long peerId, int peerType) ResolvePeer(IInputPeer? peer, long defaultUserId)
+    {
+        return peer switch
+        {
+            TInputPeerSelf => (defaultUserId, PeerTypeUser),
+            TInputPeerUser userPeer => (userPeer.UserId, PeerTypeUser),
+            TInputPeerUserFromMessage fromMessage => (fromMessage.UserId, PeerTypeUser),
+            TInputPeerChannel channelPeer => (channelPeer.ChannelId, PeerTypeChannel),
+            TInputPeerChannelFromMessage channelFromMessage => (channelFromMessage.ChannelId, PeerTypeChannel),
+            TInputPeerChat chatPeer => (chatPeer.ChatId, PeerTypeChat),
+            _ => (defaultUserId, PeerTypeUser)
+        };
+    }
 
     public static int ToStoryPeerType(PeerType peerType)
     {
         return peerType switch
         {
-            PeerType.User or PeerType.Self => 0,
-            PeerType.Chat => 1,
+            PeerType.User or PeerType.Self => PeerTypeUser,
+            PeerType.Chat => PeerTypeChat,
             PeerType.Channel => PeerTypeChannel,
             _ => -1
         };
     }
 
-    public static async Task<bool> CanViewStoryAsync(
-        StoryDocument doc,
-        long requestingUserId,
-        IMongoCollection<BsonDocument>? contactsCollection)
+    public static PeerType ToPeerType(int storyPeerType)
     {
-        if (doc.OwnerPeerId == requestingUserId)
-            return true;
-
-        if (doc.PrivacyRules == null || doc.PrivacyRules.Count == 0)
-            return true;
-
-        bool? isContact = null;
-        async Task<bool> CheckIsContact()
+        return storyPeerType switch
         {
-            if (isContact.HasValue)
-                return isContact.Value;
-            if (contactsCollection == null)
-            {
-                isContact = false;
-                return false;
-            }
-            var filter = Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("selfUserId", doc.OwnerPeerId),
-                Builders<BsonDocument>.Filter.Eq("targetUserId", requestingUserId)
-            );
-            isContact = await contactsCollection.Find(filter).AnyAsync();
-            return isContact.Value;
-        }
-
-        foreach (var rule in doc.PrivacyRules)
-        {
-            switch (rule.Type)
-            {
-                case 0:
-                    return true;
-                case 2:
-                    return false;
-                case 1:
-                    if (await CheckIsContact())
-                        return true;
-                    break;
-                case 3:
-                    if (await CheckIsContact())
-                        return false;
-                    return true;
-                case 4:
-                    return false;
-                case 5:
-                    if (rule.UserId.HasValue && rule.UserId.Value == requestingUserId)
-                        return false;
-                    break;
-                case 6:
-                    if (rule.UserId.HasValue && rule.UserId.Value == requestingUserId)
-                        return true;
-                    return false;
-            }
-        }
-        return true;
+            PeerTypeChat => PeerType.Chat,
+            PeerTypeChannel => PeerType.Channel,
+            _ => PeerType.User
+        };
     }
 
-    public static bool CanViewStory(StoryDocument doc, long requestingUserId)
+    /// <summary>
+    /// Evaluates a story's privacy rules against a viewer.
+    /// <para>
+    /// Telegram semantics: allow-rules are additive and disallow-rules take precedence, so the whole
+    /// rule set is examined rather than returning on the first match. A story with no rules is visible.
+    /// </para>
+    /// </summary>
+    /// <param name="doc">The story being read.</param>
+    /// <param name="requestingUserId">The viewer.</param>
+    /// <param name="context">
+    /// The viewer's relationship to the story owner — contacts and close-friends membership, loaded once
+    /// per request by <see cref="IStoryAccessService.GetViewerContextAsync"/>.
+    /// </param>
+    public static bool CanViewStory(StoryDocument doc, long requestingUserId, StoryViewerContext context)
     {
-        if (doc.OwnerPeerId == requestingUserId)
+        // The owner always sees their own stories.
+        if (IsOwner(doc, requestingUserId))
+        {
             return true;
+        }
 
-        if (doc.PrivacyRules == null || doc.PrivacyRules.Count == 0)
+        // Channel/chat stories follow membership, which the caller has already established.
+        if (doc.OwnerPeerType != PeerTypeUser)
+        {
             return true;
+        }
 
-        foreach (var rule in doc.PrivacyRules)
+        var rules = doc.PrivacyRules;
+        if (rules == null || rules.Count == 0)
+        {
+            return true;
+        }
+
+        var isContact = context.IsContactOf(doc.OwnerPeerId);
+        var isCloseFriend = context.IsCloseFriendOf(doc.OwnerPeerId);
+
+        var allowed = false;
+        var hasAllowRule = false;
+
+        foreach (var rule in rules)
         {
             switch (rule.Type)
             {
-                case 0:
-                    return true;
-                case 2:
+                // Disallow rules win outright.
+                case StoryPrivacyRuleType.DisallowAll:
                     return false;
+                case StoryPrivacyRuleType.DisallowContacts when isContact:
+                    return false;
+                case StoryPrivacyRuleType.DisallowUsers when rule.UserIds.Contains(requestingUserId):
+                    return false;
+
+                case StoryPrivacyRuleType.AllowAll:
+                    hasAllowRule = true;
+                    allowed = true;
+                    break;
+                case StoryPrivacyRuleType.AllowContacts:
+                    hasAllowRule = true;
+                    if (isContact)
+                    {
+                        allowed = true;
+                    }
+                    break;
+                case StoryPrivacyRuleType.AllowCloseFriends:
+                    hasAllowRule = true;
+                    if (isCloseFriend)
+                    {
+                        allowed = true;
+                    }
+                    break;
+                case StoryPrivacyRuleType.AllowUsers:
+                    hasAllowRule = true;
+                    if (rule.UserIds.Contains(requestingUserId))
+                    {
+                        allowed = true;
+                    }
+                    break;
+                case StoryPrivacyRuleType.AllowPremium:
+                    hasAllowRule = true;
+                    if (context.IsPremium)
+                    {
+                        allowed = true;
+                    }
+                    break;
             }
         }
 
-        return true;
+        // Only disallow rules were present: everyone not explicitly excluded may view.
+        return !hasAllowRule || allowed;
     }
 }

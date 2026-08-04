@@ -1,6 +1,7 @@
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services.StarGifts;
+using MyTelegram.Messenger.Services.Stories;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
@@ -18,7 +19,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //ILayeredService<IChatConverter> layeredService,
- IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
+ IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
 {
     protected override async Task<MyTelegram.Schema.Messages.IChatFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetFullChannel obj)
     {
@@ -87,6 +88,7 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
                 await SetBoostsInfoAsync(input.UserId, channelId, layeredChannelFull);
                 await SetBotVerificationAsync(channelId, layeredChannelFull, chatFull);
                 await SetPinnedMsgIdAsync(channelId, layeredChannelFull);
+                await SetStoriesAsync(input, channelId, layeredChannelFull);
             }
 
             IChat? linkedChannel = null;
@@ -141,8 +143,76 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
         }
     }
 
-    private async Task SetStarGiftsInfoAsync(long channelId, ILayeredChannelFull channelFull)
+    /// <summary>
+    /// Attaches the channel's active <a href="https://corefork.telegram.org/api/stories">stories</a> and
+    /// flags whether it has any pinned on the profile, so the channel profile can render its story section.
+    /// </summary>
+    private async Task SetStoriesAsync(IRequestInput input, long channelId, ILayeredChannelFull channelFull)
     {
+        if (channelFull is not TChannelFull tFull)
+        {
+            return;
+        }
+
+        var storyCollection = mongoDatabase.GetCollection<StoryDocument>("stories");
+        var currentTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        var activeFilter = Builders<StoryDocument>.Filter.And(
+            Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, channelId),
+            Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, StoryHelper.PeerTypeChannel),
+            Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false),
+            Builders<StoryDocument>.Filter.Lte(s => s.Date, currentTime),
+            Builders<StoryDocument>.Filter.Gte(s => s.ExpireDate, currentTime));
+
+        var stories = await storyCollection.Find(activeFilter).SortBy(s => s.StoryId).ToListAsync();
+
+        var pinnedCount = await storyCollection.CountDocumentsAsync(
+            Builders<StoryDocument>.Filter.And(
+                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, channelId),
+                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, StoryHelper.PeerTypeChannel),
+                Builders<StoryDocument>.Filter.Eq(s => s.Pinned, true),
+                Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false)));
+
+        tFull.StoriesPinnedAvailable = pinnedCount > 0;
+
+        if (stories.Count == 0)
+        {
+            return;
+        }
+
+        var sentReactions = await storyResponseBuilder.GetSentReactionsAsync(
+            channelId, StoryHelper.PeerTypeChannel, stories.Select(s => s.StoryId), input.UserId);
+
+        var storyItems = new TVector<IStoryItem>();
+        foreach (var story in stories)
+        {
+            sentReactions.TryGetValue(story.StoryId, out var sentReaction);
+            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction));
+        }
+
+        var maxReadId = await GetChannelMaxReadIdAsync(input.UserId, channelId);
+
+        tFull.Stories = new TPeerStories
+        {
+            Peer = new TPeerChannel { ChannelId = channelId },
+            Stories = storyItems,
+            MaxReadId = maxReadId > 0 ? maxReadId : null
+        };
+    }
+
+    private async Task<int> GetChannelMaxReadIdAsync(long userId, long channelId)
+    {
+        var readDoc = await mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("story_reads")
+            .Find(Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("userId", userId),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("ownerPeerId", channelId),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("ownerPeerType", StoryHelper.PeerTypeChannel)))
+            .FirstOrDefaultAsync();
+
+        return readDoc != null && readDoc.Contains("maxReadId") ? readDoc["maxReadId"].AsInt32 : 0;
+    }
+
+    private async Task SetStarGiftsInfoAsync(long channelId, ILayeredChannelFull channelFull)    {
         if (channelFull is TChannelFull tFull) tFull.StargiftsAvailable = true;
         var col = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
         var count = (int)await col.CountDocumentsAsync(

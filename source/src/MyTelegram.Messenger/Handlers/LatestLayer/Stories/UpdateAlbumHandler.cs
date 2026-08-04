@@ -1,74 +1,61 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Stories;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
+
+/// <summary>
+/// Update a <a href="https://corefork.telegram.org/api/stories#story-albums">story album</a>.
+/// Possible errors
+/// Code Type Description
+/// 400 PEER_ID_INVALID The provided peer id is invalid.
+/// 400 STORY_ID_INVALID The specified story ID is invalid.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stories.updateAlbum"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+/// </remarks>
 internal sealed class UpdateAlbumHandler(
-    IMongoDatabase mongoDatabase)
+    IStoryAccessService storyAccessService,
+    IStoryAlbumService storyAlbumService)
     : RpcResultObjectHandler<RequestUpdateAlbum, IStoryAlbum>
 {
-    private readonly IMongoCollection<StoryDocument> _storyCollection =
-        mongoDatabase.GetCollection<StoryDocument>("stories");
-
     protected override async Task<IStoryAlbum> HandleCoreAsync(IRequestInput input, RequestUpdateAlbum obj)
     {
-        var (ownerPeerId, ownerPeerType) = StoryHelper.ResolvePeer(obj.Peer, input.UserId);
+        var (ownerPeerId, ownerPeerType) =
+            await storyAccessService.ResolveOwnedPeerAsync(obj.Peer, input.UserId, StoryRight.Edit);
 
-        if (obj.AddStories != null && obj.AddStories.Count > 0)
+        var album = await storyAlbumService.GetAlbumAsync(ownerPeerId, ownerPeerType, obj.AlbumId);
+        if (album == null)
         {
-            var filter = Builders<StoryDocument>.Filter.And(
-                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, ownerPeerId),
-                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, ownerPeerType),
-                Builders<StoryDocument>.Filter.In(s => s.StoryId, obj.AddStories.ToList())
-            );
-            var update = Builders<StoryDocument>.Update.Set(s => s.AlbumId, obj.AlbumId);
-            await _storyCollection.UpdateManyAsync(filter, update);
+            RpcErrors.RpcErrors400.StoryIdInvalid.ThrowRpcError();
         }
 
-        if (obj.DeleteStories != null && obj.DeleteStories.Count > 0)
+        if (obj.DeleteStories is { Count: > 0 })
         {
-            var filter = Builders<StoryDocument>.Filter.And(
-                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, ownerPeerId),
-                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, ownerPeerType),
-                Builders<StoryDocument>.Filter.In(s => s.StoryId, obj.DeleteStories.ToList())
-            );
-            var update = Builders<StoryDocument>.Update.Unset(s => s.AlbumId);
-            await _storyCollection.UpdateManyAsync(filter, update);
+            await storyAlbumService.RemoveStoriesAsync(
+                ownerPeerId, ownerPeerType, obj.AlbumId, obj.DeleteStories.Distinct().ToList());
         }
 
-        var newTitle = obj.Title;
-        if (!string.IsNullOrEmpty(newTitle))
+        if (obj.AddStories is { Count: > 0 })
         {
-            var titleFilter = Builders<StoryDocument>.Filter.And(
-                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, ownerPeerId),
-                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, ownerPeerType),
-                Builders<StoryDocument>.Filter.Eq(s => s.AlbumId, obj.AlbumId)
-            );
-            var titleUpdate = Builders<StoryDocument>.Update.Set(s => s.AlbumTitle, newTitle);
-            await _storyCollection.UpdateManyAsync(titleFilter, titleUpdate);
+            await storyAlbumService.AddStoriesAsync(
+                ownerPeerId, ownerPeerType, obj.AlbumId, obj.AddStories.Distinct().ToList());
         }
 
-        var albumFilter = Builders<StoryDocument>.Filter.And(
-            Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, ownerPeerId),
-            Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, ownerPeerType),
-            Builders<StoryDocument>.Filter.Eq(s => s.AlbumId, obj.AlbumId)
-        );
-        var albumStories = await _storyCollection.Find(albumFilter).ToListAsync();
-        var firstStory = albumStories.OrderBy(s => s.StoryId).FirstOrDefault();
-
-        var currentTitle = firstStory?.AlbumTitle ?? $"Album {obj.AlbumId}";
-
-        var iconPhoto = StoryHelper.BuildAlbumIconPhoto(firstStory);
-        var iconVideo = StoryHelper.BuildAlbumIconVideo(firstStory);
-
-        return new TStoryAlbum
+        if (!string.IsNullOrEmpty(obj.Title))
         {
-            AlbumId = obj.AlbumId,
-            Title = currentTitle,
-            IconPhoto = iconPhoto,
-            IconVideo = iconVideo
-        };
+            await storyAlbumService.SetTitleAsync(ownerPeerId, ownerPeerType, obj.AlbumId, obj.Title);
+        }
+
+        if (obj.Order is { Count: > 0 })
+        {
+            await storyAlbumService.SetStoryOrderAsync(
+                ownerPeerId, ownerPeerType, obj.AlbumId, obj.Order.ToList());
+        }
+
+        var updated = await storyAlbumService.GetAlbumAsync(ownerPeerId, ownerPeerType, obj.AlbumId);
+
+        return await storyAlbumService.ToStoryAlbumAsync(updated ?? album!);
     }
 }

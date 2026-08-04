@@ -2,6 +2,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Photo;
+using MyTelegram.Messenger.Services.Stories;
 
 namespace MyTelegram.Messenger.Services.Impl;
 
@@ -36,6 +37,7 @@ public class MediaHelper(
             TMessageMediaPaidMedia => MessageType.Photo,
             TMessageMediaPhoto => MessageType.Photo,
             TMessageMediaPoll => MessageType.Poll,
+            TMessageMediaStory => MessageType.Text,
             TMessageMediaToDo => MessageType.Text,
             TMessageMediaUnsupported => MessageType.Text,
             TMessageMediaVenue => MessageType.Geo,
@@ -401,9 +403,31 @@ public class MediaHelper(
         };
     }
 
-    private Task<IMessageMedia> CreateMediaStoryAsync(TInputMediaStory inputMediaStory)
+    /// <summary>
+    /// Resolves a story reference into <c>messageMediaStory</c>, so a story can be forwarded into a chat.
+    /// <para>
+    /// The story itself is inlined when it is still available; otherwise only the peer and id go out and
+    /// the client renders an "expired story" placeholder.
+    /// </para>
+    /// </summary>
+    private async Task<IMessageMedia> CreateMediaStoryAsync(TInputMediaStory inputMediaStory)
     {
-        throw new NotImplementedException();
+        var (ownerPeerId, ownerPeerType) = StoryHelper.ResolvePeer(inputMediaStory.Peer, 0);
+
+        var storyCollection = mongoDatabase.GetCollection<StoryDocument>("stories");
+        var story = await storyCollection
+            .Find(s => s.OwnerPeerId == ownerPeerId &&
+                       s.OwnerPeerType == ownerPeerType &&
+                       s.StoryId == inputMediaStory.Id &&
+                       !s.Deleted)
+            .FirstOrDefaultAsync();
+
+        return new TMessageMediaStory
+        {
+            Peer = StoryHelper.CreatePeer(ownerPeerType, ownerPeerId),
+            Id = inputMediaStory.Id,
+            Story = story != null ? StoryHelper.ConvertToStoryItem(story) : null
+        };
     }
 
     private IMessageMedia CreateMediaVenue(TInputMediaVenue inputMediaVenue)

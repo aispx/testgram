@@ -1,5 +1,7 @@
-﻿using MongoDB.Driver;
+﻿using MongoDB.Bson;
+using MongoDB.Driver;
 using MyTelegram.Messenger.Services;
+using MyTelegram.Messenger.Services.Stories;
 using IChannelParticipant = MyTelegram.Schema.IChannelParticipant;
 using IChatFull = MyTelegram.Schema.IChatFull;
 using TChannelParticipant = MyTelegram.Schema.Channels.TChannelParticipant;
@@ -27,6 +29,10 @@ public class ChatConverterService(
 {
     private readonly IMongoCollection<BotVerificationDocument> _botVerificationCollection =
         mongoDatabase.GetCollection<BotVerificationDocument>("bot-verifications");
+    private readonly IMongoCollection<StoryDocument> _storyCollection =
+        mongoDatabase.GetCollection<StoryDocument>("stories");
+    private readonly IMongoCollection<BsonDocument> _storyHiddenCollection =
+        mongoDatabase.GetCollection<BsonDocument>("story_hidden_peers");
 
     public async Task<IChat> GetChannelAsync(IRequestWithAccessHashKeyId request, long channelId,
         bool checkChannelMember, bool? channelMemberIsLeft, int layer = 0, bool throwIfNotFound = true)
@@ -279,6 +285,7 @@ public class ChatConverterService(
             tChannel.Forum = channelReadModel.Forum;
             tChannel.ForumTabs = channelReadModel.ForumTabs;
             ApplyBotVerificationIcon(tChannel);
+            ApplyStoriesInfo(tChannel, request);
         }
 
         if (channelMemberIsLeft.HasValue)
@@ -333,6 +340,48 @@ public class ChatConverterService(
         }
 
         channel.BotVerificationIcon = verification.Icon;
+    }
+
+    /// <summary>
+    /// Sets the channel's <a href="https://corefork.telegram.org/api/stories">stories</a> summary, so
+    /// clients know whether to draw a story ring on the channel and where the unread boundary is.
+    /// Without this, channel stories never appear in the chat list.
+    /// </summary>
+    private void ApplyStoriesInfo(TChannel channel, IRequestWithAccessHashKeyId request)
+    {
+        var currentTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        var latest = _storyCollection
+            .Find(Builders<StoryDocument>.Filter.And(
+                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, channel.Id),
+                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, StoryHelper.PeerTypeChannel),
+                Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false),
+                Builders<StoryDocument>.Filter.Lte(s => s.Date, currentTime),
+                Builders<StoryDocument>.Filter.Gte(s => s.ExpireDate, currentTime)))
+            .SortByDescending(s => s.StoryId)
+            .Limit(1)
+            .FirstOrDefault();
+
+        if (latest == null)
+        {
+            channel.StoriesUnavailable = true;
+            return;
+        }
+
+        channel.StoriesMaxId = new TRecentStory
+        {
+            MaxId = latest.StoryId,
+            Live = latest.IsLive
+        };
+
+        var hidden = _storyHiddenCollection
+            .Find(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("userId", request.UserId),
+                Builders<BsonDocument>.Filter.Eq("peerId", channel.Id),
+                Builders<BsonDocument>.Filter.Eq("hidden", true)))
+            .Any();
+
+        channel.StoriesHidden = hidden;
     }
 
     public IChatFull ToChannelFull(IRequestWithAccessHashKeyId request,

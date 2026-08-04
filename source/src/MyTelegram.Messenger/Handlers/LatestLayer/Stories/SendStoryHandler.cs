@@ -1,6 +1,5 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
-using MyTelegram.Messenger.Services;
 using MyTelegram.Messenger.Services.Stats;
 using MyTelegram.Messenger.Services.Stats.Ingestion;
 using MyTelegram.Messenger.Services.Stories;
@@ -9,57 +8,80 @@ using MyTelegram.Schema.Stories;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 
+/// <summary>
+/// Uploads a <a href="https://corefork.telegram.org/api/stories">Telegram Story</a>.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stories.sendStory"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
+/// </remarks>
 internal sealed class SendStoryHandler(
     IIdGenerator idGenerator,
     IMongoDatabase mongoDatabase,
-    IMediaHelper mediaHelper,
-    IMetricsStore metricsStore)
+    IMetricsStore metricsStore,
+    IUserAppService userAppService,
+    ITokenizer tokenizer,
+    IStoryAccessService storyAccessService,
+    IStoryAlbumService storyAlbumService,
+    IStoryConfigProvider storyConfigProvider,
+    IStoryMediaService storyMediaService,
+    IStoryUpdatesSender storyUpdatesSender)
     : RpcResultObjectHandler<RequestSendStory, IUpdates>
 {
+    /// <summary>
+    /// The periods official clients offer, in seconds (6h, 12h, 24h, 48h). Anything else is rejected with
+    /// STORY_PERIOD_INVALID; non-Premium users are limited to 24h.
+    /// </summary>
+    private static readonly int[] AllowedPeriods = [6 * 3600, 12 * 3600, 86400, 2 * 86400];
+
+    private const int DefaultPeriod = 86400;
+
     private readonly IMongoCollection<StoryDocument> _storyCollection =
         mongoDatabase.GetCollection<StoryDocument>("stories");
-    private readonly IMongoCollection<BsonDocument> _channelMembersCollection =
-        mongoDatabase.GetCollection<BsonDocument>("channel_members");
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendStory obj)
     {
-        var (ownerPeerId, ownerPeerType) = StoryHelper.ResolvePeer(obj.Peer, input.UserId);
+        var (ownerPeerId, ownerPeerType) =
+            await storyAccessService.ResolveOwnedPeerAsync(obj.Peer, input.UserId, StoryRight.Post);
 
-        if (ownerPeerType == 2)
+        if (obj.Media == null)
         {
-            var memberFilter = Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("channelId", ownerPeerId),
-                Builders<BsonDocument>.Filter.Eq("userId", input.UserId),
-                Builders<BsonDocument>.Filter.Eq("isMember", true)
-            );
-            var member = await _channelMembersCollection.Find(memberFilter).FirstOrDefaultAsync();
-            if (member == null)
-            {
-                RpcErrors.RpcErrors400.ChatAdminRequired.ThrowRpcError();
-            }
+            RpcErrors.RpcErrors400.MediaEmpty.ThrowRpcError();
         }
+
+        var userReadModel = await userAppService.GetAsync((long?)input.UserId);
+        var isPremium = userReadModel?.Premium ?? false;
+
+        var period = ValidatePeriod(obj.Period, isPremium);
+        ValidateCaption(obj.Caption, isPremium);
+
+        await EnsureActiveStoryLimitAsync(ownerPeerId, ownerPeerType, isPremium);
 
         var currentDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var period = obj.Period ?? 86400;
-        long expireDate = currentDate + period;
+        var expireDate = currentDate + period;
 
-        int storyId;
+        // Deduplicate retries of the same send: random_id identifies the client's attempt.
         if (obj.RandomId != 0)
         {
-            var existingStory = await _storyCollection.Find(s => s.RandomId == obj.RandomId).FirstOrDefaultAsync();
-            if (existingStory != null)
+            var existing = await _storyCollection
+                .Find(s => s.RandomId == obj.RandomId &&
+                           s.OwnerPeerId == ownerPeerId &&
+                           s.OwnerPeerType == ownerPeerType)
+                .FirstOrDefaultAsync();
+
+            if (existing != null)
             {
-                storyId = existingStory.StoryId;
-            }
-            else
-            {
-                storyId = await idGenerator.NextIdAsync(IdType.StoryId, input.UserId);
+                return BuildUpdates(existing, obj.RandomId, input.UserId);
             }
         }
-        else
-        {
-            storyId = await idGenerator.NextIdAsync(IdType.StoryId, input.UserId);
-        }
+
+        // Story ids are per owner peer, so a channel's stories are numbered by the channel and not by
+        // whichever admin happened to post them.
+        var storyId = await idGenerator.NextIdAsync(IdType.StoryId, ownerPeerId);
+
+        var media = await storyMediaService.SaveStoryMediaAsync(obj.Media);
+        var hashtags = StoryHelper.ExtractHashtags(obj.Caption);
+        var privacyRules = StoryHelper.ParsePrivacyRules(obj.PrivacyRules);
 
         var storyDocument = new StoryDocument
         {
@@ -71,105 +93,205 @@ internal sealed class SendStoryHandler(
             ExpireDate = expireDate,
             Caption = obj.Caption,
             Pinned = obj.Pinned,
+            // Every story is archived on creation; `pinned` additionally keeps it on the profile.
+            Archived = true,
             NoForwards = obj.Noforwards,
             RandomId = obj.RandomId,
             Period = period,
+            MediaType = media.MediaType,
+            MediaFileId = media.FileId,
+            MediaAccessHash = media.AccessHash,
+            MediaFileReference = media.FileReference,
+            MediaDcId = media.DcId,
+            MediaSize = media.Size,
+            MediaMimeType = media.MimeType,
+            VideoWidth = media.VideoWidth,
+            VideoHeight = media.VideoHeight,
+            VideoDuration = media.VideoDuration,
+            VideoThumbBytes = media.VideoThumbBytes,
+            PrivacyRules = privacyRules,
+            CloseFriends = privacyRules.Any(r => r.Type == StoryPrivacyRuleType.AllowCloseFriends),
+            MediaAreas = StoryMediaAreaHelper.Parse(obj.MediaAreas),
+            Entities = StoryHelper.SerializeEntities(obj.Entities),
+            Hashtags = hashtags,
+            HashtagTokens = BuildHashtagTokens(hashtags),
+            AlbumIds = obj.Albums?.Distinct().ToList() ?? [],
             ViewsCount = 0,
             ForwardsCount = 0,
             ReactionsCount = 0
         };
 
-        if (obj.Media != null)
-        {
-            var savedMedia = await mediaHelper.SaveMediaAsync(obj.Media);
-
-            if (savedMedia == null)
-            {
-                RpcErrors.RpcErrors400.MediaEmpty.ThrowRpcError();
-            }
-
-            if (obj.Media is TInputMediaUploadedPhoto photoMedia && photoMedia.File is TInputFile photoFile)
-            {
-                storyDocument.MediaType = 1;
-
-                if (savedMedia is TMessageMediaPhoto photoMsg && photoMsg.Photo is TPhoto photo)
-                {
-                    storyDocument.MediaFileId = photo.Id;
-                    storyDocument.MediaAccessHash = photo.AccessHash;
-                    storyDocument.MediaDcId = photo.DcId;
-                    storyDocument.MediaFileReference = photo.FileReference.Length > 0 ? photo.FileReference.ToArray() : [];
-                }
-                else
-                {
-                    throw new Exception("Failed to save photo to file server");
-                }
-            }
-            else if (obj.Media is TInputMediaUploadedDocument docMedia && docMedia.File is TInputFile docFile)
-            {
-                storyDocument.MediaType = 2;
-
-                if (savedMedia is TMessageMediaDocument docMsg && docMsg.Document is TDocument doc)
-                {
-                    storyDocument.MediaFileId = doc.Id;
-                    storyDocument.MediaAccessHash = doc.AccessHash;
-                    storyDocument.MediaDcId = doc.DcId;
-                    storyDocument.MediaFileReference = doc.FileReference.Length > 0 ? doc.FileReference.ToArray() : [];
-                    storyDocument.MediaSize = doc.Size;
-                    storyDocument.MediaMimeType = doc.MimeType;
-                }
-                else
-                {
-                    throw new Exception("Failed to save document/video to file server");
-                }
-                
-                if (docMedia.Attributes != null)
-                {
-                    foreach (var attr in docMedia.Attributes)
-                    {
-                        if (attr is TDocumentAttributeVideo videoAttr)
-                        {
-                            storyDocument.VideoWidth = videoAttr.W;
-                            storyDocument.VideoHeight = videoAttr.H;
-                            storyDocument.VideoDuration = (int)videoAttr.Duration;
-                        }
-                    }
-                }
-            }
-        }
+        ApplyMusic(storyDocument, obj.Music);
+        ApplyForwardSource(storyDocument, obj, input.UserId);
 
         await _storyCollection.InsertOneAsync(storyDocument);
 
+        foreach (var albumId in storyDocument.AlbumIds)
+        {
+            await storyAlbumService.RefreshIconAsync(ownerPeerId, ownerPeerType, albumId);
+        }
+
+        await RecordStatsAsync(storyDocument, ownerPeerId, ownerPeerType, storyId);
+
+        var updates = BuildUpdates(storyDocument, obj.RandomId, input.UserId);
+
+        // The poster gets the story in this RPC's result; everyone else needs a push.
+        await storyUpdatesSender.PushStoryUpdateAsync(
+            storyDocument,
+            new TUpdates
+            {
+                Updates = new TVector<IUpdate>
+                {
+                    new TUpdateStory
+                    {
+                        Peer = StoryHelper.CreatePeer(ownerPeerType, ownerPeerId),
+                        Story = StoryHelper.ConvertToStoryItem(storyDocument)
+                    }
+                },
+                Chats = new TVector<IChat>(),
+                Users = new TVector<IUser>(),
+                Date = CurrentDate
+            },
+            excludeUserId: input.UserId);
+
+        return updates;
+    }
+
+    private int ValidatePeriod(int? requestedPeriod, bool isPremium)
+    {
+        if (!requestedPeriod.HasValue)
+        {
+            return DefaultPeriod;
+        }
+
+        var period = requestedPeriod.Value;
+
+        if (!AllowedPeriods.Contains(period))
+        {
+            RpcErrors.RpcErrors400.StoryPeriodInvalid.ThrowRpcError();
+        }
+
+        if (!isPremium && period != DefaultPeriod)
+        {
+            RpcErrors.RpcErrors400.PremiumAccountRequired.ThrowRpcError();
+        }
+
+        return period;
+    }
+
+    private void ValidateCaption(string? caption, bool isPremium)
+    {
+        if (string.IsNullOrEmpty(caption))
+        {
+            return;
+        }
+
+        if (caption.Length > storyConfigProvider.GetCaptionLengthLimit(isPremium))
+        {
+            RpcErrors.RpcErrors400.MediaCaptionTooLong.ThrowRpcError();
+        }
+    }
+
+    /// <summary>
+    /// Enforces <c>story_expiring_limit_*</c>: the number of stories that may be active at once.
+    /// Channel stories are not subject to the per-user Premium limit.
+    /// </summary>
+    private async Task EnsureActiveStoryLimitAsync(long ownerPeerId, int ownerPeerType, bool isPremium)
+    {
+        if (ownerPeerType != StoryHelper.PeerTypeUser)
+        {
+            return;
+        }
+
+        var currentTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var activeCount = await _storyCollection.CountDocumentsAsync(
+            Builders<StoryDocument>.Filter.And(
+                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, ownerPeerId),
+                Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, ownerPeerType),
+                Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false),
+                Builders<StoryDocument>.Filter.Gte(s => s.ExpireDate, currentTime)));
+
+        if (activeCount >= storyConfigProvider.GetExpiringLimit(isPremium))
+        {
+            RpcErrors.RpcErrors400.StoriesTooMuch.ThrowRpcError();
+        }
+    }
+
+    private List<long> BuildHashtagTokens(List<string> hashtags)
+    {
+        if (hashtags.Count == 0)
+        {
+            return [];
+        }
+
+        // Tokens are only produced when search-index encryption is configured; the plain Hashtags list
+        // is what the search actually matches on, so a null here is fine.
+        var tokens = tokenizer.BuildSearchTokens(string.Join(' ', hashtags));
+        return tokens ?? [];
+    }
+
+    private static void ApplyMusic(StoryDocument storyDocument, IInputDocument? music)
+    {
+        if (music is TInputDocument inputDocument)
+        {
+            storyDocument.MusicDocumentId = inputDocument.Id;
+            storyDocument.MusicAccessHash = inputDocument.AccessHash;
+        }
+    }
+
+    private static void ApplyForwardSource(StoryDocument storyDocument, RequestSendStory obj, long selfUserId)
+    {
+        if (obj.FwdFromId == null || !obj.FwdFromStory.HasValue)
+        {
+            return;
+        }
+
+        var (fwdPeerId, fwdPeerType) = StoryHelper.ResolvePeer(obj.FwdFromId, selfUserId);
+
+        storyDocument.FwdFromPeerId = fwdPeerId;
+        storyDocument.FwdFromPeerType = fwdPeerType;
+        storyDocument.FwdFromStoryId = obj.FwdFromStory.Value;
+        storyDocument.FwdModified = obj.FwdModified;
+    }
+
+    private async Task RecordStatsAsync(StoryDocument storyDocument, long ownerPeerId, int ownerPeerType, int storyId)
+    {
         // Stats ingestion: the story's post date (gauge) enables newest-first ordering in
         // recent-post interactions and marks the story entity as existing for stats.getStoryStats;
         // the channel-level story count is the denominator of the per-story means.
         var storyPostTime = (int)storyDocument.Date;
         var storyUtcDay = StatsIngestionTime.ToUtcDayOrNow(storyPostTime);
+
         await metricsStore.RecordAsync(
             new StatsEntityKey(StatsEntityType.Story, ownerPeerId, storyId), StatsMetricNames.PostDate,
             storyUtcDay, storyPostTime > 0 ? storyPostTime : StatsIngestionTime.CurrentUnixTime());
+
         if (ownerPeerType == StoryHelper.PeerTypeChannel)
         {
             await metricsStore.RecordAsync(
-                new StatsEntityKey(StatsEntityType.Channel, ownerPeerId, 0), StatsMetricNames.StoryPosts, storyUtcDay, 1);
+                new StatsEntityKey(StatsEntityType.Channel, ownerPeerId, 0), StatsMetricNames.StoryPosts,
+                storyUtcDay, 1);
         }
+    }
 
-        var storyItem = StoryHelper.ConvertToStoryItem(storyDocument, input.UserId);
-
-        var updateStoryId = new TUpdateStoryID
-        {
-            Id = storyId,
-            RandomId = obj.RandomId
-        };
-
-        var updateStory = new TUpdateStory
-        {
-            Peer = StoryHelper.CreatePeer(ownerPeerType, ownerPeerId),
-            Story = storyItem
-        };
-
+    private IUpdates BuildUpdates(StoryDocument storyDocument, long randomId, long requestingUserId)
+    {
         return new TUpdates
         {
-            Updates = new TVector<IUpdate> { updateStoryId, updateStory },
+            Updates = new TVector<IUpdate>
+            {
+                new TUpdateStoryID
+                {
+                    Id = storyDocument.StoryId,
+                    RandomId = randomId
+                },
+                new TUpdateStory
+                {
+                    Peer = StoryHelper.CreatePeer(storyDocument.OwnerPeerType, storyDocument.OwnerPeerId),
+                    Story = StoryHelper.ConvertToStoryItem(
+                        storyDocument, requestingUserId, includePrivacy: true)
+                }
+            },
             Chats = new TVector<IChat>(),
             Users = new TVector<IUser>(),
             Date = CurrentDate

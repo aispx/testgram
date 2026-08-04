@@ -1,15 +1,25 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
-using MyTelegram.Messenger.Converters;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Stories;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 
+/// <summary>
+/// Fetch the full active <a href="https://corefork.telegram.org/api/stories">story list</a> of a specific peer.
+/// Possible errors
+/// Code Type Description
+/// 400 PEER_ID_INVALID The provided peer id is invalid.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stories.getPeerStories"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+/// </remarks>
 internal sealed class GetPeerStoriesHandler(
     IMongoDatabase mongoDatabase,
-    IUserConverterService userConverterService)
+    IStoryAccessService storyAccessService,
+    IStoryResponseBuilder storyResponseBuilder)
     : RpcResultObjectHandler<RequestGetPeerStories, MyTelegram.Schema.Stories.IPeerStories>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
@@ -17,65 +27,66 @@ internal sealed class GetPeerStoriesHandler(
     private readonly IMongoCollection<BsonDocument> _storyReadsCollection =
         mongoDatabase.GetCollection<BsonDocument>("story_reads");
 
-    protected override async Task<MyTelegram.Schema.Stories.IPeerStories> HandleCoreAsync(IRequestInput input, RequestGetPeerStories obj)
+    protected override async Task<MyTelegram.Schema.Stories.IPeerStories> HandleCoreAsync(
+        IRequestInput input,
+        RequestGetPeerStories obj)
     {
-        var (peerId, peerType) = StoryHelper.ResolvePeer(obj.Peer, input.UserId);
-        
-        var currentTime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var (peerId, peerType) = await storyAccessService.ResolveReadablePeerAsync(obj.Peer, input.UserId);
+
+        var currentTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         var filter = Builders<StoryDocument>.Filter.And(
             Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerId, peerId),
             Builders<StoryDocument>.Filter.Eq(s => s.OwnerPeerType, peerType),
             Builders<StoryDocument>.Filter.Eq(s => s.Deleted, false),
-            Builders<StoryDocument>.Filter.Eq(s => s.Archived, false),
             Builders<StoryDocument>.Filter.Lte(s => s.Date, currentTime),
             Builders<StoryDocument>.Filter.Gte(s => s.ExpireDate, currentTime)
         );
 
         var stories = await _storyCollection.Find(filter)
-            .SortByDescending(s => s.StoryId)
+            .SortBy(s => s.StoryId)
             .ToListAsync();
 
+        var context = await storyAccessService.GetViewerContextAsync(input.UserId, [peerId]);
+        var visible = storyAccessService.FilterVisible(stories, input.UserId, context);
+
+        var isOwner = await storyAccessService.CanActAsPeerAsync(peerId, peerType, input.UserId, StoryRight.Edit);
+
+        var sentReactions = await storyResponseBuilder.GetSentReactionsAsync(
+            peerId, peerType, visible.Select(s => s.StoryId), input.UserId);
+
         var storyItems = new TVector<IStoryItem>();
-
-        foreach (var story in stories)
+        foreach (var story in visible)
         {
-            var storyItem = StoryHelper.ConvertToStoryItem(story, input.UserId);
-            storyItems.Add(storyItem);
+            sentReactions.TryGetValue(story.StoryId, out var sentReaction);
+            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner));
         }
 
-        var readFilter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("userId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("ownerPeerId", peerId),
-            Builders<BsonDocument>.Filter.Eq("ownerPeerType", peerType)
-        );
-        var readDoc = await _storyReadsCollection.Find(readFilter).FirstOrDefaultAsync();
-        int maxReadId = readDoc != null && readDoc.Contains("maxReadId") ? readDoc["maxReadId"].AsInt32 : 0;
-
-        var users = new TVector<IUser>();
-        var chats = new TVector<IChat>();
-
-        if (peerType == 0 && peerId > 0)
-        {
-            var userList = await userConverterService.GetUserListAsync(input, [peerId], false, false, input.Layer);
-            foreach (var user in userList)
-            {
-                users.Add((IUser)user);
-            }
-        }
-
-        var peer = new MyTelegram.Schema.TPeerStories
-        {
-            Peer = StoryHelper.CreatePeer(peerType, peerId),
-            Stories = storyItems,
-            MaxReadId = maxReadId > 0 ? maxReadId : null
-        };
+        var maxReadId = await GetMaxReadIdAsync(input.UserId, peerId, peerType);
+        var peers = await storyResponseBuilder.BuildPeersAsync(input, visible, [peerId]);
 
         return new MyTelegram.Schema.Stories.TPeerStories
         {
-            Stories = peer,
-            Chats = chats,
-            Users = users
+            Stories = new MyTelegram.Schema.TPeerStories
+            {
+                Peer = StoryHelper.CreatePeer(peerType, peerId),
+                Stories = storyItems,
+                MaxReadId = maxReadId > 0 ? maxReadId : null
+            },
+            Chats = peers.Chats,
+            Users = peers.Users
         };
+    }
+
+    private async Task<int> GetMaxReadIdAsync(long userId, long peerId, int peerType)
+    {
+        var readDoc = await _storyReadsCollection
+            .Find(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("userId", userId),
+                Builders<BsonDocument>.Filter.Eq("ownerPeerId", peerId),
+                Builders<BsonDocument>.Filter.Eq("ownerPeerType", peerType)))
+            .FirstOrDefaultAsync();
+
+        return readDoc != null && readDoc.Contains("maxReadId") ? readDoc["maxReadId"].AsInt32 : 0;
     }
 }
