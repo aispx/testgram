@@ -230,6 +230,87 @@ public static class PaidMediaHelper
         return null;
     }
 
+    /// <summary>
+    /// Byte length of a stored media object, or null when it cannot be fetched.
+    /// </summary>
+    /// <remarks>
+    /// Compared against the size the read model declares, this separates a real upload from a
+    /// placeholder without decrypting or decoding anything: a genuine object matches its declaration
+    /// exactly, while a stand-in is a few hundred bytes behind a declaration of any size.
+    /// </remarks>
+    public static async Task<long?> TryGetStoredObjectLengthAsync(long fileId, string sizeType)
+    {
+        try
+        {
+            var endpoint = Environment.GetEnvironmentVariable("App__PaidMediaPreviewMinioEndpoint")
+                ?? Environment.GetEnvironmentVariable("Minio__Endpoint")
+                ?? "http://minio:9000";
+            var bucket = Environment.GetEnvironmentVariable("App__PaidMediaPreviewMinioBucket")
+                ?? Environment.GetEnvironmentVariable("Minio__BucketName")
+                ?? "tg-files";
+
+            if (!endpoint.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !endpoint.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                endpoint = $"http://{endpoint}";
+            }
+
+            endpoint = endpoint.TrimEnd('/');
+            var objectName = Uri.EscapeDataString($"{fileId}_{sizeType}");
+            using var request = new HttpRequestMessage(HttpMethod.Head, $"{endpoint}/{bucket}/{objectName}");
+            using var response = await PreviewHttpClient.SendAsync(request);
+            return response.IsSuccessStatusCode ? response.Content.Headers.ContentLength : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Pixel dimensions of a stored media object, or null when it cannot be read or decoded.
+    /// </summary>
+    /// <remarks>
+    /// Lets callers tell a real image from a placeholder: the declared size in the read model is not
+    /// evidence, since a 1x1 stand-in can sit behind a declaration of any dimensions.
+    /// </remarks>
+    public static async Task<(int Width, int Height)?> TryGetStoredImageDimensionsAsync(
+        IMongoDatabase db,
+        IMessageMedia media)
+    {
+        var (fileId, sizeType) = media switch
+        {
+            TMessageMediaPhoto { Photo: TPhoto photo } => (
+                photo.Id,
+                photo.Sizes?.OfType<TPhotoSize>().OrderByDescending(x => (long)x.W * x.H).FirstOrDefault()?.Type),
+            TMessageMediaDocument { Document: TDocument document } => (
+                document.Id,
+                document.Thumbs?.OfType<TPhotoSize>().OrderByDescending(x => (long)x.W * x.H).FirstOrDefault()?.Type),
+            _ => (0L, null)
+        };
+
+        if (fileId == 0 || sizeType == null)
+        {
+            return null;
+        }
+
+        var bytes = await TryReadStoredFileBytesAsync(db, fileId, sizeType);
+        if (bytes is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        try
+        {
+            using var image = Image.Load(bytes);
+            return (image.Width, image.Height);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static byte[]? TryCreateStrippedThumb(byte[] fileBytes)
     {
         try

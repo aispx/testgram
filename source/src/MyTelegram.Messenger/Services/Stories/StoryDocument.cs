@@ -94,6 +94,18 @@ public class StoryDocument
     /// </remarks>
     [BsonElement("VideoThumbBytes")]
     public byte[]? StrippedThumbBytes { get; set; }
+
+    /// <summary>
+    /// Set when the story's stored media is not a usable image — in practice a 1x1-pixel placeholder
+    /// left by seeding rather than a real upload.
+    /// </summary>
+    /// <remarks>
+    /// Such a story cannot be rendered: advertising its sizes makes the client fetch a few hundred
+    /// bytes of single-pixel JPEG and stretch it across the tile, which shows as a flat block of
+    /// colour. Reporting it as deleted is the honest answer. Maintained by
+    /// <see cref="IStoryMediaVerificationService"/>; never set for a normal upload.
+    /// </remarks>
+    public bool MediaUnusable { get; set; }
 }
 
 public class StoryPrivacyRule

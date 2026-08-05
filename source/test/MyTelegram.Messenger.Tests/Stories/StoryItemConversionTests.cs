@@ -379,4 +379,38 @@ public class StoryItemConversionTests
         sizes.OfType<TPhotoStrippedSize>().ShouldBeEmpty();
         sizes.Select(x => ((TPhotoSize)x).Type).ShouldBe(["m", "x", "y", "w"]);
     }
+
+    [Fact]
+    public void A_story_whose_media_is_unusable_is_reported_as_deleted()
+    {
+        // Some stories were seeded with 1x1-pixel placeholders standing in for real uploads.
+        // Advertising their sizes made the client download 284 bytes of single-pixel JPEG and
+        // stretch it over the tile — a flat block of colour, which is what "pixels" looked like.
+        var doc = ExpiredPhotoStory();
+        doc.MediaUnusable = true;
+
+        StoryHelper.ConvertToStoryItem(doc, OwnerId, photo: new FakePhotoReadModel())
+            .ShouldBeOfType<TStoryItemDeleted>().Id.ShouldBe(11001);
+    }
+
+    [Fact]
+    public void An_unusable_video_story_is_also_reported_as_deleted()
+    {
+        var doc = VideoStory();
+        doc.MediaUnusable = true;
+
+        StoryHelper.ConvertToStoryItem(doc, OwnerId, document: new VideoDocumentReadModel())
+            .ShouldBeOfType<TStoryItemDeleted>();
+    }
+
+    [Fact]
+    public void A_story_with_usable_media_is_unaffected_by_the_flag()
+    {
+        // The flag defaults to false, so ordinary stories must be untouched.
+        var doc = ExpiredPhotoStory();
+        doc.MediaUnusable.ShouldBeFalse();
+
+        StoryHelper.ConvertToStoryItem(doc, OwnerId, photo: new FakePhotoReadModel())
+            .ShouldBeOfType<TStoryItem>();
+    }
 }

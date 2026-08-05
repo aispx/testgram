@@ -145,6 +145,18 @@ public static partial class StoryHelper
             };
         }
 
+        // Some stories were seeded with 1x1-pixel placeholder objects standing in for real media.
+        // Advertising their sizes makes the client download 284 bytes of single-pixel JPEG and
+        // stretch it across the tile — a flat block of colour. There is nothing to show, so say so
+        // rather than render garbage. MediaUnusable is set by the media-verification pass.
+        if (doc.MediaUnusable)
+        {
+            return new TStoryItemDeleted
+            {
+                Id = doc.StoryId
+            };
+        }
+
         IMessageMedia media = doc.MediaType switch
         {
             1 => new TMessageMediaPhoto { Photo = BuildPhoto(doc, photo) },
