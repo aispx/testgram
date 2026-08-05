@@ -28,10 +28,43 @@ internal sealed class GetStarsRevenueStatsHandler(
         var nowUnix = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var usdRate = obj.Ton ? options.CurrentValue.Rates.TonUsdRate : options.CurrentValue.Rates.StarsUsdRate;
 
-        // Resolve target peer: inputPeerSelf = bot owner (own balance), otherwise a channel/bot
+        // Resolve target peer: own wallet (inputPeerSelf / own user id), an owned bot, or a channel.
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
-        if (peer.PeerType is PeerType.User or PeerType.Self)
+        if (peer == null)
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+
+        if (peer!.PeerType is PeerType.User or PeerType.Self)
         {
+            // The Stars balance screen ("Stars" button under the balance) opens
+            // BotStarsActivity(TYPE_STARS, clientUserId) and requests stats for the user's OWN
+            // wallet — the client has a dedicated self mode for this (self == botId ==
+            // clientUserId). Rejecting it with PEER_ID_INVALID leaves the whole screen without
+            // status, so serve the caller's own wallet instead of demanding a bot peer.
+            if (peer.PeerId == input.UserId)
+            {
+                var selfCurrent = obj.Ton
+                    ? await TonBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId)
+                    : await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
+                var selfOverall = obj.Ton
+                    ? selfCurrent
+                    : await GetOverallStarsRevenueAsync(input.UserId);
+
+                return new TStarsRevenueStats
+                {
+                    Status = new TStarsRevenueStatus
+                    {
+                        CurrentBalance = ChannelRevenueHelper.BuildAmount(currency, selfCurrent),
+                        AvailableBalance = ChannelRevenueHelper.BuildAmount(currency, selfCurrent),
+                        OverallRevenue = ChannelRevenueHelper.BuildAmount(currency, selfOverall),
+                        WithdrawalEnabled = selfCurrent > 0 && (obj.Ton || selfCurrent >= StarsWithdrawalMin),
+                    },
+                    RevenueGraph = obj.Ton
+                        ? await BuildRevenueGraphAsync(input.UserId, currency, obj.Dark, nowUnix)
+                        : await BuildBotStarsRevenueGraphAsync(input.UserId, obj.Dark, nowUnix),
+                    UsdRate = usdRate,
+                };
+            }
+
             var bot = await queryProcessor.ProcessAsync(new GetUserByIdQuery(peer.PeerId));
             if (bot?.Bot != true)
                 RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
@@ -44,7 +77,7 @@ internal sealed class GetStarsRevenueStatsHandler(
                 : await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, peer.PeerId);
             var botOverall = obj.Ton
                 ? botCurrent
-                : await GetBotOverallStarsRevenueAsync(peer.PeerId);
+                : await GetOverallStarsRevenueAsync(peer.PeerId);
 
             return new TStarsRevenueStats
             {
@@ -53,7 +86,7 @@ internal sealed class GetStarsRevenueStatsHandler(
                     CurrentBalance = ChannelRevenueHelper.BuildAmount(currency, botCurrent),
                     AvailableBalance = ChannelRevenueHelper.BuildAmount(currency, botCurrent),
                     OverallRevenue = ChannelRevenueHelper.BuildAmount(currency, botOverall),
-                    WithdrawalEnabled = botCurrent > 0 && (obj.Ton || botCurrent >= 1000),
+                    WithdrawalEnabled = botCurrent > 0 && (obj.Ton || botCurrent >= StarsWithdrawalMin),
                 },
                 RevenueGraph = obj.Ton
                     ? await BuildRevenueGraphAsync(peer.PeerId, currency, obj.Dark, nowUnix)
@@ -90,7 +123,13 @@ internal sealed class GetStarsRevenueStatsHandler(
         };
     }
 
-    private async Task<long> GetBotOverallStarsRevenueAsync(long botUserId)
+    /// <summary>
+    /// Minimum withdrawable Stars balance, mirroring the client's <c>stars_revenue_withdrawal_min</c>
+    /// app config default. TON has no minimum in the client.
+    /// </summary>
+    private const long StarsWithdrawalMin = 1000;
+
+    private async Task<long> GetOverallStarsRevenueAsync(long botUserId)
     {
         var docs = await mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("star-transactions")
             .Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", botUserId) &

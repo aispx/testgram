@@ -17,10 +17,13 @@ internal sealed class GetStarsTransactionsHandler(
         var userId = input.UserId;
         var pageSize = obj.Limit > 0 ? obj.Limit : 20;
 
-        // Channel/bot revenue history
-        if (obj.Peer is not TInputPeerSelf)
+        // Channel/bot revenue history.
+        // inputPeerSelf and an explicit self user id both mean "my own wallet"; the client sends
+        // either form depending on which screen loads the list.
+        var requestedPeer = obj.Peer is TInputPeerSelf ? null : peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (requestedPeer != null && requestedPeer.PeerId != input.UserId)
         {
-            var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+            var peer = requestedPeer;
             var currency = obj.Ton ? ChannelRevenueHelper.TonCurrency : ChannelRevenueHelper.StarsCurrency;
             var (current, _) = await ChannelRevenueHelper.GetBalanceAsync(mongoDatabase, peer.PeerId, currency);
 

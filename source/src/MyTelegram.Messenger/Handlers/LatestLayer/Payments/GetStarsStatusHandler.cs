@@ -19,9 +19,12 @@ internal sealed class GetStarsStatusHandler(
         const int pageSize = 50;
 
         // Channel/bot revenue: return channel ledger balance + history.
-        if (obj.Peer is not TInputPeerSelf)
+        // inputPeerSelf and an explicit self user id both mean "my own wallet" — the client sends
+        // either form depending on the screen, so both must fall through to the self branch below.
+        var requestedPeer = obj.Peer is TInputPeerSelf ? null : peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (requestedPeer != null && requestedPeer.PeerId != input.UserId)
         {
-            var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+            var peer = requestedPeer;
             if (peer.PeerType is PeerType.User or PeerType.Self)
             {
                 var bot = await queryProcessor.ProcessAsync(new GetUserByIdQuery(peer.PeerId));
