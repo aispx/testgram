@@ -48,8 +48,11 @@ internal sealed class GetPaymentFormHandler(
             var savedCol = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
             SavedStarGiftDocument? saved = upgradeInvoice.Stargift switch
             {
-                TInputSavedStarGiftUser u => await savedCol.Find(d => d.OwnerUserId == input.UserId && d.MessageId == u.MsgId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync()
-                    ?? await savedCol.Find(d => d.OwnerUserId == input.UserId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync(),
+                TInputSavedStarGiftUser u => await savedCol.Find(
+                    Builders<SavedStarGiftDocument>.Filter.Eq(d => d.OwnerUserId, input.UserId)
+                    & Builders<SavedStarGiftDocument>.Filter.Eq(d => d.IsUnique, false)
+                    & Builders<SavedStarGiftDocument>.Filter.Ne(d => d.UpgradeStars, null)
+                    & SavedStarGiftMsgIdHelper.MatchMsgId(u.MsgId)).FirstOrDefaultAsync(),
                 TInputSavedStarGiftChat c => await savedCol.Find(d =>
                     d.OwnerChannelId == ((c.Peer as TInputPeerChannel) == null ? 0 : ((TInputPeerChannel)c.Peer).ChannelId) &&
                     d.RandomId == c.SavedId &&

@@ -15,9 +15,12 @@ internal sealed class UpdateStarGiftPriceHandler(IMongoDatabase mongoDatabase) :
         switch (obj.Stargift)
         {
             case TInputSavedStarGiftUser u:
-                // MsgId is MessageId in saved-star-gifts for regular gifts, or RandomId for unique
-                var saved = await savedCol.Find(d => d.OwnerUserId == input.UserId && d.IsUnique &&
-                    (d.MessageId == u.MsgId || d.RandomId == u.MsgId)).FirstOrDefaultAsync();
+                // MsgId is MessageId in saved-star-gifts for regular gifts, the allocated local id
+                // for unanchored ones, or RandomId for unique gifts.
+                var saved = await savedCol.Find(
+                    Builders<SavedStarGiftDocument>.Filter.Eq(d => d.OwnerUserId, input.UserId)
+                    & Builders<SavedStarGiftDocument>.Filter.Eq(d => d.IsUnique, true)
+                    & SavedStarGiftMsgIdHelper.MatchMsgId(u.MsgId)).FirstOrDefaultAsync();
                 if (saved?.UniqueSlug != null)
                     doc = await uniqueCol.Find(d => d.Slug == saved.UniqueSlug).FirstOrDefaultAsync();
                 break;

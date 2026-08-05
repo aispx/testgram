@@ -42,7 +42,11 @@ internal sealed class GetPinnedStoriesHandler(
             filterBuilder.Eq(s => s.Deleted, false)
         );
 
-        var totalCount = await _storyCollection.CountDocumentsAsync(baseFilter);
+        // Count DISTINCT story ids, not documents. Historical duplicates of the same StoryId exist
+        // in this collection, and a Count larger than the number of stories the client can actually
+        // deduplicate makes it believe the page is incomplete. Because pagination advances by
+        // StoryId, the retry returns the same page — so the client re-requests forever.
+        var totalCount = await StoryPagingHelper.CountDistinctStoriesAsync(_storyCollection, baseFilter);
 
         var pageFilter = obj.OffsetId > 0
             ? filterBuilder.And(baseFilter, filterBuilder.Lt(s => s.StoryId, obj.OffsetId))
@@ -54,8 +58,12 @@ internal sealed class GetPinnedStoriesHandler(
             // Stories pinned to the top of the profile come first, newest first within each section.
             .SortByDescending(s => s.PinnedToTop)
             .ThenByDescending(s => s.StoryId)
-            .Limit(limit)
+            // Over-fetch so that collapsing duplicates still fills the page.
+            .Limit(limit * 2)
             .ToListAsync();
+
+        // Collapse duplicates before the page is trimmed, keeping the first (best-sorted) copy.
+        stories = StoryPagingHelper.DeduplicatePage(stories, limit);
 
         var context = await storyAccessService.GetViewerContextAsync(input.UserId, [peerId]);
         var visible = storyAccessService.FilterVisible(stories, input.UserId, context);
@@ -75,13 +83,19 @@ internal sealed class GetPinnedStoriesHandler(
         var pinnedToTopIds = visible.Where(s => s.PinnedToTop).Select(s => s.StoryId).ToList();
         var peers = await storyResponseBuilder.BuildPeersAsync(input, visible, [peerId]);
 
+        // On the last page, report what the client can actually see. The distinct-id total counts
+        // stories the privacy filter may have removed for this viewer, and any Count above the
+        // number of items the client ends up holding restarts the "page is incomplete" retry loop.
+        var count = StoryPagingHelper.ResolveCount(
+            totalCount, storyItems.Count, stories.Count, limit, isFirstPage: obj.OffsetId <= 0);
+
         return new TStories
         {
             Stories = storyItems,
             PinnedToTop = pinnedToTopIds.Count > 0 ? new TVector<int>(pinnedToTopIds) : null,
             Chats = peers.Chats,
             Users = peers.Users,
-            Count = (int)totalCount
+            Count = count
         };
     }
 }

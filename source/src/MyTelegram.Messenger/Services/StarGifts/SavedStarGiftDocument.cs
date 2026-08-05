@@ -15,6 +15,13 @@ public class SavedStarGiftDocument
     public long OwnerChannelId { get; set; } // recipient (channel)
     public long FromUserId { get; set; }    // sender
     public int MessageId { get; set; }      // service message id in recipient's chat
+
+    /// <summary>
+    /// Stable 32-bit id used as <c>msg_id</c> when the gift is not anchored to a service message
+    /// (<see cref="MessageId"/> == 0). Allocated lazily by
+    /// <see cref="SavedStarGiftMsgIdHelper"/>; 0 means "not allocated yet".
+    /// </summary>
+    public int LocalMsgId { get; set; }
     public long GiftId { get; set; }
     public long Stars { get; set; }
     public long ConvertStars { get; set; }

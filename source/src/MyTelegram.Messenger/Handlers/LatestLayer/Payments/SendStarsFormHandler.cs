@@ -250,35 +250,25 @@ internal sealed class SendStarsFormHandler(
             {
                 case TInputSavedStarGiftUser u:
                 {
-                    // 1. Exact message-anchored match.
+                    // Exact match on whichever key the client round-tripped: a real service-message
+                    // id, the allocated local id for unanchored gifts, or RandomId for unique ones.
+                    // The old "no hit → newest unanchored upgradable gift" fallback was there
+                    // because msg_id arrived truncated and never matched; now that ids survive the
+                    // round-trip it would only ever upgrade the wrong gift.
                     if (u.MsgId != 0)
                     {
-                        saved = await savedCol.Find(d =>
-                            d.OwnerUserId == input.UserId &&
-                            d.MessageId == u.MsgId &&
-                            !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
-
-                        // Some clients pass the saved-id in MsgId for self-bought
-                        // gifts that were never anchored to a message.
-                        if (saved == null)
-                        {
-                            saved = await savedCol.Find(d =>
-                                d.OwnerUserId == input.UserId &&
-                                d.RandomId == u.MsgId &&
-                                !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
-                        }
+                        saved = await savedCol.Find(
+                            Builders<SavedStarGiftDocument>.Filter.Eq(d => d.OwnerUserId, input.UserId)
+                            & Builders<SavedStarGiftDocument>.Filter.Eq(d => d.IsUnique, false)
+                            & Builders<SavedStarGiftDocument>.Filter.Ne(d => d.UpgradeStars, null)
+                            & SavedStarGiftMsgIdHelper.MatchMsgId(u.MsgId)).FirstOrDefaultAsync();
                     }
-                    // 2. Buy-flow doesn't write back the service-message id, so
-                    //    self-bought gifts always have MessageId=0 in the DB.
-                    //    When no exact match was found, fall back to the most
-                    //    recently received upgradable gift — that's the one the
-                    //    user just clicked Upgrade on. Sort by Date desc instead
-                    //    of MongoDB natural order, otherwise the OLDEST gift is
-                    //    silently picked (the original bug).
-                    if (saved == null)
+                    else
                     {
+                        // msg_id == 0 → the client gave us nothing to match on; the most recently
+                        // received upgradable gift is the only sane interpretation.
                         saved = await savedCol
-                            .Find(d => d.OwnerUserId == input.UserId && d.MessageId == 0 && !d.IsUnique && d.UpgradeStars.HasValue)
+                            .Find(d => d.OwnerUserId == input.UserId && !d.IsUnique && d.UpgradeStars.HasValue)
                             .Sort(Builders<SavedStarGiftDocument>.Sort.Descending(d => d.Date))
                             .FirstOrDefaultAsync();
                     }
@@ -361,7 +351,9 @@ internal sealed class SendStarsFormHandler(
             var savedCol2 = mongoDatabase.GetCollection<SavedStarGiftDocument>("saved-star-gifts");
             SavedStarGiftDocument? saved2 = dropInvoice.Stargift switch
             {
-                TInputSavedStarGiftUser u2 => await savedCol2.Find(d => d.OwnerUserId == input.UserId && (d.MessageId == u2.MsgId || d.RandomId == u2.MsgId)).FirstOrDefaultAsync(),
+                TInputSavedStarGiftUser u2 => await savedCol2.Find(
+                    Builders<SavedStarGiftDocument>.Filter.Eq(d => d.OwnerUserId, input.UserId)
+                    & SavedStarGiftMsgIdHelper.MatchMsgId(u2.MsgId)).FirstOrDefaultAsync(),
                 TInputSavedStarGiftSlug s2 => await savedCol2.Find(d => d.OwnerUserId == input.UserId && d.UniqueSlug == s2.Slug).FirstOrDefaultAsync(),
                 TInputSavedStarGiftChat c2 => await savedCol2.Find(d => d.OwnerUserId == input.UserId && d.RandomId == c2.SavedId).FirstOrDefaultAsync(),
                 _ => null

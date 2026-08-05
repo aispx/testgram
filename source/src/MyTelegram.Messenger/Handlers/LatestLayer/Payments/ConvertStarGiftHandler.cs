@@ -14,8 +14,9 @@ internal sealed class ConvertStarGiftHandler(IMongoDatabase mongoDatabase) : Rpc
 
         SavedStarGiftDocument? gift = obj.Stargift switch
         {
-            TInputSavedStarGiftUser u when u.MsgId != 0 => await collection.Find(d =>
-                d.OwnerUserId == input.UserId && (d.MessageId == u.MsgId || d.RandomId == u.MsgId)).FirstOrDefaultAsync(),
+            TInputSavedStarGiftUser u when u.MsgId != 0 => await collection.Find(
+                Builders<SavedStarGiftDocument>.Filter.Eq(d => d.OwnerUserId, input.UserId)
+                & SavedStarGiftMsgIdHelper.MatchMsgId(u.MsgId)).FirstOrDefaultAsync(),
             TInputSavedStarGiftSlug s => await collection.Find(d =>
                 d.OwnerUserId == input.UserId && d.UniqueSlug == s.Slug).FirstOrDefaultAsync(),
             TInputSavedStarGiftChat c => await collection.Find(d =>

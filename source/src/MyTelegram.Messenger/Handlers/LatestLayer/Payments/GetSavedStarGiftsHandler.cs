@@ -124,6 +124,11 @@ internal sealed class GetSavedStarGiftsHandler(
         var nowForCooldown = DateTime.UtcNow.ToTimestamp();
         foreach (var doc in docs)
         {
+            // Layer 223: user-owned gifts are addressed by inputSavedStarGiftUser.msg_id, which is
+            // a 32-bit field. Gifts never anchored to a service message get a stable local id —
+            // casting the 64-bit RandomId here would truncate it and make the gift unaddressable.
+            var msgId = isChannel ? (int?)null : await SavedStarGiftMsgIdHelper.ResolveAsync(mongoDatabase, doc);
+
             giftMetaById.TryGetValue(doc.GiftId, out var meta);
 
             IPeer? fromId = null;
@@ -150,20 +155,12 @@ internal sealed class GetSavedStarGiftsHandler(
             }
             else
             {
-                giftTl = new TStarGift
-                {
-                    Id = doc.GiftId,
-                    Stars = doc.Stars,
-                    ConvertStars = doc.ConvertStars,
-                    UpgradeStars = doc.UpgradeStars,
-                    Title = meta?.Title,  // Include title for auction gifts
-                    Limited = meta?.Limited ?? false,
-                    SoldOut = meta?.SoldOut ?? false,
-                    AvailabilityRemains = meta?.AvailabilityRemains,
-                    AvailabilityTotal = meta?.AvailabilityTotal,
-                    FirstSaleDate = meta?.FirstSaleDate,
-                    LastSaleDate = meta?.LastSaleDate,
-                    Sticker = new TDocument
+                giftTl = StarGiftTlBuilder.Build(
+                    doc.GiftId,
+                    doc.Stars,
+                    doc.ConvertStars,
+                    doc.UpgradeStars,
+                    new TDocument
                     {
                         Id = doc.DocumentId,
                         AccessHash = doc.DocumentAccessHash,
@@ -174,7 +171,7 @@ internal sealed class GetSavedStarGiftsHandler(
                         DcId = doc.DcId,
                         Attributes = [new TDocumentAttributeSticker { Alt = "🎁", Stickerset = new TInputStickerSetEmpty() }],
                     },
-                };
+                    meta);
             }
 
             int? uniqueTransferLockedUntil = null;
@@ -195,9 +192,7 @@ internal sealed class GetSavedStarGiftsHandler(
                 Message = message,
                 // Layer 223: user-owned gifts are addressed by inputSavedStarGiftUser.msg_id;
                 // channel-owned gifts are addressed by inputSavedStarGiftChat.saved_id.
-                // Older unique user gifts in this DB store the unique id in RandomId
-                // and MessageId=0, so expose RandomId as msg_id for users.
-                MsgId = !isChannel ? (doc.MessageId > 0 ? doc.MessageId : (int?)doc.RandomId) : null,
+                MsgId = msgId,
                 SavedId = isChannel ? doc.RandomId : null,
                 ConvertStars = doc.IsUnique || doc.IsAuction ? null : (doc.ConvertStars > 0 ? doc.ConvertStars : null),
                 UpgradeStars = !doc.IsUnique && doc.PrepaidUpgrade ? doc.UpgradeStars : null,

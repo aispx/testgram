@@ -19,20 +19,14 @@ internal sealed class UpgradeStarGiftHandler(IMongoDatabase mongoDatabase, IMess
         switch (obj.Stargift)
         {
             case TInputSavedStarGiftUser u when u.MsgId != 0:
-                saved = await savedCol.Find(d =>
-                    d.OwnerUserId == input.UserId && d.MessageId == u.MsgId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
-                if (saved == null)
-                {
-                    saved = await savedCol.Find(d =>
-                        d.OwnerUserId == input.UserId && d.RandomId == u.MsgId && !d.IsUnique && d.UpgradeStars.HasValue).FirstOrDefaultAsync();
-                }
-                if (saved == null)
-                {
-                    saved = await savedCol
-                        .Find(d => d.OwnerUserId == input.UserId && d.MessageId == 0 && !d.IsUnique && d.UpgradeStars.HasValue)
-                        .Sort(Builders<SavedStarGiftDocument>.Sort.Descending(d => d.Date))
-                        .FirstOrDefaultAsync();
-                }
+                // Exact match only. The old "no hit → take the newest unanchored upgradable gift"
+                // fallback existed because msg_id used to arrive truncated and never matched;
+                // now that ids round-trip intact it would just upgrade the wrong gift.
+                saved = await savedCol.Find(
+                    Builders<SavedStarGiftDocument>.Filter.Eq(d => d.OwnerUserId, input.UserId)
+                    & Builders<SavedStarGiftDocument>.Filter.Eq(d => d.IsUnique, false)
+                    & Builders<SavedStarGiftDocument>.Filter.Ne(d => d.UpgradeStars, null)
+                    & SavedStarGiftMsgIdHelper.MatchMsgId(u.MsgId)).FirstOrDefaultAsync();
                 break;
             case TInputSavedStarGiftUser:
                 // msg_id == 0 → most recently received upgradable gift only.

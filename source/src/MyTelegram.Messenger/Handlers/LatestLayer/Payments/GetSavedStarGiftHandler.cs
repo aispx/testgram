@@ -19,7 +19,9 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
         {
             SavedStarGiftDocument? doc = null;
             if (stargift is TInputSavedStarGiftUser u)
-                doc = await savedCol.Find(d => d.OwnerUserId == input.UserId && (d.MessageId == u.MsgId || d.RandomId == u.MsgId)).FirstOrDefaultAsync();
+                doc = await savedCol.Find(
+                    Builders<SavedStarGiftDocument>.Filter.Eq(d => d.OwnerUserId, input.UserId)
+                    & SavedStarGiftMsgIdHelper.MatchMsgId(u.MsgId)).FirstOrDefaultAsync();
             else if (stargift is TInputSavedStarGiftChat c)
             {
                 var channelId = (c.Peer as TInputPeerChannel)?.ChannelId ?? 0;
@@ -39,17 +41,12 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
             else
             {
                 var meta = await giftCol.Find(d => d.GiftId == doc.GiftId).FirstOrDefaultAsync();
-                giftTl = new TStarGift
-                {
-                    Id = doc.GiftId,
-                    Stars = doc.Stars,
-                    ConvertStars = doc.ConvertStars,
-                    UpgradeStars = doc.UpgradeStars,
-                    Limited = meta?.Limited ?? false,
-                    SoldOut = meta?.SoldOut ?? false,
-                    AvailabilityRemains = meta?.AvailabilityRemains,
-                    AvailabilityTotal = meta?.AvailabilityTotal,
-                    Sticker = new TDocument
+                giftTl = StarGiftTlBuilder.Build(
+                    doc.GiftId,
+                    doc.Stars,
+                    doc.ConvertStars,
+                    doc.UpgradeStars,
+                    new TDocument
                     {
                         Id = doc.DocumentId,
                         AccessHash = doc.DocumentAccessHash,
@@ -60,7 +57,7 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
                         DcId = doc.DcId,
                         Attributes = [new TDocumentAttributeSticker { Alt = "🎁", Stickerset = new TInputStickerSetEmpty() }],
                     },
-                };
+                    meta);
             }
 
             IPeer? fromId = (!doc.NameHidden && doc.FromUserId != 0) ? new TPeerUser { UserId = doc.FromUserId } : null;
@@ -84,7 +81,9 @@ internal sealed class GetSavedStarGiftHandler(IMongoDatabase mongoDatabase)
                 FromId = fromId,
                 Date = doc.Date,
                 Message = message,
-                MsgId = doc.OwnerUserId > 0 ? (doc.MessageId > 0 ? doc.MessageId : (int?)doc.RandomId) : null,
+                MsgId = doc.OwnerUserId > 0
+                    ? await SavedStarGiftMsgIdHelper.ResolveAsync(mongoDatabase, doc)
+                    : null,
                 SavedId = doc.OwnerChannelId > 0 ? doc.RandomId : null,
                 ConvertStars = doc.IsUnique || doc.IsAuction ? null : (doc.ConvertStars > 0 ? doc.ConvertStars : null),
                 UpgradeStars = !doc.IsUnique && doc.PrepaidUpgrade ? doc.UpgradeStars : null,
