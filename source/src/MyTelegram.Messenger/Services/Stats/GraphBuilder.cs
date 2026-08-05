@@ -11,8 +11,10 @@ namespace MyTelegram.Messenger.Services.Stats;
 /// </summary>
 /// <remarks>
 /// A graph whose every series is entirely zero is likewise emitted as a <c>statsGraphError</c>: it would
-/// render as an empty card, and <c>DoubleLinearChartData</c> scales one series against the other's maximum
-/// (a zero maximum yields an infinite factor).
+/// render as an empty card. A multi-series <see cref="GraphKind.Line"/> graph additionally rejects any
+/// single series without a positive value, because <c>DoubleLinearChartData</c> scales each series against
+/// the largest one's maximum and a zero maximum divides by zero (<c>ArithmeticException</c>, which takes
+/// down the whole statistics screen).
 ///
 /// Wire format (verified against the reference clients — DrKLO <c>ChartData</c>, telegram-tt/tweb chart
 /// parsers, tdlib):
@@ -77,10 +79,25 @@ public sealed class GraphBuilder(IAsyncGraphStore asyncGraphStore) : IGraphBuild
                 return new TStatsGraphError { Error = NoDataError };
             }
 
-            // An all-zero graph carries no information: clients render an empty card, and
-            // DoubleLinearChartData divides the series maxima by each other (a zero series yields
-            // Infinity scaling). Report "no data" instead, which clients render as explanatory text.
+            // An all-zero graph carries no information: clients render an empty card.
             if (spec.Series.All(s => s.Values.All(v => v == 0)))
+            {
+                return new TStatsGraphError { Error = NoDataError };
+            }
+
+            // A multi-series line graph is rendered by DoubleLinearChartData (graph type 1 — the
+            // views+shares, IV interactions and story interactions pairs), which scales each series
+            // against the largest one: linesK[i] = max / series.maxValue. The client's maxValue starts
+            // at 0 and only grows on positive samples, so a series with no positive value leaves
+            // maxValue == 0, divides by zero and throws ArithmeticException out of ChartData's
+            // constructor — killing the entire statistics screen, not just this card. Emit "no data"
+            // for the slot instead, which clients render as explanatory text.
+            //
+            // Stacked-bar and pie graphs do no such cross-series division, so an empty category there
+            // stays a legitimate zero column and must not discard the whole graph.
+            if (spec.Kind == GraphKind.Line
+                && spec.Series.Count > 1
+                && spec.Series.Any(s => s.Values.All(v => v <= 0)))
             {
                 return new TStatsGraphError { Error = NoDataError };
             }
