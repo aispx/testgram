@@ -137,13 +137,13 @@ public class StoryItemConversionTests
         var real = StoryHelper.ConvertToStoryItem(doc, OwnerId, photo: new FakePhotoReadModel())
             .ShouldBeOfType<TStoryItem>();
 
-        // With MediaSize = 0 the guess claims a flat 100000-byte image that does not exist at that
-        // length; the client requests a range past the end of the file and renders nothing.
+        // Without a photo row there is nothing trustworthy to offer beyond the base object.
         var guessedSizes = ((TPhoto)((TMessageMediaPhoto)guessed.Media).Photo).Sizes;
-        guessedSizes.Select(s => ((TPhotoSize)s).Size).ShouldContain(100000);
+        guessedSizes.Count.ShouldBe(1);
 
+        // With one, the client gets the real per-size breakdown it can actually download.
         var realSizes = ((TPhoto)((TMessageMediaPhoto)real.Media).Photo).Sizes;
-        realSizes.Select(s => ((TPhotoSize)s).Size).ShouldNotContain(100000);
+        realSizes.Select(s => ((TPhotoSize)s).Size).ShouldBe([10719, 43283, 89123, 292980]);
     }
 
     [Fact]
@@ -181,5 +181,55 @@ public class StoryItemConversionTests
 
         var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
         sizes.Select(s => ((TPhotoSize)s).Size).ShouldContain(400_000);
+    }
+
+    [Fact]
+    public void With_no_photo_row_and_no_stored_size_no_length_is_invented()
+    {
+        // Advertising a made-up length is worse than advertising none: the client fetches it, the
+        // file-server 404s because no such object exists, and the client retries the same missing
+        // size. This was 132 of 178 observed file-server errors, and it is what made stories crawl.
+        var doc = ExpiredPhotoStory();
+        doc.MediaSize = 0;
+
+        var item = StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItem>();
+
+        var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
+        sizes.Count.ShouldBe(1);
+        sizes.Select(s => ((TPhotoSize)s).Size).ShouldNotContain(100000);
+    }
+
+    [Fact]
+    public void Only_sizes_present_in_the_read_model_are_advertised()
+    {
+        // The read model is the contract with storage: if it lists m and x, the response must not
+        // also offer y or w. 154 of 326 live photos declared sizes with no object behind them.
+        var item = StoryHelper
+            .ConvertToStoryItem(ExpiredPhotoStory(), OwnerId, photo: new TwoSizePhotoReadModel())
+            .ShouldBeOfType<TStoryItem>();
+
+        var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
+        sizes.Select(s => ((TPhotoSize)s).Type).ShouldBe(["m", "x"]);
+    }
+
+    /// <summary>A photo whose storage really only holds the "m" and "x" objects.</summary>
+    private sealed class TwoSizePhotoReadModel : IPhotoReadModel
+    {
+        public string Id => $"photo-{PhotoId}";
+        public long AccessHash => 6380161177511521543;
+        public int Date => 1774791566;
+        public int DcId => 2;
+        public byte[] FileReference => [1, 2, 3, 4];
+        public bool HasStickers => false;
+        public bool HasVideo => false;
+        public long PhotoId => StoryItemConversionTests.PhotoId;
+        public long Size => 433033;
+        public long UserId => OwnerId;
+        public bool IsProfilePhoto => false;
+        public List<VideoSize>? VideoSizes => null;
+        public List<IPhotoSize>? Sizes2 => null;
+        public List<IVideoSize>? VideoSizes2 => null;
+
+        public List<PhotoSize>? Sizes => [new(180, 320, 10719, "m"), new(450, 800, 43283, "x")];
     }
 }

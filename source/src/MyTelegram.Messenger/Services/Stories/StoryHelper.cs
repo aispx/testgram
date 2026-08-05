@@ -344,7 +344,19 @@ public static partial class StoryHelper
             return sizes;
         }
 
-        // No photo read model — fall back to a proportional guess from the stored media size.
+        // No photo read model, and no stored size either — advertising a made-up length here is
+        // worse than advertising nothing: the client fetches it, the file-server 404s because the
+        // object does not exist, and the client retries the same missing size. Offer the single
+        // base object instead and let the client size it from the bytes it receives.
+        if (doc.MediaSize <= 0)
+        {
+            return new TVector<IPhotoSize>
+            {
+                new TPhotoSize { Type = "x", W = 720, H = 1280, Size = 0 }
+            };
+        }
+
+        // Fall back to a proportional guess from the stored media size.
         return new TVector<IPhotoSize>
         {
             new TPhotoSize { Type = "x", W = 720, H = 1280, Size = doc.MediaSize > 0 ? (int)doc.MediaSize : 100000 },
