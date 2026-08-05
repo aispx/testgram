@@ -7,7 +7,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 
 /// <summary>
 /// Fetch the <a href="https://corefork.telegram.org/api/stories#pinned-or-archived-stories">stories archive</a>
-/// of a peer — every story ever posted, expired or not.
+/// of a peer — the stories whose active window has closed.
 /// Possible errors
 /// Code Type Description
 /// 400 PEER_ID_INVALID The provided peer id is invalid.
@@ -36,10 +36,18 @@ internal sealed class GetStoriesArchiveHandler(
             await storyAccessService.ResolveOwnedPeerAsync(obj.Peer, input.UserId, StoryRight.Edit);
 
         var filterBuilder = Builders<StoryDocument>.Filter;
+
+        // The archive holds stories whose active window has closed. Per
+        // https://corefork.telegram.org/api/stories a story "is automatically added to the story
+        // archive" on expiry — so membership follows from ExpireDate, not from a flag stamped at
+        // creation time. Keying off the stored Archived flag put every story in the archive the
+        // moment it was posted, while it was still active.
+        var currentTime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
         var baseFilter = filterBuilder.And(
             filterBuilder.Eq(s => s.OwnerPeerId, peerId),
             filterBuilder.Eq(s => s.OwnerPeerType, peerType),
-            filterBuilder.Eq(s => s.Archived, true),
+            filterBuilder.Lt(s => s.ExpireDate, currentTime),
             filterBuilder.Eq(s => s.Deleted, false)
         );
 
