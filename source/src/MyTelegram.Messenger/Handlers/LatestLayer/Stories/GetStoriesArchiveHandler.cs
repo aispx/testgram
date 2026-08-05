@@ -59,12 +59,18 @@ internal sealed class GetStoriesArchiveHandler(
         var sentReactions = await storyResponseBuilder.GetSentReactionsAsync(
             peerId, peerType, stories.Select(s => s.StoryId), input.UserId);
 
+        // Real photo sizes, in one query for the page — the archive is entirely made of expired
+        // stories, so this is the common path here rather than an edge case.
+        var photos = await storyResponseBuilder.GetStoryPhotosAsync(stories);
+
         var storyItems = new TVector<IStoryItem>();
         foreach (var story in stories)
         {
             sentReactions.TryGetValue(story.StoryId, out var sentReaction);
+            photos.TryGetValue(story.MediaFileId, out var photo);
             // The archive is only visible to the owner, so the privacy rules are theirs to see.
-            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, includePrivacy: true));
+            storyItems.Add(StoryHelper.ConvertToStoryItem(
+                story, input.UserId, sentReaction, includePrivacy: true, photo: photo));
         }
 
         var peers = await storyResponseBuilder.BuildPeersAsync(input, stories, [peerId]);

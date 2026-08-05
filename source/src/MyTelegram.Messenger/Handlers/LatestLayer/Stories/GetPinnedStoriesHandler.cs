@@ -73,11 +73,16 @@ internal sealed class GetPinnedStoriesHandler(
         var sentReactions = await storyResponseBuilder.GetSentReactionsAsync(
             peerId, peerType, visible.Select(s => s.StoryId), input.UserId);
 
+        // Real photo sizes, in one query for the page. A guessed size makes the client request
+        // byte ranges the stored file does not have, and the image never renders.
+        var photos = await storyResponseBuilder.GetStoryPhotosAsync(visible);
+
         var storyItems = new TVector<IStoryItem>();
         foreach (var story in visible)
         {
             sentReactions.TryGetValue(story.StoryId, out var sentReaction);
-            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner));
+            photos.TryGetValue(story.MediaFileId, out var photo);
+            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner, photo));
         }
 
         var pinnedToTopIds = visible.Where(s => s.PinnedToTop).Select(s => s.StoryId).ToList();

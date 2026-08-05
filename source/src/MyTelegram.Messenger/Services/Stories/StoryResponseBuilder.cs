@@ -36,6 +36,18 @@ public interface IStoryResponseBuilder
     Task<Dictionary<(long ownerPeerId, int ownerPeerType, int storyId), IReaction>> GetSentReactionsAsync(
         IEnumerable<StoryDocument> stories,
         long requestingUserId);
+
+    /// <summary>
+    /// Loads the real photo metadata for a set of stories in one query, keyed by photo id.
+    /// </summary>
+    /// <remarks>
+    /// A story document stores only the media id, access hash and file reference — not the per-size
+    /// breakdown. Without the photo read model the response has to guess the sizes, and a guessed
+    /// <c>size</c> makes the client request byte ranges the file does not have, so the image never
+    /// renders. Photo-type stories on this server carry <c>MediaSize = 0</c>, which is exactly the
+    /// case the guess used to cover.
+    /// </remarks>
+    Task<Dictionary<long, IPhotoReadModel>> GetStoryPhotosAsync(IEnumerable<StoryDocument> stories);
 }
 
 /// <summary>
@@ -228,5 +240,25 @@ public class StoryResponseBuilder(
         }
 
         return new TReactionEmoji { Emoticon = value };
+    }
+
+    public async Task<Dictionary<long, IPhotoReadModel>> GetStoryPhotosAsync(IEnumerable<StoryDocument> stories)
+    {
+        var photoIds = stories
+            .Where(s => s.MediaType == StoryHelper.MediaTypePhoto && s.MediaFileId != 0)
+            .Select(s => s.MediaFileId)
+            .Distinct()
+            .ToList();
+
+        if (photoIds.Count == 0)
+        {
+            return [];
+        }
+
+        var photos = await queryProcessor.ProcessAsync(new GetPhotosByPhotoIdLisQuery(photoIds));
+
+        return photos
+            .GroupBy(p => p.PhotoId)
+            .ToDictionary(g => g.Key, g => g.First());
     }
 }

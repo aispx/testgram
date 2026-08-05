@@ -18,6 +18,10 @@ public static partial class StoryHelper
     public const int PeerTypeChat = 1;
     public const int PeerTypeChannel = 2;
 
+    /// <summary>Story-document <c>MediaType</c> values.</summary>
+    public const int MediaTypePhoto = 1;
+    public const int MediaTypeVideo = 2;
+
     [GeneratedRegex(@"#[\p{L}\p{N}_]+", RegexOptions.CultureInvariant)]
     private static partial Regex HashtagRegex();
 
@@ -34,13 +38,25 @@ public static partial class StoryHelper
     /// Whether to include the story's privacy rules. Only the owner may see them — they are the
     /// owner's private configuration, not viewer-facing data.
     /// </param>
+    /// <param name="photo">
+    /// The photo read model for this story's media, when the caller loaded it. Supplies the real
+    /// per-size breakdown instead of a guess.
+    /// </param>
+    /// <remarks>
+    /// Only a genuinely deleted story becomes <c>storyItemDeleted</c>. Expiry alone does not:
+    /// per <a href="https://corefork.telegram.org/api/stories">the API</a> an expired story moves to
+    /// the archive, and pinning puts it back on the profile — which is precisely what
+    /// <c>stories.getPinnedStories</c> and <c>stories.getStoriesArchive</c> serve. Collapsing
+    /// expired stories to <c>storyItemDeleted</c> here emptied both of those listings.
+    /// </remarks>
     public static IStoryItem ConvertToStoryItem(
         StoryDocument doc,
         long requestingUserId = 0,
         IReaction? sentReaction = null,
-        bool includePrivacy = false)
+        bool includePrivacy = false,
+        IPhotoReadModel? photo = null)
     {
-        if (doc.Deleted || doc.ExpireDate < DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+        if (doc.Deleted)
         {
             return new TStoryItemDeleted
             {
@@ -53,7 +69,7 @@ public static partial class StoryHelper
             return ConvertToLiveStoryItem(doc, requestingUserId, sentReaction, includePrivacy);
         }
 
-        return ConvertToStoryItemInternal(doc, requestingUserId, sentReaction, includePrivacy);
+        return ConvertToStoryItemInternal(doc, requestingUserId, sentReaction, includePrivacy, photo);
     }
 
     private static IStoryItem ConvertToLiveStoryItem(
@@ -112,7 +128,8 @@ public static partial class StoryHelper
         StoryDocument doc,
         long requestingUserId,
         IReaction? sentReaction,
-        bool includePrivacy)
+        bool includePrivacy,
+        IPhotoReadModel? photo = null)
     {
         if (doc.MediaType == 0 || doc.MediaFileId == 0)
         {
@@ -124,7 +141,7 @@ public static partial class StoryHelper
 
         IMessageMedia media = doc.MediaType switch
         {
-            1 => new TMessageMediaPhoto { Photo = BuildPhoto(doc) },
+            1 => new TMessageMediaPhoto { Photo = BuildPhoto(doc, photo) },
             2 => new TMessageMediaDocument { Document = BuildDocument(doc) },
             _ => new TMessageMediaEmpty()
         };
@@ -261,7 +278,12 @@ public static partial class StoryHelper
     }
 
     /// <summary>Builds the photo for a photo story or an album cover.</summary>
-    public static IPhoto BuildPhoto(StoryDocument doc)
+    /// <param name="doc">The stored story.</param>
+    /// <param name="photo">
+    /// The photo read model for <c>doc.MediaFileId</c>, when the caller loaded it. It carries the
+    /// real per-size breakdown; a story document only stores the media id, hash and file reference.
+    /// </param>
+    public static IPhoto BuildPhoto(StoryDocument doc, IPhotoReadModel? photo = null)
     {
         return new TPhoto
         {
@@ -269,7 +291,7 @@ public static partial class StoryHelper
             AccessHash = doc.MediaAccessHash,
             FileReference = doc.MediaFileReference ?? [],
             Date = (int)doc.Date,
-            Sizes = BuildPhotoSizes(doc),
+            Sizes = BuildPhotoSizes(doc, photo),
             DcId = doc.MediaDcId > 0 ? doc.MediaDcId : 2
         };
     }
@@ -312,14 +334,56 @@ public static partial class StoryHelper
         };
     }
 
-    private static TVector<IPhotoSize> BuildPhotoSizes(StoryDocument doc)
+    private static TVector<IPhotoSize> BuildPhotoSizes(StoryDocument doc, IPhotoReadModel? photo)
     {
+        // Prefer the real breakdown. Guessed sizes make the client ask for byte ranges the file
+        // does not have, and the image silently never renders.
+        var sizes = ToPhotoSizes(photo);
+        if (sizes.Count > 0)
+        {
+            return sizes;
+        }
+
+        // No photo read model — fall back to a proportional guess from the stored media size.
         return new TVector<IPhotoSize>
         {
             new TPhotoSize { Type = "x", W = 720, H = 1280, Size = doc.MediaSize > 0 ? (int)doc.MediaSize : 100000 },
             new TPhotoSize { Type = "m", W = 360, H = 640, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 4) : 25000 },
             new TPhotoSize { Type = "s", W = 180, H = 320, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 8) : 6000 }
         };
+    }
+
+    /// <summary>
+    /// Maps a photo read model's stored sizes onto their TL forms, preferring the newer
+    /// <c>Sizes2</c> shape and falling back to the legacy <c>Sizes</c> list.
+    /// </summary>
+    private static TVector<IPhotoSize> ToPhotoSizes(IPhotoReadModel? photo)
+    {
+        var result = new TVector<IPhotoSize>();
+        if (photo == null)
+        {
+            return result;
+        }
+
+        if (photo.Sizes2 is { Count: > 0 })
+        {
+            foreach (var size in photo.Sizes2)
+            {
+                result.Add(size);
+            }
+
+            return result;
+        }
+
+        foreach (var size in photo.Sizes ?? [])
+        {
+            // A stripped thumbnail carries inline bytes rather than a downloadable size.
+            result.Add(size.Type == "i"
+                ? new TPhotoStrippedSize { Type = size.Type, Bytes = size.StrippedThumb }
+                : new TPhotoSize { Type = size.Type, W = size.W, H = size.H, Size = (int)size.Size });
+        }
+
+        return result;
     }
 
     /// <summary>Album cover photo, or null when the story is not a photo story.</summary>

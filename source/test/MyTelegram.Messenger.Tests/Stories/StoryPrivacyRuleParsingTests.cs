@@ -171,10 +171,23 @@ public class StoryPrivacyRuleParsingTests
     }
 
     [Fact]
-    public void An_expired_story_converts_to_the_deleted_placeholder()
+    public void An_expired_story_is_not_the_deleted_placeholder()
     {
+        // Expiry moves a story to the archive; only real deletion produces storyItemDeleted.
+        // See https://corefork.telegram.org/api/stories — pinning exists so an expired story stays
+        // on the profile, and stories.getPinnedStories / getStoriesArchive serve exactly those.
+        // This previously asserted the opposite, which is what emptied both listings.
         var story = StoryWithRules(StoryPrivacyRuleType.AllowAll);
         story.ExpireDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60;
+
+        StoryHelper.ConvertToStoryItem(story, 100).ShouldBeOfType<TStoryItem>();
+    }
+
+    [Fact]
+    public void A_deleted_story_converts_to_the_deleted_placeholder()
+    {
+        var story = StoryWithRules(StoryPrivacyRuleType.AllowAll);
+        story.Deleted = true;
 
         StoryHelper.ConvertToStoryItem(story, 100).ShouldBeOfType<TStoryItemDeleted>();
     }
