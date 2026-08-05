@@ -327,9 +327,9 @@ public static partial class StoryHelper
         var thumbs = new TVector<IPhotoSize>();
 
         // An inline stripped thumbnail renders instantly, so prefer it when the upload captured one.
-        if (doc.VideoThumbBytes is { Length: > 0 })
+        if (doc.StrippedThumbBytes is { Length: > 0 })
         {
-            thumbs.Add(new TPhotoStrippedSize { Type = "i", Bytes = doc.VideoThumbBytes });
+            thumbs.Add(new TPhotoStrippedSize { Type = "i", Bytes = doc.StrippedThumbBytes });
         }
 
         // Then the downloadable thumbnail sizes recorded for the document itself.
@@ -358,11 +358,25 @@ public static partial class StoryHelper
 
     private static TVector<IPhotoSize> BuildPhotoSizes(StoryDocument doc, IPhotoReadModel? photo)
     {
-        // Prefer the real breakdown. Guessed sizes make the client ask for byte ranges the file
-        // does not have, and the image silently never renders.
-        var sizes = ToPhotoSizes(photo);
-        if (sizes.Count > 0)
+        var sizes = new TVector<IPhotoSize>();
+
+        // The inline preview first: the client renders the profile tile from this without a round
+        // trip, and treats a thumbnail list without one as having no placeholder at all.
+        if (doc.StrippedThumbBytes is { Length: > 0 })
         {
+            sizes.Add(new TPhotoStrippedSize { Type = "i", Bytes = doc.StrippedThumbBytes });
+        }
+
+        // Then the real breakdown. Guessed sizes make the client ask for byte ranges the file does
+        // not have, and the image silently never renders.
+        var real = ToPhotoSizes(photo);
+        if (real.Count > 0)
+        {
+            foreach (var size in real)
+            {
+                sizes.Add(size);
+            }
+
             return sizes;
         }
 
@@ -372,19 +386,15 @@ public static partial class StoryHelper
         // base object instead and let the client size it from the bytes it receives.
         if (doc.MediaSize <= 0)
         {
-            return new TVector<IPhotoSize>
-            {
-                new TPhotoSize { Type = "x", W = 720, H = 1280, Size = 0 }
-            };
+            sizes.Add(new TPhotoSize { Type = "x", W = 720, H = 1280, Size = 0 });
+            return sizes;
         }
 
         // Fall back to a proportional guess from the stored media size.
-        return new TVector<IPhotoSize>
-        {
-            new TPhotoSize { Type = "x", W = 720, H = 1280, Size = doc.MediaSize > 0 ? (int)doc.MediaSize : 100000 },
-            new TPhotoSize { Type = "m", W = 360, H = 640, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 4) : 25000 },
-            new TPhotoSize { Type = "s", W = 180, H = 320, Size = doc.MediaSize > 0 ? (int)(doc.MediaSize / 8) : 6000 }
-        };
+        sizes.Add(new TPhotoSize { Type = "x", W = 720, H = 1280, Size = (int)doc.MediaSize });
+        sizes.Add(new TPhotoSize { Type = "m", W = 360, H = 640, Size = (int)(doc.MediaSize / 4) });
+        sizes.Add(new TPhotoSize { Type = "s", W = 180, H = 320, Size = (int)(doc.MediaSize / 8) });
+        return sizes;
     }
 
     /// <summary>

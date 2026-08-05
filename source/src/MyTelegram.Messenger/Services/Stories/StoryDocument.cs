@@ -83,7 +83,17 @@ public class StoryDocument
     public int? VideoWidth { get; set; }
     public int? VideoHeight { get; set; }
     public int? VideoDuration { get; set; }
-    public byte[]? VideoThumbBytes { get; set; }
+
+    /// <summary>
+    /// Inline low-resolution preview (<c>photoStrippedSize</c>) for the story's media, whether photo
+    /// or video. Kept under its original Bson name so existing documents keep deserializing.
+    /// </summary>
+    /// <remarks>
+    /// The client draws the profile preview tile from this. Without it the tile stays blank until the
+    /// full file loads, so the server generates one at upload time.
+    /// </remarks>
+    [BsonElement("VideoThumbBytes")]
+    public byte[]? StrippedThumbBytes { get; set; }
 }
 
 public class StoryPrivacyRule

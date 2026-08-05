@@ -1,3 +1,5 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.PaidMedia;
 using MyTelegram.Schema;
 
 namespace MyTelegram.Messenger.Services.Stories;
@@ -17,7 +19,17 @@ public sealed class StoryMediaInfo
     public int? VideoWidth { get; init; }
     public int? VideoHeight { get; init; }
     public int? VideoDuration { get; init; }
-    public byte[]? VideoThumbBytes { get; init; }
+
+    /// <summary>
+    /// Inline low-resolution preview (<c>photoStrippedSize</c>) for the story's media.
+    /// </summary>
+    /// <remarks>
+    /// The Android client draws the profile preview tile from this via
+    /// <c>ImageLoader.createStripedBitmap</c>, which returns nothing when the thumbnail list holds no
+    /// <c>photoStrippedSize</c> — so without it the tile stays blank until (and unless) the full file
+    /// arrives. Clients do not upload one, so the server generates it.
+    /// </remarks>
+    public byte[]? StrippedThumbBytes { get; init; }
 }
 
 public interface IStoryMediaService
@@ -37,7 +49,10 @@ public interface IStoryMediaService
 /// cannot be used to download the file afterwards.
 /// </para>
 /// </summary>
-public class StoryMediaService(IMediaHelper mediaHelper) : IStoryMediaService, ITransientDependency
+public class StoryMediaService(
+    IMediaHelper mediaHelper,
+    IMongoDatabase mongoDatabase,
+    ILogger<StoryMediaService> logger) : IStoryMediaService, ITransientDependency
 {
     public async Task<StoryMediaInfo> SaveStoryMediaAsync(IInputMedia media)
     {
@@ -46,6 +61,10 @@ public class StoryMediaService(IMediaHelper mediaHelper) : IStoryMediaService, I
         {
             RpcErrors.RpcErrors400.MediaEmpty.ThrowRpcError();
         }
+
+        // Derived from the stored media rather than the upload, so it works for both photo and video
+        // and does not depend on the client having sent a thumbnail.
+        var strippedThumb = await TryCreateStrippedThumbAsync(savedMedia!);
 
         switch (savedMedia)
         {
@@ -57,7 +76,8 @@ public class StoryMediaService(IMediaHelper mediaHelper) : IStoryMediaService, I
                     AccessHash = photo.AccessHash,
                     FileReference = photo.FileReference.Length > 0 ? photo.FileReference.ToArray() : [],
                     DcId = photo.DcId,
-                    Size = LargestPhotoSize(photo)
+                    Size = LargestPhotoSize(photo),
+                    StrippedThumbBytes = strippedThumb
                 };
 
             case TMessageMediaDocument { Document: TDocument document }:
@@ -77,14 +97,34 @@ public class StoryMediaService(IMediaHelper mediaHelper) : IStoryMediaService, I
                     VideoWidth = videoAttribute?.W,
                     VideoHeight = videoAttribute?.H,
                     VideoDuration = videoAttribute != null ? (int)videoAttribute.Duration : null,
-                    VideoThumbBytes = document.Thumbs?
+                    StrippedThumbBytes = document.Thumbs?
                         .OfType<TPhotoStrippedSize>()
-                        .FirstOrDefault()?.Bytes.ToArray()
+                        .FirstOrDefault()?.Bytes.ToArray() ?? strippedThumb
                 };
 
             default:
                 RpcErrors.RpcErrors400.MediaTypeInvalid.ThrowRpcError();
                 return null!;
+        }
+    }
+
+    /// <summary>
+    /// Builds the inline preview from the stored media, tolerating failure.
+    /// </summary>
+    /// <remarks>
+    /// A story must still post if the preview cannot be produced — a missing tile is far better than
+    /// a rejected upload — so every failure is logged and swallowed.
+    /// </remarks>
+    private async Task<byte[]?> TryCreateStrippedThumbAsync(IMessageMedia savedMedia)
+    {
+        try
+        {
+            return await PaidMediaHelper.TryCreatePreviewThumbFromStoredMediaAsync(mongoDatabase, savedMedia);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not build the inline story preview; the story will have no preview tile");
+            return null;
         }
     }
 

@@ -90,7 +90,7 @@ internal sealed class EditStoryHandler(
             updates.Add(Builders<StoryDocument>.Update.Set(s => s.VideoWidth, media.VideoWidth));
             updates.Add(Builders<StoryDocument>.Update.Set(s => s.VideoHeight, media.VideoHeight));
             updates.Add(Builders<StoryDocument>.Update.Set(s => s.VideoDuration, media.VideoDuration));
-            updates.Add(Builders<StoryDocument>.Update.Set(s => s.VideoThumbBytes, media.VideoThumbBytes));
+            updates.Add(Builders<StoryDocument>.Update.Set(s => s.StrippedThumbBytes, media.StrippedThumbBytes));
         }
 
         if (obj.Entities != null)

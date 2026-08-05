@@ -108,7 +108,7 @@ internal sealed class SendStoryHandler(
             VideoWidth = media.VideoWidth,
             VideoHeight = media.VideoHeight,
             VideoDuration = media.VideoDuration,
-            VideoThumbBytes = media.VideoThumbBytes,
+            StrippedThumbBytes = media.StrippedThumbBytes,
             PrivacyRules = privacyRules,
             CloseFriends = privacyRules.Any(r => r.Type == StoryPrivacyRuleType.AllowCloseFriends),
             MediaAreas = StoryMediaAreaHelper.Parse(obj.MediaAreas),

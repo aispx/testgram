@@ -310,7 +310,7 @@ public class StoryItemConversionTests
     {
         // A stripped thumb renders instantly, so it should precede the downloadable size.
         var story = VideoStory();
-        story.VideoThumbBytes = [1, 2, 3];
+        story.StrippedThumbBytes = [1, 2, 3];
 
         var item = StoryHelper
             .ConvertToStoryItem(story, OwnerId, document: new VideoDocumentReadModel())
@@ -336,5 +336,47 @@ public class StoryItemConversionTests
         var video = doc.Attributes.ShouldHaveSingleItem().ShouldBeOfType<TDocumentAttributeVideo>();
         video.W.ShouldBe(720);
         video.Duration.ShouldBe(12);
+    }
+
+    [Fact]
+    public void A_photo_story_offers_its_inline_preview_first()
+    {
+        // The client builds the profile tile from the stripped size and ignores a list without one,
+        // so it has to be present and ahead of the downloadable sizes.
+        var doc = ExpiredPhotoStory();
+        doc.StrippedThumbBytes = [1, 2, 3];
+
+        var item = StoryHelper
+            .ConvertToStoryItem(doc, OwnerId, photo: new FakePhotoReadModel())
+            .ShouldBeOfType<TStoryItem>();
+
+        var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
+        sizes[0].ShouldBeOfType<TPhotoStrippedSize>().Type.ShouldBe("i");
+        sizes.Skip(1).Select(x => ((TPhotoSize)x).Type).ShouldBe(["m", "x", "y", "w"]);
+    }
+
+    [Fact]
+    public void A_photo_story_without_a_read_model_still_offers_the_inline_preview()
+    {
+        var doc = ExpiredPhotoStory();
+        doc.StrippedThumbBytes = [1, 2, 3];
+
+        var item = StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItem>();
+
+        var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
+        sizes[0].ShouldBeOfType<TPhotoStrippedSize>().Type.ShouldBe("i");
+    }
+
+    [Fact]
+    public void A_photo_story_with_no_preview_is_unchanged()
+    {
+        // Older stories have no stripped bytes; they must still produce their usual sizes.
+        var item = StoryHelper
+            .ConvertToStoryItem(ExpiredPhotoStory(), OwnerId, photo: new FakePhotoReadModel())
+            .ShouldBeOfType<TStoryItem>();
+
+        var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
+        sizes.OfType<TPhotoStrippedSize>().ShouldBeEmpty();
+        sizes.Select(x => ((TPhotoSize)x).Type).ShouldBe(["m", "x", "y", "w"]);
     }
 }
