@@ -48,6 +48,17 @@ public interface IStoryResponseBuilder
     /// case the guess used to cover.
     /// </remarks>
     Task<Dictionary<long, IPhotoReadModel>> GetStoryPhotosAsync(IEnumerable<StoryDocument> stories);
+
+    /// <summary>
+    /// Loads the real document metadata for a set of video stories in one query, keyed by document id.
+    /// </summary>
+    /// <remarks>
+    /// A story document has no thumbnail of its own unless one was captured at upload time, and most
+    /// were not. The document read model does carry the thumbnail sizes, and the matching objects
+    /// exist in storage — so without this the response ships an empty <c>thumbs</c> vector and the
+    /// client has nothing to draw as the video's preview tile.
+    /// </remarks>
+    Task<Dictionary<long, IDocumentReadModel>> GetStoryDocumentsAsync(IEnumerable<StoryDocument> stories);
 }
 
 /// <summary>
@@ -62,6 +73,9 @@ public class StoryResponseBuilder(
 {
     private readonly IMongoCollection<BsonDocument> _reactionsCollection =
         mongoDatabase.GetCollection<BsonDocument>("story_reactions");
+
+    private readonly IMongoCollection<DocumentReadModel> _documentCollection =
+        mongoDatabase.GetCollection<DocumentReadModel>("eventflow-documentreadmodel");
 
     public async Task<StoryPeerBundle> BuildPeersAsync(
         IRequestInput input,
@@ -260,5 +274,29 @@ public class StoryResponseBuilder(
         return photos
             .GroupBy(p => p.PhotoId)
             .ToDictionary(g => g.Key, g => g.First());
+    }
+
+    public async Task<Dictionary<long, IDocumentReadModel>> GetStoryDocumentsAsync(IEnumerable<StoryDocument> stories)
+    {
+        var documentIds = stories
+            .Where(s => s.MediaType == StoryHelper.MediaTypeVideo && s.MediaFileId != 0)
+            .Select(s => s.MediaFileId)
+            .Distinct()
+            .ToList();
+
+        if (documentIds.Count == 0)
+        {
+            return [];
+        }
+
+        // Read the collection directly: GetDocumentsByIdListQuery is declared but has no registered
+        // handler, so dispatching it would throw at runtime.
+        var documents = await _documentCollection
+            .Find(Builders<DocumentReadModel>.Filter.In(d => d.DocumentId, documentIds))
+            .ToListAsync();
+
+        return documents
+            .GroupBy(d => d.DocumentId)
+            .ToDictionary(g => g.Key, g => (IDocumentReadModel)g.First());
     }
 }

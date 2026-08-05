@@ -42,6 +42,10 @@ public static partial class StoryHelper
     /// The photo read model for this story's media, when the caller loaded it. Supplies the real
     /// per-size breakdown instead of a guess.
     /// </param>
+    /// <param name="document">
+    /// The document read model for a video story's media, when the caller loaded it. Supplies the
+    /// thumbnail the client draws as the preview tile.
+    /// </param>
     /// <remarks>
     /// Only a genuinely deleted story becomes <c>storyItemDeleted</c>. Expiry alone does not:
     /// per <a href="https://corefork.telegram.org/api/stories">the API</a> an expired story moves to
@@ -54,7 +58,8 @@ public static partial class StoryHelper
         long requestingUserId = 0,
         IReaction? sentReaction = null,
         bool includePrivacy = false,
-        IPhotoReadModel? photo = null)
+        IPhotoReadModel? photo = null,
+        IDocumentReadModel? document = null)
     {
         if (doc.Deleted)
         {
@@ -69,7 +74,7 @@ public static partial class StoryHelper
             return ConvertToLiveStoryItem(doc, requestingUserId, sentReaction, includePrivacy);
         }
 
-        return ConvertToStoryItemInternal(doc, requestingUserId, sentReaction, includePrivacy, photo);
+        return ConvertToStoryItemInternal(doc, requestingUserId, sentReaction, includePrivacy, photo, document);
     }
 
     private static IStoryItem ConvertToLiveStoryItem(
@@ -129,7 +134,8 @@ public static partial class StoryHelper
         long requestingUserId,
         IReaction? sentReaction,
         bool includePrivacy,
-        IPhotoReadModel? photo = null)
+        IPhotoReadModel? photo = null,
+        IDocumentReadModel? document = null)
     {
         if (doc.MediaType == 0 || doc.MediaFileId == 0)
         {
@@ -142,7 +148,7 @@ public static partial class StoryHelper
         IMessageMedia media = doc.MediaType switch
         {
             1 => new TMessageMediaPhoto { Photo = BuildPhoto(doc, photo) },
-            2 => new TMessageMediaDocument { Document = BuildDocument(doc) },
+            2 => new TMessageMediaDocument { Document = BuildDocument(doc, document) },
             _ => new TMessageMediaEmpty()
         };
 
@@ -297,7 +303,13 @@ public static partial class StoryHelper
     }
 
     /// <summary>Builds the document for a video story or an album cover.</summary>
-    public static IDocument BuildDocument(StoryDocument doc)
+    /// <param name="doc">The stored story.</param>
+    /// <param name="document">
+    /// The document read model for <c>doc.MediaFileId</c>, when the caller loaded it. It carries the
+    /// thumbnail sizes; a story document only has an inline thumbnail if one was captured at upload
+    /// time, and an empty <c>thumbs</c> leaves the client with nothing to draw as the preview tile.
+    /// </param>
+    public static IDocument BuildDocument(StoryDocument doc, IDocumentReadModel? document = null)
     {
         var attributes = new TVector<IDocumentAttribute>();
         if (doc.VideoWidth.HasValue || doc.VideoHeight.HasValue || doc.VideoDuration.HasValue)
@@ -313,9 +325,19 @@ public static partial class StoryHelper
         }
 
         var thumbs = new TVector<IPhotoSize>();
+
+        // An inline stripped thumbnail renders instantly, so prefer it when the upload captured one.
         if (doc.VideoThumbBytes is { Length: > 0 })
         {
             thumbs.Add(new TPhotoStrippedSize { Type = "i", Bytes = doc.VideoThumbBytes });
+        }
+
+        // Then the downloadable thumbnail sizes recorded for the document itself.
+        foreach (var size in document?.Thumbs ?? [])
+        {
+            thumbs.Add(size.Type == "i"
+                ? new TPhotoStrippedSize { Type = size.Type, Bytes = size.StrippedThumb }
+                : new TPhotoSize { Type = size.Type, W = size.W, H = size.H, Size = (int)size.Size });
         }
 
         return new TDocument

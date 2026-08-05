@@ -75,6 +75,7 @@ internal sealed class GetPinnedStoriesHandler(
 
         // Real photo sizes, in one query for the page. A guessed size makes the client request
         // byte ranges the stored file does not have, and the image never renders.
+        var documents = await storyResponseBuilder.GetStoryDocumentsAsync(visible);
         var photos = await storyResponseBuilder.GetStoryPhotosAsync(visible);
 
         var storyItems = new TVector<IStoryItem>();
@@ -82,7 +83,8 @@ internal sealed class GetPinnedStoriesHandler(
         {
             sentReactions.TryGetValue(story.StoryId, out var sentReaction);
             photos.TryGetValue(story.MediaFileId, out var photo);
-            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner, photo));
+            documents.TryGetValue(story.MediaFileId, out var document);
+            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner, photo, document));
         }
 
         var pinnedToTopIds = visible.Where(s => s.PinnedToTop).Select(s => s.StoryId).ToList();

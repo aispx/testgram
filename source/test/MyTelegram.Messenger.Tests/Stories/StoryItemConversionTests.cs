@@ -232,4 +232,109 @@ public class StoryItemConversionTests
 
         public List<PhotoSize>? Sizes => [new(180, 320, 10719, "m"), new(450, 800, 43283, "x")];
     }
+
+    private const long VideoDocumentId = 4649901531927009243;
+
+    private static StoryDocument VideoStory() => new()
+    {
+        Id = ObjectId.GenerateNewId(),
+        OwnerPeerId = OwnerId,
+        OwnerPeerType = StoryHelper.PeerTypeUser,
+        StoryId = 19002,
+        Date = Now - 200_000,
+        ExpireDate = Now - 100_000,
+        Pinned = true,
+        Deleted = false,
+        MediaType = StoryHelper.MediaTypeVideo,
+        MediaFileId = VideoDocumentId,
+        MediaAccessHash = 12345,
+        MediaDcId = 2,
+        MediaSize = 3107812,
+        MediaMimeType = "video/mp4",
+        VideoWidth = 720,
+        VideoHeight = 1280,
+        VideoDuration = 12
+    };
+
+    /// <summary>A video document whose thumbnail lives in storage, as the live rows do.</summary>
+    private sealed class VideoDocumentReadModel : IDocumentReadModel
+    {
+        public string Id => $"documentreadmodel-{VideoDocumentId}";
+        public long AccessHash => 12345;
+        public byte[]? Attributes => null;
+        public long? CreatorId => null;
+        public int Date => 1775290238;
+        public int DcId => 2;
+        public long DocumentId => VideoDocumentId;
+        public ReadOnlyMemory<byte> FileReference => new byte[] { 1, 2, 3, 4 };
+        public int? Fingerprint => null;
+        public string? Md5CheckSum => null;
+        public string? Name => "video.mp4";
+        public string MimeType => "video/mp4";
+        public long Size => 3107812;
+        public long? ThumbId => null;
+        public long? VideoThumbId => null;
+        public List<VideoSize>? VideoThumbs => null;
+        public List<IDocumentAttribute>? Attributes2 => null;
+        public List<PhotoSize>? Thumbs => [new(720, 1280, 44141, "y")];
+    }
+
+    [Fact]
+    public void A_video_story_without_a_document_row_has_no_preview_thumbnail()
+    {
+        // The state that showed no preview: the story itself has no inline thumbnail, so unless the
+        // document read model is supplied there is nothing for the client to draw.
+        var item = StoryHelper.ConvertToStoryItem(VideoStory(), OwnerId).ShouldBeOfType<TStoryItem>();
+
+        var doc = item.Media.ShouldBeOfType<TMessageMediaDocument>().Document.ShouldBeOfType<TDocument>();
+        doc.Thumbs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_video_story_gets_its_thumbnail_from_the_document_row()
+    {
+        var item = StoryHelper
+            .ConvertToStoryItem(VideoStory(), OwnerId, document: new VideoDocumentReadModel())
+            .ShouldBeOfType<TStoryItem>();
+
+        var doc = item.Media.ShouldBeOfType<TMessageMediaDocument>().Document.ShouldBeOfType<TDocument>();
+        var thumb = doc.Thumbs.ShouldHaveSingleItem().ShouldBeOfType<TPhotoSize>();
+        thumb.Type.ShouldBe("y");
+        thumb.Size.ShouldBe(44141);
+        thumb.W.ShouldBe(720);
+        thumb.H.ShouldBe(1280);
+    }
+
+    [Fact]
+    public void An_inline_stripped_thumbnail_comes_first_when_the_upload_captured_one()
+    {
+        // A stripped thumb renders instantly, so it should precede the downloadable size.
+        var story = VideoStory();
+        story.VideoThumbBytes = [1, 2, 3];
+
+        var item = StoryHelper
+            .ConvertToStoryItem(story, OwnerId, document: new VideoDocumentReadModel())
+            .ShouldBeOfType<TStoryItem>();
+
+        var doc = (TDocument)((TMessageMediaDocument)item.Media).Document;
+        doc.Thumbs!.Count.ShouldBe(2);
+        doc.Thumbs[0].ShouldBeOfType<TPhotoStrippedSize>().Type.ShouldBe("i");
+        doc.Thumbs[1].ShouldBeOfType<TPhotoSize>().Type.ShouldBe("y");
+    }
+
+    [Fact]
+    public void The_video_document_keeps_its_identity_and_attributes()
+    {
+        var item = StoryHelper
+            .ConvertToStoryItem(VideoStory(), OwnerId, document: new VideoDocumentReadModel())
+            .ShouldBeOfType<TStoryItem>();
+
+        var doc = (TDocument)((TMessageMediaDocument)item.Media).Document;
+        doc.Id.ShouldBe(VideoDocumentId);
+        doc.MimeType.ShouldBe("video/mp4");
+        doc.Size.ShouldBe(3107812);
+        var video = doc.Attributes.ShouldHaveSingleItem().ShouldBeOfType<TDocumentAttributeVideo>();
+        video.W.ShouldBe(720);
+        video.Duration.ShouldBe(12);
+    }
 }
