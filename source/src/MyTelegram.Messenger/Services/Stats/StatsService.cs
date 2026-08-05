@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Schema.Stats;
@@ -29,6 +30,9 @@ public class StatsService(
     : IStatsService, ITransientDependency
 {
     private const string StoriesCollectionName = "stories";
+
+    /// <summary>Per-user notify-settings read model, used to recompute the muted gauge on demand.</summary>
+    private const string NotifySettingsCollectionName = "eventflow-peernotifysettingsreadmodel";
 
     private const long MillisPerSecond = 1000L;
 
@@ -69,6 +73,17 @@ public class StatsService(
         var notifyOn = await metricsStore.AggregateAsync(channel, StatsMetricNames.NotifyOn, period.MinDate, period.MaxDate);
         var muted = await metricsStore.AggregateAsync(channel, StatsMetricNames.Muted, period.MinDate, period.MaxDate);
         var subscriberCount = notifyOn + muted;
+
+        // The notify gauges are only written when something moves them (a join/leave or a mute/unmute), so
+        // a channel that has seen neither has no recorded pair at all. Clients divide part by total
+        // without guarding it — DrKLO computes `part / total * 100f` — so a zero total renders as "NaN%".
+        // Derive the pair from the live membership instead, which is what the recorder would have stored.
+        if (subscriberCount <= 0)
+        {
+            (notifyOn, muted) = await ComputeLiveNotifyStateAsync(channelId);
+            subscriberCount = notifyOn + muted;
+        }
+
         var enabledNotifications = new TStatsPercentValue { Part = notifyOn, Total = subscriberCount };
 
         var recentPosts = await metricsStore.GetRecentPostInteractionsAsync(channelId);
@@ -296,6 +311,39 @@ public class StatsService(
     }
 
     // --- Helpers ---
+
+    /// <summary>
+    /// Recomputes the <c>notify_on</c>/<c>muted</c> pair from live state, for a channel whose gauges were
+    /// never recorded because it has seen no join/leave and no mute/unmute since stats ingestion started.
+    ///
+    /// <para>Mirrors <c>NotifyStateRecorder</c>: the muted count comes from the per-user notify-settings
+    /// read model, which keeps documents for users who left (or only previewed) the channel, so it is
+    /// clamped to the current participant count and <c>notify_on = participants - muted</c>.</para>
+    ///
+    /// <para>Returns <c>(0, 0)</c> when the channel is unknown or reports no participants; the caller then
+    /// emits <c>part = total = 0</c>, which is what the official server sends for an empty channel.</para>
+    /// </summary>
+    private async Task<(long NotifyOn, long Muted)> ComputeLiveNotifyStateAsync(long channelId)
+    {
+        var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channelId));
+        var participants = (long)Math.Max(0, channelReadModel?.ParticipantsCount ?? 0);
+        if (participants == 0)
+        {
+            return (0, 0);
+        }
+
+        var now = DateTime.UtcNow.ToTimestamp();
+        var filter = Builders<BsonDocument>.Filter.Eq("PeerId", channelId)
+                     & Builders<BsonDocument>.Filter.Eq("PeerType", (int)PeerType.Channel)
+                     & (Builders<BsonDocument>.Filter.Eq("NotifySettings.Silent", true)
+                        | Builders<BsonDocument>.Filter.Gt("NotifySettings.MuteUntil", now));
+
+        var muted = await mongoDatabase.GetCollection<BsonDocument>(NotifySettingsCollectionName)
+            .CountDocumentsAsync(filter);
+
+        muted = Math.Clamp(muted, 0, participants);
+        return (participants - muted, muted);
+    }
 
     /// <summary>
     /// Builds a <c>statsAbsValueAndPrev</c> whose <c>current</c> is the aggregate over the Period and
