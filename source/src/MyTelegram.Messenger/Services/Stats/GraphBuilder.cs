@@ -35,29 +35,46 @@ namespace MyTelegram.Messenger.Services.Stats;
 /// </remarks>
 public sealed class GraphBuilder(IAsyncGraphStore asyncGraphStore) : IGraphBuilder, ISingletonDependency
 {
-    /// <summary>Light-theme palette keyed by <see cref="GraphSeries.ColorKey"/>.</summary>
-    public static readonly IReadOnlyDictionary<string, string> LightPalette =
+    /// <summary>
+    /// Palette keyed by <see cref="GraphSeries.ColorKey"/>, in the wire form real Telegram uses:
+    /// <c>NAME#RRGGBB</c>. The client parses the payload with <c>Pattern.compile("(.*)(#.*)")</c> and turns
+    /// the name into the theme key <c>statisticChartLine_&lt;name lowercased&gt;</c>, falling back to the
+    /// literal hex for the raw color — so a bare <c>#RRGGBB</c> still draws, but loses theme awareness
+    /// (notably the dark-theme variants the client picks per key). Values verified against
+    /// <c>stats.getBroadcastStats</c> on production.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> Palette =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["primary"] = "#2196F3",
-            ["secondary"] = "#4CAF50",
-            ["tertiary"] = "#FF9800",
-            ["quaternary"] = "#E53935",
-            ["quinary"] = "#9C27B0",
-            ["default"] = "#5A9BD4"
+            ["primary"] = "BLUE#007AFF",
+            ["secondary"] = "LIGHTBLUE#5AC8FA",
+            ["tertiary"] = "LIGHTGREEN#7ED321",
+            ["quaternary"] = "ORANGE#FF9500",
+            ["quinary"] = "GREEN#34C759",
+            ["senary"] = "RED#FF3B30",
+            ["septenary"] = "INDIGO#5E5CE6",
+            ["golden"] = "GOLDEN#FFCC00",
+            ["joined"] = "GREEN#34C759",
+            ["left"] = "RED#FF3B30",
+            ["default"] = "BLUE#007AFF"
         };
 
-    /// <summary>Dark-theme palette keyed by <see cref="GraphSeries.ColorKey"/>.</summary>
-    public static readonly IReadOnlyDictionary<string, string> DarkPalette =
-        new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["primary"] = "#64B5F6",
-            ["secondary"] = "#81C784",
-            ["tertiary"] = "#FFB74D",
-            ["quaternary"] = "#EF5350",
-            ["quinary"] = "#BA68C8",
-            ["default"] = "#7CB5EC"
-        };
+    /// <summary>
+    /// Category palette in the order real Telegram assigns it to the series of a breakdown graph
+    /// (languages, views-by-source, new-followers-by-source).
+    /// </summary>
+    public static readonly IReadOnlyList<string> CategoryColorKeys =
+        ["primary", "secondary", "tertiary", "quaternary", "quinary", "senary", "septenary"];
+
+    /// <summary>
+    /// Kept for compatibility with callers that still ask for a themed palette; real Telegram serves the
+    /// same <c>NAME#RRGGBB</c> strings regardless of the <c>dark</c> flag and lets the client resolve the
+    /// theme variant from the name.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> LightPalette = Palette;
+
+    /// <inheritdoc cref="LightPalette"/>
+    public static readonly IReadOnlyDictionary<string, string> DarkPalette = Palette;
 
     private const string DefaultColorKey = "default";
 
@@ -94,9 +111,10 @@ public sealed class GraphBuilder(IAsyncGraphStore asyncGraphStore) : IGraphBuild
             // for the slot instead, which clients render as explanatory text.
             //
             // Stacked-bar and pie graphs do no such cross-series division, so an empty category there
-            // stays a legitimate zero column and must not discard the whole graph.
-            if (spec.Kind == GraphKind.Line
-                && spec.Series.Count > 1
+            // stays a legitimate zero column and must not discard the whole graph. Note this covers both
+            // "line" and "step" — the client picks DoubleLinearChartData by the graph TYPE it was asked
+            // for (StatisticActivity passes graphType 1), not by the series type string in the payload.
+            if (IsMultiSeriesLine(spec)
                 && spec.Series.Any(s => s.Values.All(v => v <= 0)))
             {
                 return new TStatsGraphError { Error = NoDataError };
@@ -176,13 +194,61 @@ public sealed class GraphBuilder(IAsyncGraphStore asyncGraphStore) : IGraphBuild
 
         var root = new JsonObject
         {
+            ["title"] = "",
             ["columns"] = columns,
             ["types"] = types,
             ["names"] = names,
-            ["colors"] = colors
+            ["colors"] = colors,
+            // Real Telegram always sends these; the Android parser tolerates their absence but the
+            // web/desktop chart code and the subchart (range selector) rely on them, so mirror the
+            // production payload rather than emitting the bare minimum.
+            ["hidden"] = new JsonArray(),
+            ["subchart"] = BuildSubchart(spec.XAxisMillis),
+            ["strokeWidth"] = 2,
+            ["xTickFormatter"] = "statsFormat('day')",
+            ["xTooltipFormatter"] = "statsTooltipFormat('day')",
+            ["xRangeFormatter"] = "null",
+            ["yTickFormatter"] = "null",
+            ["yTooltipFormatter"] = "statsFormatTooltipValue",
+            ["tooltipSort"] = null,
+            ["stacked"] = spec.Kind == GraphKind.StackedBar,
+            // Two series on different scales are drawn against independent y axes (views vs shares).
+            ["y_scaled"] = IsMultiSeriesLine(spec),
         };
 
         return root.ToJsonString();
+    }
+
+    /// <summary>
+    /// True for a graph the clients render with <c>DoubleLinearChartData</c> (graph type 1), which scales
+    /// each series against the largest one. Driven by <see cref="GraphSpec.PairedScale"/> rather than the
+    /// series type, because a two-series line chart can also be read as plain <c>ChartData</c>
+    /// (<c>followers_graph</c>), where a zero series is harmless.
+    /// </summary>
+    private static bool IsMultiSeriesLine(GraphSpec spec) =>
+        spec.PairedScale && spec.Series.Count > 1;
+
+    /// <summary>
+    /// Builds the <c>subchart</c> block (the range selector under the chart). Real Telegram shows it and
+    /// defaults the zoom to roughly the last month of the axis, which is what the clients open on.
+    /// </summary>
+    private static JsonObject BuildSubchart(IReadOnlyList<long> xAxisMillis)
+    {
+        var subchart = new JsonObject { ["show"] = true };
+        if (xAxisMillis.Count == 0)
+        {
+            return subchart;
+        }
+
+        const long defaultZoomDays = 30;
+        const long millisPerDay = 86_400_000L;
+
+        var last = xAxisMillis[^1];
+        var first = xAxisMillis[0];
+        var from = Math.Max(first, last - defaultZoomDays * millisPerDay);
+
+        subchart["defaultZoom"] = new JsonArray { from, last };
+        return subchart;
     }
 
     public GraphSpec? ParseGraphJson(string json)
@@ -266,26 +332,35 @@ public sealed class GraphBuilder(IAsyncGraphStore asyncGraphStore) : IGraphBuild
     }
 
     /// <summary>
-    /// Resolves a <see cref="GraphSeries.ColorKey"/> to a hex color. A value that is already a hex color
-    /// (e.g. produced by a previous serialization and fed back through <see cref="ParseGraphJson"/>) is
-    /// returned unchanged so the JSON round-trips; otherwise the palette entry for the key is used, falling
-    /// back to the palette's <c>default</c> entry for unknown keys.
+    /// Resolves a <see cref="GraphSeries.ColorKey"/> to a wire color. A value that already carries a hex
+    /// color — either bare (<c>#RRGGBB</c>) or in Telegram's <c>NAME#RRGGBB</c> form, e.g. produced by a
+    /// previous serialization and fed back through <see cref="ParseGraphJson"/> — is returned unchanged so
+    /// the JSON round-trips; otherwise the palette entry for the key is used, falling back to the palette's
+    /// <c>default</c> entry for unknown keys.
     /// </summary>
     private static string ResolveColor(string colorKey, bool dark)
     {
-        var palette = dark ? DarkPalette : LightPalette;
-
-        if (!string.IsNullOrEmpty(colorKey) && IsHexColor(colorKey))
+        if (!string.IsNullOrEmpty(colorKey) && CarriesHexColor(colorKey))
         {
             return colorKey;
         }
 
-        if (!string.IsNullOrEmpty(colorKey) && palette.TryGetValue(colorKey, out var color))
+        if (!string.IsNullOrEmpty(colorKey) && Palette.TryGetValue(colorKey, out var color))
         {
             return color;
         }
 
-        return palette[DefaultColorKey];
+        return Palette[DefaultColorKey];
+    }
+
+    /// <summary>
+    /// True when the value already carries a literal color: either a bare <c>#RRGGBB</c>/<c>#RGB</c> or
+    /// Telegram's <c>NAME#RRGGBB</c> form.
+    /// </summary>
+    private static bool CarriesHexColor(string value)
+    {
+        var hash = value.IndexOf('#');
+        return hash >= 0 && IsHexColor(value[hash..]);
     }
 
     private static bool IsHexColor(string value)

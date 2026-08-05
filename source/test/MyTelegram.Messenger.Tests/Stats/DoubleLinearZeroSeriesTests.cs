@@ -42,7 +42,7 @@ public class DoubleLinearZeroSeriesTests
         [
             new GraphSeries("views", "Views", "primary", [11L, 6L, 2L]),
             new GraphSeries("shares", "Shares", "secondary", [0L, 0L, 0L]),
-        ]);
+        ], PairedScale: true);
 
         var error = BuildInline(spec).ShouldBeOfType<TStatsGraphError>();
         error.Error.ShouldNotBeNullOrEmpty();
@@ -56,7 +56,7 @@ public class DoubleLinearZeroSeriesTests
         [
             new GraphSeries("iv_views", "IV views", "primary", [0L, 0L, 0L]),
             new GraphSeries("iv_shares", "IV shares", "secondary", [3L, 1L, 4L]),
-        ]);
+        ], PairedScale: true);
 
         BuildInline(spec).ShouldBeOfType<TStatsGraphError>();
     }
@@ -132,7 +132,7 @@ public class DoubleLinearZeroSeriesTests
         [
             new GraphSeries("messages", "Messages", "primary", [11L, 6L, 2L]),
             new GraphSeries("actions", "Actions", "secondary", [-1L, -4L, -2L]),
-        ]);
+        ], PairedScale: true);
 
         BuildInline(spec).ShouldBeOfType<TStatsGraphError>();
     }

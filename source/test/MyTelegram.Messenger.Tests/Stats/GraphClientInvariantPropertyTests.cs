@@ -26,7 +26,13 @@ namespace MyTelegram.Messenger.Tests.Stats;
 [Properties(Arbitrary = new[] { typeof(StatsArbitraries) }, MaxTest = 100)]
 public class GraphClientInvariantPropertyTests
 {
-    private static readonly Regex HexColor = new("^#[0-9A-Fa-f]{6}$", RegexOptions.Compiled);
+    /// <summary>
+    /// The wire form real Telegram uses for chart colors: an optional theme name followed by the hex value
+    /// (<c>BLUE#007AFF</c>). The Android client parses it with <c>Pattern.compile("(.*)(#.*)")</c>, taking
+    /// the prefix as the theme key <c>statisticChartLine_&lt;name&gt;</c> and the remainder as the literal
+    /// color, so a bare <c>#RRGGBB</c> is also valid.
+    /// </summary>
+    private static readonly Regex HexColor = new("^[A-Za-z]*#[0-9A-Fa-f]{6}$", RegexOptions.Compiled);
 
     [Property]
     public void Emitted_statsGraph_always_satisfies_client_chart_invariants(GraphSpecFixture fixture)

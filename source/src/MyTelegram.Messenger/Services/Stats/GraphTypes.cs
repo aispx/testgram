@@ -29,8 +29,18 @@ public sealed record GraphSeries(string Id, string Name, string ColorKey, IReadO
 /// <param name="XAxisMillis">The x-axis Unix-millisecond timestamps in strictly ascending order.</param>
 /// <param name="Series">The data-series columns (one array per series in the produced JSON).</param>
 /// <param name="Zoom">An optional zoomed series that produces a non-empty <c>zoom_token</c> when present.</param>
+/// <param name="PairedScale">
+/// <see langword="true"/> when the target slot is one the clients render with <c>DoubleLinearChartData</c>
+/// — the interaction pairs (<c>interactions_graph</c>, <c>iv_interactions_graph</c>,
+/// <c>story_interactions_graph</c>) and the supergroup <c>actions_graph</c>, which
+/// <c>StatisticActivity</c> passes as graph type 1. That parser scales each series against the largest
+/// one's maximum (<c>linesK[i] = max / maxValue</c>), so a series with no positive value divides by zero.
+/// The flag cannot be inferred from <see cref="Kind"/>: <c>followers_graph</c> is a two-series line chart
+/// too, but the client reads it as graph type 0 (plain <c>ChartData</c>), where a zero series is fine.
+/// </param>
 public sealed record GraphSpec(
     GraphKind Kind,
     IReadOnlyList<long> XAxisMillis,
     IReadOnlyList<GraphSeries> Series,
-    GraphSpec? Zoom = null);
+    GraphSpec? Zoom = null,
+    bool PairedScale = false);

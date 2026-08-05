@@ -146,8 +146,9 @@ public class BroadcastStatsSlotDiagnosticsTests(ITestOutputHelper output)
         stats.InteractionsGraph.ShouldBeOfType<TStatsGraphError>();
         stats.IvInteractionsGraph.ShouldBeOfType<TStatsGraphError>();
 
-        // Everything the channel does have data for is served for real.
-        stats.FollowersGraph.ShouldBeOfType<TStatsGraph>();
+        // Everything the channel does have data for is served for real. growth_graph is the absolute
+        // follower count, so a single recorded snapshot already fills it.
+        stats.GrowthGraph.ShouldBeOfType<TStatsGraph>();
         stats.EnabledNotifications.ShouldBeOfType<TStatsPercentValue>().Total.ShouldBe(5d);
     }
 
@@ -166,18 +167,23 @@ public class BroadcastStatsSlotDiagnosticsTests(ITestOutputHelper output)
             await store.RecordAsync(entity, StatsMetricNames.Views, day, 11);
             await store.RecordAsync(entity, StatsMetricNames.Shares, day, 4);
             await store.RecordAsync(entity, StatsMetricNames.Messages, day, 3);
-            await store.RecordAsync(entity, StatsMetricNames.Followers, day, 5);
             await store.RecordAsync(entity, StatsMetricNames.NotifyOn, day, 4);
             await store.RecordAsync(entity, StatsMetricNames.Muted, day, 1);
         }
+
+        // followers is a gauge: give it a day-over-day movement so the churn pair ("Joined"/"Left") has
+        // something to draw. A flat count legitimately yields an empty churn graph.
+        await store.RecordAsync(entity, StatsMetricNames.Followers, yesterday, 3);
+        await store.RecordAsync(entity, StatsMetricNames.Followers, today, 5);
 
         var stats = (TBroadcastStats)await CreateService(mongo.Database, participantsCount: 5)
             .GetBroadcastStatsAsync(CreateInput(), ChannelId, dark: false);
 
         // With both series populated the interactions pair is a real chart again.
         stats.InteractionsGraph.ShouldBeOfType<TStatsGraph>();
-        stats.FollowersGraph.ShouldBeOfType<TStatsGraph>();
+        // growth_graph is the absolute count; followers_graph is the Joined/Left churn pair.
         stats.GrowthGraph.ShouldBeOfType<TStatsGraph>();
+        stats.FollowersGraph.ShouldBeOfType<TStatsGraph>();
         stats.MuteGraph.ShouldBeOfType<TStatsGraph>();
 
         var percent = stats.EnabledNotifications.ShouldBeOfType<TStatsPercentValue>();

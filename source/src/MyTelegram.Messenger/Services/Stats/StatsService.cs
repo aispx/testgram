@@ -106,17 +106,24 @@ public class StatsService(
             SharesPerStory = sharesPerStory,
             ReactionsPerStory = reactionsPerStory,
             EnabledNotifications = enabledNotifications,
-            GrowthGraph = await BuildGrowthGraphAsync(channel, StatsMetricNames.Followers, graphPeriod, "Growth", "primary", dark, snapshotId, nowUnix),
-            FollowersGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.Followers, graphPeriod, "Followers", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
-            MuteGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.Muted, graphPeriod, "Muted", "secondary", GraphKind.Line, dark, snapshotId, nowUnix),
-            TopHoursGraph = await BuildTopHoursGraphAsync(channel, StatsMetricNames.ViewsByHour, graphPeriod, "Views by hour", "tertiary", dark, snapshotId, nowUnix),
+            // Verified against stats.getBroadcastStats on production: growth_graph is the ABSOLUTE follower
+            // count ("Total followers", one blue line), while followers_graph is the per-day churn pair
+            // ("Joined" green / "Left" red). These were the wrong way round here.
+            GrowthGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.Followers, graphPeriod,
+                "Total followers", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
+            FollowersGraph = await BuildChurnGraphAsync(channel, StatsMetricNames.Followers, graphPeriod,
+                dark, snapshotId, nowUnix),
+            // Real Telegram names this series "Unmuted" and draws it green.
+            MuteGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.NotifyOn, graphPeriod, "Unmuted", "quinary", GraphKind.Line, dark, snapshotId, nowUnix),
+            TopHoursGraph = await BuildTopHoursGraphAsync(channel, StatsMetricNames.ViewsByHour, graphPeriod, "Views by hour", "secondary", dark, snapshotId, nowUnix),
+            // Production serves the interaction pairs as "step" series, views blue and shares golden.
             InteractionsGraph = await BuildMultiSeriesGraphAsync(channel, graphPeriod,
-                [(StatsMetricNames.Views, "Views", "primary"), (StatsMetricNames.Shares, "Shares", "secondary")],
-                GraphKind.Line, dark, snapshotId, nowUnix, viewsHourlyZoom),
+                [(StatsMetricNames.Views, "Views", "primary"), (StatsMetricNames.Shares, "Shares", "golden")],
+                GraphKind.Step, dark, snapshotId, nowUnix, viewsHourlyZoom),
             // Instant View is not supported by this server, so IV interactions are genuinely zero.
             IvInteractionsGraph = await BuildMultiSeriesGraphAsync(channel, graphPeriod,
-                [("iv_views", "IV views", "primary"), ("iv_shares", "IV shares", "secondary")],
-                GraphKind.Line, dark, snapshotId, nowUnix),
+                [("iv_views", "Views", "primary"), ("iv_shares", "Shares", "golden")],
+                GraphKind.Step, dark, snapshotId, nowUnix),
             // View sources (URL/search/other channels) are not tracked; with no recorded categories the
             // Graph_Builder emits a statsGraphError for this slot.
             ViewsBySourceGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Views, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
@@ -124,8 +131,8 @@ public class StatsService(
             LanguagesGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.JoinsByLanguage, graphPeriod, GraphKind.Pie, dark, snapshotId, nowUnix),
             ReactionsByEmotionGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.Reactions, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
             StoryInteractionsGraph = await BuildMultiSeriesGraphAsync(channel, graphPeriod,
-                [(StatsMetricNames.StoryViews, "Story views", "primary"), (StatsMetricNames.StoryShares, "Story shares", "secondary")],
-                GraphKind.Line, dark, snapshotId, nowUnix),
+                [(StatsMetricNames.StoryViews, "Views", "primary"), (StatsMetricNames.StoryShares, "Shares", "golden")],
+                GraphKind.Step, dark, snapshotId, nowUnix),
             StoryReactionsByEmotionGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.StoryReactions, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
             RecentPostsInteractions = new TVector<IPostInteractionCounters>(recentPosts.Select(ToPostInteractionCounters))
         };
@@ -171,8 +178,12 @@ public class StatsService(
             Messages = messages,
             Viewers = viewers,
             Posters = posters,
-            GrowthGraph = await BuildGrowthGraphAsync(channel, StatsMetricNames.Members, graphPeriod, "Growth", "primary", dark, snapshotId, nowUnix),
-            MembersGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.Members, graphPeriod, "Members", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
+            // Same correction as the broadcast side: growth is the absolute member count, members_graph is
+            // the per-day churn pair.
+            GrowthGraph = await BuildGaugeSeriesGraphAsync(channel, StatsMetricNames.Members, graphPeriod,
+                "Total members", "primary", GraphKind.Line, dark, snapshotId, nowUnix),
+            MembersGraph = await BuildChurnGraphAsync(channel, StatsMetricNames.Members, graphPeriod,
+                dark, snapshotId, nowUnix),
             NewMembersBySourceGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.JoinsBySource, graphPeriod, GraphKind.StackedBar, dark, snapshotId, nowUnix),
             LanguagesGraph = await BuildCategoryGraphAsync(channel, StatsMetricNames.JoinsByLanguage, graphPeriod, GraphKind.Pie, dark, snapshotId, nowUnix),
             MessagesGraph = await BuildSeriesGraphAsync(channel, StatsMetricNames.Messages, graphPeriod, "Messages", "secondary", GraphKind.StackedBar, dark, snapshotId, nowUnix,
@@ -544,7 +555,9 @@ public class StatsService(
 
     /// <summary>
     /// Builds a multi-series counter <c>statsGraph</c> (e.g. the interactions graph's views+shares pair),
-    /// each series zero-filled across the whole Period.
+    /// each series zero-filled across the whole Period. Every caller targets a slot the clients read as
+    /// graph type 1 (<c>DoubleLinearChartData</c>), so the spec is marked
+    /// <see cref="GraphSpec.PairedScale"/> and the Graph_Builder rejects a zero series in it.
     /// </summary>
     private async Task<IStatsGraph> BuildMultiSeriesGraphAsync(StatsEntityKey entity, StatsDateRange period,
         IReadOnlyList<(string Metric, string Name, string ColorKey)> seriesDefs, GraphKind kind, bool dark,
@@ -560,7 +573,7 @@ public class StatsService(
             series.Add(new GraphSeries(metric, name, colorKey, values));
         }
 
-        var spec = new GraphSpec(kind, xAxis, series, zoom);
+        var spec = new GraphSpec(kind, xAxis, series, zoom, PairedScale: true);
         return await graphBuilder.BuildInlineAsync(spec, dark, snapshotId, nowUnix);
     }
 
@@ -593,6 +606,42 @@ public class StatsService(
         var series = new[] { new GraphSeries(metric, seriesName, colorKey, values) };
 
         return await graphBuilder.BuildInlineAsync(new GraphSpec(kind, xAxis, series), dark, snapshotId, nowUnix);
+    }
+
+    /// <summary>
+    /// Builds the churn graph real Telegram serves as <c>followers_graph</c>: two per-day series, "Joined"
+    /// (green) and "Left" (red), derived from the day-over-day movement of a membership gauge. A day whose
+    /// count rose by <c>n</c> contributes <c>n</c> joins and 0 leaves; a day that fell contributes the
+    /// mirror. Seeded from the last snapshot before the Period so the first window day has a predecessor.
+    ///
+    /// <para>This server records no separate join/leave counters, so the gauge delta is the only faithful
+    /// source: it under-reports a day where equal numbers joined and left, which is the same limitation the
+    /// growth figure already has.</para>
+    /// </summary>
+    private async Task<IStatsGraph> BuildChurnGraphAsync(StatsEntityKey entity, string metric,
+        StatsDateRange period, bool dark, string snapshotId, int nowUnix)
+    {
+        var days = EnumeratePeriodDays(period.MinDate - SecondsPerDay, period.MaxDate);
+        var values = await GetGaugeDailyValuesAsync(entity, metric, period.MinDate - SecondsPerDay, days);
+
+        var xAxis = new List<long>(days.Count - 1);
+        var joined = new List<long>(days.Count - 1);
+        var left = new List<long>(days.Count - 1);
+        for (var i = 1; i < days.Count; i++)
+        {
+            var delta = values[i] - values[i - 1];
+            xAxis.Add(days[i] * MillisPerSecond);
+            joined.Add(delta > 0 ? delta : 0);
+            left.Add(delta < 0 ? -delta : 0);
+        }
+
+        var series = new[]
+        {
+            new GraphSeries("joined", "Joined", "joined", joined),
+            new GraphSeries("left", "Left", "left", left),
+        };
+
+        return await graphBuilder.BuildInlineAsync(new GraphSpec(GraphKind.Line, xAxis, series), dark, snapshotId, nowUnix);
     }
 
     /// <summary>
@@ -747,7 +796,9 @@ public class StatsService(
 
         var xAxis = days.Select(d => d * MillisPerSecond).ToList();
 
-        var colorKeys = new[] { "primary", "secondary", "tertiary", "quaternary", "quinary" };
+        // Production assigns the category palette in a fixed order (blue, light blue, light green, orange,
+        // green, red, indigo) across the breakdown's series.
+        var colorKeys = GraphBuilder.CategoryColorKeys;
         var series = new List<GraphSeries>(categorySeries.Count);
         for (var c = 0; c < categorySeries.Count; c++)
         {
@@ -761,7 +812,7 @@ public class StatsService(
                 }
             }
 
-            var colorKey = colorKeys[c % colorKeys.Length];
+            var colorKey = colorKeys[c % colorKeys.Count];
             series.Add(new GraphSeries(category.Category, category.Category, colorKey, values));
         }
 
