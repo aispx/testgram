@@ -34,6 +34,9 @@ public class StatsService(
     /// <summary>Per-user notify-settings read model, used to recompute the muted gauge on demand.</summary>
     private const string NotifySettingsCollectionName = "eventflow-peernotifysettingsreadmodel";
 
+    /// <summary>Reading-history read model, used to count distinct supergroup viewers on demand.</summary>
+    private const string ReadingHistoryCollectionName = "eventflow-readinghistoryreadmodel";
+
     private const long MillisPerSecond = 1000L;
 
     private const long MillisPerHour = 3_600_000L;
@@ -141,6 +144,22 @@ public class StatsService(
         var messages = await AbsValueAsync(channel, StatsMetricNames.Messages, period);
         var viewers = await AbsValueAsync(channel, StatsMetricNames.Viewers, period);
         var posters = await AbsValueAsync(channel, StatsMetricNames.Posters, period);
+
+        // Nothing writes the distinct-viewer gauge, so "Viewing members" always read 0. The reading-history
+        // read model records (reader, target peer, date), so distinct readers of this supergroup over the
+        // range are a faithful stand-in.
+        if (viewers is TStatsAbsValueAndPrev { Current: 0, Previous: 0 })
+        {
+            viewers = await DistinctViewersAsync(channelId, period);
+        }
+
+        // Nothing writes the distinct-poster gauge, so "Posting members" always read 0. The top-poster
+        // breakdown is recorded per posting user id, so the distinct posters over a range are exactly its
+        // category count — derive both the current and the previous period from it.
+        if (posters is TStatsAbsValueAndPrev { Current: 0, Previous: 0 })
+        {
+            posters = await DistinctPostersAsync(channel, period);
+        }
 
         var topEntities = await metricsStore.GetTopEntitiesAsync(channelId, period.MinDate, period.MaxDate);
         var users = await BuildUsersAsync(input, topEntities.UserIds);
@@ -313,6 +332,87 @@ public class StatsService(
     // --- Helpers ---
 
     /// <summary>
+    /// Counts distinct users who read messages in the supergroup over the Period and the Previous_Period,
+    /// from the reading-history read model. Used for the supergroup "Viewing members" figure, which has no
+    /// gauge of its own (the view event carries only a count, never the viewer's identity).
+    /// </summary>
+    private async Task<IStatsAbsValueAndPrev> DistinctViewersAsync(long channelId, StatsDateRange period)
+    {
+        var current = await DistinctReaderCountAsync(channelId, period.MinDate, period.MaxDate);
+
+        var previousMin = period.MinDate - (period.MaxDate - period.MinDate);
+        var previous = await DistinctReaderCountAsync(channelId, previousMin, period.MinDate);
+
+        return new TStatsAbsValueAndPrev { Current = current, Previous = previous };
+    }
+
+    private async Task<long> DistinctReaderCountAsync(long channelId, int minDay, int maxDay)
+    {
+        if (maxDay < minDay)
+        {
+            return 0;
+        }
+
+        // Reading history is stamped with a Unix second timestamp; the range bounds are day-aligned, so
+        // include the whole of the final day.
+        var filter = Builders<BsonDocument>.Filter.Eq("TargetPeerId", channelId)
+                     & Builders<BsonDocument>.Filter.Gte("Date", minDay)
+                     & Builders<BsonDocument>.Filter.Lt("Date", maxDay + SecondsPerDay);
+
+        // "Viewing members" is one figure on a screen full of them: a reading-history query that fails must
+        // degrade to 0 rather than fail the whole megagroup result.
+        try
+        {
+            var cursor = await mongoDatabase.GetCollection<BsonDocument>(ReadingHistoryCollectionName)
+                .DistinctAsync<BsonValue>("ReaderPeerId", filter);
+            if (cursor == null)
+            {
+                return 0;
+            }
+
+            var readers = await cursor.ToListAsync();
+            return readers?.Count ?? 0;
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Counts distinct posting users over the Period and the Previous_Period from the
+    /// <c>top_poster_messages</c> breakdown, whose categories are the posting user ids. Used for the
+    /// supergroup "Posting members" figure, which has no gauge of its own.
+    /// </summary>
+    private async Task<IStatsAbsValueAndPrev> DistinctPostersAsync(StatsEntityKey entity, StatsDateRange period)
+    {
+        var current = await DistinctCategoryCountAsync(entity, period.MinDate, period.MaxDate);
+
+        var previousMin = period.MinDate - (period.MaxDate - period.MinDate);
+        var previous = await DistinctCategoryCountAsync(entity, previousMin, period.MinDate);
+
+        return new TStatsAbsValueAndPrev { Current = current, Previous = previous };
+    }
+
+    private async Task<long> DistinctCategoryCountAsync(StatsEntityKey entity, int minDay, int maxDay)
+    {
+        // As with the viewer count, one overview figure must not be able to fail the whole result.
+        try
+        {
+            var categories = await metricsStore.GetCategorySeriesAsync(
+                entity, StatsMetricNames.TopPosterMessages, minDay, maxDay);
+
+            // A category is present with all-zero points when the breakdown was recorded but the user
+            // posted nothing in this range; only count users who actually posted.
+            return categories?.Count(c => c.Points.Any(p => p.Value > 0)) ?? 0;
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
     /// Recomputes the <c>notify_on</c>/<c>muted</c> pair from live state, for a channel whose gauges were
     /// never recorded because it has seen no join/leave and no mute/unmute since stats ingestion started.
     ///
@@ -325,24 +425,33 @@ public class StatsService(
     /// </summary>
     private async Task<(long NotifyOn, long Muted)> ComputeLiveNotifyStateAsync(long channelId)
     {
-        var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channelId));
-        var participants = (long)Math.Max(0, channelReadModel?.ParticipantsCount ?? 0);
-        if (participants == 0)
+        // The fallback is a convenience over live state; if either lookup fails, fall back to {0,0} rather
+        // than failing the whole broadcast result over one overview cell.
+        try
+        {
+            var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channelId));
+            var participants = (long)Math.Max(0, channelReadModel?.ParticipantsCount ?? 0);
+            if (participants == 0)
+            {
+                return (0, 0);
+            }
+
+            var now = DateTime.UtcNow.ToTimestamp();
+            var filter = Builders<BsonDocument>.Filter.Eq("PeerId", channelId)
+                         & Builders<BsonDocument>.Filter.Eq("PeerType", (int)PeerType.Channel)
+                         & (Builders<BsonDocument>.Filter.Eq("NotifySettings.Silent", true)
+                            | Builders<BsonDocument>.Filter.Gt("NotifySettings.MuteUntil", now));
+
+            var muted = await mongoDatabase.GetCollection<BsonDocument>(NotifySettingsCollectionName)
+                .CountDocumentsAsync(filter);
+
+            muted = Math.Clamp(muted, 0, participants);
+            return (participants - muted, muted);
+        }
+        catch (Exception)
         {
             return (0, 0);
         }
-
-        var now = DateTime.UtcNow.ToTimestamp();
-        var filter = Builders<BsonDocument>.Filter.Eq("PeerId", channelId)
-                     & Builders<BsonDocument>.Filter.Eq("PeerType", (int)PeerType.Channel)
-                     & (Builders<BsonDocument>.Filter.Eq("NotifySettings.Silent", true)
-                        | Builders<BsonDocument>.Filter.Gt("NotifySettings.MuteUntil", now));
-
-        var muted = await mongoDatabase.GetCollection<BsonDocument>(NotifySettingsCollectionName)
-            .CountDocumentsAsync(filter);
-
-        muted = Math.Clamp(muted, 0, participants);
-        return (participants - muted, muted);
     }
 
     /// <summary>
