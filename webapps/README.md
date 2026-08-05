@@ -27,14 +27,20 @@ user read model, which is what makes clients show the button.
 `messages.requestAppWebView`:
 
 ```
-/newapp     create a web app (pick bot, title, description, URL, short name)
+/newapp     create a web app (pick bot, title, description, photo, GIF, URL, short name)
 /myapps     list every web app you own
 /listapps   list the web apps of one bot
-/editapp    edit title / description / URL of an app (by its t.me link)
+/editapp    edit title / description / photo / GIF / URL of an app (by its t.me link)
 /deleteapp  delete an app (by its t.me link)
 ```
 
 Short names follow BotFather's rule: 3-30 characters, `a-zA-Z0-9_`.
+
+The preview photo must be uploaded at exactly 640x360, as upstream BotFather
+requires; anything else is rejected with "the image dimensions are invalid". The
+demo GIF is optional — send `/empty` to skip it in `/newapp`, or `/empty` in
+`/editapp` to remove one that was set. Both are returned to clients through
+`messages.getBotApp`.
 
 ## How the URL is resolved
 
@@ -62,8 +68,5 @@ is told to close the view.
 
 ## Known limitations
 
-- BotFather only receives text messages in this server (media is not routed to
-  it), so `/newapp` does not ask for the 640x360 photo or the demo GIF that
-  upstream BotFather requests, and `/editapp` has no photo/GIF steps.
 - `messages.editInlineBotMessage` is still unimplemented, so a mini app cannot
   edit a message it previously sent through inline mode.

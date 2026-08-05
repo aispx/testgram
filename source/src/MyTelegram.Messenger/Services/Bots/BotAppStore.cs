@@ -75,10 +75,41 @@ public class BotAppStore(IMongoDatabase mongoDatabase) : IBotAppStore, ISingleto
             ShortName = GetString(document, "short_name"),
             Title = GetString(document, "title"),
             Description = GetString(document, "description"),
-            // Mini app icons are optional; an empty photo keeps clients from dereferencing null.
-            Photo = new TPhotoEmpty(),
+            // Uploaded through BotFather /newapp; photoEmpty keeps older clients from dereferencing
+            // null when an app predates the upload step.
+            Photo = ReadPhoto(document) ?? new TPhotoEmpty(),
+            Document = ReadDocument(document),
             Hash = GetInt64(document, "hash")
         };
+    }
+
+    /// <summary>Reads the app's preview photo, stored as a serialised messageMediaPhoto.</summary>
+    private static IPhoto? ReadPhoto(BsonDocument document)
+    {
+        return ReadMedia(document, "photo") is TMessageMediaPhoto { Photo: { } photo } ? photo : null;
+    }
+
+    /// <summary>Reads the app's demo GIF, stored as a serialised messageMediaDocument.</summary>
+    private static IDocument? ReadDocument(BsonDocument document)
+    {
+        return ReadMedia(document, "gif") is TMessageMediaDocument { Document: { } gif } ? gif : null;
+    }
+
+    private static IMessageMedia? ReadMedia(BsonDocument document, string name)
+    {
+        if (!document.TryGetValue(name, out var value) || value.BsonType != BsonType.Binary)
+        {
+            return null;
+        }
+
+        var bytes = value.AsBsonBinaryData.Bytes;
+        if (bytes.Length == 0)
+        {
+            return null;
+        }
+
+        var buffer = new ReadOnlyMemory<byte>(bytes);
+        return buffer.Read<IMessageMedia>();
     }
 
     private static string GetString(BsonDocument doc, string name)

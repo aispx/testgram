@@ -8,6 +8,12 @@ public interface IBotFatherBotService
 {
     Task HandleMessageAsync(IRequestInput input, long fromUserId, string message);
     Task HandleCallbackAsync(IRequestInput input, long fromUserId, int msgId, string data);
+
+    /// <summary>
+    /// Handles a media message sent to BotFather (photo / GIF uploads for web app flows).
+    /// </summary>
+    /// <param name="media">The saved media, as produced by <c>IMediaHelper.SaveMediaAsync</c>.</param>
+    Task HandleMediaAsync(IRequestInput input, long fromUserId, IMessageMedia? media);
 }
 
 public class BotFatherBotService(
@@ -1009,7 +1015,14 @@ public class BotFatherBotService(
                     return;
                 }
 
-                await SetStateAsync(fromUserId, $"newapp:title:{username}");
+                await SaveDraftAsync(fromUserId, new BsonDocument
+                {
+                    ["_id"] = DraftId(fromUserId),
+                    ["user_id"] = fromUserId,
+                    ["username"] = username
+                });
+
+                await SetStateAsync(fromUserId, "newapp:title");
                 await SendAsync(input, fromUserId,
                     $"Creating a new web app for @{username}. Please enter a title for the web app.",
                     new TReplyKeyboardHide());
@@ -1017,21 +1030,35 @@ public class BotFatherBotService(
             }
 
             case "title":
-                await SetStateAsync(fromUserId, $"newapp:description:{extra}:{text}");
+                await UpdateDraftAsync(fromUserId, "title", text);
+                await SetStateAsync(fromUserId, "newapp:description");
                 await SendAsync(input, fromUserId, "Please enter a short description of the web app.");
                 break;
 
             case "description":
-            {
-                // State carries username:title, and the title may itself contain ':'.
-                var username = extra;
-                var title = string.Join(':', stateParts.Skip(3));
-                await SetStateAsync(fromUserId, $"newapp:url:{username}:{title}:{text}");
-                await SendAsync(input, fromUserId,
-                    "Now please send me the Web App URL that will be opened when users follow a web app direct link.\n\n" +
-                    "Photos and demo GIFs are not supported here yet.");
+                await UpdateDraftAsync(fromUserId, "description", text);
+                await SetStateAsync(fromUserId, "newapp:photo");
+                await SendAsync(input, fromUserId, $"Please upload a photo, {RequiredPhotoWidth}x{RequiredPhotoHeight} pixels.");
                 break;
-            }
+
+            case "photo":
+                // Only a photo upload advances this step; HandleMediaAsync deals with that.
+                await SendAsync(input, fromUserId,
+                    $"Please upload a photo, {RequiredPhotoWidth}x{RequiredPhotoHeight} pixels.");
+                break;
+
+            case "gif":
+                if (IsEmpty(text))
+                {
+                    await SetStateAsync(fromUserId, "newapp:url");
+                    await SendAsync(input, fromUserId,
+                        "No problem, you can always add a GIF later using the /editapp command. " +
+                        "Now please send me the Web App URL that will be opened when users follow a web app direct link.");
+                    return;
+                }
+
+                await SendAsync(input, fromUserId, "Now upload a demo GIF or send /empty to skip this step.");
+                break;
 
             case "url":
             {
@@ -1041,15 +1068,14 @@ public class BotFatherBotService(
                     return;
                 }
 
-                var username = extra;
-                var title = stateParts.Length > 3 ? stateParts[3] : string.Empty;
-                var description = stateParts.Length > 4 ? string.Join(':', stateParts.Skip(4)) : string.Empty;
+                await UpdateDraftAsync(fromUserId, "url", text.Trim());
+                await SetStateAsync(fromUserId, "newapp:shortname");
 
-                await SetStateAsync(fromUserId, $"newapp:shortname:{username}:{title}:{description}:{text}");
+                var draft = await GetDraftAsync(fromUserId);
                 await SendAsync(input, fromUserId,
                     "Good! Now please choose a short name for your web app: 3-30 characters, a-zA-Z0-9_. " +
-                    $"This short name will be used in URLs like t.me/{username}/myapp and serve as a unique " +
-                    "identifier for your web app.");
+                    $"This short name will be used in URLs like t.me/{GetString(draft, "username")}/myapp and serve " +
+                    "as a unique identifier for your web app.");
                 break;
             }
 
@@ -1063,30 +1089,29 @@ public class BotFatherBotService(
                     return;
                 }
 
-                var username = extra;
-                var title = stateParts.Length > 3 ? stateParts[3] : string.Empty;
-                var description = stateParts.Length > 4 ? stateParts[4] : string.Empty;
-                var url = stateParts.Length > 5 ? string.Join(':', stateParts.Skip(5)) : string.Empty;
+                var draft = await GetDraftAsync(fromUserId);
+                var username = GetString(draft, "username");
 
                 var bot = await GetBotAsync(fromUserId, username);
                 if (bot == null)
                 {
                     await ClearStateAsync(fromUserId);
+                    await DeleteDraftAsync(fromUserId);
                     await SendAsync(input, fromUserId, $"I couldn't find a bot @{username} owned by you.");
                     return;
                 }
 
                 var botUserId = bot["BotUserId"].AsInt64;
-                var existing = await GetAppAsync(botUserId, shortName);
-                if (existing != null)
+                if (await GetAppAsync(botUserId, shortName) != null)
                 {
                     await SendAsync(input, fromUserId,
                         "Sorry, this short name is already taken. Please choose a different one.");
                     return;
                 }
 
-                await CreateAppAsync(botUserId, shortName, title, description, url);
+                await CreateAppAsync(botUserId, shortName, draft!);
                 await ClearStateAsync(fromUserId);
+                await DeleteDraftAsync(fromUserId);
                 await SendAsync(input, fromUserId,
                     $"You can now use {shortName} as the short_name parameter value in Bot API. " +
                     $"Your web app link is t.me/{username}/{shortName}. Open it to start developing your web app!");
@@ -1122,6 +1147,7 @@ public class BotFatherBotService(
                 if (!IsSkip(text))
                 {
                     await UpdateAppFieldAsync(fromUserId, extra, shortName, "title", text);
+                    await MarkEditChangedAsync(fromUserId);
                 }
 
                 await SetStateAsync(fromUserId, $"editapp:description:{extra}:{shortName}");
@@ -1138,6 +1164,45 @@ public class BotFatherBotService(
                 if (!IsSkip(text))
                 {
                     await UpdateAppFieldAsync(fromUserId, extra, shortName, "description", text);
+                    await MarkEditChangedAsync(fromUserId);
+                }
+
+                await SetStateAsync(fromUserId, $"editapp:photo:{extra}:{shortName}");
+                await SendAsync(input, fromUserId, "Please send a new photo. Use /skip to leave the photo as is.");
+                break;
+            }
+
+            case "photo":
+            {
+                var shortName = stateParts.Length > 3 ? stateParts[3] : string.Empty;
+
+                // A photo upload is handled by HandleMediaAsync; only /skip moves on from text.
+                if (!IsSkip(text))
+                {
+                    await SendAsync(input, fromUserId, "Please send a new photo. Use /skip to leave the photo as is.");
+                    return;
+                }
+
+                await SetStateAsync(fromUserId, $"editapp:gif:{extra}:{shortName}");
+                await SendAsync(input, fromUserId,
+                    "Please send a new GIF. Use /skip to leave the GIF as is or /empty to remove the current GIF.");
+                break;
+            }
+
+            case "gif":
+            {
+                var shortName = stateParts.Length > 3 ? stateParts[3] : string.Empty;
+
+                if (IsEmpty(text))
+                {
+                    await UpdateAppMediaAsync(fromUserId, extra, shortName, "gif", null);
+                    await MarkEditChangedAsync(fromUserId);
+                }
+                else if (!IsSkip(text))
+                {
+                    await SendAsync(input, fromUserId,
+                        "Please send a new GIF. Use /skip to leave the GIF as is or /empty to remove the current GIF.");
+                    return;
                 }
 
                 await SetStateAsync(fromUserId, $"editapp:url:{extra}:{shortName}");
@@ -1149,11 +1214,12 @@ public class BotFatherBotService(
             case "url":
             {
                 var shortName = stateParts.Length > 3 ? stateParts[3] : string.Empty;
-                await ClearStateAsync(fromUserId);
 
                 if (IsSkip(text))
                 {
-                    await SendAsync(input, fromUserId, "No changes were made.");
+                    var changed = await ConsumeEditChangedAsync(fromUserId);
+                    await ClearStateAsync(fromUserId);
+                    await SendAsync(input, fromUserId, changed ? "Success!" : "No changes were made.");
                     return;
                 }
 
@@ -1164,6 +1230,8 @@ public class BotFatherBotService(
                 }
 
                 await UpdateAppFieldAsync(fromUserId, extra, shortName, "url", text);
+                await ConsumeEditChangedAsync(fromUserId);
+                await ClearStateAsync(fromUserId);
                 await SendAsync(input, fromUserId, "Success!");
                 break;
             }
@@ -1364,23 +1432,36 @@ public class BotFatherBotService(
 
     // --- Web app DB helpers ---
 
-    private async Task CreateAppAsync(long botId, string shortName, string title, string description, string url)
+    private async Task CreateAppAsync(long botId, string shortName, BsonDocument draft)
     {
-        await mongoDatabase.GetCollection<BsonDocument>(AppCollection).InsertOneAsync(new BsonDocument
+        var document = new BsonDocument
         {
             ["bot_id"] = botId,
             ["app_id"] = await GetNextAppIdAsync(),
             ["access_hash"] = Random.Shared.NextInt64(),
             ["short_name"] = shortName,
-            ["title"] = title,
-            ["description"] = description,
-            ["url"] = url,
+            ["title"] = GetString(draft, "title"),
+            ["description"] = GetString(draft, "description"),
+            ["url"] = GetString(draft, "url"),
             ["hash"] = Random.Shared.NextInt64(),
             ["request_write_access"] = false,
             ["has_settings"] = false,
             ["inactive"] = false,
             ["created_at"] = DateTime.UtcNow.ToTimestamp()
-        });
+        };
+
+        // Photo is mandatory in the flow, the demo GIF is optional.
+        if (draft.TryGetValue("photo", out var photo) && photo.BsonType == BsonType.Binary)
+        {
+            document["photo"] = photo;
+        }
+
+        if (draft.TryGetValue("gif", out var gif) && gif.BsonType == BsonType.Binary)
+        {
+            document["gif"] = gif;
+        }
+
+        await mongoDatabase.GetCollection<BsonDocument>(AppCollection).InsertOneAsync(document);
     }
 
     private async Task<long> GetNextAppIdAsync()
@@ -1484,11 +1565,220 @@ public class BotFatherBotService(
     private static bool IsSkip(string text) =>
         text.Trim().Equals("/skip", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsEmpty(string text) =>
+        text.Trim().Equals("/empty", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsHttpsUrl(string text) =>
         Uri.TryCreate(text.Trim(), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 
     private static string GetString(BsonDocument? doc, string name)
     {
         return doc != null && doc.TryGetValue(name, out var value) && value.IsString ? value.AsString : string.Empty;
+    }
+
+    // --- Media uploads ---
+
+    /// <summary>Web app preview photos must be exactly this size, as upstream BotFather requires.</summary>
+    private const int RequiredPhotoWidth = BotAppMediaValidator.RequiredPhotoWidth;
+
+    private const int RequiredPhotoHeight = BotAppMediaValidator.RequiredPhotoHeight;
+
+    private const string DraftCollection = "botfather-app-drafts";
+
+    /// <summary>
+    /// Handles a photo or GIF sent to BotFather. Which step is waiting for it is decided by the FSM
+    /// state, so an upload arriving out of turn is politely ignored rather than mis-filed.
+    /// </summary>
+    public async Task HandleMediaAsync(IRequestInput input, long fromUserId, IMessageMedia? media)
+    {
+        if (media == null)
+        {
+            return;
+        }
+
+        var state = await GetStateAsync(fromUserId);
+        if (state == null)
+        {
+            return;
+        }
+
+        var parts = state.Split(':');
+        var flow = parts[0];
+        var step = parts.Length > 1 ? parts[1] : string.Empty;
+
+        switch (flow)
+        {
+            case "newapp" when step == "photo":
+                await HandleNewAppPhotoAsync(input, fromUserId, media);
+                break;
+
+            case "newapp" when step == "gif":
+                await HandleNewAppGifAsync(input, fromUserId, media);
+                break;
+
+            case "editapp" when step == "photo":
+                await HandleEditAppPhotoAsync(input, fromUserId, media, parts);
+                break;
+
+            case "editapp" when step == "gif":
+                await HandleEditAppGifAsync(input, fromUserId, media, parts);
+                break;
+        }
+    }
+
+    private async Task HandleNewAppPhotoAsync(IRequestInput input, long fromUserId, IMessageMedia media)
+    {
+        if (media is not TMessageMediaPhoto)
+        {
+            await SendAsync(input, fromUserId,
+                $"Please upload a photo, {RequiredPhotoWidth}x{RequiredPhotoHeight} pixels.");
+            return;
+        }
+
+        if (!BotAppMediaValidator.IsValidPreviewPhoto(media))
+        {
+            await SendAsync(input, fromUserId,
+                $"Sorry, the image dimensions are invalid. Must be {RequiredPhotoWidth}x{RequiredPhotoHeight}.");
+            return;
+        }
+
+        await UpdateDraftAsync(fromUserId, "photo", media.ToBytes());
+        await SetStateAsync(fromUserId, "newapp:gif");
+        await SendAsync(input, fromUserId, "Now upload a demo GIF or send /empty to skip this step.");
+    }
+
+    private async Task HandleNewAppGifAsync(IRequestInput input, long fromUserId, IMessageMedia media)
+    {
+        if (!BotAppMediaValidator.IsAnimation(media))
+        {
+            await SendAsync(input, fromUserId, "Please upload a GIF or send /empty to skip this step.");
+            return;
+        }
+
+        await UpdateDraftAsync(fromUserId, "gif", media.ToBytes());
+        await SetStateAsync(fromUserId, "newapp:url");
+        await SendAsync(input, fromUserId,
+            "Now please send me the Web App URL that will be opened when users follow a web app direct link.");
+    }
+
+    private async Task HandleEditAppPhotoAsync(IRequestInput input, long fromUserId, IMessageMedia media,
+        string[] stateParts)
+    {
+        var username = stateParts.Length > 2 ? stateParts[2] : string.Empty;
+        var shortName = stateParts.Length > 3 ? stateParts[3] : string.Empty;
+
+        if (media is not TMessageMediaPhoto)
+        {
+            await SendAsync(input, fromUserId, "Please send a new photo. Use /skip to leave the photo as is.");
+            return;
+        }
+
+        if (!BotAppMediaValidator.IsValidPreviewPhoto(media))
+        {
+            await SendAsync(input, fromUserId,
+                $"Sorry, the image dimensions are invalid. Must be {RequiredPhotoWidth}x{RequiredPhotoHeight}.");
+            return;
+        }
+
+        await UpdateAppMediaAsync(fromUserId, username, shortName, "photo", media.ToBytes());
+        await MarkEditChangedAsync(fromUserId);
+
+        await SetStateAsync(fromUserId, $"editapp:gif:{username}:{shortName}");
+        await SendAsync(input, fromUserId,
+            "Please send a new GIF. Use /skip to leave the GIF as is or /empty to remove the current GIF.");
+    }
+
+    private async Task HandleEditAppGifAsync(IRequestInput input, long fromUserId, IMessageMedia media,
+        string[] stateParts)
+    {
+        var username = stateParts.Length > 2 ? stateParts[2] : string.Empty;
+        var shortName = stateParts.Length > 3 ? stateParts[3] : string.Empty;
+
+        if (!BotAppMediaValidator.IsAnimation(media))
+        {
+            await SendAsync(input, fromUserId,
+                "Please send a new GIF. Use /skip to leave the GIF as is or /empty to remove the current GIF.");
+            return;
+        }
+
+        await UpdateAppMediaAsync(fromUserId, username, shortName, "gif", media.ToBytes());
+        await MarkEditChangedAsync(fromUserId);
+
+        await SetStateAsync(fromUserId, $"editapp:url:{username}:{shortName}");
+        await SendAsync(input, fromUserId, "Please send a new web app URL. Use /skip to leave the URL as is.");
+    }
+
+    // --- Web app draft helpers ---
+    //
+    // A /newapp run spans several messages and now carries binary media, so the draft lives in
+    // Mongo rather than being packed into the ':'-delimited FSM state string.
+
+    private static string DraftId(long userId) => $"botfather-app-draft-{userId}";
+
+    private async Task SaveDraftAsync(long userId, BsonDocument draft)
+    {
+        await mongoDatabase.GetCollection<BsonDocument>(DraftCollection).ReplaceOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", DraftId(userId)),
+            draft,
+            new ReplaceOptions { IsUpsert = true });
+    }
+
+    private async Task UpdateDraftAsync(long userId, string field, BsonValue value)
+    {
+        await mongoDatabase.GetCollection<BsonDocument>(DraftCollection).UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", DraftId(userId)),
+            Builders<BsonDocument>.Update.Set(field, value).SetOnInsert("user_id", userId),
+            new UpdateOptions { IsUpsert = true });
+    }
+
+    private async Task<BsonDocument?> GetDraftAsync(long userId)
+    {
+        return await mongoDatabase.GetCollection<BsonDocument>(DraftCollection)
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", DraftId(userId)))
+            .FirstOrDefaultAsync();
+    }
+
+    private async Task DeleteDraftAsync(long userId)
+    {
+        await mongoDatabase.GetCollection<BsonDocument>(DraftCollection)
+            .DeleteOneAsync(Builders<BsonDocument>.Filter.Eq("_id", DraftId(userId)));
+    }
+
+    /// <summary>
+    /// Records that an /editapp run has changed something, so the final step can honestly say
+    /// "Success!" versus "No changes were made."
+    /// </summary>
+    private async Task MarkEditChangedAsync(long userId)
+    {
+        await UpdateDraftAsync(userId, "edit_changed", true);
+    }
+
+    private async Task<bool> ConsumeEditChangedAsync(long userId)
+    {
+        var draft = await GetDraftAsync(userId);
+        await DeleteDraftAsync(userId);
+
+        return draft != null && draft.TryGetValue("edit_changed", out var value) && value.IsBoolean &&
+               value.AsBoolean;
+    }
+
+    /// <summary>Sets or clears a media field on a stored web app.</summary>
+    private async Task UpdateAppMediaAsync(long ownerId, string username, string shortName, string field,
+        byte[]? bytes)
+    {
+        var bot = await GetBotAsync(ownerId, username);
+        if (bot == null) return;
+
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("bot_id", bot["BotUserId"].AsInt64),
+            Builders<BsonDocument>.Filter.Eq("short_name", shortName));
+
+        var update = bytes == null
+            ? Builders<BsonDocument>.Update.Unset(field)
+            : Builders<BsonDocument>.Update.Set(field, bytes);
+
+        // Bump the hash so clients refetch via messages.getBotApp.
+        await mongoDatabase.GetCollection<BsonDocument>(AppCollection).UpdateOneAsync(
+            filter, update.Set("hash", Random.Shared.NextInt64()));
     }
 }
