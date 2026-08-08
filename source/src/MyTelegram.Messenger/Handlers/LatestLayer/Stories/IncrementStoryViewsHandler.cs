@@ -23,11 +23,17 @@ internal sealed class IncrementStoryViewsHandler(
     IStoryViewRecorder storyViewRecorder)
     : RpcResultObjectHandler<RequestIncrementStoryViews, IBool>
 {
+    /// <summary>
+    /// Upper bound on the ids accepted in one call. RecordViewsAsync issues several writes per id, so an
+    /// unbounded client-supplied list would turn a single RPC into an arbitrary number of round trips.
+    /// </summary>
+    private const int MaxStoryIds = 100;
+
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestIncrementStoryViews obj)
     {
         var (peerId, peerType) = await storyAccessService.ResolveReadablePeerAsync(obj.Peer, input.UserId);
 
-        var storyIds = obj.Id?.Distinct().ToList() ?? [];
+        var storyIds = obj.Id?.Distinct().Take(MaxStoryIds).ToList() ?? [];
         if (storyIds.Count == 0)
         {
             return new TBoolTrue();

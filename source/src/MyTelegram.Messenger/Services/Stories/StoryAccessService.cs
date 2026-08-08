@@ -101,6 +101,16 @@ public class StoryAccessService(
                 {
                     RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
                 }
+
+                // StoryHelper.CanViewStory short-circuits to true for every non-user owner, so this is
+                // the only gate on channel stories. Without it, any user could read a private channel's
+                // stories — including downloadable media — by guessing its (sequential) channel id.
+                // Public channels stay readable by anyone, matching the joinability rule used for stats.
+                if (string.IsNullOrEmpty(channelReadModel!.UserName)
+                    && !await channelAppService.IsChannelMemberAsync(userId, channelReadModel.ChannelId))
+                {
+                    RpcErrors.RpcErrors400.ChannelPrivate.ThrowRpcError();
+                }
                 break;
 
             default:
@@ -124,6 +134,7 @@ public class StoryAccessService(
             {
                 UserId = userId,
                 IsPremium = userReadModel?.Premium ?? false,
+                IsBot = userReadModel?.Bot ?? false,
                 StealthMode = stealth
             };
         }
@@ -146,6 +157,7 @@ public class StoryAccessService(
         {
             UserId = userId,
             IsPremium = userReadModel?.Premium ?? false,
+            IsBot = userReadModel?.Bot ?? false,
             OwnersWhoHaveViewerAsContact = ownersWithViewerAsContact.ToHashSet(),
             OwnersWhoHaveViewerAsCloseFriend = ownersWithViewerAsCloseFriend,
             StealthMode = stealth

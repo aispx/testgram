@@ -23,6 +23,9 @@ public sealed class StoryViewerContext
     /// <summary>Whether the viewer has Telegram Premium (for the allow-premium rule).</summary>
     public bool IsPremium { get; init; }
 
+    /// <summary>Whether the viewer is a bot account (for the allow-bots / disallow-bots rules).</summary>
+    public bool IsBot { get; init; }
+
     /// <summary>Owners who have the viewer in their contacts, keyed by owner user id.</summary>
     public HashSet<long> OwnersWhoHaveViewerAsContact { get; init; } = [];
 

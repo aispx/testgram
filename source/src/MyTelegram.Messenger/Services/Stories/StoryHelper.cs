@@ -905,13 +905,19 @@ public static partial class StoryHelper
         {
             switch (rule.Type)
             {
-                // Disallow rules win outright.
+                // Disallow rules win outright. Each guarded case needs an unguarded counterpart below
+                // it: a `when` that does not match falls through to the remaining cases, so without
+                // one a non-excluded viewer would reach `default` and be treated as unevaluable.
                 case StoryPrivacyRuleType.DisallowAll:
                     return false;
                 case StoryPrivacyRuleType.DisallowContacts when isContact:
                     return false;
                 case StoryPrivacyRuleType.DisallowUsers when rule.UserIds.Contains(requestingUserId):
                     return false;
+                case StoryPrivacyRuleType.DisallowContacts:
+                case StoryPrivacyRuleType.DisallowUsers:
+                    // The viewer is not excluded by this rule; it contributes no permission either.
+                    break;
 
                 case StoryPrivacyRuleType.AllowAll:
                     hasAllowRule = true;
@@ -944,6 +950,36 @@ public static partial class StoryHelper
                     {
                         allowed = true;
                     }
+                    break;
+
+                case StoryPrivacyRuleType.DisallowBots when context.IsBot:
+                    return false;
+                case StoryPrivacyRuleType.DisallowBots:
+                    break;
+                case StoryPrivacyRuleType.AllowBots:
+                    hasAllowRule = true;
+                    if (context.IsBot)
+                    {
+                        allowed = true;
+                    }
+                    break;
+
+                // Chat-participant rules cannot be evaluated: basic-group membership is not queryable
+                // here (GetChatMemberListQuery has no handler), so there is no way to tell whether the
+                // viewer is in the listed chats. They are therefore applied conservatively rather than
+                // ignored -- previously neither had a case, so a story restricted to chat participants
+                // matched no allow-rule and fell through to "no allow rule present => visible to all".
+                // This denies some legitimate viewers, which is the safe direction; resolving group
+                // membership into StoryViewerContext would make them exact.
+                case StoryPrivacyRuleType.DisallowChatParticipants:
+                    return false;
+                case StoryPrivacyRuleType.AllowChatParticipants:
+                    hasAllowRule = true;
+                    break;
+
+                default:
+                    // An unrecognised rule type is treated as a restriction, never as permission.
+                    hasAllowRule = true;
                     break;
             }
         }

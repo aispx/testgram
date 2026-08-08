@@ -153,7 +153,77 @@ public class StoryPrivacyTests
         var story = Story(Rule(StoryPrivacyRuleType.DisallowAll));
         story.OwnerPeerType = StoryHelper.PeerTypeChannel;
 
-        // Channel visibility is decided by channel membership before this point.
+        // Channel visibility is decided by channel membership before this point, in
+        // StoryAccessService.ResolveReadablePeerAsync: a private channel requires the caller to be a
+        // member. This unconditional pass is only sound because that check is guaranteed upstream --
+        // it previously was not, which made every private channel's stories world-readable.
+        StoryHelper.CanViewStory(story, ViewerId, Context()).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AllowChatParticipants_does_not_make_the_story_world_readable()
+    {
+        // Regression: neither chat-participant rule had a case in the switch, so a story restricted to
+        // chat participants matched no allow-rule and fell through to "no allow rule present =>
+        // visible to everyone" - inverting the restriction into full exposure.
+        var story = Story(new StoryPrivacyRule
+        {
+            Type = StoryPrivacyRuleType.AllowChatParticipants,
+            ChatIds = [777]
+        });
+
+        StoryHelper.CanViewStory(story, ViewerId, Context()).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DisallowChatParticipants_does_not_admit_an_unrelated_viewer()
+    {
+        var story = Story(new StoryPrivacyRule
+        {
+            Type = StoryPrivacyRuleType.DisallowChatParticipants,
+            ChatIds = [777]
+        });
+
+        StoryHelper.CanViewStory(story, ViewerId, Context()).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void An_unrecognised_rule_type_never_grants_access()
+    {
+        var story = Story(Rule(int.MaxValue));
+
+        StoryHelper.CanViewStory(story, ViewerId, Context()).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AllowBots_checks_whether_the_viewer_is_a_bot()
+    {
+        var story = Story(Rule(StoryPrivacyRuleType.AllowBots));
+
+        StoryHelper.CanViewStory(story, ViewerId, Context(isBot: true)).ShouldBeTrue();
+        StoryHelper.CanViewStory(story, ViewerId, Context()).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DisallowBots_excludes_bots_but_still_admits_a_human()
+    {
+        var story = Story(Rule(StoryPrivacyRuleType.DisallowBots));
+
+        StoryHelper.CanViewStory(story, ViewerId, Context(isBot: true)).ShouldBeFalse();
+        // Only a disallow rule is present, so a viewer it does not exclude may still watch. This also
+        // pins the `when`-guard fallthrough: an unmatched guarded case must not reach `default`.
+        StoryHelper.CanViewStory(story, ViewerId, Context()).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DisallowUsers_still_admits_a_user_it_does_not_list()
+    {
+        var story = Story(new StoryPrivacyRule
+        {
+            Type = StoryPrivacyRuleType.DisallowUsers,
+            UserIds = [999]
+        });
+
         StoryHelper.CanViewStory(story, ViewerId, Context()).ShouldBeTrue();
     }
 
@@ -170,12 +240,14 @@ public class StoryPrivacyTests
     private static StoryViewerContext Context(
         bool isContact = false,
         bool isCloseFriend = false,
-        bool isPremium = false)
+        bool isPremium = false,
+        bool isBot = false)
     {
         return new StoryViewerContext
         {
             UserId = ViewerId,
             IsPremium = isPremium,
+            IsBot = isBot,
             OwnersWhoHaveViewerAsContact = isContact ? [OwnerId] : [],
             OwnersWhoHaveViewerAsCloseFriend = isCloseFriend ? [OwnerId] : []
         };

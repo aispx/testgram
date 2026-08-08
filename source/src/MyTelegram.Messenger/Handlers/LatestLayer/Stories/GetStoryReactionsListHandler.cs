@@ -70,8 +70,11 @@ internal sealed class GetStoryReactionsListHandler(
             }
 
             entries.Add(new ReactionEntry(
-                doc["userId"].AsInt64,
-                doc.Contains("date") ? doc["date"].AsInt32 : 0,
+                GetInt64(doc.GetValue("userId", BsonNull.Value)),
+                // SendReactionHandler writes "date" as an uncast ToUnixTimeSeconds(), i.e. BSON Int64.
+                // BsonValue.AsInt32 throws on Int64 rather than converting, so every story that has a
+                // reaction used to fail here.
+                (int)GetInt64(doc.GetValue("date", BsonNull.Value)),
                 reaction));
         }
 
@@ -128,6 +131,22 @@ internal sealed class GetStoryReactionsListHandler(
                 type = string.Empty;
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Reads a numeric BSON value irrespective of whether it was stored as Int32 or Int64. Writers in this
+    /// area are inconsistent (<c>story_reactions.date</c> is an uncast <c>ToUnixTimeSeconds()</c>), and
+    /// <see cref="BsonValue.AsInt32"/> throws on <see cref="BsonType.Int64"/> instead of converting.
+    /// </summary>
+    private static long GetInt64(BsonValue value)
+    {
+        return value.BsonType switch
+        {
+            BsonType.Int64 => value.AsInt64,
+            BsonType.Int32 => value.AsInt32,
+            BsonType.Double => (long)value.AsDouble,
+            _ => 0
+        };
     }
 
     private sealed record ReactionEntry(long UserId, int Date, IReaction Reaction);
