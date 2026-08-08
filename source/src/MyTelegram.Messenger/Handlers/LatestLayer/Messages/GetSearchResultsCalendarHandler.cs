@@ -10,6 +10,7 @@ internal sealed class GetSearchResultsCalendarHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IMessageAppService messageAppService,
+    IChannelAppService channelAppService,
     IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchResultsCalendar, MyTelegram.Schema.Messages.ISearchResultsCalendar>
 {
     private const int SecondsPerDay = 86400;
@@ -21,6 +22,11 @@ internal sealed class GetSearchResultsCalendarHandler(
         if (!MessageFilterHelper.IsSupportedByPositionsAndCalendar(obj.Filter))
         {
             RpcErrors.RpcErrors400.FilterNotSupported.ThrowRpcError();
+        }
+
+        if (await MessageSearchMongoHelper.SendRpcErrorIfNotVisibleAsync(peerHelper, channelAppService, input, obj.Peer))
+        {
+            return null!;
         }
 
         var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");

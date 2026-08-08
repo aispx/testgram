@@ -20,8 +20,24 @@ internal sealed class GetMessagesViewsHandler(
     IChannelAppService channelAppService,
     IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetMessagesViews, MyTelegram.Schema.Messages.IMessageViews>
 {
+    /// <summary>
+    /// Upper bound on the ids one call may ask about. Each id costs a view lookup (and, with
+    /// increment set, a command publish), so an unbounded vector turns one request into an
+    /// arbitrary number of round trips.
+    /// </summary>
+    private const int MaxMessageIds = 100;
+
     protected override async Task<MyTelegram.Schema.Messages.IMessageViews> HandleCoreAsync(IRequestInput input, RequestGetMessagesViews obj)
     {
+        // An empty vector used to reach obj.Id.Max() below, which throws InvalidOperationException
+        // on an empty sequence and surfaced as an INTERNAL_ERROR rather than an RPC error.
+        if (obj.Id == null || obj.Id.Count == 0)
+        {
+            RpcErrors.RpcErrors400.MsgIdInvalid.ThrowRpcError();
+        }
+
+        var messageIds = obj.Id!.Take(MaxMessageIds).ToList();
+
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer.PeerType == PeerType.Channel)
         {
@@ -30,23 +46,23 @@ internal sealed class GetMessagesViewsHandler(
             {
                 return new MyTelegram.Schema.Messages.TMessageViews
                 {
-                    Views = [..obj.Id.Select(_ => (MyTelegram.Schema.IMessageViews)new Schema.TMessageViews()).ToList()],
+                    Views = [..messageIds.Select(_ => (MyTelegram.Schema.IMessageViews)new Schema.TMessageViews()).ToList()],
                     Chats = new TVector<IChat>(),
                     Users = new TVector<IUser>()
                 };
             }
 
-            if (obj.Id.Max() < 0)
+            if (messageIds.Max() < 0)
             {
                 return new MyTelegram.Schema.Messages.TMessageViews
                 {
-                    Views = [..obj.Id.Select(p => new Schema.TMessageViews { Views = 1 }).ToList()],
+                    Views = [..messageIds.Select(p => new Schema.TMessageViews { Views = 1 }).ToList()],
                     Chats = new TVector<IChat>(),
                     Users = new TVector<IUser>()
                 };
             }
 
-            var views = await GetMessageViewsAsync(input, peer, obj.Id.ToList(), obj.Increment);
+            var views = await GetMessageViewsAsync(input, peer, messageIds, obj.Increment);
             return new MyTelegram.Schema.Messages.TMessageViews
             {
                 Chats = new TVector<IChat>(),
@@ -55,7 +71,7 @@ internal sealed class GetMessagesViewsHandler(
             };
         }
 
-        var nonChannelViews = await GetMessageViewsAsync(input, peer, obj.Id.ToList(), obj.Increment);
+        var nonChannelViews = await GetMessageViewsAsync(input, peer, messageIds, obj.Increment);
         return new MyTelegram.Schema.Messages.TMessageViews
         {
             Chats = new TVector<IChat>(),

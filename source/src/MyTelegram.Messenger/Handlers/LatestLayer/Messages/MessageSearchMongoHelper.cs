@@ -17,6 +17,34 @@ internal static class MessageSearchMongoHelper
         return (resolvedPeer, resolvedSavedPeer, ownerPeerId);
     }
 
+    /// <summary>
+    /// For a channel scope, verifies the caller is a member before any count/position/calendar query
+    /// runs. <see cref="ResolveScope"/> derives <c>OwnerPeerId</c> from the client-supplied peer and
+    /// <see cref="IPeerHelper.GetPeer"/> does not validate the access hash, so without this gate these
+    /// read paths return message counts and dates for private channels the caller never joined —
+    /// the same leak messages.getHistory already blocks. Returns true when an RPC error was sent.
+    /// </summary>
+    public static async Task<bool> SendRpcErrorIfNotVisibleAsync(
+        IPeerHelper peerHelper,
+        IChannelAppService channelAppService,
+        IRequestInput input,
+        IInputPeer peerInput)
+    {
+        var peer = peerHelper.GetPeer(peerInput, input.UserId);
+        if (peer.PeerType != PeerType.Channel)
+        {
+            return false;
+        }
+
+        var channelReadModel = await channelAppService.GetAsync((long?)peer.PeerId);
+        if (channelReadModel == null)
+        {
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+        }
+
+        return await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel!);
+    }
+
     public static FilterDefinition<BsonDocument> BuildFilter(
         IRequestInput input,
         IPeerHelper peerHelper,

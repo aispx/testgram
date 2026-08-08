@@ -7,8 +7,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </summary>
 internal sealed class GetSearchResultsPositionsHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchResultsPositions, MyTelegram.Schema.Messages.ISearchResultsPositions>
+    IPeerHelper peerHelper,
+    IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchResultsPositions, MyTelegram.Schema.Messages.ISearchResultsPositions>
 {
+    private const int MaxLimit = 100;
+    private const int DefaultLimit = 20;
+
     protected override async Task<MyTelegram.Schema.Messages.ISearchResultsPositions> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSearchResultsPositions obj)
     {
         // inputMessagesFilterEmpty and inputMessagesFilterMyMentions are not supported here.
@@ -18,10 +22,15 @@ internal sealed class GetSearchResultsPositionsHandler(
             RpcErrors.RpcErrors400.FilterNotSupported.ThrowRpcError();
         }
 
+        if (await MessageSearchMongoHelper.SendRpcErrorIfNotVisibleAsync(peerHelper, channelAppService, input, obj.Peer))
+        {
+            return null!;
+        }
+
         var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
         var filter = MessageSearchMongoHelper.BuildFilter(input, peerHelper, obj.Peer, obj.SavedPeerId, null, obj.Filter, obj.OffsetId);
         var count = (int)await collection.CountDocumentsAsync(filter);
-        var limit = obj.Limit > 0 ? obj.Limit : 20;
+        var limit = obj.Limit > 0 ? Math.Min(obj.Limit, MaxLimit) : DefaultLimit;
         var docs = await collection.Find(filter)
             .Sort(Builders<BsonDocument>.Sort.Descending("MessageId"))
             .Project(Builders<BsonDocument>.Projection.Include("MessageId").Include("Date"))

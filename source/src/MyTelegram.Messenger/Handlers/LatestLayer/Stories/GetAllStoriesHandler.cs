@@ -38,7 +38,7 @@ internal sealed class GetAllStoriesHandler(
     {
         var currentTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        var (hiddenPeerIds, allHidden) = await LoadHiddenAsync(input.UserId);
+        var (hiddenPeers, allHidden) = await LoadHiddenAsync(input.UserId);
 
         var contactIds = await queryProcessor.ProcessAsync(new GetContactUserIdListQuery(input.UserId));
         var channelIds = await queryProcessor.ProcessAsync(new GetChannelIdListByUserIdQuery(input.UserId));
@@ -56,7 +56,7 @@ internal sealed class GetAllStoriesHandler(
 
         var groups = visible
             .GroupBy(s => (OwnerPeerId: s.OwnerPeerId, OwnerPeerType: s.OwnerPeerType))
-            .Where(g => IsInRequestedSection(g.Key.OwnerPeerId, hiddenPeerIds, allHidden, obj.Hidden))
+            .Where(g => IsInRequestedSection(g.Key.OwnerPeerId, g.Key.OwnerPeerType, hiddenPeers, allHidden, obj.Hidden))
             // Peers with the freshest story first, which is the order clients render the bar in.
             .OrderByDescending(g => g.Max(s => s.Date))
             .ToList();
@@ -149,14 +149,19 @@ internal sealed class GetAllStoriesHandler(
 
     /// <summary>
     /// Reads both the per-peer hidden flags and the global one written by stories.toggleAllStoriesHidden.
+    /// <para>
+    /// Keyed on the (peerId, peerType) pair because a user and a channel can share an id: keying on
+    /// peerId alone would let hiding one also hide the other. Documents written before peerType was
+    /// stored are treated as user peers, which is what the old write path only ever produced.
+    /// </para>
     /// </summary>
-    private async Task<(HashSet<long> hiddenPeerIds, bool allHidden)> LoadHiddenAsync(long userId)
+    private async Task<(HashSet<(long, int)> hiddenPeers, bool allHidden)> LoadHiddenAsync(long userId)
     {
         var docs = await _hiddenCollection
             .Find(Builders<BsonDocument>.Filter.Eq("userId", userId))
             .ToListAsync();
 
-        var hiddenPeerIds = new HashSet<long>();
+        var hiddenPeers = new HashSet<(long, int)>();
         var allHidden = false;
 
         foreach (var doc in docs)
@@ -175,11 +180,14 @@ internal sealed class GetAllStoriesHandler(
             }
             else if (hidden)
             {
-                hiddenPeerIds.Add(peerId);
+                var peerType = doc.Contains("peerType") && doc["peerType"].IsInt32
+                    ? doc["peerType"].AsInt32
+                    : StoryHelper.PeerTypeUser;
+                hiddenPeers.Add((peerId, peerType));
             }
         }
 
-        return (hiddenPeerIds, allHidden);
+        return (hiddenPeers, allHidden);
     }
 
     /// <summary>
@@ -188,11 +196,12 @@ internal sealed class GetAllStoriesHandler(
     /// </summary>
     private static bool IsInRequestedSection(
         long ownerPeerId,
-        HashSet<long> hiddenPeerIds,
+        int ownerPeerType,
+        HashSet<(long, int)> hiddenPeers,
         bool allHidden,
         bool requestedHidden)
     {
-        var isHidden = allHidden || hiddenPeerIds.Contains(ownerPeerId);
+        var isHidden = allHidden || hiddenPeers.Contains((ownerPeerId, ownerPeerType));
         return isHidden == requestedHidden;
     }
 

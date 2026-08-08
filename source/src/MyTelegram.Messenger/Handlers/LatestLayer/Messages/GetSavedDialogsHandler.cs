@@ -7,21 +7,30 @@ internal sealed class GetSavedDialogsHandler(
     IPeerHelper peerHelper,
     IMessageAppService messageAppService,
     IGetHistoryConverterService getHistoryConverterService,
+    IChannelAppService channelAppService,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSavedDialogs, MyTelegram.Schema.Messages.ISavedDialogs>
 {
     protected override async Task<MyTelegram.Schema.Messages.ISavedDialogs> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSavedDialogs obj)
     {
         if (obj.ParentPeer != null)
         {
-            var monoforumPeer = peerHelper.GetPeer(obj.ParentPeer);
+            var monoforumPeer = peerHelper.GetPeer(obj.ParentPeer, input.UserId);
             var monoforumReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(monoforumPeer.PeerId));
             if (monoforumReadModel == null || !monoforumReadModel.IsMonoforum)
                 RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+
+            // Every monoforum topic is a private conversation between one user and the channel. Only a
+            // manager of the broadcast side may list them all; anyone else sees just their own topic,
+            // otherwise this enumerates every DM in the monoforum to any caller.
+            var canManage = await MonoforumAccessHelper.CanManageAllTopicsAsync(
+                monoforumReadModel!, input.UserId, channelAppService);
+            var scopeToSelf = canManage ? null : new Peer(PeerType.User, input.UserId);
 
             var limit = obj.Limit > 0 ? obj.Limit : 20;
             var historyLimit = Math.Clamp(limit * 50, limit, 2000);
             var history = await messageAppService.GetHistoryAsync(new GetHistoryInput
             {
+                SavedPeerId = scopeToSelf,
                 OwnerPeerId = monoforumPeer.PeerId,
                 SelfUserId = input.UserId,
                 AddOffset = 0,

@@ -7,10 +7,16 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </summary>
 internal sealed class GetSearchCountersHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchCounters, TVector<MyTelegram.Schema.Messages.ISearchCounter>>
+    IPeerHelper peerHelper,
+    IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSearchCounters, TVector<MyTelegram.Schema.Messages.ISearchCounter>>
 {
     protected override async Task<TVector<ISearchCounter>> HandleCoreAsync(IRequestInput input, RequestGetSearchCounters obj)
     {
+        if (await MessageSearchMongoHelper.SendRpcErrorIfNotVisibleAsync(peerHelper, channelAppService, input, obj.Peer))
+        {
+            return null!;
+        }
+
         var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
         var result = new List<ISearchCounter>();
         foreach (var filter in obj.Filters)

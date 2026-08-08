@@ -375,10 +375,15 @@ public class ChatConverterService(
             Live = latest.IsLive
         };
 
+        // Match on the (peerId, peerType) pair: channel ids and user ids come from separate sequences
+        // and do collide, so a peerId-only filter would report a channel as hidden because the caller
+        // hid a user with the same numeric id. Rows written before peerType existed are user rows only,
+        // so requiring the channel type here loses nothing.
         var hidden = _storyHiddenCollection
             .Find(Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("userId", request.UserId),
                 Builders<BsonDocument>.Filter.Eq("peerId", channel.Id),
+                Builders<BsonDocument>.Filter.Eq("peerType", StoryHelper.PeerTypeChannel),
                 Builders<BsonDocument>.Filter.Eq("hidden", true)))
             .Any();
 

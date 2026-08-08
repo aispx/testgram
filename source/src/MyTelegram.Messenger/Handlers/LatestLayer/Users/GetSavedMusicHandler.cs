@@ -20,6 +20,9 @@ internal sealed class GetSavedMusicHandler(
     IPrivacyAppService privacyAppService,
     IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetSavedMusic, MyTelegram.Schema.Users.ISavedMusic>, IObjectHandler
 {
+    private const int MaxLimit = 100;
+    private const int DefaultLimit = 20;
+
     protected override async Task<MyTelegram.Schema.Users.ISavedMusic> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetSavedMusic obj)
     {
         // Validate access hash
@@ -61,10 +64,16 @@ internal sealed class GetSavedMusicHandler(
 
         var totalCount = (int)await collection.CountDocumentsAsync(filter);
 
+        // A negative Skip is accepted by the driver but rejected by the MongoDB server, which
+        // surfaced as INTERNAL_ERROR; Limit(0) is not treated as "no limit" by IFindFluent, so an
+        // unclamped zero returned the target's whole saved-music list.
+        var offset = Math.Max(0, obj.Offset);
+        var limit = obj.Limit > 0 ? Math.Min(obj.Limit, MaxLimit) : DefaultLimit;
+
         var docs = await collection.Find(filter)
             .Sort(sort)
-            .Skip(obj.Offset)
-            .Limit(obj.Limit)
+            .Skip(offset)
+            .Limit(limit)
             .ToListAsync();
 
         var documents = new TVector<MyTelegram.Schema.IDocument>();

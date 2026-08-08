@@ -14,7 +14,8 @@ namespace MyTelegram.Messenger.Handlers.Messages;
 /// </summary>
 internal sealed class GetForumTopicsHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopics, MyTelegram.Schema.Messages.IForumTopics>
+    IPeerHelper peerHelper,
+    IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopics, MyTelegram.Schema.Messages.IForumTopics>
 {
     private const int MinSearchQueryLength = 2;
     private const int MaxLimit = 100;
@@ -26,6 +27,22 @@ internal sealed class GetForumTopicsHandler(
             RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
 
         var channelId = peer!.PeerId;
+
+        // Topic titles, creation dates and creator ids are private-forum metadata: the access hash
+        // is not validated anywhere on this path, so without a membership gate any user could
+        // enumerate the topic list of a forum they never joined. Mirrors messages.getHistory.
+        if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelId))
+        {
+            return null!;
+        }
+
+        // Topic titles, dates and creator ids are channel content: a private forum must not expose
+        // them to non-members. PeerHelper.GetPeer is a pure type conversion and validates no access
+        // hash, so the channel id alone is enough to reach this point.
+        if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelId))
+        {
+            return null!;
+        }
 
         var topicsCol = mongoDatabase.GetCollection<BsonDocument>("forum_topics");
         var filterBuilder = Builders<BsonDocument>.Filter;

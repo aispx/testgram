@@ -13,7 +13,8 @@ namespace MyTelegram.Messenger.Handlers.Messages;
 /// </summary>
 internal sealed class GetForumTopicsByIDHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopicsByID, MyTelegram.Schema.Messages.IForumTopics>
+    IPeerHelper peerHelper,
+    IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopicsByID, MyTelegram.Schema.Messages.IForumTopics>
 {
     protected override async Task<MyTelegram.Schema.Messages.IForumTopics> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetForumTopicsByID obj)
     {
@@ -22,6 +23,13 @@ internal sealed class GetForumTopicsByIDHandler(
             RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
 
         var channelId = peer.PeerId;
+
+        // Same private-forum metadata leak as messages.getForumTopics: gate on membership before
+        // returning topic titles/creators for a channel the caller may not be in.
+        if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelId))
+        {
+            return null!;
+        }
 
         // Query topics by IDs
         var topicsCol = mongoDatabase.GetCollection<BsonDocument>("forum_topics");

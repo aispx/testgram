@@ -35,7 +35,11 @@ internal sealed class UpdateColorHandler(
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestUpdateColor obj)
     {
         var channel = peerHelper.GetChannel(obj.Channel);
-        await channelAdminRightsChecker.CheckAdminRightAsync(channel.PeerId, input.UserId, p => p.PinMessages, RpcErrors.RpcErrors400.ChatAdminRequired);
+        // Repainting a channel is an appearance change, so it needs ChangeInfo -- the same right
+        // every sibling appearance handler checks (UpdateEmojiStatus, EditPhoto, EditTitle).
+        // PinMessages is an independent flag: an admin promoted with only pin_messages, which
+        // deliberately withholds change_info, could otherwise recolor the whole channel.
+        await channelAdminRightsChecker.CheckAdminRightAsync(channel.PeerId, input.UserId, p => p.ChangeInfo, RpcErrors.RpcErrors400.ChatAdminRequired);
 
         var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channel.PeerId));
         if (channelReadModel == null)

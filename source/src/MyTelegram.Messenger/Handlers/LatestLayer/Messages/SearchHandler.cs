@@ -21,7 +21,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SearchHandler(IMessageAppService messageAppService, ITokenizer tokenizer, IPeerHelper peerHelper, IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSearch, IMessages>
+internal sealed class SearchHandler(IMessageAppService messageAppService, ITokenizer tokenizer, IPeerHelper peerHelper, IChannelAppService channelAppService, IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSearch, IMessages>
 {
     private const int MinTextSearchLength = 2;
     private const int MaxSearchLimit = 100;
@@ -54,6 +54,25 @@ internal sealed class SearchHandler(IMessageAppService messageAppService, IToken
         var fromPeer = obj.FromId == null ? null : peerHelper.GetPeer(obj.FromId, userId);
         var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, userId);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : userId;
+
+        // Channel messages are stored with OwnerPeerId = channelId, and the search query filters on
+        // that alone, so without a membership gate any user could read a private channel's history by
+        // guessing its (sequential) id — the access hash on the input peer is not validated. This
+        // mirrors the check messages.getHistory already performs.
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var channelReadModel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (channelReadModel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel!))
+            {
+                return null!;
+            }
+        }
+
         var tokens = tokenizer.BuildSearchTokens(q);
         var limit = NormalizeLimit(obj.Limit);
         var getMessageOutput = await messageAppService.SearchAsync(new SearchInput

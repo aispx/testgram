@@ -14,6 +14,7 @@ internal sealed class GetSavedDialogsByIDHandler(
     IPeerHelper peerHelper,
     IMessageAppService messageAppService,
     IGetHistoryConverterService getHistoryConverterService,
+    IChannelAppService channelAppService,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSavedDialogsByID, MyTelegram.Schema.Messages.ISavedDialogs>
 {
     protected override async Task<MyTelegram.Schema.Messages.ISavedDialogs> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSavedDialogsByID obj)
@@ -26,10 +27,21 @@ internal sealed class GetSavedDialogsByIDHandler(
         if (monoforumReadModel == null || !monoforumReadModel.IsMonoforum)
             RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
 
+        var canManage = await MonoforumAccessHelper.CanManageAllTopicsAsync(
+            monoforumReadModel!, input.UserId, channelAppService);
+
         var topMessages = new List<IMessageReadModel>();
         foreach (var id in obj.Ids)
         {
             var topicPeer = peerHelper.GetPeer(id, input.UserId);
+
+            // A monoforum topic is a private conversation between one user and the channel. Without
+            // this check any caller could pass an arbitrary user id here and read that user's DM
+            // topic, since SavedPeerId is taken straight from the request.
+            if (!canManage && !MonoforumAccessHelper.IsOwnTopic(topicPeer, input.UserId))
+            {
+                continue;
+            }
             var history = await messageAppService.GetHistoryAsync(new GetHistoryInput
             {
                 OwnerPeerId = monoforumPeer.PeerId,
