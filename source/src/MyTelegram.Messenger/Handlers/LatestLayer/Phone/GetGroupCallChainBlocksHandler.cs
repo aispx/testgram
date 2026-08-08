@@ -29,6 +29,13 @@ internal sealed class GetGroupCallChainBlocksHandler(
             return null!;
         }
 
+        // Subchain 0 carries the conference key material, so only participants may page the chain.
+        if (!GroupCallStateHelper.IsJoinedByUser(groupCall, input.UserId) && groupCall.CreatorId != input.UserId)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
         var blocks = GroupCallStateHelper.GetChainBlocksPage(
             groupCall,
             obj.SubChainId,

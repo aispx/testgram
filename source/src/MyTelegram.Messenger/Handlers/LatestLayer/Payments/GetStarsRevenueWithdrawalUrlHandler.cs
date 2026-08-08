@@ -51,7 +51,12 @@ internal sealed class GetStarsRevenueWithdrawalUrlHandler(
         }
         else
         {
-            // bot/self
+            // bot/self: the ledger being debited is peerId, so the caller must own it.
+            // Without this check any user could name a victim bot as the peer and have the
+            // victim's revenue credited to their own wallet below.
+            if (peerId != input.UserId && !await IsBotOwnerAsync(peerId, input.UserId))
+                RpcErrors.RpcErrors403.ChatAdminRequired.ThrowRpcError();
+
             ownerUserId = input.UserId;
         }
 
@@ -112,5 +117,14 @@ internal sealed class GetStarsRevenueWithdrawalUrlHandler(
             : $"https://fragment.com/wallet/withdraw?peer={peerId}&amount={amount}&currency=xtr";
 
         return new TStarsRevenueWithdrawalUrl { Url = url };
+    }
+
+    private async Task<bool> IsBotOwnerAsync(long botUserId, long ownerUserId)
+    {
+        return await mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("bot-owners")
+            .Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("OwnerId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
     }
 }

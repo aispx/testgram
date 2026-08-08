@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Security.Cryptography;
+using System.Text;
 using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Services.TwoFactor;
@@ -39,6 +40,10 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
     : ITwoFactorService, ISingletonDependency
 {
     private const string CollectionName = "user-password";
+
+    /// <summary>Wrong recovery-code guesses tolerated before the pending code is discarded.</summary>
+    private const int MaxRecoveryCodeFailedCount = 5;
+
     private IMongoCollection<UserPasswordDocument> Collection =>
         mongoDatabase.GetCollection<UserPasswordDocument>(CollectionName);
 
@@ -139,6 +144,16 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
             return false;
         }
 
+        // The security guidelines additionally require 1 < A < p-1. A = 1 removes the client's
+        // contribution from the exchange (S becomes a function of the public verifier and the
+        // server's own B), and A = p-1 forces S into the order-2 subgroup so it takes one of two
+        // known values — both reduce the proof to something forgeable without the password.
+        // https://corefork.telegram.org/mtproto/security_guidelines
+        if (a <= BigInteger.One || a >= p - BigInteger.One)
+        {
+            return false;
+        }
+
         var pBytes = ToPaddedBytes(p, 256);
         var gBytes = ToPaddedBytes(g, 256);
         var k = new BigInteger(SHA256.HashData([.. pBytes, .. gBytes]), isUnsigned: true, isBigEndian: true);
@@ -189,6 +204,7 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
         doc.RecoveryEmail = email;
         doc.RecoveryEmailCode = code;
         doc.RecoveryEmailCodeExpire = DateTime.UtcNow.Add(TimeSpan.FromMinutes(5));
+        doc.RecoveryEmailCodeFailedCount = 0;
         await Collection.ReplaceOneAsync(p => p.Id == userId, doc);
     }
 
@@ -307,9 +323,31 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
             return RecoveryCodeCheckResult.ExpiredOrMissing;
         }
 
-        return string.Equals(doc.RecoveryEmailCode, code, StringComparison.Ordinal)
-            ? RecoveryCodeCheckResult.Ok
-            : RecoveryCodeCheckResult.CodeInvalid;
+        // Burn the code once too many wrong guesses have been made, so the recovery window cannot be
+        // used to brute-force it.
+        if (doc.RecoveryEmailCodeFailedCount >= MaxRecoveryCodeFailedCount)
+        {
+            doc.RecoveryEmailCode = null;
+            doc.RecoveryEmailCodeExpire = null;
+            doc.RecoveryEmailCodeFailedCount = 0;
+            await Collection.ReplaceOneAsync(p => p.Id == userId, doc);
+            return RecoveryCodeCheckResult.ExpiredOrMissing;
+        }
+
+        // Constant-time compare: an ordinal string comparison short-circuits on the first differing
+        // character, which leaks a prefix oracle that turns an exhaustive search into a linear one.
+        var isValid = CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(doc.RecoveryEmailCode),
+            Encoding.UTF8.GetBytes(code ?? string.Empty));
+
+        if (!isValid)
+        {
+            doc.RecoveryEmailCodeFailedCount++;
+            await Collection.ReplaceOneAsync(p => p.Id == userId, doc);
+            return RecoveryCodeCheckResult.CodeInvalid;
+        }
+
+        return RecoveryCodeCheckResult.Ok;
     }
 
     public string? GetRecoveryEmailPattern(string? email)

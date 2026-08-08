@@ -29,6 +29,11 @@ internal sealed class SetBotInfoHandler(
                 var targetBot = await queryProcessor.ProcessAsync(new GetUserByIdQuery(targetBotId));
                 if (targetBot == null || !targetBot.Bot)
                     RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
+                // Being a bot is not enough: without an ownership check any user could rewrite
+                // the public name/about/description of any bot on the server.
+                if (targetBotId != input.UserId && !await IsBotOwnerAsync(targetBotId, input.UserId))
+                    RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
             }
             else
             {
@@ -70,5 +75,26 @@ internal sealed class SetBotInfoHandler(
         await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
 
         return new TBoolTrue();
+    }
+
+    /// <summary>
+    /// A bot is owned by the user recorded in <c>bot-owners</c>, or by the <c>CreatorUserId</c> on the
+    /// bot's user read model — both are written depending on how the bot was registered.
+    /// </summary>
+    private async Task<bool> IsBotOwnerAsync(long botUserId, long ownerUserId)
+    {
+        var ownedViaBotOwners = await mongoDatabase.GetCollection<BsonDocument>("bot-owners")
+            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("OwnerId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
+        if (ownedViaBotOwners)
+            return true;
+
+        return await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
+            .Find(Builders<BsonDocument>.Filter.Eq("UserId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("CreatorUserId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
     }
 }

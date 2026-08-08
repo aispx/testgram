@@ -17,21 +17,27 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Premium;
 /// </remarks>
 internal sealed class GetBoostsListHandler : RpcResultObjectHandler<MyTelegram.Schema.Premium.RequestGetBoostsList, MyTelegram.Schema.Premium.IBoostsList>
 {
+    private const int DefaultLimit = 20;
+    private const int MaxLimit = 100;
+
     private readonly IMongoDatabase _mongoDatabase;
     private readonly IPeerHelper _peerHelper;
     private readonly IUserAppService _userAppService;
     private readonly IUserConverterService _userConverterService;
+    private readonly IChannelAdminRightsChecker _channelAdminRightsChecker;
 
     public GetBoostsListHandler(
         IMongoDatabase mongoDatabase,
         IPeerHelper peerHelper,
         IUserAppService userAppService,
-        IUserConverterService userConverterService)
+        IUserConverterService userConverterService,
+        IChannelAdminRightsChecker channelAdminRightsChecker)
     {
         _mongoDatabase = mongoDatabase;
         _peerHelper = peerHelper;
         _userAppService = userAppService;
         _userConverterService = userConverterService;
+        _channelAdminRightsChecker = channelAdminRightsChecker;
     }
 
     protected override async Task<IBoostsList> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Premium.RequestGetBoostsList obj)
@@ -43,6 +49,13 @@ internal sealed class GetBoostsListHandler : RpcResultObjectHandler<MyTelegram.S
         }
 
         var channelId = peer.PeerId;
+
+        // Boost lists are admin-only: without this check any user who knows a channel id can
+        // enumerate which users boosted it.
+        await _channelAdminRightsChecker.CheckAdminRightAsync(channelId, input.UserId, _ => true);
+
+        var limit = obj.Limit > 0 ? Math.Min(obj.Limit, MaxLimit) : DefaultLimit;
+
         var collection = _mongoDatabase.GetCollection<BsonDocument>("channel_boosts");
 
         var filter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
@@ -65,7 +78,7 @@ internal sealed class GetBoostsListHandler : RpcResultObjectHandler<MyTelegram.S
                 Unclaimed = g.Any(doc => doc.Contains("Unclaimed") && doc["Unclaimed"].AsBoolean)
             })
             .OrderByDescending(x => x.LatestDate)
-            .Take(obj.Limit)
+            .Take(limit)
             .ToList();
 
         var boosts = new List<IBoost>();

@@ -18,6 +18,9 @@ internal sealed class GetSuggestedStarRefBotsHandler(
     IQueryProcessor queryProcessor,
     IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetSuggestedStarRefBots, MyTelegram.Schema.Payments.ISuggestedStarRefBots>
 {
+    private const int DefaultLimit = 20;
+    private const int MaxLimit = 100;
+
     protected override async Task<MyTelegram.Schema.Payments.ISuggestedStarRefBots> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetSuggestedStarRefBots obj)
     {
         // Validate peer
@@ -51,10 +54,15 @@ internal sealed class GetSuggestedStarRefBotsHandler(
             sort = Builders<BsonDocument>.Sort.Descending("commission_permille");
         }
 
+        // Parse the client offset once: a non-numeric value must not reach int.Parse below, and a
+        // negative skip makes Mongo throw.
+        var skip = int.TryParse(obj.Offset, out var parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
+        var limit = obj.Limit > 0 ? Math.Min(obj.Limit, MaxLimit) : DefaultLimit;
+
         var programs = await programsCol.Find(filter)
             .Sort(sort)
-            .Skip(int.TryParse(obj.Offset, out var skip) ? skip : 0)
-            .Limit(obj.Limit)
+            .Skip(skip)
+            .Limit(limit)
             .ToListAsync();
 
         if (programs.Count == 0)
@@ -103,8 +111,8 @@ internal sealed class GetSuggestedStarRefBotsHandler(
             userList.Add(StarRefBotUserHelper.BuildBotUser(userConverterService, input, user));
         }
 
-        var nextOffset = programs.Count >= obj.Limit
-            ? (int.Parse(obj.Offset ?? "0") + obj.Limit).ToString()
+        var nextOffset = programs.Count >= limit
+            ? (skip + limit).ToString()
             : null;
 
         return new MyTelegram.Schema.Payments.TSuggestedStarRefBots

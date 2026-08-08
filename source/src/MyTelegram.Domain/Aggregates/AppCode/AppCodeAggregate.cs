@@ -79,6 +79,14 @@ public class AppCodeAggregate : SnapshotAggregateRoot<AppCodeAggregate, AppCodeI
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
 
+        // auth.signUp carries no phone code, so the caller must have already proved possession of
+        // it via auth.signIn. Comparing _state.Code against itself here would always succeed and
+        // would let anyone register any phone number without ever seeing the SMS.
+        if (!_state.SignUpAllowed)
+        {
+            RpcErrors.RpcErrors400.PhoneCodeInvalid.ThrowRpcError();
+        }
+
         var isCodeValid = CheckCodeCore(_state.Code,
             _maxFailedCount,
             RpcErrors.RpcErrors400.PhoneCodeInvalid,
@@ -118,7 +126,7 @@ public class AppCodeAggregate : SnapshotAggregateRoot<AppCodeAggregate, AppCodeI
         return Task.FromResult(new AppCodeSnapshot(_state.UserId, _state.Expire, _state.FailedCount, _state.PhoneNumber, _state.PhoneCodeHash, _state.Code,
             _state.Email, _state.LastSmsCodeSendDate, _state.LastEmailCodeSendDate, _state.TotalSentCount,
             _state.TodaySentCount, _state.AppCodeType, _state.LoginEmailResetRequested,
-            _state.PaidAuthRequired, _state.PaidAuthFormId, _state.PaidAuthCompleted));
+            _state.PaidAuthRequired, _state.PaidAuthFormId, _state.PaidAuthCompleted, _state.SignUpAllowed));
     }
 
     protected override Task LoadSnapshotAsync(AppCodeSnapshot snapshot, ISnapshotMetadata metadata,

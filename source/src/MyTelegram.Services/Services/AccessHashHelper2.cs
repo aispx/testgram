@@ -176,18 +176,23 @@ public sealed class AccessHashHelper2(
     {
         accessHashType = NormalizeAccessHashType(accessHashType);
 
-        // accessHashType:1 + currentUserId:8 + targetId:8 + hash:32 + keyForUser:32 + accessHashKeyForUser:8 = 89 bytes
-        Span<byte> bytes = stackalloc byte[89];
-        bytes[0] = (byte)accessHashType;
-        BinaryPrimitives.WriteInt64LittleEndian(bytes.Slice(1, 8), currentUserId);
-        BinaryPrimitives.WriteInt64LittleEndian(bytes[17..], targetId);
-        var dest = bytes.Slice(17, 32);
-        var accessHashSecretKey = bytes.Slice(49, 32);
-        var accessHashKeyBytes = bytes[..^8];
+        // Keep the MAC input, the key-derivation input and the output in separate buffers. Slicing
+        // one shared buffer previously let the accessHashKeyId write clobber the type byte and
+        // currentUserId, so neither bound the resulting hash: a hash minted for one user/type
+        // validated for another.
+        Span<byte> data = stackalloc byte[17];
+        data[0] = (byte)accessHashType;
+        BinaryPrimitives.WriteInt64LittleEndian(data.Slice(1, 8), currentUserId);
+        BinaryPrimitives.WriteInt64LittleEndian(data.Slice(9, 8), targetId);
+
+        Span<byte> accessHashKeyBytes = stackalloc byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(accessHashKeyBytes, accessHashKeyId);
-        //accessHashKey.TryWriteBytes(accessHashKeyBytes);
+
+        Span<byte> accessHashSecretKey = stackalloc byte[32];
         GenerateAccessHashSecretKeyForUser(accessHashKeyBytes, accessHashSecretKey);
-        HMACSHA256.HashData(accessHashSecretKey, bytes[..17], dest);
+
+        Span<byte> dest = stackalloc byte[32];
+        HMACSHA256.HashData(accessHashSecretKey, data, dest);
 
         return BitConverter.ToInt64(dest);
     }

@@ -38,6 +38,12 @@ internal sealed class SetBotMenuButtonHandler(
 
             if (string.IsNullOrWhiteSpace(menuButton.Url) || menuButton.Url.Length > 1024)
                 RpcErrors.RpcErrors400.ButtonUrlInvalid.ThrowRpcError();
+
+            // Clients open this url directly, so restrict it to https the same way the webview
+            // handlers do — otherwise javascript:/data: urls can be stored and surfaced.
+            if (!Uri.TryCreate(menuButton.Url, UriKind.Absolute, out var menuButtonUri) ||
+                menuButtonUri.Scheme != Uri.UriSchemeHttps)
+                RpcErrors.RpcErrors400.ButtonUrlInvalid.ThrowRpcError();
         }
 
         var collection = mongoDatabase.GetCollection<BsonDocument>("bot_menu_buttons");

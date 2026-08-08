@@ -240,7 +240,7 @@ public class CallConformanceTests
     {
         var assembly = typeof(CallSessionDocument).Assembly;
         var type = assembly.GetType($"MyTelegram.Messenger.Handlers.LatestLayer.Phone.{handlerTypeName}", throwOnError: true)!;
-        return Activator.CreateInstance(type, PhoneTestFixtures.WithNullLoggers(type, args))!;
+        return PhoneTestFixtures.CreateGroupCallHandler(type, args);
     }
 
     // ---- 1:1 harness ----------------------------------------------------------------------------

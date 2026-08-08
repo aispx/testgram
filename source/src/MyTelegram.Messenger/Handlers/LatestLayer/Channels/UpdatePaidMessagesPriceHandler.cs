@@ -5,10 +5,13 @@ internal sealed class UpdatePaidMessagesPriceHandler(
     IRandomHelper randomHelper,
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
-    IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestUpdatePaidMessagesPrice, MyTelegram.Schema.IUpdates>
+    IMessageAppService messageAppService,
+    IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestUpdatePaidMessagesPrice, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestUpdatePaidMessagesPrice obj)
     {
+        await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
+
         var channelPeer = peerHelper.GetChannel(obj.Channel);
         var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(channelPeer.PeerId));
         if (channelReadModel == null || !channelReadModel.Broadcast)

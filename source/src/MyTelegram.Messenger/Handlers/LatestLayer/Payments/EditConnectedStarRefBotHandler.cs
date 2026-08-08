@@ -15,6 +15,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 internal sealed class EditConnectedStarRefBotHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IChannelAppService channelAppService,
     IQueryProcessor queryProcessor,
     IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestEditConnectedStarRefBot, MyTelegram.Schema.Payments.IConnectedStarRefBots>
 {
@@ -23,6 +24,27 @@ internal sealed class EditConnectedStarRefBotHandler(
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer == null)
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+
+        // The affiliate url is public (it is handed out as a t.me referral link), so the peer is
+        // the only thing binding a connection to its owner. GetPeer discards the access hash,
+        // so without this check anyone could revoke another peer's referral income.
+        if (peer.PeerType is PeerType.User or PeerType.Self)
+        {
+            if (peer.PeerId != input.UserId)
+                RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+        }
+        else if (peer.PeerType == PeerType.Channel)
+        {
+            var channel = await channelAppService.GetAsync(peer.PeerId);
+            if (channel == null)
+                RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            if (channel!.CreatorId != input.UserId)
+                RpcErrors.RpcErrors403.ChatAdminRequired.ThrowRpcError();
+        }
+        else
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+        }
 
         var connectionsCol = mongoDatabase.GetCollection<BsonDocument>("connected_star_ref_bots");
         var filter = Builders<BsonDocument>.Filter.And(

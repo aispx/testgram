@@ -14,10 +14,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// </remarks>
 internal sealed class SetBoostsToUnblockRestrictionsHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetBoostsToUnblockRestrictions, MyTelegram.Schema.IUpdates>
+    IPeerHelper peerHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetBoostsToUnblockRestrictions, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestSetBoostsToUnblockRestrictions obj)
     {
+        await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
         // Convert IInputChannel to IInputPeer
         IInputPeer inputPeer;
         if (obj.Channel is TInputChannel inputChannel)

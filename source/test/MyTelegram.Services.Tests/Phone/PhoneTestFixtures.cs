@@ -71,6 +71,75 @@ public static class PhoneTestFixtures
 
         return filled;
     }
+
+    /// <summary>
+    /// Builds a group-call handler by matching the supplied dependencies to the constructor by type,
+    /// filling in a <see cref="NullLogger{T}"/> for loggers, a permissive
+    /// <see cref="IChannelAdminRightsChecker"/> for the manage-call gate, and a
+    /// <see cref="PeerHelper"/> for peer resolution. Tests that exercise the authorization gate
+    /// itself should construct the handler directly with their own checker instead.
+    /// </summary>
+    public static object CreateGroupCallHandler(Type handlerType, params object[] args)
+    {
+        var constructor = handlerType.GetConstructors()
+            .OrderByDescending(c => c.GetParameters().Length)
+            .First();
+        var supplied = args.ToList();
+        var filled = new object[constructor.GetParameters().Length];
+        var parameters = constructor.GetParameters();
+
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var parameterType = parameters[i].ParameterType;
+
+            var match = supplied.FirstOrDefault(a => a != null && parameterType.IsInstanceOfType(a));
+            if (match != null)
+            {
+                supplied.Remove(match);
+                filled[i] = match;
+                continue;
+            }
+
+            if (parameterType.IsGenericType && parameterType.GetGenericTypeDefinition() == typeof(ILogger<>))
+            {
+                var nullLogger = typeof(NullLogger<>).MakeGenericType(parameterType.GetGenericArguments()[0]);
+                filled[i] = nullLogger.GetField("Instance")!.GetValue(null)!;
+                continue;
+            }
+
+            if (parameterType == typeof(IChannelAdminRightsChecker))
+            {
+                filled[i] = PermissiveAdminRightsChecker();
+                continue;
+            }
+
+            if (parameterType == typeof(IPeerHelper))
+            {
+                filled[i] = new PeerHelper();
+                continue;
+            }
+
+            throw new InvalidOperationException(
+                $"{handlerType.Name} needs a {parameterType.Name} that the test did not supply.");
+        }
+
+        return Activator.CreateInstance(handlerType, filled)!;
+    }
+
+    /// <summary>
+    /// An <see cref="IChannelAdminRightsChecker"/> that authorizes every request, for tests whose
+    /// subject is not the authorization gate.
+    /// </summary>
+    public static IChannelAdminRightsChecker PermissiveAdminRightsChecker()
+    {
+        var checker = new Mock<IChannelAdminRightsChecker>();
+        checker
+            .Setup(x => x.HasChatAdminRightAsync(It.IsAny<long>(), It.IsAny<long>(),
+                It.IsAny<Func<ChatAdminRights, bool>>()))
+            .ReturnsAsync(true);
+        return checker.Object;
+    }
+
     public const string CallSessionsCollectionName = "call_sessions";
     public const string GroupCallsCollectionName = "group_calls";
 

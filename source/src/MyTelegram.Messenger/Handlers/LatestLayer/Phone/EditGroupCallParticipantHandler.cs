@@ -22,6 +22,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class EditGroupCallParticipantHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
     IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestEditGroupCallParticipant, MyTelegram.Schema.IUpdates>
 {
@@ -69,6 +70,13 @@ internal sealed class EditGroupCallParticipantHandler(
         {
             RpcErrors.RpcErrors400.RaiseHandForbidden.ThrowRpcError();
             return null!;
+        }
+
+        // The same applies to every other participant field: mute/volume/video state may only be
+        // changed on one's own participant entry, or by whoever can manage the call.
+        if (!GroupCallStateHelper.IsParticipantControlledByUser(groupCall, participant, input.UserId))
+        {
+            await GroupCallStateHelper.EnsureCanManageCallAsync(groupCall, input.UserId, channelAdminRightsChecker);
         }
 
         if (obj.Muted.HasValue) participant.Muted = obj.Muted.Value;

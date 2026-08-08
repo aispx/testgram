@@ -15,6 +15,9 @@ internal sealed class GetAdminLogHandler(
     IChatConverterService chatConverterService)
     : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestGetAdminLog, MyTelegram.Schema.Channels.IAdminLogResults>
 {
+    private const int DefaultLimit = 100;
+    private const int MaxLimit = 100;
+
     protected override async Task<MyTelegram.Schema.Channels.IAdminLogResults> HandleCoreAsync(
         IRequestInput input,
         MyTelegram.Schema.Channels.RequestGetAdminLog obj)
@@ -42,10 +45,14 @@ internal sealed class GetAdminLogHandler(
         if (member == null)
             RpcErrors.RpcErrors406.ChannelPrivate.ThrowRpcError();
 
-        var isCreator = member.Contains("IsCreator") && member["IsCreator"].AsBoolean;
-        var adminRights = member.Contains("AdminRights") && !member["AdminRights"].IsBsonNull;
+        // AdminRights is a non-nullable int on the read model, so an IsBsonNull test passes for
+        // every member; and IsCreator is not persisted at all. Check the rights mask and the
+        // IsAdmin flag that actually exist, otherwise any member can read the moderation history.
+        var isAdmin = member.Contains("IsAdmin") && !member["IsAdmin"].IsBsonNull && member["IsAdmin"].AsBoolean;
+        var adminRights = member.Contains("AdminRights") && !member["AdminRights"].IsBsonNull &&
+                          member["AdminRights"].ToInt32() != 0;
 
-        if (!isCreator && !adminRights)
+        if (!isAdmin && !adminRights)
             RpcErrors.RpcErrors403.ChatAdminRequired.ThrowRpcError();
 
         // Build filter for admin log query
@@ -65,8 +72,11 @@ internal sealed class GetAdminLogHandler(
         // Apply search query
         if (!string.IsNullOrEmpty(obj.Q))
         {
-            // Search in action data (simplified - would need full-text search in production)
-            filters.Add(filterBuilder.Regex("action.type", new BsonRegularExpression(obj.Q, "i")));
+            // Search in action data (simplified - would need full-text search in production).
+            // Escape the client string: an unescaped regex is evaluated server-side against every
+            // document in the collection and can be made to backtrack catastrophically.
+            filters.Add(filterBuilder.Regex("action.type",
+                new BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(obj.Q), "i")));
         }
 
         // Apply admin filter
@@ -123,12 +133,16 @@ internal sealed class GetAdminLogHandler(
 
         var combinedFilter = filterBuilder.And(filters);
 
+        // Limit(0) means "no limit" in the Mongo driver, and each row deserializes an embedded TL
+        // blob below, so an unclamped value lets one request load the whole log into memory.
+        var limit = obj.Limit > 0 ? Math.Min(obj.Limit, MaxLimit) : DefaultLimit;
+
         // Execute query with pagination
         var events = await collection
             .Find(combinedFilter)
             .SortByDescending(e => e["date"])
             .ThenByDescending(e => e["event_id"])
-            .Limit(obj.Limit)
+            .Limit(limit)
             .ToListAsync();
 
         // Convert to TL objects

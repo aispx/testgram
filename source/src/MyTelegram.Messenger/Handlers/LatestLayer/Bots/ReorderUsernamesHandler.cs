@@ -39,6 +39,21 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
             return null!;
         }
 
+        if (!bot.Contains("Bot") || !bot["Bot"].AsBoolean)
+        {
+            RpcErrors.RpcErrors400.UserBotInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        // Only the bot's owner may reorder its usernames. The first active+editable entry is the
+        // primary handle, so without this check any user could change which handle another
+        // account presents as primary.
+        if (!await IsBotOwnerAsync(botUserId, input.UserId))
+        {
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+            return null!;
+        }
+
         // Get current usernames
         var usernamesV2 = bot.Contains("Usernames") && !bot["Usernames"].IsBsonNull
             ? bot["Usernames"].AsBsonArray
@@ -109,5 +124,25 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         await userCollection.UpdateOneAsync(botFilter, update);
 
         return new TBoolTrue();
+    }
+
+    private async Task<bool> IsBotOwnerAsync(long botUserId, long ownerUserId)
+    {
+        if (botUserId == ownerUserId)
+            return true;
+
+        var ownedViaBotOwners = await _database.GetCollection<BsonDocument>("bot-owners")
+            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("OwnerId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
+        if (ownedViaBotOwners)
+            return true;
+
+        return await _database.GetCollection<BsonDocument>("eventflow-userreadmodel")
+            .Find(Builders<BsonDocument>.Filter.Eq("UserId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("CreatorUserId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
     }
 }

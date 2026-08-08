@@ -15,10 +15,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// </remarks>
 internal sealed class SetEmojiStickersHandler(
     IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetEmojiStickers, IBool>
+    IPeerHelper peerHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetEmojiStickers, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestSetEmojiStickers obj)
     {
+        await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, p => p.ChangeInfo);
         // Convert IInputChannel to IInputPeer
         IInputPeer inputPeer;
         if (obj.Channel is TInputChannel inputChannel)

@@ -8,6 +8,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Premium;
 /// Returns the lists of boost that were applied to a channel/supergroup by a specific user (admins only)
 /// Possible errors
 /// Code Type Description
+/// 400 CHAT_ADMIN_REQUIRED You must be an admin in this chat to do this.
 /// 400 PEER_ID_INVALID The provided peer id is invalid.
 /// <para><c>See <a href="https://corefork.telegram.org/method/premium.getUserBoosts"/> </c></para>
 /// </summary>
@@ -20,17 +21,20 @@ internal sealed class GetUserBoostsHandler : RpcResultObjectHandler<MyTelegram.S
     private readonly IPeerHelper _peerHelper;
     private readonly IUserAppService _userAppService;
     private readonly IUserConverterService _userConverterService;
+    private readonly IChannelAdminRightsChecker _channelAdminRightsChecker;
 
     public GetUserBoostsHandler(
         IMongoDatabase mongoDatabase,
         IPeerHelper peerHelper,
         IUserAppService userAppService,
-        IUserConverterService userConverterService)
+        IUserConverterService userConverterService,
+        IChannelAdminRightsChecker channelAdminRightsChecker)
     {
         _mongoDatabase = mongoDatabase;
         _peerHelper = peerHelper;
         _userAppService = userAppService;
         _userConverterService = userConverterService;
+        _channelAdminRightsChecker = channelAdminRightsChecker;
     }
 
     protected override async Task<IBoostsList> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Premium.RequestGetUserBoosts obj)
@@ -48,6 +52,11 @@ internal sealed class GetUserBoostsHandler : RpcResultObjectHandler<MyTelegram.S
         }
 
         var channelId = peer.PeerId;
+
+        // Boost lists are admin-only: without this check any user who knows a channel id can
+        // enumerate which users boosted it.
+        await _channelAdminRightsChecker.CheckAdminRightAsync(channelId, input.UserId, _ => true);
+
         var collection = _mongoDatabase.GetCollection<BsonDocument>("channel_boosts");
 
         var filter = Builders<BsonDocument>.Filter.And(

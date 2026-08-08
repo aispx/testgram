@@ -12,6 +12,12 @@ public class UserPasswordDocument
     public string? RecoveryEmail { get; set; }
     public string? RecoveryEmailCode { get; set; }
     public DateTime? RecoveryEmailCodeExpire { get; set; }
+
+    /// <summary>
+    /// Failed attempts against the pending recovery code. Without a limit the code — which gates a
+    /// 2FA password reset — can be brute-forced within its validity window.
+    /// </summary>
+    public int RecoveryEmailCodeFailedCount { get; set; }
     public bool IsPasswordResetRequested { get; set; }
     public DateTime? PasswordResetRequestedAt { get; set; }
     public DateTime? PasswordResetRetryAt { get; set; }

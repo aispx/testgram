@@ -16,10 +16,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class SetMainProfileTabHandler(
     IMongoDatabase database,
     IPeerHelper peerHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
     ILogger<SetMainProfileTabHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetMainProfileTab, IBool>, IObjectHandler
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestSetMainProfileTab obj)
     {
+        await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, p => p.ChangeInfo);
         // Extract channel ID
         long channelId = 0;
         if (obj.Channel is MyTelegram.Schema.TInputChannel inputChannel)

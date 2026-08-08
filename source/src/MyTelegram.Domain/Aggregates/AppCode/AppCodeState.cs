@@ -31,6 +31,13 @@ public class AppCodeState : AggregateState<AppCodeAggregate, AppCodeId, AppCodeS
     public bool PaidAuthRequired { get; private set; }
     public long PaidAuthFormId { get; private set; }
     public bool PaidAuthCompleted { get; private set; }
+
+    /// <summary>
+    /// Set once <c>auth.signIn</c> has accepted the phone code for a phone number that has no
+    /// account yet. <c>auth.signUp</c> carries no phone code of its own, so this flag is the only
+    /// evidence that the caller ever proved possession of the code.
+    /// </summary>
+    public bool SignUpAllowed { get; private set; }
     public void Apply(AppCodeCanceledEvent aggregateEvent)
     {
         Canceled = true;
@@ -118,7 +125,12 @@ public class AppCodeState : AggregateState<AppCodeAggregate, AppCodeId, AppCodeS
         if (!aggregateEvent.IsCodeValid)
         {
             FailedCount++;
+            return;
         }
+
+        // Accepting the code here is the caller's proof that they possess it, which is what
+        // auth.signUp relies on since it carries no code of its own.
+        SignUpAllowed = true;
     }
 
     public void Apply(CheckSignUpCodeCompletedEvent aggregateEvent)
@@ -159,5 +171,6 @@ public class AppCodeState : AggregateState<AppCodeAggregate, AppCodeId, AppCodeS
         PaidAuthRequired = snapshot.PaidAuthRequired;
         PaidAuthFormId = snapshot.PaidAuthFormId;
         PaidAuthCompleted = snapshot.PaidAuthCompleted;
+        SignUpAllowed = snapshot.SignUpAllowed;
     }
 }

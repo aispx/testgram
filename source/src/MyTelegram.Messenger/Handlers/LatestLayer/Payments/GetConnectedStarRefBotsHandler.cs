@@ -15,6 +15,9 @@ internal sealed class GetConnectedStarRefBotsHandler(
     IQueryProcessor queryProcessor,
     IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetConnectedStarRefBots, MyTelegram.Schema.Payments.IConnectedStarRefBots>
 {
+    private const int DefaultLimit = 20;
+    private const int MaxLimit = 100;
+
     protected override async Task<MyTelegram.Schema.Payments.IConnectedStarRefBots> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetConnectedStarRefBots obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
@@ -35,7 +38,11 @@ internal sealed class GetConnectedStarRefBotsHandler(
 
         var query = connectionsCol.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("date"));
 
-        var connections = await query.Limit(obj.Limit).ToListAsync();
+        // Limit(0) means "no limit" in the Mongo driver, so an unclamped value would return the
+        // whole collection.
+        var limit = obj.Limit > 0 ? Math.Min(obj.Limit, MaxLimit) : DefaultLimit;
+
+        var connections = await query.Limit(limit).ToListAsync();
 
         if (connections.Count == 0)
         {

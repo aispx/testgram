@@ -113,7 +113,12 @@ public class UpdateRecipientPropertyTests
             .Range(0, topology.InvitedCount)
             .Select(i => InvitedBase + i)
             .ToList();
-        var originatorUserId = participantUserIds[topology.OriginatorIndex];
+        // Both operations under test mutate shared call state, which requires manage-call rights.
+        // On a channel-peer call a participant can hold them (as a channel admin), so the creator
+        // stays a distinct subscriber; on a user-peer call only the creator can, so it originates.
+        var originatorUserId = topology.PeerIsUser
+            ? CreatorId
+            : participantUserIds[topology.OriginatorIndex];
 
         var database = PhoneTestFixtures.CreateDatabase(out _);
         SeedGroupCall(database, participantUserIds, invitedUserIds, topology.PeerIsUser);
@@ -141,7 +146,7 @@ public class UpdateRecipientPropertyTests
             // Mute a participant other than the originator -> a genuine state change emitting
             // updateGroupCallParticipants. (Targeting a distinct participant avoids the input peer being
             // resolved to a "self" peer, which would not match the stored user participant entry.)
-            var targetUserId = participantUserIds[(topology.OriginatorIndex + 1) % participantUserIds.Count];
+            var targetUserId = participantUserIds.First(id => id != originatorUserId);
             updates = await InvokeAsync("EditGroupCallParticipantHandler", database, sender, originatorUserId,
                 new RequestEditGroupCallParticipant
                 {
@@ -253,7 +258,7 @@ public class UpdateRecipientPropertyTests
     {
         var assembly = typeof(GroupCallDocument).Assembly;
         var type = assembly.GetType($"MyTelegram.Messenger.Handlers.LatestLayer.Phone.{handlerTypeName}", throwOnError: true)!;
-        var handler = Activator.CreateInstance(type, database, new PeerHelper(), sender)!;
+        var handler = PhoneTestFixtures.CreateGroupCallHandler(type, database, sender);
         var method = type.GetMethod("HandleAsync", new[] { typeof(IRequestInput), typeof(IObject) })!;
 
         var input = PhoneTestFixtures.RequestInput(inputUserId).Build();

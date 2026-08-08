@@ -20,6 +20,12 @@ internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase,
         if (botReadModel == null || !botReadModel.Bot)
             RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
 
+        // The badge is stored as issued by botId and rendered with that verifier's icon/company,
+        // so the caller must be the bot itself or its owner. Otherwise any user could mint a
+        // badge under an arbitrary organisation's identity.
+        if (botId != input.UserId && !await IsBotOwnerAsync(botId, input.UserId))
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+
         // Resolve target peer
         long targetUserId = 0;
         long targetChannelId = 0;
@@ -63,6 +69,23 @@ internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase,
         await col.ReplaceOneAsync(filter, doc, new ReplaceOptions { IsUpsert = true });
         await NotifyVerificationGrantedAsync(botReadModel, targetUserId, targetChannelId, icon, description);
         return new TBoolTrue();
+    }
+
+    private async Task<bool> IsBotOwnerAsync(long botUserId, long ownerUserId)
+    {
+        var ownedViaBotOwners = await mongoDatabase.GetCollection<BsonDocument>("bot-owners")
+            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("OwnerId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
+        if (ownedViaBotOwners)
+            return true;
+
+        return await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
+            .Find(Builders<BsonDocument>.Filter.Eq("UserId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("CreatorUserId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
     }
 
     private async Task NotifyVerificationGrantedAsync(

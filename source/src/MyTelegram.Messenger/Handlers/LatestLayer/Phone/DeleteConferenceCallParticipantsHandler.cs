@@ -16,6 +16,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class DeleteConferenceCallParticipantsHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
     IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDeleteConferenceCallParticipants, MyTelegram.Schema.IUpdates>
 {
@@ -37,6 +38,11 @@ internal sealed class DeleteConferenceCallParticipantsHandler(
             RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
             return null!;
         }
+
+        // This both kicks participants and appends a caller-supplied block to subchain 0 (the key
+        // material chain), so it must be restricted to whoever can manage the call.
+        await GroupCallStateHelper.EnsureCanManageCallAsync(groupCall, input.UserId, channelAdminRightsChecker,
+            RpcErrors.RpcErrors400.GroupcallInvalid);
 
         var ids = obj.Ids.ToHashSet();
         var previousParticipantUserIds = GroupCallStateHelper.GetParticipantUserIds(groupCall).ToList();

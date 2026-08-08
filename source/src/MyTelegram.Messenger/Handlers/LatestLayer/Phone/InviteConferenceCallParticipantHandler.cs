@@ -32,6 +32,14 @@ internal sealed class InviteConferenceCallParticipantHandler(
             return null!;
         }
 
+        // Inviting adds the target to InvitedUserIds (which grants them join rights) and pushes a
+        // service message attributed to the caller, so only participants may invite.
+        if (!GroupCallStateHelper.IsJoinedByUser(groupCall, input.UserId) && groupCall.CreatorId != input.UserId)
+        {
+            RpcErrors.RpcErrors400.GroupcallInvalid.ThrowRpcError();
+            return null!;
+        }
+
         var userId = peerHelper.GetPeer(obj.UserId, input.UserId).PeerId;
         var date = GroupCallStateHelper.CurrentDate();
         var messageId = await idGenerator.NextIdAsync(IdType.MessageId, userId);

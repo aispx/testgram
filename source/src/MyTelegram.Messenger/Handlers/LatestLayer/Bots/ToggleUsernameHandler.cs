@@ -27,6 +27,13 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         }
 
         var botUserId = inputUser.UserId;
+
+        if (string.IsNullOrEmpty(obj.Username))
+        {
+            RpcErrors.RpcErrors400.UsernameInvalid.ThrowRpcError();
+            return null!;
+        }
+
         var username = obj.Username.ToLower();
 
         // Get bot from MongoDB
@@ -44,6 +51,14 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         if (!bot.Contains("Bot") || !bot["Bot"].AsBoolean)
         {
             RpcErrors.RpcErrors400.UserBotInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        // Only the bot's owner may toggle its usernames; otherwise any user could deactivate
+        // another bot's username and make it unreachable by @name.
+        if (!await IsBotOwnerAsync(botUserId, input.UserId))
+        {
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
             return null!;
         }
 
@@ -127,5 +142,25 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         await userCollection.UpdateOneAsync(botFilter, update);
 
         return new TBoolTrue();
+    }
+
+    private async Task<bool> IsBotOwnerAsync(long botUserId, long ownerUserId)
+    {
+        if (botUserId == ownerUserId)
+            return true;
+
+        var ownedViaBotOwners = await _database.GetCollection<BsonDocument>("bot-owners")
+            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("OwnerId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
+        if (ownedViaBotOwners)
+            return true;
+
+        return await _database.GetCollection<BsonDocument>("eventflow-userreadmodel")
+            .Find(Builders<BsonDocument>.Filter.Eq("UserId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("CreatorUserId", ownerUserId))
+            .Limit(1)
+            .AnyAsync();
     }
 }

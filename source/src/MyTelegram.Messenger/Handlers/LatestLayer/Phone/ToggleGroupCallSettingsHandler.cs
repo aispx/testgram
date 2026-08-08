@@ -17,6 +17,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class ToggleGroupCallSettingsHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
     IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestToggleGroupCallSettings, MyTelegram.Schema.IUpdates>
 {
@@ -35,6 +36,9 @@ internal sealed class ToggleGroupCallSettingsHandler(
 
         var modified = false;
         var joinMutedChanged = false;
+
+        await GroupCallStateHelper.EnsureCanManageCallAsync(groupCall, input.UserId, channelAdminRightsChecker);
+
         if (obj.JoinMuted.HasValue && groupCall.JoinMuted != obj.JoinMuted.Value)
         {
             groupCall.JoinMuted = obj.JoinMuted.Value;

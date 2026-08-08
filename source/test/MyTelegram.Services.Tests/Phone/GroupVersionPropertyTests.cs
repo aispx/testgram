@@ -242,7 +242,7 @@ public class GroupVersionPropertyTests
     {
         var assembly = typeof(GroupCallDocument).Assembly;
         var type = assembly.GetType($"MyTelegram.Messenger.Handlers.LatestLayer.Phone.{handlerTypeName}", throwOnError: true)!;
-        var handler = Activator.CreateInstance(type, database, new PeerHelper(), sender)!;
+        var handler = PhoneTestFixtures.CreateGroupCallHandler(type, database, sender);
         var method = type.GetMethod("HandleAsync", new[] { typeof(IRequestInput), typeof(IObject) })!;
 
         var input = PhoneTestFixtures.RequestInput(inputUserId).Build();

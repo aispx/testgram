@@ -531,7 +531,7 @@ public class ConferenceCallHandlerTests
     {
         var assembly = typeof(GroupCallDocument).Assembly;
         var type = assembly.GetType($"MyTelegram.Messenger.Handlers.LatestLayer.Phone.{handlerTypeName}", throwOnError: true)!;
-        return Activator.CreateInstance(type, args)!;
+        return PhoneTestFixtures.CreateGroupCallHandler(type, args);
     }
 
     private static async Task<IUpdates> InvokeUpdatesAsync(object handler, long userId, IObject request)

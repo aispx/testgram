@@ -16,6 +16,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Phone;
 internal sealed class EditGroupCallTitleHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
     IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestEditGroupCallTitle, MyTelegram.Schema.IUpdates>
 {
@@ -36,6 +37,8 @@ internal sealed class EditGroupCallTitleHandler(
             RpcErrors.RpcErrors403.GroupcallForbidden.ThrowRpcError();
             return null!;
         }
+
+        await GroupCallStateHelper.EnsureCanManageCallAsync(groupCall, input.UserId, channelAdminRightsChecker);
 
         groupCall.Title = obj.Title;
         groupCall.Version++;

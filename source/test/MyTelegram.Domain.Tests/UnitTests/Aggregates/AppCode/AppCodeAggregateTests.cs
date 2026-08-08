@@ -103,7 +103,7 @@ public class AppCodeAggregateTests : TestsFor<AppCodeAggregate>
     //        .ToList();
     //    Sut.ApplyEvents(domainEvents);
 
-    //    var exception = Assert.Throws<UserFriendlyException>(() => Sut.CheckSignUpCode(A<RequestInfo>(),
+    //    var exception = Assert.Throws<RpcException>(() => Sut.CheckSignUpCode(A<RequestInfo>(),
     //        0,
     //        _validPhoneCodeHash,
     //        0,
@@ -122,7 +122,7 @@ public class AppCodeAggregateTests : TestsFor<AppCodeAggregate>
     //    var domainEvent = ADomainEvent<AppCodeAggregate, AppCodeId, AppCodeCanceledEvent>(Sut.Version + 1);
     //    Sut.ApplyEvents(new IDomainEvent[] { domainEvent });
 
-    //    var exception = Assert.Throws<UserFriendlyException>(() => Sut.CheckSignUpCode(A<RequestInfo>(),
+    //    var exception = Assert.Throws<RpcException>(() => Sut.CheckSignUpCode(A<RequestInfo>(),
     //        0,
     //        _validPhoneCodeHash,
     //        0,
@@ -138,6 +138,7 @@ public class AppCodeAggregateTests : TestsFor<AppCodeAggregate>
     public void CheckSignUpCode_With_Correct_PhoneCode_For_New_User()
     {
         CreateAppCodeAggregate();
+        ApplyValidSignInCode();
 
         Sut.CheckSignUpCode(
             A<RequestInfo>(),
@@ -153,6 +154,7 @@ public class AppCodeAggregateTests : TestsFor<AppCodeAggregate>
     {
         var oldUid = 1;
         CreateAppCodeAggregate(oldUid);
+        ApplyValidSignInCode(oldUid);
 
         Sut.CheckSignUpCode(A<RequestInfo>(), oldUid, _validPhoneCodeHash, 0, _phoneNumber, "0", null);
 
@@ -162,12 +164,40 @@ public class AppCodeAggregateTests : TestsFor<AppCodeAggregate>
         checkSignUpCodeCompletedEvent.PhoneNumber.ShouldBe(_phoneNumber);
     }
 
+    [Fact]
+    public void CheckSignUpCode_Without_Prior_SignIn_Throws_PhoneCodeInvalid()
+    {
+        // auth.signUp carries no phone code, so registering without first passing auth.signIn
+        // would let anyone claim any phone number without ever receiving the SMS.
+        CreateAppCodeAggregate();
+
+        var exception = Assert.Throws<RpcException>(() => Sut.CheckSignUpCode(
+            A<RequestInfo>(),
+            0, _validPhoneCodeHash, 0, _phoneNumber, "0", null));
+
+        exception.Message.ShouldBe(RpcErrors.RpcErrors400.PhoneCodeInvalid.Message);
+        Sut.UncommittedEvents.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CheckSignUpCode_After_Failed_SignIn_Throws_PhoneCodeInvalid()
+    {
+        CreateAppCodeAggregate();
+        ApplyInvalidSignInCode();
+
+        var exception = Assert.Throws<RpcException>(() => Sut.CheckSignUpCode(
+            A<RequestInfo>(),
+            0, _validPhoneCodeHash, 0, _phoneNumber, "0", null));
+
+        exception.Message.ShouldBe(RpcErrors.RpcErrors400.PhoneCodeInvalid.Message);
+    }
+
     //[Fact]
     //public void CheckSignUpCode_With_Empty_PhoneCode_Throws_Exception()
     //{
     //    CreateAppCodeAggregate(expireMinutes: -5);
 
-    //    var exception = Assert.Throws<UserFriendlyException>(() => Sut.CheckSignUpCode(A<RequestInfo>(),
+    //    var exception = Assert.Throws<RpcException>(() => Sut.CheckSignUpCode(A<RequestInfo>(),
     //        0,
     //        string.Empty,
     //        0,
@@ -184,7 +214,7 @@ public class AppCodeAggregateTests : TestsFor<AppCodeAggregate>
     //{
     //    CreateAppCodeAggregate(expireMinutes: -5);
 
-    //    var exception = Assert.Throws<UserFriendlyException>(() => Sut.CheckSignUpCode(A<RequestInfo>(),
+    //    var exception = Assert.Throws<RpcException>(() => Sut.CheckSignUpCode(A<RequestInfo>(),
     //        0,
     //        _validPhoneCodeHash,
     //        0,
@@ -214,6 +244,32 @@ public class AppCodeAggregateTests : TestsFor<AppCodeAggregate>
 
     //    Sut.UncommittedEvents.Single().AggregateEvent.ShouldBeOfType<AppCodeCreatedEvent>();
     //}
+
+    /// <summary>
+    /// Replays a successful auth.signIn code check, the precondition auth.signUp requires.
+    /// </summary>
+    private void ApplyValidSignInCode(long uid = 0)
+    {
+        ApplySignInCodeCompleted(true, uid);
+    }
+
+    private void ApplyInvalidSignInCode(long uid = 0)
+    {
+        ApplySignInCodeCompleted(false, uid);
+    }
+
+    private void ApplySignInCodeCompleted(bool isCodeValid, long uid)
+    {
+        var aggregateEvent = new CheckSignInCodeCompletedEvent(A<RequestInfo>(), isCodeValid, uid);
+        Sut.ApplyEvents(new IDomainEvent[]
+        {
+            new DomainEvent<AppCodeAggregate, AppCodeId, CheckSignInCodeCompletedEvent>(aggregateEvent,
+                Metadata.Empty,
+                DateTimeOffset.UtcNow,
+                A<AppCodeId>(),
+                Sut.Version + 1)
+        });
+    }
 
     private void CreateAppCodeAggregate(long uid = 0, int expireMinutes = 5)
     {

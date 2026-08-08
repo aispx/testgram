@@ -16,6 +16,7 @@ public record AppCodeSnapshot(
     bool LoginEmailResetRequested = false,
     bool PaidAuthRequired = false,
     long PaidAuthFormId = 0,
-    bool PaidAuthCompleted = false
+    bool PaidAuthCompleted = false,
+    bool SignUpAllowed = false
     )
     : ISnapshot;

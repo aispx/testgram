@@ -15,7 +15,11 @@ internal static class GroupCallStateHelper
 
     public static FilterDefinition<GroupCallDocument> Filter(TInputGroupCall call)
     {
-        return Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, call.Id);
+        // Call ids are sequential and therefore guessable, so the access hash is the capability
+        // token that proves the client legitimately learned of this call. Match on both.
+        return Builders<GroupCallDocument>.Filter.And(
+            Builders<GroupCallDocument>.Filter.Eq(g => g.CallId, call.Id),
+            Builders<GroupCallDocument>.Filter.Eq(g => g.AccessHash, call.AccessHash));
     }
 
     public static FilterDefinition<GroupCallDocument> Filter(IInputGroupCall call, long userId)

@@ -112,8 +112,10 @@ internal sealed class JoinGroupCallHandler(
         IInputGroupCall inputCall,
         GroupCallDocument groupCall)
     {
+        // Note: conference calls must NOT be admitted merely for being conferences — that made the
+        // invite checks below unreachable and let any user join any private conference. Slug and
+        // invite-message lookups already imply a valid invite.
         if (inputCall is TInputGroupCallSlug or TInputGroupCallInviteMessage ||
-            groupCall.Conference ||
             groupCall.CreatorId == input.UserId ||
             groupCall.InvitedUserIds.Contains(input.UserId) ||
             groupCall.InviteMessages.Any(p => p.UserId == input.UserId && !p.Declined))
@@ -124,6 +126,12 @@ internal sealed class JoinGroupCallHandler(
         if ((PeerType)groupCall.PeerType == PeerType.Channel)
         {
             return !await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, groupCall.PeerId);
+        }
+
+        // A conference that reached this point carries no invite for the caller.
+        if (groupCall.Conference)
+        {
+            return false;
         }
 
         return true;
