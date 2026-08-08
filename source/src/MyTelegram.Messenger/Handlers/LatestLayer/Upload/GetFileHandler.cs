@@ -90,27 +90,73 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
             Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
             Builders<BsonDocument>.Filter.Eq("FileId", fileId)
         );
-        var parts = await partsCollection.Find(partsFilter)
+        // Read the part sizes only. Loading the Bytes of every part just to copy a window out of
+        // the assembled blob meant a 1-byte ranged request on a 2 GB upload still materialised the
+        // whole file (twice, via the intermediate List<byte>), so concurrent getFile calls could
+        // exhaust server memory.
+        var partIndex = await partsCollection.Find(partsFilter)
             .Sort(Builders<BsonDocument>.Sort.Ascending("FilePart"))
+            .Project(Builders<BsonDocument>.Projection.Include("FilePart").Include("Size"))
             .ToListAsync();
 
-        if (parts.Count > 0)
+        if (partIndex.Count > 0)
         {
-            // Assemble file from parts
-            var allBytes = new List<byte>();
-            foreach (var part in parts)
+            // Part sizes are not fixed on the saveFilePart path, so the byte offset of each part is
+            // derived from the running total rather than assumed.
+            var windowStart = obj.Offset;
+            var windowEnd = obj.Offset + obj.Limit;
+            var covering = new List<(int FilePart, long Start)>();
+            long cursor = 0;
+            foreach (var entry in partIndex)
             {
-                var partBytes = part["Bytes"].AsByteArray;
-                allBytes.AddRange(partBytes);
+                var size = entry.TryGetValue("Size", out var sizeValue) ? sizeValue.ToInt64() : 0;
+                var partStart = cursor;
+                cursor += size;
+
+                if (partStart < windowEnd && cursor > windowStart)
+                {
+                    covering.Add((entry["FilePart"].ToInt32(), partStart));
+                }
+
+                if (partStart >= windowEnd)
+                {
+                    break;
+                }
             }
 
-            var fileBytes = allBytes.ToArray();
+            var totalSize = cursor;
+            var start = Math.Min(windowStart, totalSize);
+            var length = (int)Math.Min(obj.Limit, totalSize - start);
+            var resultBytes = new byte[Math.Max(0, length)];
 
-            // Apply offset and limit
-            var start = (int)Math.Min(obj.Offset, fileBytes.Length);
-            var length = Math.Min(obj.Limit, fileBytes.Length - start);
-            var resultBytes = new byte[length];
-            Array.Copy(fileBytes, start, resultBytes, 0, length);
+            if (covering.Count > 0 && resultBytes.Length > 0)
+            {
+                var coveringParts = await partsCollection
+                    .Find(partsFilter & Builders<BsonDocument>.Filter.In("FilePart", covering.Select(p => p.FilePart)))
+                    .ToListAsync();
+                var startByPart = covering.ToDictionary(p => p.FilePart, p => p.Start);
+
+                foreach (var part in coveringParts)
+                {
+                    if (!startByPart.TryGetValue(part["FilePart"].ToInt32(), out var partStart))
+                    {
+                        continue;
+                    }
+
+                    var partBytes = part["Bytes"].AsByteArray;
+                    // Overlap of [partStart, partStart+len) with the requested window, in part-local
+                    // coordinates.
+                    var copyFrom = (int)Math.Max(0, start - partStart);
+                    var copyTo = (int)Math.Min(partBytes.Length, windowEnd - partStart);
+                    if (copyTo <= copyFrom)
+                    {
+                        continue;
+                    }
+
+                    var destination = (int)(partStart + copyFrom - start);
+                    Array.Copy(partBytes, copyFrom, resultBytes, destination, copyTo - copyFrom);
+                }
+            }
 
             _logger.LogDebug("Retrieved file from parts: FileId={FileId}, Offset={Offset}, Limit={Limit}, Returned={Length}",
                 fileId, obj.Offset, obj.Limit, resultBytes.Length);

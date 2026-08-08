@@ -177,6 +177,49 @@ public class PrivacyHelperTests
         Evaluate([Rule(PrivacyValueType.Unknown)], ContactType.None).ShouldBeFalse();
     }
 
+    // --- fact-dependent disallow rules must fail closed when the viewer facts are missing ---
+
+    [Fact]
+    public void ShouldDenyChatParticipantRuleWhenViewerFactsAreUnknown()
+    {
+        // "Everybody, except <chat>" — the standard Telegram exclusion. Without the viewer's chat
+        // list, an unmatched disallowChatParticipants cannot be read as "the viewer is not in that
+        // chat", so it must not fall through to the allowAll rule beside it.
+        var rules = new[]
+        {
+            Rule(PrivacyValueType.AllowAll),
+            Ids(PrivacyValueType.DisallowChatParticipants, 555)
+        };
+
+        Evaluate(rules, ContactType.None, PrivacyViewerContext.Unknown).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldDenyBotRuleWhenViewerFactsAreUnknown()
+    {
+        var rules = new[]
+        {
+            Rule(PrivacyValueType.AllowAll),
+            Rule(PrivacyValueType.DisallowBots)
+        };
+
+        Evaluate(rules, ContactType.None, PrivacyViewerContext.Unknown).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShouldStillHonourExplicitAllowUsersWhenViewerFactsAreUnknown()
+    {
+        // The fail-closed branch must not override an explicit per-user grant, which is evaluated
+        // from the request identity alone and needs none of the missing facts.
+        var rules = new[]
+        {
+            Ids(PrivacyValueType.DisallowChatParticipants, 555),
+            Ids(PrivacyValueType.AllowUsers, ViewerId)
+        };
+
+        Evaluate(rules, ContactType.None, PrivacyViewerContext.Unknown).ShouldBeTrue();
+    }
+
     private static bool Evaluate(
         IReadOnlyList<PrivacyValueData> rules,
         ContactType contactType,

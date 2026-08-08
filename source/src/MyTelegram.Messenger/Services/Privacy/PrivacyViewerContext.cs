@@ -25,8 +25,23 @@ public sealed record PrivacyViewerContext(
     IReadOnlySet<long> ChatIds)
 {
     /// <summary>
-    /// Used when the caller has no viewer details. Every rule that depends on them evaluates
-    /// as "not matched", which keeps the protected data hidden.
+    /// False on <see cref="Unknown"/>, i.e. when the caller could not supply the viewer facts.
+    /// <para>
+    /// The facts are only missing, never known-to-be-false, so an unmatched <c>Disallow*</c> rule
+    /// cannot be read as "the viewer is not excluded". Treating it that way is what let a viewer
+    /// excluded by <c>disallowChatParticipants</c> or <c>disallowBots</c> fall through to the
+    /// <c>allowAll</c> rule alongside it and read the protected field anyway. Rules that depend on
+    /// these facts therefore deny access while this is false — see
+    /// <c>PrivacyHelper.IsAllowedByPrivacy</c>.
+    /// </para>
     /// </summary>
-    public static readonly PrivacyViewerContext Unknown = new(false, false, false, new HashSet<long>());
+    public bool FactsKnown { get; init; } = true;
+
+    /// <summary>
+    /// Used when the caller has no viewer details. Allow-rules that depend on the missing facts
+    /// evaluate as "not matched", and fact-dependent disallow-rules deny outright, so the
+    /// protected data stays hidden either way.
+    /// </summary>
+    public static readonly PrivacyViewerContext Unknown =
+        new(false, false, false, new HashSet<long>()) { FactsKnown = false };
 }

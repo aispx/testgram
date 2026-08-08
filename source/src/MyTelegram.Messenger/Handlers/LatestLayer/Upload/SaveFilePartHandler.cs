@@ -9,6 +9,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Upload;
 /// </summary>
 internal sealed class SaveFilePartHandler : RpcResultObjectHandler<MyTelegram.Schema.Upload.RequestSaveFilePart, IBool>
 {
+    /// <summary>Largest accepted part, matching the 512 KB cap in <c>SaveBigFilePartHandler</c>.</summary>
+    private const int MaxPartSize = 512 * 1024;
+
     private readonly IMongoDatabase _database;
     private readonly ILogger<SaveFilePartHandler> _logger;
 
@@ -29,6 +32,13 @@ internal sealed class SaveFilePartHandler : RpcResultObjectHandler<MyTelegram.Sc
         if (obj.FilePart < 0)
         {
             RpcErrors.RpcErrors400.FilePartInvalid.ThrowRpcError();
+        }
+
+        // Mirrors the cap SaveBigFilePartHandler already enforces. Without it a single call could
+        // store an arbitrarily large blob, and upload.getFile has to read those bytes back.
+        if (obj.Bytes.Length > MaxPartSize)
+        {
+            RpcErrors.RpcErrors400.FilePartTooBig.ThrowRpcError();
         }
 
         var collection = _database.GetCollection<BsonDocument>("file_parts");

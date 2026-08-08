@@ -20,6 +20,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class GetHistoryHandler(IMessageAppService messageAppService, IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChannelAppService channelAppService, IGetHistoryConverterService getHistoryConverterService) : RpcResultObjectHandler<RequestGetHistory, IMessages>
 {
+    /// <summary>Upper bound on one history page, matching the paging limit used by the search handlers.</summary>
+    private const int MaxHistoryLimit = 100;
+
     protected override async Task<IMessages> HandleCoreAsync(IRequestInput input, RequestGetHistory obj)
     {
         var userId = input.UserId;
@@ -52,7 +55,11 @@ internal sealed class GetHistoryHandler(IMessageAppService messageAppService, IQ
             channelHistoryMinId = dialogReadModel?.ChannelHistoryMinId ?? 0;
         }
 
-        var r = await messageAppService.GetHistoryAsync(new GetHistoryInput { OwnerPeerId = ownerPeerId, SelfUserId = userId, AddOffset = obj.AddOffset, Limit = obj.Limit, MaxId = obj.MaxId, MinId = obj.MinId, OffsetId = obj.OffsetId, Peer = peerHelper.GetPeer(obj.Peer, userId), ChannelHistoryMinId = channelHistoryMinId });
+        // The read-model store only applies a Mongo limit when it is > 0, so limit=0 or a negative
+        // value meant "no limit at all" and returned the whole history in one response.
+        var limit = obj.Limit is <= 0 or > MaxHistoryLimit ? MaxHistoryLimit : obj.Limit;
+
+        var r = await messageAppService.GetHistoryAsync(new GetHistoryInput { OwnerPeerId = ownerPeerId, SelfUserId = userId, AddOffset = obj.AddOffset, Limit = limit, MaxId = obj.MaxId, MinId = obj.MinId, OffsetId = obj.OffsetId, Peer = peerHelper.GetPeer(obj.Peer, userId), ChannelHistoryMinId = channelHistoryMinId });
         return getHistoryConverterService.ToMessages(input, r, input.Layer);
     }
 }

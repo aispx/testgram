@@ -62,7 +62,15 @@ public class PrivacyHelper : IPrivacyHelper, ITransientDependency
             return true;
         }
 
-        if (viewerContext.IsBot && rules.Any(p => p.PrivacyValueType == PrivacyValueType.DisallowBots))
+        // Deny rules that depend on viewer facts must not be skipped when those facts are missing.
+        // With an unknown viewer, `IsBot` is false and `ChatIds` is empty, so both deny rules below
+        // used to match nothing and evaluation fell through to AllowAll -- i.e. a rule set such as
+        // [allowAll, disallowChatParticipants] granted access to the very people it excludes.
+        // The explicit AllowUsers/DisallowUsers checks above still take precedence, so a viewer named
+        // individually is unaffected; only viewers whose eligibility genuinely cannot be determined
+        // are denied.
+        if (rules.Any(p => p.PrivacyValueType == PrivacyValueType.DisallowBots)
+            && (viewerContext.IsBot || !viewerContext.FactsKnown))
         {
             return false;
         }
@@ -72,8 +80,10 @@ public class PrivacyHelper : IPrivacyHelper, ITransientDependency
             return true;
         }
 
-        if (rules.Any(p => p.PrivacyValueType == PrivacyValueType.DisallowChatParticipants
-                           && SharesChat(p, viewerContext)))
+        if (rules.Any(p => p.PrivacyValueType == PrivacyValueType.DisallowChatParticipants)
+            && (!viewerContext.FactsKnown
+                || rules.Any(p => p.PrivacyValueType == PrivacyValueType.DisallowChatParticipants
+                                  && SharesChat(p, viewerContext))))
         {
             return false;
         }
