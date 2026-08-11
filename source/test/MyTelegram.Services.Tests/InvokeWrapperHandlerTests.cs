@@ -216,7 +216,11 @@ public class InvokeWrapperHandlerTests
         });
 
         var handler = new RecordingHandler();
-        var query = new FakeQuery();
+        // A real wrappable method covered by the connection's Reply right: the allowlist in
+        // BusinessConnectionRightsMap rejects any constructor that is not explicitly permitted, so a
+        // synthetic FakeQuery would fail authorization before reaching the identity-rebinding path
+        // this test is about.
+        var query = new MyTelegram.Schema.Messages.RequestSendMessage();
         var handlerHelper = new FakeHandlerHelper(query.ConstructorId, handler);
         var request = new RequestInvokeWithBusinessConnection { ConnectionId = connectionId, Query = query };
 
@@ -232,6 +236,75 @@ public class InvokeWrapperHandlerTests
         handler.LastInput.ShouldNotBeNull();
         handler.LastInput!.UserId.ShouldBe(businessUserId);
         AssertRpcResultCarries(result, handler.Result);
+    }
+
+    // The wrapper runs the inner query as the connected USER, so the set of wrappable methods must be
+    // closed. Gating only on "Reply" and then dispatching any constructor let a bot holding the
+    // minimum grant reach account.* and auth.* as the user — a full account takeover.
+    [Fact]
+    public void InvokeWithBusinessConnection_RejectsMethodOutsideAllowlist()
+    {
+        const long botId = 555L;
+        const long businessUserId = 777L;
+        const string connectionId = "conn-2";
+
+        var store = PhoneTestFixtures.CreateStore();
+        store.Database.GetCollection<BsonDocument>("connected_business_bots").InsertOne(new BsonDocument
+        {
+            { "ConnectionId", connectionId },
+            { "BotId", botId },
+            { "UserId", businessUserId },
+            // Every right granted: the allowlist must still refuse a method that is not wrappable.
+            { "Rights", new BsonDocument
+                {
+                    { "Reply", true }, { "ReadMessages", true }, { "DeleteSentMessages", true },
+                    { "EditName", true }, { "EditBio", true }, { "EditUsername", true },
+                    { "ManageStories", true }
+                }
+            }
+        });
+
+        var handler = new RecordingHandler();
+        var query = new MyTelegram.Schema.Auth.RequestLogOut();
+        var handlerHelper = new FakeHandlerHelper(query.ConstructorId, handler);
+        var request = new RequestInvokeWithBusinessConnection { ConnectionId = connectionId, Query = query };
+        var input = new FakeRequestInput { UserId = botId };
+
+        var exception = Should.Throw<RpcException>(() => Invoke(
+            "InvokeWithBusinessConnectionHandler", [store.Database, handlerHelper], input, request));
+
+        exception.Message.ShouldBe("BUSINESS_CONNECTION_NOT_ALLOWED");
+        handler.CallCount.ShouldBe(0);
+    }
+
+    // A wrappable method still requires the specific right that governs it, not merely any right.
+    [Fact]
+    public void InvokeWithBusinessConnection_RejectsWrappableMethodWithoutItsRight()
+    {
+        const long botId = 555L;
+        const long businessUserId = 777L;
+        const string connectionId = "conn-3";
+
+        var store = PhoneTestFixtures.CreateStore();
+        store.Database.GetCollection<BsonDocument>("connected_business_bots").InsertOne(new BsonDocument
+        {
+            { "ConnectionId", connectionId },
+            { "BotId", botId },
+            { "UserId", businessUserId },
+            // Reply only: enough to send, not to rename the user's account.
+            { "Rights", new BsonDocument { { "Reply", true } } }
+        });
+
+        var handler = new RecordingHandler();
+        var query = new MyTelegram.Schema.Account.RequestUpdateUsername();
+        var handlerHelper = new FakeHandlerHelper(query.ConstructorId, handler);
+        var request = new RequestInvokeWithBusinessConnection { ConnectionId = connectionId, Query = query };
+        var input = new FakeRequestInput { UserId = botId };
+
+        Should.Throw<RpcException>(() => Invoke(
+            "InvokeWithBusinessConnectionHandler", [store.Database, handlerHelper], input, request));
+
+        handler.CallCount.ShouldBe(0);
     }
 
     // ---- helpers --------------------------------------------------------------------------------

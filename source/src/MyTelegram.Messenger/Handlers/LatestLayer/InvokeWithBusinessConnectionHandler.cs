@@ -43,11 +43,20 @@ internal sealed class InvokeWithBusinessConnectionHandler : RpcResultObjectHandl
 
         var userId = connection["UserId"].AsInt64;
 
-        // Check rights - verify bot has permission to reply
-        var rightsDoc = connection["Rights"].AsBsonDocument;
-        var canReply = rightsDoc.Contains("Reply") && rightsDoc["Reply"].AsBoolean;
+        // The inner request runs under the connected user's identity, so the set of wrappable methods
+        // has to be closed and each one gated on its own right. Checking only "Reply" and then
+        // dispatching any constructor let a bot with the minimum grant reach account.*, auth.logOut and
+        // every dialog's history as the user - a full account takeover.
+        var rightsDoc = connection.TryGetValue("Rights", out var rightsValue) && rightsValue.IsBsonDocument
+            ? rightsValue.AsBsonDocument
+            : null;
 
-        if (!canReply)
+        if (!BusinessConnectionRightsMap.IsWrappable(obj.Query.ConstructorId))
+        {
+            RpcErrors.RpcErrors400.BusinessConnectionNotAllowed.ThrowRpcError();
+        }
+
+        if (!BusinessConnectionRightsMap.IsAllowed(obj.Query.ConstructorId, rightsDoc))
         {
             RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
         }

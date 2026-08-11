@@ -32,14 +32,12 @@ public class DefaultDataProcessor<TData>(
 
                     if (!needToCheckRequest && data is IHasSubQuery subQuery)
                     {
+                        // Recurses to the innermost query so any depth of invoke* nesting is unwrapped.
+                        // The old two-level walk let a triple-nested wrapper (e.g.
+                        // invokeWithoutUpdates(invokeWithReCaptcha(invokeWithBusinessConnection(...))))
+                        // skip the replay/dedup gate on state-changing commands.
                         needToCheckRequest =
-                            ObjectIdConsts.CommandServerHandlers.ContainsKey(subQuery.Query.ConstructorId);
-
-                        if (!needToCheckRequest && subQuery.Query is IHasSubQuery subQuery2)
-                        {
-                            needToCheckRequest =
-                                ObjectIdConsts.CommandServerHandlers.ContainsKey(subQuery2.Query.ConstructorId);
-                        }
+                            ObjectIdConsts.CommandServerHandlers.ContainsKey(subQuery.GetObjectId());
                     }
 
                     if (needToCheckRequest)
