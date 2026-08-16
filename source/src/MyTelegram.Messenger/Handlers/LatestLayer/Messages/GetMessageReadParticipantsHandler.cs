@@ -12,12 +12,22 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetMessageReadParticipantsHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetMessageReadParticipants, TVector<MyTelegram.Schema.IReadParticipantDate>>
+internal sealed class GetMessageReadParticipantsHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetMessageReadParticipants, TVector<MyTelegram.Schema.IReadParticipantDate>>
 {
     protected override async Task<TVector<MyTelegram.Schema.IReadParticipantDate>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetMessageReadParticipants obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
+
+        // Read receipts (who read a message, and when) are visible only to members. GetPeer validates
+        // no access hash and channel ids are sequential, so a non-member could otherwise enumerate a
+        // private group's read receipts. Gate membership as messages.getHistory does.
+        if (peer.PeerType == PeerType.Channel &&
+            await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, peer.PeerId))
+        {
+            return null!;
+        }
+
         var messageReadModel = await queryProcessor.ProcessAsync(new GetMessageByPeerIdAndMessageIdQuery(ownerPeerId, obj.MsgId));
         if (messageReadModel == null)
         {

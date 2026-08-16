@@ -26,6 +26,15 @@ internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQuery
             RpcErrors.RpcErrors400.ChatIdInvalid.ThrowRpcError();
         }
 
+        // A discussion preview is public for a public channel/linked discussion group, but a private
+        // channel's thread must not be readable by a non-member. GetPeer validates no access hash and
+        // channel ids are sequential, so gate membership; the helper permits public/broadcast/linked
+        // channels and only errors on a private group. See messages.getHistory.
+        if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel!))
+        {
+            return null!;
+        }
+
         var query = new GetDiscussionMessageQuery(channelReadModel!.Broadcast, peer.PeerId, obj.MsgId);
         var messageReadModel = await queryProcessor.ProcessAsync(query);
         if (messageReadModel == null)
