@@ -43,12 +43,39 @@ internal sealed class GetChannelDifferenceHandler(IMessageAppService messageAppS
 
         if (channelId != 0)
         {
+            // Gate membership BEFORE reading any updates or messages. Computing isChannelMember alone
+            // is not enforcement: a null member read model (never a member) used to fall straight
+            // through and return the channel's message history to anyone, since the access-hash check
+            // on this path was removed and PeerHelper.GetPeer does not validate hashes.
+            var membershipCheckChannel = await channelAppService.GetAsync((long?)channelId);
+            if (membershipCheckChannel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, membershipCheckChannel!))
+            {
+                return null!;
+            }
+
             var isChannelMember = true;
             var channelMemberReadModel = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channelId, input.UserId));
             isChannelMember = channelMemberReadModel != null;
             if (channelMemberReadModel != null && channelMemberReadModel.Kicked)
             {
                 RpcErrors.RpcErrors403.ChannelPublicGroupNa.ThrowRpcError();
+            }
+
+            // The shared membership helper intentionally lets non-members read broadcast channels,
+            // which is right for public broadcasts (they have a username). A private broadcast
+            // channel (no username) must still require membership, otherwise getChannelDifference
+            // leaks its updates to anyone. This is a targeted check; the shared helper is left
+            // untouched so other read paths keep their public-channel policy.
+            if (channelMemberReadModel == null &&
+                membershipCheckChannel!.Broadcast &&
+                string.IsNullOrEmpty(membershipCheckChannel.UserName))
+            {
+                RpcErrors.RpcErrors400.ChannelPrivate.ThrowRpcError();
             }
 
             var limit = obj.Limit == 0 ? MyTelegramConsts.DefaultPtsTotalLimit : obj.Limit;

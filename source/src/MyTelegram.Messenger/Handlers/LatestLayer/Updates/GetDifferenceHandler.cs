@@ -45,8 +45,12 @@ internal sealed class GetDifferenceHandler(IMessageAppService messageAppService,
         // The user's own box sequence is the correct "current as of now" starting point.
         var globalSeqNo = ptsForAuthKeyIdReadModel?.GlobalSeqNo ?? ptsReadModel?.GlobalSeqNo ?? 0;
         var joinedChannelIdList = await queryProcessor.ProcessAsync(new GetChannelIdListByMemberUserIdQuery(input.UserId));
-        var limit = obj.PtsTotalLimit ?? MyTelegramConsts.DefaultPtsTotalLimit;
-        limit = Math.Min(limit, MyTelegramConsts.DefaultPtsTotalLimit);
+        // Clamp both ends. A negative pts_total_limit used to survive Math.Min and reach the read-model
+        // queries, where FindOptions.Limit is only applied when > 0 — so a negative value meant NO limit
+        // and replayed the caller's entire update box in one response.
+        var limit = obj.PtsTotalLimit is > 0
+            ? Math.Min(obj.PtsTotalLimit.Value, MyTelegramConsts.DefaultPtsTotalLimit)
+            : MyTelegramConsts.DefaultPtsTotalLimit;
 
         // A session that is further behind than a page-by-page catch-up can realistically close is
         // told to resync from scratch. Paging only advances the server cursor once the client acks

@@ -21,7 +21,8 @@ internal sealed class AppendTodoListHandler(
     IQueryProcessor queryProcessor,
     ICommandBus commandBus,
     IMessageAppService messageAppService,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IChannelAppService channelAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAppendTodoList, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestAppendTodoList obj)
@@ -33,6 +34,22 @@ internal sealed class AppendTodoListHandler(
 
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var membershipChannel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (membershipChannel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // Appending to a channel's checklist writes into the channel and posts a service message;
+            // it requires membership even when others_can_append is set. GetPeer validates no access
+            // hash.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, membershipChannel!))
+            {
+                return null!;
+            }
+        }
 
         var messageReadModel = await queryProcessor.ProcessAsync(
             new GetMessageByPeerIdAndMessageIdQuery(ownerPeerId, obj.MsgId));

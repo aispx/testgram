@@ -11,6 +11,22 @@ internal sealed class GetMessageReactionsListHandler(
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         var isChannel = peer.PeerType == PeerType.Channel;
         var ownerPeerId = isChannel ? peer.PeerId : input.UserId;
+        if (isChannel)
+        {
+            var membershipChannel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (membershipChannel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // For non-broadcast channels this list names who reacted, which is member-only data.
+            // GetPeer validates no access hash, so resolve membership explicitly.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, membershipChannel!))
+            {
+                return null!;
+            }
+        }
+
         var msg = await queryProcessor.ProcessAsync(new GetMessageByPeerIdAndMessageIdQuery(ownerPeerId, obj.Id)) as MessageReadModel;
 
         var reactions = msg?.RecentReactions2 ?? [];

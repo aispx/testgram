@@ -24,11 +24,28 @@ internal sealed class SendVoteHandler(
     ICommandBus commandBus,
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
-    IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendVote, MyTelegram.Schema.IUpdates>
+    IMessageAppService messageAppService,
+    IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendVote, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendVote obj)
     {
-        var peer = peerHelper.GetPeer(obj.Peer);
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var channelReadModel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (channelReadModel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // Voting is a write into the channel's poll; a non-member must not be able to cast or
+            // stuff votes. GetPeer validates no access hash, so resolve membership explicitly.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel!))
+            {
+                return null!;
+            }
+        }
+
         var pollId = await queryProcessor.ProcessAsync(new GetPollIdByMessageIdQuery(peer.PeerId, obj.MsgId), default);
         if (pollId == null)
         {

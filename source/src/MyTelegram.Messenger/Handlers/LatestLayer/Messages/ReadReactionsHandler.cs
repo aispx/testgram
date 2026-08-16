@@ -16,11 +16,29 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class ReadReactionsHandler(
     IPtsHelper ptsHelper,
     IPeerHelper peerHelper,
-    ICommandBus commandBus) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadReactions, MyTelegram.Schema.Messages.IAffectedHistory>
+    ICommandBus commandBus,
+    IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadReactions, MyTelegram.Schema.Messages.IAffectedHistory>
 {
     protected override async Task<MyTelegram.Schema.Messages.IAffectedHistory> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReadReactions obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var membershipChannel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (membershipChannel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // This call advances the channel's pts, so a non-member could inflate it and force every
+            // member's client into getDifference resync loops. Require membership first; GetPeer
+            // validates no access hash.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, membershipChannel!))
+            {
+                return null!;
+            }
+        }
+
         var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, input.UserId);
         var key = ReactionReadState.GetKey(peer, obj.TopMsgId, savedPeer);
         var command = new UpdateUserConfigCommand(

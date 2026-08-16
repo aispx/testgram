@@ -21,13 +21,29 @@ internal sealed class AddPollAnswerHandler(
     IQueryProcessor queryProcessor,
     ICommandBus commandBus,
     IPeerHelper peerHelper,
-    IMessageAppService messageAppService)
+    IMessageAppService messageAppService,
+    IChannelAppService channelAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAddPollAnswer, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input,
         MyTelegram.Schema.Messages.RequestAddPollAnswer obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var membershipChannel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (membershipChannel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // Adding an answer writes into the channel's poll and broadcasts a service message, so it
+            // requires membership even for open-answer polls. GetPeer validates no access hash.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, membershipChannel!))
+            {
+                return null!;
+            }
+        }
 
         var pollId = await queryProcessor.ProcessAsync(new GetPollIdByMessageIdQuery(peer.PeerId, obj.MsgId));
         if (pollId == null)

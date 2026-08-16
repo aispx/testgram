@@ -28,7 +28,17 @@ internal sealed class RegisterDeviceHandler(ICommandBus commandBus, IPushTokenVa
             throw new RpcException(error.Value);
         }
 
-        var command = new RegisterDeviceCommand(PushDeviceId.Create(obj.Token), input.ToRequestInfo(), input.UserId, input.PermAuthKeyId, obj.TokenType, obj.Token, obj.NoMuted, obj.AppSandbox, obj.Secret, obj.OtherUids.ToList());
+        // other_uids lists sibling accounts a multi-account client claims share this device, and the push
+        // dispatcher routes a recipient's messages to any device that merely lists that recipient in
+        // OtherUids. The client asserts these ids without proof, and this fork has no device-to-accounts
+        // registry the server could verify them against (each account session has its own PermAuthKeyId,
+        // so nothing correlates them). Honoring unverified ids would let any caller register their own
+        // device as a recipient of another user's push payloads — including plaintext message bodies.
+        // Only the caller's own account is trusted here; restoring multi-account routing requires a
+        // device-account registry. The LayerN converter already uses this safe shape (OtherUids = []).
+        var otherUids = new List<long>();
+
+        var command = new RegisterDeviceCommand(PushDeviceId.Create(obj.Token), input.ToRequestInfo(), input.UserId, input.PermAuthKeyId, obj.TokenType, obj.Token, obj.NoMuted, obj.AppSandbox, obj.Secret, otherUids);
         await commandBus.PublishAsync(command);
         return new TBoolTrue();
     }

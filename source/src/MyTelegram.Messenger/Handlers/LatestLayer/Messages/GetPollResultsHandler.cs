@@ -13,11 +13,27 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetPollResultsHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, //ILayeredService<IPollConverter> layeredService,
- IPollConverterService pollConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetPollResults, MyTelegram.Schema.IUpdates>
+ IPollConverterService pollConverterService, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetPollResults, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestGetPollResults obj)
     {
-        var peer = peerHelper.GetPeer(obj.Peer);
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var channelReadModel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (channelReadModel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // Poll results — and recent voter identities for public_voters polls — are member-only
+            // data. GetPeer validates no access hash, so resolving the peer proves nothing.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel!))
+            {
+                return null!;
+            }
+        }
+
         var pollId = await queryProcessor.ProcessAsync(new GetPollIdByMessageIdQuery(peer.PeerId, obj.MsgId));
         if (pollId == null)
         {

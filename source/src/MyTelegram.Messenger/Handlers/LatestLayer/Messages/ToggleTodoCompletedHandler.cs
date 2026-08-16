@@ -17,13 +17,30 @@ internal sealed class ToggleTodoCompletedHandler(
     IQueryProcessor queryProcessor,
     ICommandBus commandBus,
     IMessageAppService messageAppService,
-    IPeerHelper peerHelper)
+    IPeerHelper peerHelper,
+    IChannelAppService channelAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestToggleTodoCompleted, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestToggleTodoCompleted obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var membershipChannel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (membershipChannel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // Toggling a checklist item writes into the channel and posts a service message, so it
+            // requires membership even when others_can_complete is set. GetPeer validates no access
+            // hash.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, membershipChannel!))
+            {
+                return null!;
+            }
+        }
 
         var messageReadModel = await queryProcessor.ProcessAsync(
             new GetMessageByPeerIdAndMessageIdQuery(ownerPeerId, obj.MsgId));

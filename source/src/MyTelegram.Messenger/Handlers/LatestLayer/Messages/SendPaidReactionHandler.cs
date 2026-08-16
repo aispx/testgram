@@ -22,7 +22,9 @@ internal sealed class SendPaidReactionHandler(
     IPeerHelper peerHelper,
     IMongoDatabase mongoDatabase,
     IAppConfigHelper appConfigHelper,
-    IPaidReactionPrivacyAppService paidReactionPrivacyAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendPaidReaction, MyTelegram.Schema.IUpdates>
+    IPaidReactionPrivacyAppService paidReactionPrivacyAppService,
+    IChannelAppService channelAppService,
+    IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendPaidReaction, MyTelegram.Schema.IUpdates>
 {
     private const string SentCollectionName = "paid_reaction_sent";
 
@@ -44,6 +46,11 @@ internal sealed class SendPaidReactionHandler(
         if (channelReadModel == null)
             RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
 
+        // A paid reaction spends stars into the channel and shows on the post, so it requires
+        // membership; GetPeer validates no access hash.
+        if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel!))
+            return null!;
+
         if (!channelReadModel!.PaidReactionsEnabled)
             RpcErrors.RpcErrors400.ReactionsCountInvalid.ThrowRpcError();
 
@@ -57,17 +64,33 @@ internal sealed class SendPaidReactionHandler(
             return null!;
         }
 
-        var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
-        if (balance < obj.Count)
+        // Atomic conditional debit — the real balance guard. A separate read-then-write check races:
+        // two concurrent sends could both pass it and both debit, driving the balance negative and
+        // minting stars into the channel owner's wallet. Done before any other writes so an
+        // insufficient balance fails fast with no side effects.
+        if (!await StarsBalanceHelper.TryDebitAsync(mongoDatabase, input.UserId, obj.Count))
             RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
 
         var setting = obj.Private != null
             ? PaidReactionPrivacyConverter.FromTl(obj.Private, peerHelper, input.UserId)
             : await paidReactionPrivacyAppService.GetDefaultAsync(input.UserId);
+
+        // A paid reaction attributed to a channel shows that channel as the donor on the top-reactors
+        // leaderboard. FromTl accepts any channel id without proof, so verify the caller can actually
+        // post as the named channel; otherwise fall back to the default attribution. Without this, a
+        // one-star reaction could impersonate any channel on the server.
+        if (setting.Type == PaidReactionPrivacyType.Peer && setting.PeerId != 0)
+        {
+            var sendAsPeer = new Peer(PeerType.Channel, setting.PeerId);
+            if (!await messageAppService.IsValidSendAsPeerAsync(input.UserId, peer, sendAsPeer))
+            {
+                setting = new PaidReactionPrivacySetting(PaidReactionPrivacyType.Default);
+            }
+        }
+
         await paidReactionPrivacyAppService.SetForMessageAsync(input.UserId, peer.PeerId, obj.MsgId, setting);
 
-        // Deduct stars from sender, add to channel owner
-        await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -obj.Count);
+        // Credit the channel owner only after the debit succeeded.
         await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, channelReadModel.CreatorId, obj.Count);
         // Tag both legs with reaction:true so starsTransaction renders the
         // "paid reaction" label on both sender and receiver wallets.

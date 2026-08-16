@@ -24,6 +24,29 @@ public static class StarsBalanceHelper
         return result?.Balance ?? delta;
     }
 
+    /// <summary>
+    /// Atomically debits <paramref name="amount"/> only when the stored balance already covers it.
+    /// The balance check and the decrement happen in a single conditional update, so two concurrent
+    /// requests cannot both pass a prior read-then-write check and drive the balance negative (which
+    /// would mint stars). Returns false when the balance is insufficient or the account has no row;
+    /// the caller must then abort without crediting the counterparty.
+    /// </summary>
+    public static async Task<bool> TryDebitAsync(IMongoDatabase db, long userId, long amount)
+    {
+        if (amount <= 0)
+        {
+            return false;
+        }
+
+        var col = db.GetCollection<StarsBalanceDocument>("star-balances");
+        var result = await col.FindOneAndUpdateAsync(
+            x => x.UserId == userId && x.Balance >= amount,
+            Builders<StarsBalanceDocument>.Update.Inc(x => x.Balance, -amount),
+            new FindOneAndUpdateOptions<StarsBalanceDocument> { ReturnDocument = ReturnDocument.After }
+        );
+        return result != null;
+    }
+
     public static async Task AddTransactionAsync(IMongoDatabase db, long userId, long amount, bool gift = false,
         long? peerUserId = null, long? peerChannelId = null, string? title = null, bool stargiftUpgrade = false,
         bool stargiftAuctionBid = false, bool offer = false, string? stargiftSlug = null, int? premiumGiftMonths = null,

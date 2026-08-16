@@ -21,10 +21,23 @@ internal sealed class GetPollVotesHandler(IQueryProcessor queryProcessor, IChatC
         var ownerPeerId = peer.PeerId;
         if (peer.PeerType == PeerType.Channel)
         {
-            var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
-            if (channelReadModel.Broadcast)
+            var channelReadModel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (channelReadModel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            if (channelReadModel!.Broadcast)
             {
                 RpcErrors.RpcErrors403.BroadcastForbidden.ThrowRpcError();
+            }
+
+            // Voter identities are member-only data. A non-member must not be able to enumerate who
+            // voted in a supergroup poll; obj.Peer.ToPeer() validates no access hash, so resolving the
+            // peer proves nothing about membership.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel))
+            {
+                return null!;
             }
         }
 
@@ -39,6 +52,22 @@ internal sealed class GetPollVotesHandler(IQueryProcessor queryProcessor, IChatC
         if (pollReadModel == null)
         {
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+        }
+
+        // Anonymous polls (public_voters = false) must never expose voter identities. Attributed vote
+        // documents are stored for every poll regardless of anonymity, so without this gate any
+        // participant — or the creator, who skips the participation check — could deanonymize every
+        // voter. Return an empty list, matching GetPollResultsHandler, which omits recent voters unless
+        // PublicVoters is set.
+        if (!pollReadModel!.PublicVoters)
+        {
+            return new TVotesList
+            {
+                Count = 0,
+                Chats = new TVector<IChat>(),
+                Users = new TVector<IUser>(),
+                Votes = []
+            };
         }
 
         // You have to participate before you get to see who voted for what. The poll's own

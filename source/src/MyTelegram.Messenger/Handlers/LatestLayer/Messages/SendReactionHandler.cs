@@ -36,6 +36,22 @@ internal sealed class SendReactionHandler(
 
         // For private chats, OwnerPeerId is the current user
         var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var membershipChannel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (membershipChannel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // Reacting writes into the channel's message and is broadcast to members, so it requires
+            // membership. GetPeer validates no access hash; resolve membership explicitly.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, membershipChannel!))
+            {
+                return null!;
+            }
+        }
+
         var messageReadModel = await queryProcessor.ProcessAsync(new GetMessageByPeerIdAndMessageIdQuery(ownerPeerId, obj.MsgId)) as MessageReadModel;
         if (messageReadModel == null)
         {
