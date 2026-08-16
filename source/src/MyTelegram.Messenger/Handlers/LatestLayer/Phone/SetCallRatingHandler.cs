@@ -22,6 +22,13 @@ internal sealed class SetCallRatingHandler(
     private readonly IMongoCollection<CallSessionDocument> _callCollection =
         mongoDatabase.GetCollection<CallSessionDocument>("call_sessions");
 
+    /// <summary>Rating is a 1..5 star value; anything outside is clamped rather than stored verbatim.</summary>
+    private const int MinRating = 0;
+    private const int MaxRating = 5;
+
+    /// <summary>Upper bound on the free-text rating comment; the client's rating dialog is a short note.</summary>
+    private const int MaxCommentLength = 255;
+
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Phone.RequestSetCallRating obj)
     {
         if (obj.Peer is not TInputPhoneCall inputPhoneCall)
@@ -42,10 +49,17 @@ internal sealed class SetCallRatingHandler(
             return null!;
         }
 
+        var rating = Math.Clamp(obj.Rating, MinRating, MaxRating);
+        var comment = obj.Comment;
+        if (comment is { Length: > MaxCommentLength })
+        {
+            comment = comment[..MaxCommentLength];
+        }
+
         await _callCollection.UpdateOneAsync(filter,
             Builders<CallSessionDocument>.Update
-                .Set(s => s.Rating, obj.Rating)
-                .Set(s => s.RatingComment, obj.Comment)
+                .Set(s => s.Rating, rating)
+                .Set(s => s.RatingComment, comment)
                 .Set(s => s.RatingUserInitiative, obj.UserInitiative));
 
         return new TUpdates
