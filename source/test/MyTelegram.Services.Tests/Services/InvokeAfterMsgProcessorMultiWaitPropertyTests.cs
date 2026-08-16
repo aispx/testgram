@@ -6,6 +6,7 @@ using MyTelegram;
 using MyTelegram.Abstractions;
 using MyTelegram.Schema;
 using MyTelegram.Services.Services;
+using MyTelegram.Services.Tests.Phone;
 
 namespace MyTelegram.Services.Tests;
 
@@ -52,6 +53,7 @@ public class InvokeAfterMsgProcessorMultiWaitPropertyTests
         var handlerHelper = new FakeHandlerHelper(query.ConstructorId, handler);
         var processor = new InvokeAfterMsgProcessor(
             handlerHelper,
+            new CapturingObjectMessageSender(),
             NullLogger<InvokeAfterMsgProcessor>.Instance);
 
         var input = new FakeRequestInput();

@@ -7,6 +7,7 @@ using MyTelegram.Abstractions;
 using MyTelegram.Messenger;
 using MyTelegram.Schema;
 using MyTelegram.Services.Services;
+using MyTelegram.Services.Tests.Phone;
 
 namespace MyTelegram.Services.Tests;
 
@@ -121,7 +122,35 @@ public class InvokeAfterMsgsHandlerTests
     }
 
     private static InvokeAfterMsgProcessor NewProcessor(IHandlerHelper handlerHelper) =>
-        new(handlerHelper, NullLogger<InvokeAfterMsgProcessor>.Instance);
+        new(handlerHelper, new CapturingObjectMessageSender(), NullLogger<InvokeAfterMsgProcessor>.Instance);
+
+    // Regression: a deferred single-id invokeAfterMsg must deliver its rpc_result when the awaited
+    // dependency completes. Before the fix the deferred handler ran but its result was dropped,
+    // leaving the client waiting forever.
+    [Fact]
+    public async Task DeferredInvokeAfterMsg_delivers_rpc_result_on_dependency_completion()
+    {
+        var query = new FakeQuery();
+        var handler = new RecordingHandler();
+        var handlerHelper = new FakeHandlerHelper(query.ConstructorId, handler);
+        var sender = new CapturingObjectMessageSender();
+        var processor = new InvokeAfterMsgProcessor(
+            handlerHelper, sender, NullLogger<InvokeAfterMsgProcessor>.Instance);
+
+        const long dependencyMsgId = 424242L;
+        processor.Enqueue(dependencyMsgId, new FakeRequestInput(), query);
+
+        // The inner query has not run and nothing has been sent while the dependency is pending.
+        handler.CallCount.ShouldBe(0);
+        sender.RpcMessages.Count.ShouldBe(0);
+
+        // Completing the dependency releases the deferred query.
+        await processor.HandleAsync(dependencyMsgId);
+
+        handler.CallCount.ShouldBe(1);
+        sender.RpcMessages.Count.ShouldBe(1, "deferred invokeAfterMsg result was not delivered to the client");
+        sender.RpcMessages[0].Data.ShouldBe(handler.Result);
+    }
 
     // Instantiates the internal InvokeAfterMsgsHandler via reflection and invokes it through the
     // public IObjectHandler entrypoint.

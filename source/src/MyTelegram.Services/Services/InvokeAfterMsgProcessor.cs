@@ -3,10 +3,14 @@ using System.Threading;
 using System.Threading.Channels;
 using EventFlow.Core;
 using MyTelegram.Schema;
+using MyTelegram.Services.Extensions;
 
 namespace MyTelegram.Services.Services;
 
-public class InvokeAfterMsgProcessor(IHandlerHelper handlerHelper, ILogger<InvokeAfterMsgProcessor> logger) : IInvokeAfterMsgProcessor
+public class InvokeAfterMsgProcessor(
+    IHandlerHelper handlerHelper,
+    IObjectMessageSender objectMessageSender,
+    ILogger<InvokeAfterMsgProcessor> logger) : IInvokeAfterMsgProcessor
     , ISingletonDependency
 {
     private readonly CircularBuffer<long> _recentMessageIds = new(50000);
@@ -110,11 +114,28 @@ public class InvokeAfterMsgProcessor(IHandlerHelper handlerHelper, ILogger<Invok
         _ = ExecuteInnerQueryAsync(handler, item);
     }
 
-    private async Task ExecuteInnerQueryAsync(IObjectHandler handler, MultiWaitItem item)
+    private Task ExecuteInnerQueryAsync(IObjectHandler handler, MultiWaitItem item)
+    {
+        return ExecuteAndRespondAsync(handler, item.Input, item.Query);
+    }
+
+    /// <summary>
+    /// Runs a deferred inner query and delivers its rpc_result to the caller. A deferred
+    /// invokeAfterMsg(s) executes off the original request thread, so — unlike the synchronous path
+    /// in <see cref="DefaultDataProcessor{TData}"/> — its result is not carried back and sent for it.
+    /// Without sending it here the client waits forever for the response to its deferred query.
+    /// Failures keep the pre-existing behaviour: an exception on the deferred path (including an
+    /// unresolved inner constructor) is logged and dropped rather than surfaced as an rpc_error.
+    /// </summary>
+    private async Task ExecuteAndRespondAsync(IObjectHandler handler, IRequestInput input, IObject query)
     {
         try
         {
-            await handler.HandleAsync(item.Input, item.Query)!;
+            var result = await handler.HandleAsync(input, query)!;
+            if (result != null!)
+            {
+                await objectMessageSender.SendMessageToPeerAsync(input.ToRequestInfo(), result);
+            }
         }
         catch (Exception ex)
         {
@@ -201,7 +222,9 @@ public class InvokeAfterMsgProcessor(IHandlerHelper handlerHelper, ILogger<Invok
                 throw new NotImplementedException($"Not supported query: {item.Query.ConstructorId:x2}");
             }
 
-            return handler.HandleAsync(item.Input, item.Query);
+            // Deliver the deferred query's rpc_result; the synchronous path's caller is not around
+            // to send it (see ExecuteAndRespondAsync).
+            return ExecuteAndRespondAsync(handler, item.Input, item.Query);
         }
 
         return Task.CompletedTask;
