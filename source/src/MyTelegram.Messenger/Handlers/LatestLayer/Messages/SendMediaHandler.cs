@@ -125,6 +125,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
+    /// <summary>Official poll text limits: 255 chars for the question, 100 per option.</summary>
+    private const int PollQuestionMaxLength = 255;
+    private const int PollAnswerMaxLength = 100;
+
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMedia obj)
     {
         // Only voice notes are covered by privacyKeyVoiceMessages. This used to match any
@@ -340,6 +344,20 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
     private async Task CreatePollAsync(long creatorUserId, Peer toPeer, TInputMediaPoll inputMediaPoll)
     {
         var poll = inputMediaPoll.Poll;
+
+        // Official limits: 255 chars for the question, 100 per option. Without a cap, oversized text
+        // is persisted in the poll aggregate and embedded in every updateMessagePoll pushed to members.
+        if (poll.Question?.Text == null || poll.Question.Text.Length > PollQuestionMaxLength)
+        {
+            RpcErrors.RpcErrors400.PollQuestionInvalid.ThrowRpcError();
+        }
+
+        if (poll.Answers == null || poll.Answers.Count == 0 ||
+            poll.Answers.Any(p => p.Text?.Text == null || p.Text.Text.Length > PollAnswerMaxLength))
+        {
+            RpcErrors.RpcErrors400.PollAnswersInvalid.ThrowRpcError();
+        }
+
         var solutionEntities = inputMediaPoll.SolutionEntities;
         if (solutionEntities == null && !string.IsNullOrEmpty(inputMediaPoll.Solution))
         {

@@ -25,6 +25,9 @@ internal sealed class AddPollAnswerHandler(
     IChannelAppService channelAppService)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAddPollAnswer, MyTelegram.Schema.IUpdates>
 {
+    /// <summary>Official per-option text limit for poll answers.</summary>
+    private const int MaxAnswerLength = 100;
+
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input,
         MyTelegram.Schema.Messages.RequestAddPollAnswer obj)
     {
@@ -59,6 +62,13 @@ internal sealed class AddPollAnswerHandler(
 
         var text = obj.Answer.Text;
         if (text == null || string.IsNullOrWhiteSpace(text.Text))
+        {
+            RpcErrors.RpcErrors400.PollAnswerInvalid.ThrowRpcError();
+        }
+
+        // Official option-text limit is 100 chars; without a cap a multi-megabyte answer is stored,
+        // pushed to every member and re-broadcast as a service message.
+        if (text!.Text.Length > MaxAnswerLength)
         {
             RpcErrors.RpcErrors400.PollAnswerInvalid.ThrowRpcError();
         }
