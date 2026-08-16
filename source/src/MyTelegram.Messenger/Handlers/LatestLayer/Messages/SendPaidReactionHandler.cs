@@ -100,26 +100,17 @@ internal sealed class SendPaidReactionHandler(
         var anonymous = setting.Type != PaidReactionPrivacyType.Default;
         var anonymousPeerId = setting.Type == PaidReactionPrivacyType.Peer ? setting.PeerId : 0;
 
-        // Keep everyone else's reactions untouched.
-        var newReactions = messageReadModel!.RecentReactions2?
-            .Where(r => r.SenderUserId != input.UserId)
-            .Select(r => new Reaction(
-                r.SenderUserId,
-                r.Reaction is TReactionEmoji e ? e.Emoticon : null,
-                r.Reaction is TReactionCustomEmoji c ? c.DocumentId : (long?)null,
-                r.Date,
-                IsPaid: r.Reaction is TReactionPaid))
-            .ToList() ?? [];
-
-        // Keep our own non-paid reactions: sendPaidReaction must not clear a regular reaction.
-        newReactions.AddRange(messageReadModel.RecentReactions2?
+        // Only this user's reactions are carried; the aggregate keeps everyone else's from its
+        // authoritative state so a concurrent reaction is never clobbered.
+        // Keep our own non-paid reaction: sendPaidReaction must not clear a regular reaction.
+        var ownReactions = messageReadModel!.RecentReactions2?
             .Where(r => r.SenderUserId == input.UserId && r.Reaction is not TReactionPaid)
             .Select(r => new Reaction(
                 r.SenderUserId,
                 r.Reaction is TReactionEmoji e ? e.Emoticon : null,
                 r.Reaction is TReactionCustomEmoji c ? c.DocumentId : (long?)null,
                 r.Date))
-            ?? []);
+            .ToList() ?? [];
 
         // Paid reactions accumulate: previously sent stars stay, this request adds obj.Count more.
         var previousOwnPaidCount = messageReadModel.RecentReactions2?
@@ -127,14 +118,14 @@ internal sealed class SendPaidReactionHandler(
 
         for (var i = 0; i < previousOwnPaidCount + obj.Count; i++)
         {
-            newReactions.Add(new Reaction(input.UserId, null, null, CurrentDate, IsPaid: true,
+            ownReactions.Add(new Reaction(input.UserId, null, null, CurrentDate, IsPaid: true,
                 Anonymous: anonymous, AnonymousPeerId: anonymousPeerId));
         }
 
         var messageId = MessageId.Create(peer.PeerId, obj.MsgId);
         try
         {
-            await commandBus.PublishAsync(new UpdateMessageReactionsCommand(messageId, input.ToRequestInfo(), newReactions));
+            await commandBus.PublishAsync(new UpdateMessageReactionsCommand(messageId, input.ToRequestInfo(), input.UserId, ownReactions));
         }
         catch (DomainError)
         {

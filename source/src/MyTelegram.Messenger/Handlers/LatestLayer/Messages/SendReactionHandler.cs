@@ -61,15 +61,11 @@ internal sealed class SendReactionHandler(
         var newUserReactions = ParseRequestedReactions(obj);
         await ValidateAsync(input, peer, messageReadModel!, newUserReactions);
 
-        var otherReactions = messageReadModel!.RecentReactions2?
-            .Where(r => r.SenderUserId != input.UserId)
-            .Select(r => new Reaction(r.SenderUserId, r.Reaction is TReactionEmoji e ? e.Emoticon : null,
-                r.Reaction is TReactionCustomEmoji c ? c.DocumentId : null, r.Date,
-                IsPaid: r.Reaction is TReactionPaid))
-            .ToList() ?? [];
-
-        // Paid reactions are managed by messages.sendPaidReaction and must survive a plain sendReaction.
-        var ownPaidReactions = messageReadModel.RecentReactions2?
+        // Only this user's reactions are carried; the aggregate keeps everyone else's from its
+        // authoritative state so a concurrent reaction by another user is never clobbered.
+        // Paid reactions are managed by messages.sendPaidReaction and must survive a plain sendReaction,
+        // so the caller's own paid reactions are preserved here.
+        var ownPaidReactions = messageReadModel!.RecentReactions2?
             .Where(r => r.SenderUserId == input.UserId && r.Reaction is TReactionPaid)
             .Select(r => new Reaction(r.SenderUserId, null, null, r.Date, IsPaid: true))
             .ToList() ?? [];
@@ -79,9 +75,8 @@ internal sealed class SendReactionHandler(
             .Select(r => r.Reaction)
             .ToList() ?? [];
 
-        var newReactions = new List<Reaction>(otherReactions);
-        newReactions.AddRange(ownPaidReactions);
-        newReactions.AddRange(newUserReactions.Select(r => r switch
+        var ownReactions = new List<Reaction>(ownPaidReactions);
+        ownReactions.AddRange(newUserReactions.Select(r => r switch
         {
             TReactionEmoji emoji => new Reaction(input.UserId, emoji.Emoticon, null, CurrentDate, obj.Big),
             TReactionCustomEmoji custom => new Reaction(input.UserId, null, custom.DocumentId, CurrentDate, obj.Big),
@@ -89,13 +84,13 @@ internal sealed class SendReactionHandler(
         }));
 
         var messageId = MessageId.Create(ownerPeerId, obj.MsgId);
-        await PublishReactionsAsync(messageId, input, newReactions);
+        await PublishReactionsAsync(messageId, input, ownReactions);
 
         // For PM inbox messages, also update the outbox copy at the sender's side
         if (peer.PeerType == PeerType.User && !messageReadModel.Out && messageReadModel.SenderMessageId > 0)
         {
             var outboxMessageId = MessageId.Create(messageReadModel.SenderUserId, messageReadModel.SenderMessageId);
-            await PublishReactionsAsync(outboxMessageId, input, newReactions);
+            await PublishReactionsAsync(outboxMessageId, input, ownReactions);
         }
 
         // Reactions on Saved Messages act as tags, so keep the per-tag message counters in sync.
@@ -288,11 +283,11 @@ internal sealed class SendReactionHandler(
         }
     }
 
-    private async Task PublishReactionsAsync(MessageId messageId, IRequestInput input, List<Reaction> reactions)
+    private async Task PublishReactionsAsync(MessageId messageId, IRequestInput input, List<Reaction> ownReactions)
     {
         try
         {
-            await commandBus.PublishAsync(new UpdateMessageReactionsCommand(messageId, input.ToRequestInfo(), reactions));
+            await commandBus.PublishAsync(new UpdateMessageReactionsCommand(messageId, input.ToRequestInfo(), input.UserId, ownReactions));
         }
         catch (DomainError)
         {

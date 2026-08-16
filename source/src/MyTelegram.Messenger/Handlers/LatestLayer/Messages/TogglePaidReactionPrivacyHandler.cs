@@ -74,14 +74,16 @@ internal sealed class TogglePaidReactionPrivacyHandler(
         var anonymous = setting.Type != PaidReactionPrivacyType.Default;
         var anonymousPeerId = setting.Type == PaidReactionPrivacyType.Peer ? setting.PeerId : 0;
 
+        // Only this user's reactions are carried; the aggregate keeps everyone else's from its
+        // authoritative state so a concurrent reaction is never clobbered. Keep our own non-paid
+        // reaction and re-emit our paid reactions with the new anonymity setting.
         var reactions = messageReadModel.RecentReactions2?
-            .Where(r => !(r.SenderUserId == input.UserId && r.Reaction is TReactionPaid))
+            .Where(r => r.SenderUserId == input.UserId && r.Reaction is not TReactionPaid)
             .Select(r => new Reaction(
                 r.SenderUserId,
                 r.Reaction is TReactionEmoji e ? e.Emoticon : null,
                 r.Reaction is TReactionCustomEmoji c ? c.DocumentId : null,
-                r.Date,
-                IsPaid: r.Reaction is TReactionPaid))
+                r.Date))
             .ToList() ?? [];
 
         for (var i = 0; i < ownPaidCount; i++)
@@ -93,7 +95,7 @@ internal sealed class TogglePaidReactionPrivacyHandler(
         try
         {
             await commandBus.PublishAsync(new UpdateMessageReactionsCommand(
-                MessageId.Create(peer.PeerId, msgId), input.ToRequestInfo(), reactions));
+                MessageId.Create(peer.PeerId, msgId), input.ToRequestInfo(), input.UserId, reactions));
         }
         catch (DomainError)
         {

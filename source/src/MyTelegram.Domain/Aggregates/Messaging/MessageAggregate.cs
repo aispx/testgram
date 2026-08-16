@@ -27,11 +27,21 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
     }
 
     [DoNotInheritRequestCommand]
-    public void UpdateMessageReactions(RequestInfo requestInfo, List<Reaction> reactions)
+    public void UpdateMessageReactions(RequestInfo requestInfo, long senderUserId, List<Reaction> senderReactions)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
         // The previous set is carried in the event so subscribers can report old_reactions to bots.
         var oldReactions = _state.RecentReactions.ToList();
+
+        // Merge against authoritative state instead of trusting a full list precomputed by the caller
+        // from the (eventually consistent) read model. Two users reacting to the same message would
+        // otherwise each rebuild the list without the other's reaction and the second write would clobber
+        // the first. Keep everyone else's reactions untouched and replace only this sender's set; on an
+        // optimistic-concurrency retry EventFlow reloads state and re-runs this, so the merge always sees
+        // the latest reactions.
+        var reactions = _state.RecentReactions.Where(r => r.UserId != senderUserId).ToList();
+        reactions.AddRange(senderReactions);
+
         Emit(new MessageReactionsUpdatedEvent(requestInfo, _state.MessageItem, reactions, oldReactions));
     }
 
