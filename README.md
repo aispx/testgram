@@ -519,5 +519,5 @@ If you find Testgram helpful, please consider giving the project a ⭐️.
 ## Feedback
 
 - Contact author: https://t.me/glebxdlol
-- Testgram Channel: https://t.me/testgram
+- Testgram Channel: https://t.me/testgramrofl
 - Discussion Group: https://t.me/+etFTfnAPU7Q1M2Ri

@@ -522,5 +522,5 @@ cd ../../docker/compose && docker compose down && docker compose up -d
 ## Обратная связь
 
 - Связаться с автором: https://t.me/glebxdlol
-- Канал Testgram: https://t.me/testgram
+- Канал Testgram: https://t.me/testgramrofl
 - Группа обсуждений: https://t.me/+etFTfnAPU7Q1M2Ri
