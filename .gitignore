@@ -408,3 +408,6 @@ docker/docker-backup/
 
 # Vendored telethon fork used for manual client-side testing — it is its own git clone
 telethon-testgram/
+
+# OMC (oh-my-claudecode) plugin per-session state — rewritten on every tool call
+.omc/

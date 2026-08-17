@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"grep -n \\\": RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAddPollAnswer\\\" AddPollAnswerHandler.cs && sed -n \\\"$(grep -n 'RequestAddPollAnswer' AddPollAnswerHandler.cs | head -1 ...",
-  "error": "Exit code 2\nugrep: warning: AddPollAnswerHandler.cs: No such file or directory",
-  "timestamp": "2026-08-16T16:00:42.057Z",
-  "retry_count": 1
-}
