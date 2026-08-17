@@ -173,7 +173,7 @@ public class PushNotificationEventHandler(
             : new List<long>();
 
         var command = new UnRegisterDeviceCommand(
-            PushDeviceId.Create(device.Token),
+            PushDeviceId.Create(device.Token, device.UserId),
             RequestInfo.Empty,
             device.TokenType,
             device.Token,

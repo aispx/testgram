@@ -2,7 +2,7 @@
 //
 // For any device, if the sender returns the outcome TokenInvalidated (APNs 410, FCM 404
 // UNREGISTERED), the delivery service (PushNotificationEventHandler) publishes an
-// UnRegisterDeviceCommand for that device's Token (PushDeviceId.Create(device.Token)); for any other
+// UnRegisterDeviceCommand for that device's Token (PushDeviceId.Create(device.Token, device.UserId)); for any other
 // outcome (Delivered, TransientFailure) the device is not removed (no UnRegisterDeviceCommand is
 // published).
 //
@@ -10,7 +10,7 @@
 // IPushDispatcher returning a generated PushSendOutcome, a query processor returning exactly one
 // device, an offline IPushOnlineFilter, an unlocked IDeviceLockStore, and a capturing ICommandBus.
 // It then asserts the biconditional: UnRegisterDeviceCommand is published iff the outcome is
-// TokenInvalidated, and (when published) it targets PushDeviceId.Create(device.Token).
+// TokenInvalidated, and (when published) it targets PushDeviceId.Create(device.Token, device.UserId).
 //
 // Validates: Requirements 3.4
 
@@ -123,7 +123,7 @@ public class Property08_StaleTokenUnregistersTests
             // The stale-token signal removes the device for its exact Token (Req 3.4).
             unregisterCommands.Count.ShouldBe(1, $"outcome={outcome}");
             unregisterCommands[0].AggregateId.ShouldBe(
-                PushDeviceId.Create(device.Token),
+                PushDeviceId.Create(device.Token, device.UserId),
                 $"unregister must target PushDeviceId.Create(token) for token '{device.Token}'");
         }
         else

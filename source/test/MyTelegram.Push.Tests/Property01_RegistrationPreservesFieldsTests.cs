@@ -23,7 +23,7 @@ public class Property01_RegistrationPreservesFieldsTests
     {
         // Arrange: drive the real aggregate exactly as RegisterDeviceHandler does. The aggregate is
         // keyed by token, so a fresh aggregate is unregistered and registration always emits.
-        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(reg.Token));
+        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(reg.Token, reg.UserId));
         var requestInfo = RequestInfo.Empty with
         {
             UserId = reg.UserId,
@@ -81,11 +81,11 @@ public class Property01_RegistrationPreservesFieldsTests
             registeredEvent,
             Metadata.Empty,
             DateTimeOffset.UtcNow,
-            PushDeviceId.Create(reg.Token),
+            PushDeviceId.Create(reg.Token, reg.UserId),
             1);
         readModel.ApplyAsync(null!, domainEvent, CancellationToken.None).GetAwaiter().GetResult();
 
-        readModel.Id.ShouldBe(PushDeviceId.Create(reg.Token).Value);
+        readModel.Id.ShouldBe(PushDeviceId.Create(reg.Token, reg.UserId).Value);
         AssertFieldsPreserved(reg,
             readModel.UserId,
             readModel.PermAuthKeyId,

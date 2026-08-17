@@ -91,7 +91,7 @@ public class Property33_OtherUidsRoutingTests
             registeredEvent,
             Metadata.Empty,
             DateTimeOffset.UtcNow,
-            PushDeviceId.Create(fake.Token),
+            PushDeviceId.Create(fake.Token, fake.UserId),
             1);
         readModel.ApplyAsync(null!, domainEvent, CancellationToken.None).GetAwaiter().GetResult();
         return readModel;

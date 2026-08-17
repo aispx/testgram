@@ -28,18 +28,23 @@ internal sealed class RegisterDeviceHandler(ICommandBus commandBus, IPushTokenVa
             throw new RpcException(error.Value);
         }
 
-        // other_uids lists sibling accounts a multi-account client claims share this device, and the push
-        // dispatcher routes a recipient's messages to any device that merely lists that recipient in
-        // OtherUids. The client asserts these ids without proof, and this fork has no device-to-accounts
-        // registry the server could verify them against (each account session has its own PermAuthKeyId,
-        // so nothing correlates them). Honoring unverified ids would let any caller register their own
-        // device as a recipient of another user's push payloads — including plaintext message bodies.
-        // Only the caller's own account is trusted here; restoring multi-account routing requires a
-        // device-account registry. The LayerN converter already uses this safe shape (OtherUids = []).
+        // Ignore the caller-supplied other_uids entirely. It lists sibling accounts a multi-account
+        // client claims share this device, but the client asserts them without proof, and honouring them
+        // would let any caller register their own device as a recipient of another user's push payloads
+        // (including plaintext message bodies). Multi-account routing is instead recovered safely by
+        // scoping the device identity to the authenticated account (PushDeviceId.Create(token, userId)):
+        // every account on the shared token registers its own row from its own session, and the
+        // dispatcher routes by owner. No account can register a token on another account's behalf.
         var otherUids = new List<long>();
 
-        var command = new RegisterDeviceCommand(PushDeviceId.Create(obj.Token), input.ToRequestInfo(), input.UserId, input.PermAuthKeyId, obj.TokenType, obj.Token, obj.NoMuted, obj.AppSandbox, obj.Secret, otherUids);
+        var command = new RegisterDeviceCommand(PushDeviceId.Create(obj.Token, input.UserId), input.ToRequestInfo(), input.UserId, input.PermAuthKeyId, obj.TokenType, obj.Token, obj.NoMuted, obj.AppSandbox, obj.Secret, otherUids);
         await commandBus.PublishAsync(command);
+
+        // Migrate away from the pre-account-scoped row for this token so its last owner does not keep
+        // receiving a duplicate push. A no-op once the legacy row is gone.
+        var legacyCleanup = new UnRegisterDeviceCommand(PushDeviceId.CreateLegacy(obj.Token), input.ToRequestInfo(), obj.TokenType, obj.Token, otherUids);
+        await commandBus.PublishAsync(legacyCleanup);
+
         return new TBoolTrue();
     }
 }

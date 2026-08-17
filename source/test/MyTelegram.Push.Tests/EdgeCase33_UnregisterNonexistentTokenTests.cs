@@ -3,7 +3,7 @@
 // account.unregisterDevice for a token that has no registered device is a no-op: the
 // PushDeviceAggregate emits no event and does not throw — this is the path on which the
 // handler returns boolTrue (Req 3.3). A fresh aggregate (keyed by token via
-// PushDeviceId.Create(token)) has never seen a PushDeviceRegisteredEvent, so unregistering
+// PushDeviceId.Create(token, 12345L)) has never seen a PushDeviceRegisteredEvent, so unregistering
 // it must leave state unchanged (no uncommitted events).
 //
 // Validates: Requirements 3.3
@@ -22,7 +22,7 @@ public class EdgeCase33_UnregisterNonexistentTokenTests
     {
         // Arrange: a fresh aggregate for a token that was never registered.
         const string token = "never-registered-token";
-        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(token));
+        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(token, 12345L));
         var requestInfo = RequestInfo.Empty with
         {
             UserId = 12345L,

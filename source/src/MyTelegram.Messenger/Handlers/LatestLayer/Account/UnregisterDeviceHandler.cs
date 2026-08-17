@@ -16,10 +16,10 @@ internal sealed class UnregisterDeviceHandler(ICommandBus commandBus, IQueryProc
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestUnregisterDevice obj)
     {
-        // The device aggregate is keyed solely on the token, so without an ownership check any caller
-        // who knows or guesses a victim's push token could delete that device and silently stop the
-        // victim's notifications. Only the device owner, or an account listed in its OtherUids, may
-        // unregister it. Provider-driven cleanup (PushNotificationEventHandler) publishes the command
+        // The device row is scoped to (token, account), so this only ever targets the caller's own
+        // registration — a foreign account's row for the same token is a different aggregate and cannot
+        // be touched here. The ownership lookup keeps the documented "unknown token = silent no-op"
+        // behaviour. Provider-driven cleanup (PushNotificationEventHandler) publishes the command
         // directly and does not go through this gate.
         var callerDevices = await queryProcessor.ProcessAsync(new GetPushDevicesForRecipientQuery(input.UserId));
         var ownsDevice = callerDevices.Any(p => string.Equals(p.Token, obj.Token, StringComparison.Ordinal));
@@ -30,7 +30,7 @@ internal sealed class UnregisterDeviceHandler(ICommandBus commandBus, IQueryProc
             return new TBoolTrue();
         }
 
-        var command = new UnRegisterDeviceCommand(PushDeviceId.Create(obj.Token), input.ToRequestInfo(), obj.TokenType, obj.Token, obj.OtherUids.ToList());
+        var command = new UnRegisterDeviceCommand(PushDeviceId.Create(obj.Token, input.UserId), input.ToRequestInfo(), obj.TokenType, obj.Token, obj.OtherUids.ToList());
         await commandBus.PublishAsync(command, CancellationToken.None);
         return new TBoolTrue();
     }

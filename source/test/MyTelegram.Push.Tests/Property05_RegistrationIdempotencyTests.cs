@@ -58,7 +58,7 @@ public class Property05_RegistrationIdempotencyTests
 
     private static PushDeviceAggregate RegisterAll(DeviceRegistration r, params long[] dateMs)
     {
-        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(r.Token));
+        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(r.Token, r.UserId));
         foreach (var date in dateMs)
         {
             aggregate.RegisterDevice(

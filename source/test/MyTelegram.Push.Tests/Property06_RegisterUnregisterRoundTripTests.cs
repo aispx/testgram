@@ -29,7 +29,7 @@ public class Property06_RegisterUnregisterRoundTripTests
     {
         // Arrange: register the device exactly as RegisterDeviceHandler does. Emit applies the event
         // to the aggregate state, so the aggregate is now IsRegistered for this token.
-        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(reg.Token));
+        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(reg.Token, reg.UserId));
         var requestInfo = RequestInfo.Empty with
         {
             UserId = reg.UserId,
@@ -61,7 +61,7 @@ public class Property06_RegisterUnregisterRoundTripTests
             registeredEvent,
             Metadata.Empty,
             DateTimeOffset.UtcNow,
-            PushDeviceId.Create(reg.Token),
+            PushDeviceId.Create(reg.Token, reg.UserId),
             1);
         readModel.ApplyAsync(null!, registeredDomainEvent, CancellationToken.None).GetAwaiter().GetResult();
         readModel.Token.ShouldBe(reg.Token);
@@ -84,12 +84,12 @@ public class Property06_RegisterUnregisterRoundTripTests
         // The aggregate state reflects removal.
         // Projecting the unregister event onto the read model deletes the device
         // (context.MarkForDeletion()), i.e. the device is removed from PushDeviceReadModel (Req 3.1).
-        var context = new ReadModelContext(null!, PushDeviceId.Create(reg.Token).Value, false);
+        var context = new ReadModelContext(null!, PushDeviceId.Create(reg.Token, reg.UserId).Value, false);
         var unregisteredDomainEvent = new DomainEvent<PushDeviceAggregate, PushDeviceId, PushDeviceUnRegisteredEvent>(
             unregisteredEvent,
             Metadata.Empty,
             DateTimeOffset.UtcNow,
-            PushDeviceId.Create(reg.Token),
+            PushDeviceId.Create(reg.Token, reg.UserId),
             2);
         readModel.ApplyAsync(context, unregisteredDomainEvent, CancellationToken.None).GetAwaiter().GetResult();
 

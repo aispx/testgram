@@ -42,7 +42,7 @@ public class Property07_UnregisterClearsAllBindingsTests
         // read-model projection (register => upsert, unregister => delete).
         var store = new Dictionary<string, FakePushDeviceReadModel>(StringComparer.Ordinal);
 
-        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(reg.Token));
+        var aggregate = new PushDeviceAggregate(PushDeviceId.Create(reg.Token, reg.UserId));
 
         // --- Register -------------------------------------------------------------------------
         aggregate.RegisterDevice(
