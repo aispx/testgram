@@ -6,7 +6,8 @@ public class ChannelMemberReadModel : IChannelMemberReadModel,
     //IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelMemberJoinedEvent>,
     IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelMemberBannedRightsChangedEvent>,
     IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelMemberLeftEvent>,
-    IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelAdminEditedEvent2>
+    IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelAdminEditedEvent2>,
+    IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelMemberSubscriptionExtendedEvent>
 
 {
     public int BannedRights { get; private set; }
@@ -98,6 +99,15 @@ public class ChannelMemberReadModel : IChannelMemberReadModel,
 
         return Task.CompletedTask;
     }
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<ChannelMemberAggregate, ChannelMemberId, ChannelMemberSubscriptionExtendedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        SubscriptionUntilDate = domainEvent.AggregateEvent.SubscriptionUntilDate;
+
+        return Task.CompletedTask;
+    }
+
     public Task ApplyAsync(IReadModelContext context, IDomainEvent<ChannelMemberAggregate, ChannelMemberId, ChannelAdminEditedEvent2> domainEvent, CancellationToken cancellationToken)
     {
         AdminRights = domainEvent.AggregateEvent.AdminRights;

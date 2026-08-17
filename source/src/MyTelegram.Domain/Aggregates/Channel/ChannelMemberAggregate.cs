@@ -59,6 +59,20 @@ public class ChannelMemberAggregate : SnapshotAggregateRoot<ChannelMemberAggrega
             ));
     }
 
+    /// <summary>
+    /// Pushes the paid-for period of a Telegram Star subscription bought through a paid invite
+    /// link forward, so channel.subscription_until_date keeps matching the charged subscription.
+    /// See https://corefork.telegram.org/api/invites#paid-invite-links
+    /// </summary>
+    public void ExtendChannelMemberSubscription(RequestInfo requestInfo,
+        long channelId,
+        long userId,
+        int subscriptionUntilDate)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new ChannelMemberSubscriptionExtendedEvent(requestInfo, channelId, userId, subscriptionUntilDate));
+    }
+
     public void CreateChannelCreator(RequestInfo requestInfo,
         long channelId,
         long userId,

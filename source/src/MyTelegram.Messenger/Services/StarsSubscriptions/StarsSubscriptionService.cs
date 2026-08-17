@@ -39,6 +39,24 @@ public class StarsSubscriptionDocument
 
     /// <summary>First purchase date.</summary>
     public int Date { get; set; }
+
+    /// <summary>
+    /// The <see cref="UntilDate"/> the "your balance is too low" warning was last sent for, so the
+    /// renewal worker warns once per period instead of once per poll.
+    /// </summary>
+    public int LowBalanceWarningUntilDate { get; set; }
+
+    /// <summary>
+    /// The <see cref="UntilDate"/> a failed renewal was last reported for. Renewal keeps being
+    /// retried while the grace period runs, but the user is only told about it once.
+    /// </summary>
+    public int RenewalFailedUntilDate { get; set; }
+
+    /// <summary>
+    /// When a renewal of the current period was last attempted. Acts as a short lease so two
+    /// command servers running the renewal worker cannot charge the same period twice.
+    /// </summary>
+    public int RenewalAttemptDate { get; set; }
 }
 
 public interface IStarsSubscriptionService
@@ -68,6 +86,30 @@ public interface IStarsSubscriptionService
         string? channelTitle);
 
     Task SetCanceledAsync(long userId, string subscriptionId, bool canceled);
+
+    /// <summary>
+    /// Subscriptions with auto-renewal still on whose paid period ends no later than
+    /// <paramref name="untilDateBefore"/>: the ones the renewal worker has to warn about or charge.
+    /// </summary>
+    Task<IReadOnlyList<StarsSubscriptionDocument>> GetRenewableAsync(int untilDateBefore, int limit);
+
+    /// <summary>
+    /// Records that the low balance warning for <paramref name="untilDate"/> has been sent.
+    /// </summary>
+    Task MarkLowBalanceWarningSentAsync(string subscriptionId, int untilDate);
+
+    /// <summary>
+    /// Records that a failed renewal of the period ending at <paramref name="untilDate"/> has been
+    /// reported to the user.
+    /// </summary>
+    Task MarkRenewalFailureReportedAsync(string subscriptionId, int untilDate);
+
+    /// <summary>
+    /// Takes a <paramref name="leaseSeconds"/> long lease on renewing the period that ends at
+    /// <paramref name="untilDate"/>. Returns false when the subscription has meanwhile been
+    /// renewed or another worker is already charging it.
+    /// </summary>
+    Task<bool> TryClaimRenewalAsync(string subscriptionId, int untilDate, int now, int leaseSeconds);
 }
 
 public class StarsSubscriptionService(IMongoDatabase database) : IStarsSubscriptionService, ITransientDependency
@@ -163,5 +205,41 @@ public class StarsSubscriptionService(IMongoDatabase database) : IStarsSubscript
         return Collection.UpdateOneAsync(
             x => x.Id == subscriptionId && x.UserId == userId,
             Builders<StarsSubscriptionDocument>.Update.Set(x => x.Canceled, canceled));
+    }
+
+    public async Task<IReadOnlyList<StarsSubscriptionDocument>> GetRenewableAsync(int untilDateBefore, int limit)
+    {
+        return await Collection
+            .Find(x => !x.Canceled && !x.BotCanceled && x.UntilDate <= untilDateBefore)
+            .SortBy(x => x.UntilDate)
+            .Limit(limit)
+            .ToListAsync();
+    }
+
+    public Task MarkLowBalanceWarningSentAsync(string subscriptionId, int untilDate)
+    {
+        return Collection.UpdateOneAsync(
+            x => x.Id == subscriptionId,
+            Builders<StarsSubscriptionDocument>.Update.Set(x => x.LowBalanceWarningUntilDate, untilDate));
+    }
+
+    public Task MarkRenewalFailureReportedAsync(string subscriptionId, int untilDate)
+    {
+        return Collection.UpdateOneAsync(
+            x => x.Id == subscriptionId,
+            Builders<StarsSubscriptionDocument>.Update.Set(x => x.RenewalFailedUntilDate, untilDate));
+    }
+
+    public async Task<bool> TryClaimRenewalAsync(string subscriptionId, int untilDate, int now, int leaseSeconds)
+    {
+        // The filter also pins UntilDate: a subscription another worker has already renewed no
+        // longer matches, so the charge cannot run twice for the same period.
+        var result = await Collection.UpdateOneAsync(
+            x => x.Id == subscriptionId
+                 && x.UntilDate == untilDate
+                 && x.RenewalAttemptDate <= now - leaseSeconds,
+            Builders<StarsSubscriptionDocument>.Update.Set(x => x.RenewalAttemptDate, now));
+
+        return result.ModifiedCount > 0;
     }
 }

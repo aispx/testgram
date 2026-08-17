@@ -8,6 +8,7 @@ public static class ServerLanguage
 {
     public const string English = "en";
     public const string Russian = "ru";
+    public const string Ukrainian = "uk";
 
     /// <summary>Used when the client reported no language, or one that has no translation.</summary>
     public const string Default = English;
@@ -30,6 +31,7 @@ public static class ServerLanguage
         {
             Russian => Russian,
             English => English,
+            Ukrainian => Ukrainian,
             _ => Default
         };
     }

@@ -8,7 +8,8 @@ public class ChannelMemberState : AggregateState<ChannelMemberAggregate, Channel
     IApply<ChannelMemberBannedRightsChangedEvent>,
     IApply<ChannelMemberLeftEvent>,
     IApply<ChannelMemberLeftEvent2>,
-    IApply<ChannelAdminEditedEvent2>
+    IApply<ChannelAdminEditedEvent2>,
+    IApply<ChannelMemberSubscriptionExtendedEvent>
 {
     public bool Banned { get; private set; }
 
@@ -68,6 +69,12 @@ public class ChannelMemberState : AggregateState<ChannelMemberAggregate, Channel
     public void Apply(ChannelMemberLeftEvent2 aggregateEvent)
     {
         Left = true;
+    }
+
+    // The subscription period lives on the read model only; the aggregate emits the event so
+    // channel.subscription_until_date can follow a renewal.
+    public void Apply(ChannelMemberSubscriptionExtendedEvent aggregateEvent)
+    {
     }
 
     public void Apply(ChannelAdminEditedEvent2 aggregateEvent)

@@ -22,6 +22,8 @@ public class ServerLanguageTests
     [InlineData("  ru-ru  ", ServerLanguage.Russian)]
     [InlineData("en", ServerLanguage.English)]
     [InlineData("en-US", ServerLanguage.English)]
+    [InlineData("uk", ServerLanguage.Ukrainian)]
+    [InlineData("uk-UA", ServerLanguage.Ukrainian)]
     public void Normalizes_regional_and_cased_variants_to_the_base_language(string langCode, string expected)
     {
         ServerLanguage.Normalize(langCode).ShouldBe(expected);
@@ -43,10 +45,14 @@ public class ServerLanguageTests
     {
         var english = ServerTexts.PremiumLastDayPsa(ServerLanguage.English);
         var russian = ServerTexts.PremiumLastDayPsa(ServerLanguage.Russian);
+        var ukrainian = ServerTexts.PremiumLastDayPsa(ServerLanguage.Ukrainian);
 
         english.ShouldNotBeNullOrWhiteSpace();
         russian.ShouldNotBeNullOrWhiteSpace();
+        ukrainian.ShouldNotBeNullOrWhiteSpace();
         russian.ShouldNotBe(english);
+        ukrainian.ShouldNotBe(english);
+        ukrainian.ShouldNotBe(russian);
     }
 
     [Fact]
@@ -54,7 +60,7 @@ public class ServerLanguageTests
     {
         // SetCustomVerificationHandler locates iconText in the rendered message to place the
         // custom-emoji entity; a translation that dropped it would silently lose the icon.
-        foreach (var language in new[] { ServerLanguage.English, ServerLanguage.Russian })
+        foreach (var language in new[] { ServerLanguage.English, ServerLanguage.Russian, ServerLanguage.Ukrainian })
         {
             var message = ServerTexts.CustomVerificationGranted(language, "@mybot", "⭐", "Acme");
 
