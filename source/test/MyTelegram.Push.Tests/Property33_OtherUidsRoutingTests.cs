@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 33: Маршрутизация по OtherUids выбирает устройство для любого члена.
+// Feature: push-updates, Property 33: Routing by OtherUids picks a device for any member.
 // For any set of devices registered with arbitrary owner UserId and OtherUids, the recipient
 // push-devices query (GetPushDevicesForRecipientQueryHandler) returns a device if and only if the
 // recipient belongs to OtherUids ∪ {UserId}. This biconditional is asserted over arbitrary

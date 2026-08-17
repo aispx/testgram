@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 6: Round-trip регистрация/отмена удаляет устройство.
+// Feature: push-updates, Property 6: Round-trip register/unregister removes the device.
 //
 // For any previously registered device, calling account.unregisterDevice with its Token removes the
 // device from PushDeviceReadModel and returns boolTrue.
@@ -22,7 +22,7 @@ namespace MyTelegram.Push.Tests;
 
 public class Property06_RegisterUnregisterRoundTripTests
 {
-    // Property 6: Round-trip регистрация/отмена удаляет устройство
+    // Property 6: Round-trip register/unregister removes the device
     // Validates: Requirements 3.1
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Unregister_of_registered_device_removes_it(DeviceRegistration reg)

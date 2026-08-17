@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 29: Условное включение report_delivery_until_date.
+// Feature: push-updates, Property 29: Conditional inclusion of report_delivery_until_date.
 //
 // For any new-message notification, the field custom.report_delivery_until_date is present in the
 // resulting payload (object model AND serialized JSON) if and only if the originating message has a
@@ -29,7 +29,7 @@ public class Property29_ReportDeliveryUntilDateTests
     /// <summary>The JSON field name official clients read for messages.reportMessagesDelivery scheduling.</summary>
     private const string JsonField = "report_delivery_until_date";
 
-    // Property 29: Условное включение report_delivery_until_date
+    // Property 29: Conditional inclusion of report_delivery_until_date
     // Validates: Requirements 8.4
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(Property29Arbitraries) })]
     public void Report_delivery_until_date_present_iff_message_has_nonempty_value(ReportDeliveryCase testCase)

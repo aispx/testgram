@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 36: Пустые учётные данные означают выключенный провайдер.
+// Feature: push-updates, Property 36: Empty credentials mean the provider is disabled.
 //
 // For any provider configuration, the computed Enabled flag of each provider is TRUE iff the set of
 // credentials required by that provider are ALL present (non-blank), and FALSE iff any required
@@ -107,7 +107,7 @@ public class Property36_EmptyCredentialsDisabledTests
         }
     }
 
-    // Property 36: Пустые учётные данные означают выключенный провайдер
+    // Property 36: Empty credentials mean the provider is disabled
     // Validates: Requirements 11.4
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(Arbitraries) })]
     public void Empty_credentials_mean_disabled_provider(EmptyCredentialsCase c)

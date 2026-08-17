@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 10: Текстовое сообщение в личном чате даёт MESSAGE_TEXT.
+// Feature: push-updates, Property 10: A text message in a private chat yields MESSAGE_TEXT.
 //
 // For any text message in a personal (user-to-user) chat — non-empty/non-whitespace text, no media,
 // not a service message and with MessageActionType.None — the payload builder
@@ -23,7 +23,7 @@ namespace MyTelegram.Push.Tests;
 
 public class Property10_PersonalTextMessageTests
 {
-    // Property 10: Текстовое сообщение в личном чате даёт MESSAGE_TEXT
+    // Property 10: A text message in a private chat yields MESSAGE_TEXT
     // Validates: Requirements 4.2
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(Property10Arbitraries) })]
     public void Personal_text_message_yields_MESSAGE_TEXT_with_sender_and_text(PersonalTextMessageCase testCase)

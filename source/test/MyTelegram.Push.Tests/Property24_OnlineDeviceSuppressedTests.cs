@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 24: Онлайн-устройство подавляется.
+// Feature: push-updates, Property 24: An online device is suppressed.
 //
 // For any device for which PushOnlineFilter.IsOnlineAsync(PermAuthKeyId) returns true, the delivery
 // service (PushNotificationEventHandler) does NOT send a push to that device; conversely, when the
@@ -39,7 +39,7 @@ public class Property24_OnlineDeviceSuppressedTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 24: Онлайн-устройство подавляется
+    // Property 24: An online device is suppressed
     // Validates: Requirements 7.1
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Online_device_is_suppressed_offline_device_is_sent(

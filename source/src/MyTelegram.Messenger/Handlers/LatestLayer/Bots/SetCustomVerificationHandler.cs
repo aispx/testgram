@@ -2,10 +2,11 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Messenger.Services.Interfaces;
+using MyTelegram.Messenger.Services.Localization;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 
-internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase, IUserAppService userAppService, IChannelAppService channelAppService, IMessageAppService messageAppService) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetCustomVerification, IBool>
+internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase, IUserAppService userAppService, IChannelAppService channelAppService, IMessageAppService messageAppService, IUserLanguageResolver userLanguageResolver) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetCustomVerification, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSetCustomVerification obj)
     {
@@ -106,27 +107,35 @@ internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase,
             : $"@{botReadModel.UserName}";
         var company = string.IsNullOrWhiteSpace(description) ? botName : description;
         var iconText = await GetCustomEmojiAltAsync(iconDocumentId) ?? "⭐";
-        var message = $"Бот {botName} выдал вам верификацию.\nПредложенный статус:\n{iconText} Аккаунт верифицирован организацией «{company}».";
-        var entities = BuildCustomEmojiEntities(message, iconText, iconDocumentId);
         var now = DateTime.UtcNow.ToTimestamp();
 
-        var sendInputs = recipients.Select(recipientId => new SendMessageInput(
-            RequestInfo.Empty with
-            {
-                UserId = MyTelegramConsts.NotificationServiceUserId,
-                Layer = MyTelegramConsts.Layer,
-                Date = now,
-                RequestId = Guid.NewGuid(),
-                DeviceType = DeviceType.Android
-            },
-            MyTelegramConsts.NotificationServiceUserId,
-            new Peer(PeerType.User, recipientId),
-            message,
-            Random.Shared.NextInt64(),
-            entities: entities,
-            sendMessageType: SendMessageType.Text,
-            messageType: MessageType.Text
-        )).ToList();
+        // Recipients are the badge owner and, for channels, its admins - each of them may run a
+        // client in a different language, so the text is built per recipient.
+        var languages = await userLanguageResolver.GetLanguagesAsync(recipients);
+
+        var sendInputs = recipients.Select(recipientId =>
+        {
+            var language = languages.TryGetValue(recipientId, out var value) ? value : ServerLanguage.Default;
+            var message = ServerTexts.CustomVerificationGranted(language, botName, iconText, company);
+
+            return new SendMessageInput(
+                RequestInfo.Empty with
+                {
+                    UserId = MyTelegramConsts.NotificationServiceUserId,
+                    Layer = MyTelegramConsts.Layer,
+                    Date = now,
+                    RequestId = Guid.NewGuid(),
+                    DeviceType = DeviceType.Android
+                },
+                MyTelegramConsts.NotificationServiceUserId,
+                new Peer(PeerType.User, recipientId),
+                message,
+                Random.Shared.NextInt64(),
+                entities: BuildCustomEmojiEntities(message, iconText, iconDocumentId),
+                sendMessageType: SendMessageType.Text,
+                messageType: MessageType.Text
+            );
+        }).ToList();
 
         await messageAppService.SendMessageAsync(sendInputs);
     }

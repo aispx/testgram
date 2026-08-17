@@ -4,7 +4,7 @@ using MyTelegram.Messenger;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 39: Эффективный таймаут не меньше 5 секунд.
+// Feature: push-updates, Property 39: The effective timeout is never below 5 seconds.
 //
 // For any configured PushTimeoutSec value, the actual HTTP request timeout equals
 // Max(5, PushTimeoutSec) seconds. The senders (ApnsPushSender / FcmPushSender / WebPushSender)
@@ -27,7 +27,7 @@ public class Property39_EffectiveTimeoutTests
     private static TimeSpan EffectiveTimeout(int pushTimeoutSec) =>
         TimeSpan.FromSeconds(Math.Max(5, pushTimeoutSec));
 
-    // Property 39: Эффективный таймаут не меньше 5 секунд
+    // Property 39: The effective timeout is never below 5 seconds
     // Validates: Requirements 12.3
     [Property(MaxTest = 100)]
     public Property Effective_timeout_equals_max_5_and_is_never_below_5_seconds()

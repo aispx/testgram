@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 34: Дедупликация по уникальному токену.
+// Feature: push-updates, Property 34: Deduplication by unique token.
 //
 // For any set of recipient devices, the number of actual push sends equals the number of unique
 // non-empty Token values among them: the delivery service (PushNotificationEventHandler) sends at
@@ -44,7 +44,7 @@ public class Property34_TokenDedupTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 34: Дедупликация по уникальному токену
+    // Property 34: Deduplication by unique token
     // Validates: Requirements 10.3
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Number_of_sends_equals_number_of_unique_non_empty_tokens(DeviceSet deviceSet)

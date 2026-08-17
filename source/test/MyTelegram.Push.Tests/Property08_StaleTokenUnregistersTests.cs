@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 8: Сигнал устаревшего токена от провайдера удаляет устройство.
+// Feature: push-updates, Property 8: A stale-token signal from the provider removes the device.
 //
 // For any device, if the sender returns the outcome TokenInvalidated (APNs 410, FCM 404
 // UNREGISTERED), the delivery service (PushNotificationEventHandler) publishes an
@@ -42,7 +42,7 @@ public class Property08_StaleTokenUnregistersTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 8: Сигнал устаревшего токена от провайдера удаляет устройство
+    // Property 8: A stale-token signal from the provider removes the device
     // Validates: Requirements 3.4
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Stale_token_outcome_unregisters_device_iff_token_invalidated(

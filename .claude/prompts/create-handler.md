@@ -113,7 +113,7 @@ Create a new handler for Telegram API method: messages.getHistory
 ## After Creating Handler
 
 1. Build: `cd build/docker && ./1.build-messenger-command-server.sh`
-2. Restart: `docker-compose restart messenger-command-server`
+2. Restart: `docker compose -p mytelegram restart messenger-command-server`
 3. Test with official Telegram client
-4. Check logs: `docker-compose logs -f messenger-command-server`
-5. Verify data: `docker-compose exec mongodb mongosh tg`
+4. Check logs: `docker compose -p mytelegram logs -f messenger-command-server`
+5. Verify data: `docker compose -p mytelegram exec mongodb mongosh tg`

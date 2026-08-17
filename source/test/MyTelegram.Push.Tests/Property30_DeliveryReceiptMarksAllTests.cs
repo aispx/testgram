@@ -6,10 +6,10 @@ using MyTelegram.Push.Tests.Infrastructure;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 30: Подтверждение доставки фиксирует все сообщения.
+// Feature: push-updates, Property 30: The delivery receipt records every message.
 //
 // For any messages.reportMessagesDelivery request carrying the Push flag and a set of (peer, msgIds),
-// the Сервис_Подтверждения_Доставки records the delivery for every msgId and the RPC succeeds
+// the Delivery_Receipt_Service records the delivery for every msgId and the RPC succeeds
 // (boolTrue). Modelled at the store level: PushDeliveryReceiptStore.MarkDeliveredAsync is invoked for
 // each (peerId, msgId) pair. The first time a receipt is recorded the call returns true, and the
 // corresponding Redis key (push:delivered:{peerId}:{messageId}) exists afterwards. The store is backed
@@ -31,7 +31,7 @@ public class Property30_DeliveryReceiptMarksAllTests
         from ids in GenHelpers.ArrayOfLength(count, Gen.Choose(1, 100_000))
         select ids.Distinct().ToArray();
 
-    // Property 30: Подтверждение доставки фиксирует все сообщения
+    // Property 30: The delivery receipt records every message
     // Validates: Requirements 8.5
     [Property(MaxTest = 100)]
     public Property Delivery_receipt_records_every_message()

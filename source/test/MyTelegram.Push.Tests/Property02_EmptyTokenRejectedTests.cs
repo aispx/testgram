@@ -6,7 +6,7 @@ using MyTelegram.Push.Tests.Infrastructure;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 2: Пустой токен отклоняется как TOKEN_EMPTY.
+// Feature: push-updates, Property 2: An empty token is rejected as TOKEN_EMPTY.
 // For any Token consisting only of empty/whitespace characters (including null and ""), the
 // registration validator returns 400 TOKEN_EMPTY and no device is created.
 //

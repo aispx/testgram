@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 7: Отмена снимает привязку ко всем OtherUids и текущему аккаунту.
+// Feature: push-updates, Property 7: Unregister clears the binding to all OtherUids and to the current account.
 //
 // For any device registered with a set of OtherUids and a current UserId, after
 // account.unregisterDevice none of the accounts in OtherUids ∪ {UserId} get that Token when querying
@@ -28,7 +28,7 @@ public class Property07_UnregisterClearsAllBindingsTests
 {
     private const long BaseDateMs = 1_700_000_000_000L;
 
-    // Property 7: Отмена снимает привязку ко всем OtherUids и текущему аккаунту
+    // Property 7: Unregister clears the binding to all OtherUids and to the current account
     // Validates: Requirements 3.2
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Unregister_clears_binding_for_all_other_uids_and_current_account(DeviceRegistration reg)

@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 25: Устройство-источник действия исключается.
+// Feature: push-updates, Property 25: The device that originated the action is excluded.
 //
 // For any delivery event carrying a given ExcludeAuthKeyId, the device whose PermAuthKeyId matches
 // that value is skipped (no push is dispatched to it), while every other (non-matching) device is
@@ -95,7 +95,7 @@ public class Property25_ExcludeAuthKeyIdTests
         }
     }
 
-    // Property 25: Устройство-источник действия исключается
+    // Property 25: The device that originated the action is excluded
     // Validates: Requirements 7.3
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(ExcludeArbitraries) })]
     public void Originating_device_is_excluded_while_others_are_processed(ExcludeScenario scenario)

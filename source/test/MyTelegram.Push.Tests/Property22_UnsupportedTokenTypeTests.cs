@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 22: Неподдерживаемые типы токенов пропускаются без исключения.
+// Feature: push-updates, Property 22: Unsupported token types are skipped without an exception.
 //
 // For any TokenType without an implemented sender (3 MPNS, 5 Ubuntu, 6 BlackBerry, 7 Android
 // internal push, 8 WNS, 11 MPNS VoIP, 12 Tizen, 13 Huawei) the router (PushDispatcher) calls none of the provider senders,
@@ -39,7 +39,7 @@ public class Property22_UnsupportedTokenTypeTests
         PushTokenType.Huawei
     };
 
-    // Property 22: Неподдерживаемые типы токенов пропускаются без исключения
+    // Property 22: Unsupported token types are skipped without an exception
     // Validates: Requirements 6.4
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries), typeof(Property22Arbitraries) })]
     public void Unsupported_token_types_are_skipped_without_exception(

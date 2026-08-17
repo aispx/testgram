@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 38: Не-успешный HTTP-статус не выбрасывает исключение.
+// Feature: push-updates, Property 38: A non-success HTTP status does not throw.
 //
 // For any non-success HTTP status returned by a provider, the sender records the status/body in the
 // log and completes without an unhandled exception (Req 12.2). Of the three senders, WebPushSender
@@ -81,7 +81,7 @@ public sealed class Property38_NonSuccessStatusNoThrowTests : IDisposable
         _sender = new WebPushSender(options, NullLogger<WebPushSender>.Instance);
     }
 
-    // Property 38: Не-успешный HTTP-статус не выбрасывает исключение
+    // Property 38: A non-success HTTP status does not throw
     // Validates: Requirements 12.2
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(HttpFailureStatusArbitrary) })]
     public void NonSuccess_status_never_throws_and_maps_to_a_defined_outcome(HttpFailureStatus status)

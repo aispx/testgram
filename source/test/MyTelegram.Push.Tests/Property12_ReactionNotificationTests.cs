@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 12: Уведомление о реакции (reaction notification)
+// Feature: push-updates, Property 12: Reaction notification (reaction notification)
 using FsCheck;
 using FsCheck.Xunit;
 using MyTelegram.Messenger.QueryServer.DomainEventHandlers;
@@ -8,7 +8,7 @@ using Shouldly;
 namespace MyTelegram.Push.Tests;
 
 /// <summary>
-/// Property 12: Уведомление о реакции.
+/// Property 12: Reaction notification.
 ///
 /// <para>
 /// For any reaction event on a user's message, the payload builder

@@ -1,5 +1,5 @@
-// Feature: push-updates, EXAMPLE 6.6: APNS VoIP заголовки — для устройства с token_type = 9
-// (APNS VoIP) отправитель устанавливает заголовок `apns-push-type: voip` и формирует VoIP-тему
+// Feature: push-updates, EXAMPLE 6.6: APNS VoIP headers — for a device with token_type = 9
+// (APNS VoIP) the sender sets the `apns-push-type: voip` header and builds the VoIP topic
 // `apns-topic = "{BundleId}.voip"`.
 //
 // Verification approach (documented seam):

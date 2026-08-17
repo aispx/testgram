@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 1: Регистрация сохраняет все поля устройства без искажений.
+// Feature: push-updates, Property 1: Registration preserves every device field without distortion.
 // For any valid registration request (supported TokenType, non-empty Token, arbitrary Secret,
 // NoMuted, AppSandbox, OtherUids, UserId, PermAuthKeyId), after applying PushDeviceRegisteredEvent
 // the aggregate state AND the read model hold every field identically to the inputs, and the

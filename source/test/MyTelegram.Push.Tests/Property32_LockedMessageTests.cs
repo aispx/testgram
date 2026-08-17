@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 32: Блокировка скрывает текст сообщения.
+// Feature: push-updates, Property 32: A lock hides the message text.
 //
 // For any new-message notification, if the device's PermAuthKeyId has an active lock, the
 // transformed payload (as actually sent to the dispatcher) has loc_key == LOCKED_MESSAGE and
@@ -44,7 +44,7 @@ public class Property32_LockedMessageTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 32: Блокировка скрывает текст сообщения
+    // Property 32: A lock hides the message text
     // Validates: Requirements 9.2
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Lock_hides_message_text_iff_device_locked(

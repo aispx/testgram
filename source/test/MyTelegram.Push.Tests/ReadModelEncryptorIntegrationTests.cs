@@ -1,6 +1,6 @@
-// Feature: push-updates, EXAMPLE 2.4: интеграция ReadModel↔Шифратор —
-// устройство с непустым 256-байтным Secret шифрует payload (MTProto v2),
-// устройство без Secret (null) отдаёт незашифрованный base64url JSON.
+// Feature: push-updates, EXAMPLE 2.4: ReadModel-to-Encryptor integration —
+// a device with a non-empty 256-byte Secret encrypts the payload (MTProto v2),
+// a device without a Secret (null) returns unencrypted base64url JSON.
 //
 // This is the unit-level example for the ReadModel↔Encryptor integration described in the design
 // (Testing Strategy, EXAMPLE 2.4) backing Requirement 5.4. It builds two PushDeviceReadModel test

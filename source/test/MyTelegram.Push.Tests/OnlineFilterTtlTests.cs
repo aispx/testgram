@@ -1,7 +1,7 @@
-// Feature: push-updates, INTEGRATION 7.4: онлайн-фильтр TTL — MarkOnlineAsync затем
-// IsOnlineAsync == true; после истечения TTL (90с) → false.
+// Feature: push-updates, INTEGRATION 7.4: online filter TTL — MarkOnlineAsync then
+// IsOnlineAsync == true; after the TTL (90 s) expires it is false.
 //
-// Req 7.4 states: WHEN incoming MTProto traffic reaches a PermAuthKeyId, THE Фильтр_Онлайн SHALL
+// Req 7.4 states: WHEN incoming MTProto traffic reaches a PermAuthKeyId, THE Online_Filter SHALL
 // mark that PermAuthKeyId as online with a bounded time-to-live on the mark. This integration test
 // exercises the PRODUCTION PushOnlineFilter (MyTelegram.Messenger.QueryServer.Services) end-to-end:
 //   1. MarkOnlineAsync(authKeyId)  =>  IsOnlineAsync(authKeyId) == true   (the round-trip);

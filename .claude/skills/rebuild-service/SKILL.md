@@ -20,10 +20,18 @@ Rebuild a specific service and restart its Docker container.
 
 ## Available Services
 
-- `messenger-command-server` - Main RPC handler service
-- `messenger-query-server` - Read model query service
-- `gateway-server` - MTProto gateway
-- `session-server` - Session management (closed-source binary)
+| Service | Build script |
+|---------|--------------|
+| `messenger-command-server` - Main RPC handler service | `1.build-messenger-command-server.sh` |
+| `messenger-query-server` - Read model query service | `2.build-messenger-query-server.sh` |
+| `sms-sender` - Login-code delivery | `4.build-sms-sender.sh` |
+| `gateway-server` - MTProto gateway | `5.build-gateway-server.sh` |
+| `auth-server` - Auth keys and login | `6.build-auth-server.sh` |
+| `data-seeder` - Seed data | `7.build-data-seeder.sh` |
+| `session-server` - Session management | no build script (closed-source image) |
+
+The script numbering is not sequential per service and skips `3.`, so the prefix has to be looked
+up in this table rather than guessed.
 
 ## What This Does
 
@@ -37,17 +45,19 @@ Rebuild a specific service and restart its Docker container.
 # Navigate to build directory
 cd /root/testgram/build/docker
 
-# Run build script for the service
-./1.build-$ARGUMENTS.sh
+# Run the build script for the service - the numeric prefix comes from the table above,
+# so resolve it by listing the directory instead of assuming "1."
+ls *.build-$ARGUMENTS.sh
+./$(ls *.build-$ARGUMENTS.sh | head -1)
 
 # Navigate to compose directory
 cd /root/testgram/docker/compose
 
 # Restart the service
-docker-compose up -d $ARGUMENTS
+docker compose -p mytelegram up -d $ARGUMENTS
 
 # Show logs
-docker-compose logs -f $ARGUMENTS | head -50
+docker compose -p mytelegram logs -f $ARGUMENTS | head -50
 ```
 
 ## After Rebuild
@@ -56,13 +66,13 @@ Check that the service started successfully:
 
 ```bash
 # Check container status
-docker-compose ps $ARGUMENTS
+docker compose -p mytelegram ps $ARGUMENTS
 
 # Check logs for errors
-docker-compose logs -f $ARGUMENTS | grep -i error
+docker compose -p mytelegram logs -f $ARGUMENTS | grep -i error
 
 # Check MongoDB connection
-docker-compose exec mongodb mongosh tg --eval "db.serverStatus()"
+docker compose -p mytelegram exec mongodb mongosh tg --eval "db.serverStatus()"
 ```
 
 ## Common Issues
@@ -72,7 +82,7 @@ docker-compose exec mongodb mongosh tg --eval "db.serverStatus()"
 - Clean build: `cd /root/testgram/scripts && ./delete-bin-obj-folders.sh`
 
 **Container won't start:**
-- Check logs: `docker-compose logs $ARGUMENTS`
+- Check logs: `docker compose -p mytelegram logs $ARGUMENTS`
 - Check .env configuration
 - Verify MongoDB/RabbitMQ are running
 

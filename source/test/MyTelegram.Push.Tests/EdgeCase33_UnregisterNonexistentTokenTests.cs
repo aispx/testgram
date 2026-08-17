@@ -1,4 +1,4 @@
-// Feature: push-updates, EDGE_CASE 3.3: отмена несуществующего токена.
+// Feature: push-updates, EDGE_CASE 3.3: unregistering a nonexistent token.
 //
 // account.unregisterDevice for a token that has no registered device is a no-op: the
 // PushDeviceAggregate emits no event and does not throw — this is the path on which the

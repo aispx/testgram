@@ -4,7 +4,7 @@ using MyTelegram.Push.Tests.Infrastructure;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 35: Маскирование токена в логах.
+// Feature: push-updates, Property 35: Token masking in logs.
 //
 // For any token string, the masking function used by the push senders returns a value that reveals
 // at most the first 8 characters of the original token. The masking helper lives as an identical
@@ -41,7 +41,7 @@ public class Property35_TokenMaskingTests
             // Arbitrary strings (may include unicode / control chars), filtered of nulls.
             Arb.Generate<string>().Where(s => s is not null));
 
-    // Property 35: Маскирование токена в логах
+    // Property 35: Token masking in logs
     // Validates: Requirements 11.3
     [Property(MaxTest = 100)]
     public Property Masking_reveals_at_most_first_8_characters()

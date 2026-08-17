@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 26: уведомление об удалении сообщений.
+// Feature: push-updates, Property 26: message deletion notification.
 //
 // For any non-empty list of deleted message ids (and any peer / recipient), the production
 // MessagePushDataBuilder.BuildMessageDeleted(recipientUserId, peer, messageIds) produces a PushData
@@ -35,7 +35,7 @@ public class Property26_MessageDeletedTests
         from ids in GenHelpers.ArrayOfLength(count, Gen.Choose(1, 1_000_000))
         select (recipient, peer, ids);
 
-    // Property 26: уведомление об удалении сообщений
+    // Property 26: message deletion notification
     // Validates: Requirements 8.1
     [Property(MaxTest = 100)]
     public Property MessageDeleted_sets_loc_key_and_comma_joined_messages()

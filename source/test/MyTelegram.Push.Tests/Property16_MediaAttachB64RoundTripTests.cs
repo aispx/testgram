@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 16: Медиа round-trip через attachb64 (media round-trip via attachb64)
+// Feature: push-updates, Property 16: Media round-trip through attachb64 (media round-trip via attachb64)
 //
 // For any media message (Photo / Document), MessagePushDataBuilder fills custom.attachb64 with the
 // base64url TL-serialization of the corresponding Photo / Document object, and decoding that string
@@ -106,7 +106,7 @@ public class Property16_MediaAttachB64RoundTripTests
             Media: media)
         select new MediaMessageCase(item, original, peer.PeerType);
 
-    // Property 16: Медиа round-trip через attachb64
+    // Property 16: Media round-trip through attachb64
     // Validates: Requirements 4.8
     [Property(MaxTest = 100)]
     public Property Media_attachb64_is_base64url_tl_serialization_that_round_trips()

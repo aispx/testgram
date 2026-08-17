@@ -15,6 +15,13 @@ DB_PATH = os.environ.get("DB_PATH", "/root/testgram/bot/codes.db")
 
 bot = Bot(token=BOT_TOKEN)
 
+# Kept in sync with bot.py, which owns the user_settings table and the language switcher.
+DEFAULT_LANG = "en"
+CODE_TEXT = {
+    "en": "📱 Code for {phone}: {code}",
+    "ru": "📱 Код для {phone}: {code}",
+}
+
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -25,7 +32,21 @@ async def init_db():
                 PRIMARY KEY (tg_id, phone)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                tg_id INTEGER PRIMARY KEY,
+                lang TEXT
+            )
+        """)
         await db.commit()
+
+
+async def get_lang(tg_id: int) -> str:
+    """Interface language chosen in the bot, or DEFAULT_LANG when nothing was stored."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT lang FROM user_settings WHERE tg_id=?", (tg_id,)) as cur:
+            row = await cur.fetchone()
+    return row[0] if row and row[0] in CODE_TEXT else DEFAULT_LANG
 
 
 async def get_owner_of(phone: str):
@@ -51,7 +72,8 @@ async def handle_send(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "no owner"}, status=404)
 
     digits = re.sub(r'\D', '', phone)
-    await bot.send_message(owner, f"📱 Код для {digits}: {code}")
+    lang = await get_lang(owner)
+    await bot.send_message(owner, CODE_TEXT[lang].format(phone=digits, code=code))
     return web.json_response({"ok": True})
 
 

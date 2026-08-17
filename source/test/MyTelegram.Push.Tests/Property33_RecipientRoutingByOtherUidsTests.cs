@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 33: Маршрутизация по OtherUids выбирает устройство для любого члена.
+// Feature: push-updates, Property 33: Routing by OtherUids picks a device for any member.
 //
 // For any device registered with an owner UserId and a set of OtherUids, the recipient push-device
 // query (GetPushDevicesForRecipientQueryHandler) returns that device if and only if the recipient is
@@ -27,7 +27,7 @@ namespace MyTelegram.Push.Tests;
 
 public class Property33_RecipientRoutingByOtherUidsTests
 {
-    // Property 33: Маршрутизация по OtherUids выбирает устройство для любого члена
+    // Property 33: Routing by OtherUids picks a device for any member
     // Validates: Requirements 10.2
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Recipient_query_selects_device_iff_recipient_in_otherUids_union_owner(DeviceSet deviceSet)

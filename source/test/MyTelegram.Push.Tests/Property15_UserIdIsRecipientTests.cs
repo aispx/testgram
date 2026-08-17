@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 15: user_id равен аккаунту-получателю.
+// Feature: push-updates, Property 15: user_id equals the recipient account.
 //
 // For any recipient account recipientUserId, the final payload that the delivery service
 // (PushNotificationEventHandler) hands to a device must carry user_id == recipientUserId — the
@@ -45,7 +45,7 @@ public class Property15_UserIdIsRecipientTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 15: user_id равен аккаунту-получателю
+    // Property 15: user_id equals the recipient account
     // Validates: Requirements 4.7, 10.1
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Final_payload_user_id_equals_recipient_account(

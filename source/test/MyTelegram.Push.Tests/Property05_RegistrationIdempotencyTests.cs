@@ -6,7 +6,7 @@ using MyTelegram.Push.Tests.Infrastructure;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 5: Повторная регистрация идемпотентна в пределах 24 часов.
+// Feature: push-updates, Property 5: Re-registration is idempotent within 24 hours.
 //
 // For any valid registration request, applying it once versus applying it twice with identical
 // parameters within 24 hours yields an identical final read-model state (no duplicate device).
@@ -27,7 +27,7 @@ public class Property05_RegistrationIdempotencyTests
     private static Gen<long> WithinWindowDeltaMs =>
         Gen.Choose(0, (int)(TwentyFourHoursMs - 1)).Select(i => (long)i);
 
-    // Property 5: Повторная регистрация идемпотентна в пределах 24 часов
+    // Property 5: Re-registration is idempotent within 24 hours
     // Validates: Requirements 1.4
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PushArbitraries) })]
     public Property Repeated_registration_within_24h_is_idempotent(DeviceRegistration registration)

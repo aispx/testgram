@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 20: Fallback без секрета — обратимый незашифрованный base64url
+// Feature: push-updates, Property 20: Fallback without a secret — reversible unencrypted base64url
 // (no-secret fallback is a reversible, unencrypted base64url)
 //
 // For any PushData, when the device has no push secret (Secret == null OR Secret == empty array),
@@ -31,7 +31,7 @@ public class Property20_NoSecretFallbackTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 20: Fallback без секрета — обратимый незашифрованный base64url
+    // Property 20: Fallback without a secret — reversible unencrypted base64url
     // Validates: Requirements 5.4
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void NoSecret_fallback_is_reversible_unencrypted_base64url(PushData data)

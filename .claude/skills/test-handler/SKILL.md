@@ -1,7 +1,7 @@
 ---
 name: test-handler
 description: Test a Telegram API handler by checking logs and MongoDB data. Use after implementing a handler to verify it works correctly.
-allowed-tools: Bash(docker-compose *), Bash(docker *), Read(**)
+allowed-tools: Bash(docker compose *), Bash(docker *), Read(**)
 disable-model-invocation: true
 argument-hint: <handler-name>
 ---
@@ -22,19 +22,19 @@ Test a handler by checking Docker logs, MongoDB data, and verifying the response
 ### 1. Check if handler is registered
 ```bash
 # Check logs for handler initialization
-docker-compose logs messenger-command-server | grep -i "$ARGUMENTS"
+docker compose -p mytelegram logs messenger-command-server | grep -i "$ARGUMENTS"
 ```
 
 ### 2. Check recent requests
 ```bash
 # Show recent logs (last 100 lines)
-docker-compose logs --tail=100 messenger-command-server | grep -i "handler"
+docker compose -p mytelegram logs --tail=100 messenger-command-server | grep -i "handler"
 ```
 
 ### 3. Check MongoDB data
 ```bash
 # Connect to MongoDB and check relevant collections
-docker-compose exec mongodb mongosh tg --eval "
+docker compose -p mytelegram exec mongodb mongosh tg --eval "
   print('=== Sticker Sets ===');
   db['eventflow-stickersetreadmodel'].find().limit(5).forEach(printjson);
   
@@ -46,8 +46,8 @@ docker-compose exec mongodb mongosh tg --eval "
 ### 4. Check for errors
 ```bash
 # Search for errors in logs
-docker-compose logs --tail=200 messenger-command-server | grep -i error
-docker-compose logs --tail=200 messenger-command-server | grep -i exception
+docker compose -p mytelegram logs --tail=200 messenger-command-server | grep -i error
+docker compose -p mytelegram logs --tail=200 messenger-command-server | grep -i exception
 ```
 
 ### 5. Verify handler file exists
@@ -100,7 +100,7 @@ cd /root/testgram/build/docker && ./1.build-messenger-command-server.sh
 grep -n "TVector" source/src/MyTelegram.Messenger/Handlers/LatestLayer/**/*$ARGUMENTS*.cs
 
 # Check MongoDB query
-docker-compose logs --tail=50 messenger-command-server | grep -i "mongodb"
+docker compose -p mytelegram logs --tail=50 messenger-command-server | grep -i "mongodb"
 ```
 
 ### Client Crashes
@@ -123,11 +123,11 @@ grep -n "ConstructorId\|0x" source/src/MyTelegram.Schema/**/*.cs | grep -i "$ARG
 2. **Trigger the handler** (e.g., open sticker picker for GetStickerSet)
 3. **Watch logs in real-time**:
    ```bash
-   docker-compose logs -f messenger-command-server
+   docker compose -p mytelegram logs -f messenger-command-server
    ```
 4. **Check MongoDB after operation**:
    ```bash
-   docker-compose exec mongodb mongosh tg
+   docker compose -p mytelegram exec mongodb mongosh tg
    db.getCollectionNames()
    db["eventflow-stickersetreadmodel"].find().limit(5)
    ```

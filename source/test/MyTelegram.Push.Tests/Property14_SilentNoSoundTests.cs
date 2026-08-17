@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 14: silent эквивалентен отсутствию звука.
+// Feature: push-updates, Property 14: silent is equivalent to no sound.
 //
 // For any built new-message notification, the silent flag and the audible sound are mutually
 // exclusive: if the source MessageItem is marked silent, then the production
@@ -32,7 +32,7 @@ public class Property14_SilentNoSoundTests
         from silent in Arb.Generate<bool>()
         select (mc with { Item = mc.Item with { Silent = silent } }, silent);
 
-    // Property 14: silent эквивалентен отсутствию звука
+    // Property 14: silent is equivalent to no sound
     // Validates: Requirements 4.6
     [Property(MaxTest = 100)]
     public Property Silent_message_has_no_sound_and_non_silent_has_sound()

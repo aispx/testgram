@@ -1,7 +1,7 @@
-// Feature: push-updates, EXAMPLE 11.5: секреты не попадают в логи.
+// Feature: push-updates, EXAMPLE 11.5: secrets never reach the logs.
 //
-// Requirement 11.5: THE Сервер SHALL не записывать значение Секрета_Push и приватные ключи
-// провайдеров (.p8, VAPID private key, service account private key) в журналы.
+// Requirement 11.5: THE Server SHALL NOT write the Push_Secret value or the provider private
+// keys (.p8, VAPID private key, service account private key) into the logs.
 //
 // This is an example-based (unit) test, not a property. It drives the realistically reachable
 // logging paths of the push senders / encryptor with DISTINCTIVE MARKER secret/private-key values,

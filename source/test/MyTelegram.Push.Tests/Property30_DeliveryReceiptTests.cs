@@ -7,10 +7,10 @@ using StackExchange.Redis;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 30: Подтверждение доставки фиксирует все сообщения.
+// Feature: push-updates, Property 30: The delivery receipt records every message.
 //
 // For any messages.reportMessagesDelivery request carrying the Push flag and a set of
-// (peerId, msgId) pairs, the Сервис_Подтверждения_Доставки records a delivery receipt for
+// (peerId, msgId) pairs, the Delivery_Receipt_Service records a delivery receipt for
 // every msgId and the RPC succeeds (boolTrue). This exercises
 // PushDeliveryReceiptStore.MarkDeliveredAsync over an in-memory fake
 // IConnectionMultiplexer/IDatabase (StringSet NX with TTL, KeyExists), so the property runs
@@ -35,7 +35,7 @@ public class Property30_DeliveryReceiptTests
         Gen.NonEmptyListOf(ReportedMessage)
             .Select(list => list.Distinct().ToArray());
 
-    // Property 30: Подтверждение доставки фиксирует все сообщения
+    // Property 30: The delivery receipt records every message
     // Validates: Requirements 8.5
     [Property(MaxTest = 100)]
     public Property Reporting_delivery_records_every_message()

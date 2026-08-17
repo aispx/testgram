@@ -7,7 +7,7 @@ using Shouldly;
 namespace MyTelegram.Push.Tests;
 
 /// <summary>
-/// Feature: push-updates, Property 3: Классификация валидности типа токена.
+/// Feature: push-updates, Property 3: Token type validity classification.
 /// <para>
 /// For any integer <c>TokenType</c>, <see cref="PushTokenValidator"/> returns
 /// <c>400 TOKEN_TYPE_INVALID</c> if and only if the value is NOT in the supported set
@@ -38,7 +38,7 @@ public class Property03_TokenTypeClassificationTests
         from token in tokenType == 10 ? PushGen.ValidWebPushTokenJson : PushGen.NonEmptyToken
         select (tokenType, token);
 
-    // Feature: push-updates, Property 3: Классификация валидности типа токена
+    // Feature: push-updates, Property 3: Token type validity classification
     // Validates: Requirements 1.3
     [Property(MaxTest = 20)]
     public Property TokenType_is_classified_invalid_iff_outside_supported_set()

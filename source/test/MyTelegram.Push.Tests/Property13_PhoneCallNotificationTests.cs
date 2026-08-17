@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 13: Уведомление о входящем звонке.
+// Feature: push-updates, Property 13: Incoming call notification.
 //
 // For any incoming call, MessagePushDataBuilder.BuildPhoneCall sets loc_key = PHONE_CALL_REQUEST and
 // fills custom.call_id, custom.call_ah and custom.updates (the base64url TL-serialization of the
@@ -33,7 +33,7 @@ public class Property13_PhoneCallNotificationTests
         from updatesTl in GenHelpers.ArrayOfLength(length, Gen.Choose(0, 255).Select(i => (byte)i))
         select (recipientUserId, callId, callAh, updatesTl);
 
-    // Property 13: Уведомление о входящем звонке
+    // Property 13: Incoming call notification
     // Validates: Requirements 4.5
     [Property(MaxTest = 100)]
     public Property Phone_call_push_sets_lockey_and_call_fields()

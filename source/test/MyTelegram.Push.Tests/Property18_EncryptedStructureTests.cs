@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 18: Структура зашифрованного payload соответствует MTProto v2
+// Feature: push-updates, Property 18: The encrypted payload structure matches MTProto v2
 //
 // For any JSON payload (built by PushPayloadEncryptor.BuildJson from a generated PushData) and any
 // 256-byte Secret, the production PushPayloadEncryptor.EncryptForDevice output, once base64url-decoded
@@ -34,7 +34,7 @@ public class Property18_EncryptedStructureTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 18: Структура зашифрованного payload соответствует MTProto v2
+    // Property 18: The encrypted payload structure matches MTProto v2
     // Validates: Requirements 5.1, 5.2
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public Property Encrypted_payload_has_mtproto_v2_structure(PushData data)

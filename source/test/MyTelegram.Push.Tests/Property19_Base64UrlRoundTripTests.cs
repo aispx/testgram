@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 19: base64url-кодирование обратимо и без выравнивания
+// Feature: push-updates, Property 19: base64url encoding is reversible and unpadded
 // (base64url encoding is reversible and unpadded)
 //
 // For any byte array, the production PushPayloadEncryptor.Base64UrlEncode produces a string that
@@ -34,7 +34,7 @@ public class Property19_Base64UrlRoundTripTests
         from bytes in GenHelpers.ArrayOfLength(length, Gen.Choose(0, 255).Select(i => (byte)i))
         select bytes;
 
-    // Property 19: base64url-кодирование обратимо и без выравнивания
+    // Property 19: base64url encoding is reversible and unpadded
     // Validates: Requirements 5.3
     [Property(MaxTest = 100)]
     public Property Base64Url_encode_is_unpadded_url_safe_and_round_trips()

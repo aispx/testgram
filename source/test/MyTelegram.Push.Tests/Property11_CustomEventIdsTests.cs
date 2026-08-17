@@ -8,7 +8,7 @@ using MyTelegram.Schema;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 11: custom содержит идентификаторы события согласно типу чата.
+// Feature: push-updates, Property 11: custom carries the event identifiers according to the chat type.
 //
 // For any built new-message notification, custom.msg_id equals the message id, and depending on the
 // peer type exactly the corresponding identifier is set. This exercises the production
@@ -33,7 +33,7 @@ public class Property11_CustomEventIdsTests
             mc.Kind != MessageKind.Call &&
             (mc.PeerType == PeerType.User || mc.PeerType == PeerType.Channel));
 
-    // Property 11: custom содержит идентификаторы события согласно типу чата
+    // Property 11: custom carries the event identifiers according to the chat type
     // Validates: Requirements 4.3
     [Property(MaxTest = 100)]
     public Property Custom_carries_msgId_and_the_peer_identifier_for_its_chat_type()

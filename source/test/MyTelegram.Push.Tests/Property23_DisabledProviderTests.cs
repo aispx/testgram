@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 23: Выключенный провайдер никогда не вызывается.
+// Feature: push-updates, Property 23: A disabled provider is never called.
 //
 // For any device, if the master flag Push.Enabled is false OR the Enabled flag of the provider
 // required by the device's TokenType is false, no provider sender is ever invoked (and no
@@ -49,7 +49,7 @@ public class Property23_DisabledProviderTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 23: Выключенный провайдер никогда не вызывается
+    // Property 23: A disabled provider is never called
     // Validates: Requirements 6.5, 11.1
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Disabled_provider_is_never_invoked(

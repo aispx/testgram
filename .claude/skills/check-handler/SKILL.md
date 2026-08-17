@@ -133,4 +133,4 @@ If issues found:
 1. Fix the issues in the handler
 2. Run `/rebuild-service messenger-command-server`
 3. Test with official Telegram client
-4. Check logs: `docker-compose logs -f messenger-command-server`
+4. Check logs: `docker compose -p mytelegram logs -f messenger-command-server`

@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Localization;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Help;
 /// <summary>
@@ -15,16 +16,19 @@ internal sealed class GetPromoDataHandler : RpcResultObjectHandler<MyTelegram.Sc
     private readonly IChatConverterService _chatConverterService;
     private readonly IDismissedSuggestionAppService _dismissedSuggestionAppService;
     private readonly IAppConfigHelper _appConfigHelper;
+    private readonly IUserLanguageResolver _userLanguageResolver;
 
     public GetPromoDataHandler(IMongoDatabase database,
         IChatConverterService chatConverterService,
         IDismissedSuggestionAppService dismissedSuggestionAppService,
-        IAppConfigHelper appConfigHelper)
+        IAppConfigHelper appConfigHelper,
+        IUserLanguageResolver userLanguageResolver)
     {
         _database = database;
         _chatConverterService = chatConverterService;
         _dismissedSuggestionAppService = dismissedSuggestionAppService;
         _appConfigHelper = appConfigHelper;
+        _userLanguageResolver = userLanguageResolver;
     }
 
     protected override async Task<IPromoData> HandleCoreAsync(IRequestInput input, RequestGetPromoData obj)
@@ -52,12 +56,16 @@ internal sealed class GetPromoDataHandler : RpcResultObjectHandler<MyTelegram.Sc
         var channelId = channelDoc["ChannelId"].AsInt64;
         var channelObj = await _chatConverterService.GetChannelAsync(input, channelId, false, false, input.Layer);
 
+        // The PSA text is rendered by the client as-is, so it has to be written in the language the
+        // caller's client reported at initConnection.
+        var language = await _userLanguageResolver.GetLanguageAsync(input.UserId);
+
         return new TPromoData
         {
             Expires = DateTime.UtcNow.AddHours(1).ToTimestamp(),
             Peer = new TPeerChannel { ChannelId = channelId },
             PsaType = "premium_last_day",
-            PsaMessage = "Сегодня — последняя возможность оплатить Telegram Premium.",
+            PsaMessage = ServerTexts.PremiumLastDayPsa(language),
             Chats = new TVector<IChat> { channelObj },
             Users = new TVector<IUser>(),
             PendingSuggestions = [.. pendingSuggestions],

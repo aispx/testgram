@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 27: Уведомление о прочтении истории (read-history cancel notification).
+// Feature: push-updates, Property 27: Read-history notification (read-history cancel notification).
 //
 // For any maxId value (and any recipient/peer), MessagePushDataBuilder.BuildReadHistory produces a
 // service push with loc_key = READ_HISTORY and custom.max_id == maxId. This test drives the real
@@ -29,7 +29,7 @@ public class Property27_ReadHistoryTests
         from maxId in Arb.Generate<int>()
         select (recipientUserId, peer, maxId);
 
-    // Property 27: Уведомление о прочтении истории
+    // Property 27: Read-history notification
     // Validates: Requirements 8.2
     [Property(MaxTest = 100)]
     public Property Read_history_push_sets_lockey_and_max_id()

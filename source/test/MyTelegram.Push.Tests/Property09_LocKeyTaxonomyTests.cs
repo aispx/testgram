@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 9: loc_key всегда принадлежит известной таксономии.
+// Feature: push-updates, Property 9: loc_key always belongs to a known taxonomy.
 //
 // For any built PushData, the loc_key field is non-empty and belongs to the set of
 // PushNotificationTypes constants. This is exercised by driving the PRODUCTION
@@ -40,7 +40,7 @@ public class Property09_LocKeyTaxonomyTests
             .Select(f => (string)f.GetValue(null)!)
             .ToHashSet(StringComparer.Ordinal);
 
-    // Property 9: loc_key всегда принадлежит известной таксономии
+    // Property 9: loc_key always belongs to a known taxonomy
     // Validates: Requirements 4.1
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Built_loc_key_is_non_empty_and_in_taxonomy(MessageCase messageCase)

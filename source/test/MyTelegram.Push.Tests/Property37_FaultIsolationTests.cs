@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 37: Сбой на одном устройстве не прерывает доставку остальным.
+// Feature: push-updates, Property 37: A failure on one device does not stop delivery to the others.
 //
 // For any set of devices belonging to one recipient, if delivery to one device throws an exception,
 // the delivery service (PushNotificationEventHandler) still attempts delivery to every remaining
@@ -47,7 +47,7 @@ public class Property37_FaultIsolationTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 37: Сбой на одном устройстве не прерывает доставку остальным
+    // Property 37: A failure on one device does not stop delivery to the others
     // Validates: Requirements 12.1
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public void Failure_on_one_device_does_not_stop_delivery_to_the_rest(DeviceSet deviceSet)

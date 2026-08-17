@@ -32,6 +32,55 @@ else:
 DB_PATH = os.environ.get("DB_PATH", "/root/testgram/bot/codes.db")
 MAX_NUMBERS = 2
 
+# Supported interface languages. DEFAULT_LANG is used for users whose Telegram
+# language is neither of them, and for code delivery when nothing was stored yet.
+LANGUAGES = ("en", "ru")
+DEFAULT_LANG = "en"
+
+# All user-facing text lives here so both languages stay in sync.
+STRINGS = {
+    "en": {
+        "add_number": "➕ Add number",
+        "switch_lang": "🌐 Русский",
+        "no_numbers": "📱 No linked numbers.\nLimit: 0/{max}",
+        "your_numbers": "📱 Your TestGram numbers:\n{numbers}\n\nLimit: {count}/{max}",
+        "limit_alert": "Limit is {max} numbers",
+        "enter_number": "Send the number: +79XXXXXXXXX",
+        "bad_format": "Invalid format",
+        "added": "✅ Added!",
+        "limit": "❌ Limit {max}",
+        "taken": "❌ Already taken",
+        "exists": "✅ Already linked",
+        "code": "📱 Code for {phone}: <code>{code}</code>",
+    },
+    "ru": {
+        "add_number": "➕ Добавить номер",
+        "switch_lang": "🌐 English",
+        "no_numbers": "📱 Нет привязанных номеров.\nЛимит: 0/{max}",
+        "your_numbers": "📱 Ваши номера TestGram:\n{numbers}\n\nЛимит: {count}/{max}",
+        "limit_alert": "Лимит {max} номера",
+        "enter_number": "Введите номер: +79XXXXXXXXX",
+        "bad_format": "Неверный формат",
+        "added": "✅ Добавлен!",
+        "limit": "❌ Лимит {max}",
+        "taken": "❌ Занят",
+        "exists": "✅ Уже есть",
+        "code": "📱 Код для {phone}: <code>{code}</code>",
+    },
+}
+
+def normalize_lang(language_code):
+    """Map a Telegram language_code ("ru-RU", "en", None, ...) to a supported language."""
+    if not language_code:
+        return DEFAULT_LANG
+    primary = re.split(r"[-_]", language_code)[0].strip().lower()
+    return primary if primary in LANGUAGES else DEFAULT_LANG
+
+def t(lang, key, **kwargs):
+    """Look up a string, falling back to DEFAULT_LANG for unknown languages."""
+    table = STRINGS.get(lang) or STRINGS[DEFAULT_LANG]
+    return table[key].format(**kwargs)
+
 def collect_bot_tokens():
     """Return the list of bot tokens to run.
 
@@ -136,6 +185,41 @@ async def init_db():
             columns = [row[1] for row in await cur.fetchall()]
         if "bot_id" not in columns:
             await db.execute("ALTER TABLE user_numbers ADD COLUMN bot_id INTEGER")
+        # Interface language per Telegram user, set from their Telegram language on
+        # first contact and changeable with the in-bot switcher.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                tg_id INTEGER PRIMARY KEY, lang TEXT
+            )
+        """)
+        await db.commit()
+
+async def get_lang(tg_id, language_code=None):
+    """Return the stored interface language, detecting it from Telegram on first contact.
+
+    language_code is the Telegram client language of the user; it is only used when
+    nothing was stored yet, so an explicit choice in the bot always wins.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT lang FROM user_settings WHERE tg_id=?", (tg_id,)) as cur:
+            row = await cur.fetchone()
+    if row and row[0] in LANGUAGES:
+        return row[0]
+    detected = normalize_lang(language_code)
+    if language_code is not None:
+        await set_lang(tg_id, detected)
+    return detected
+
+async def set_lang(tg_id, lang):
+    """Persist the interface language for a Telegram user."""
+    if lang not in LANGUAGES:
+        lang = DEFAULT_LANG
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO user_settings (tg_id, lang) VALUES (?,?) "
+            "ON CONFLICT(tg_id) DO UPDATE SET lang=excluded.lang",
+            (tg_id, lang),
+        )
         await db.commit()
 
 async def get_user_numbers(tg_id):
@@ -173,43 +257,58 @@ async def remove_number(tg_id, phone):
         await db.execute("DELETE FROM user_numbers WHERE tg_id=? AND phone=?", (tg_id, phone))
         await db.commit()
 
-def numbers_keyboard(numbers):
-    """Build the inline keyboard for adding/removing linked numbers."""
+def numbers_keyboard(numbers, lang):
+    """Build the inline keyboard for adding/removing numbers and switching language."""
     buttons = [[InlineKeyboardButton(text=f"❌ {n}", callback_data=f"del:{n}")] for n in numbers]
-    buttons.append([InlineKeyboardButton(text="➕ Добавить номер", callback_data="add")])
+    buttons.append([InlineKeyboardButton(text=t(lang, "add_number"), callback_data="add")])
+    other = "ru" if lang == "en" else "en"
+    buttons.append([InlineKeyboardButton(text=t(lang, "switch_lang"), callback_data=f"lang:{other}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def status_text(numbers):
+def status_text(numbers, lang):
     """Render the account status text shown in /start and after changes."""
     if not numbers:
-        return f"📱 Нет привязанных номеров.\nЛимит: 0/{MAX_NUMBERS}"
+        return t(lang, "no_numbers", max=MAX_NUMBERS)
     nums_str = "\n".join(f"  • {n}" for n in numbers)
-    return f"📱 Ваши номера TestGram:\n{nums_str}\n\nЛимит: {len(numbers)}/{MAX_NUMBERS}"
+    return t(lang, "your_numbers", numbers=nums_str, count=len(numbers), max=MAX_NUMBERS)
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     waiting_for_phone.discard(message.from_user.id)
+    lang = await get_lang(message.from_user.id, message.from_user.language_code)
     numbers = await get_user_numbers(message.from_user.id)
-    await message.answer(status_text(numbers), reply_markup=numbers_keyboard(numbers))
+    await message.answer(status_text(numbers, lang), reply_markup=numbers_keyboard(numbers, lang))
+
+@dp.callback_query(F.data.startswith("lang:"))
+async def cb_lang(call: CallbackQuery):
+    """Switch the interface language and redraw the status message."""
+    lang = call.data[5:]
+    await set_lang(call.from_user.id, lang)
+    lang = await get_lang(call.from_user.id)
+    numbers = await get_user_numbers(call.from_user.id)
+    await call.message.edit_text(status_text(numbers, lang), reply_markup=numbers_keyboard(numbers, lang))
+    await call.answer()
 
 @dp.callback_query(F.data == "add")
 async def cb_add(call: CallbackQuery):
     """Start phone-number binding flow."""
+    lang = await get_lang(call.from_user.id, call.from_user.language_code)
     numbers = await get_user_numbers(call.from_user.id)
     if len(numbers) >= MAX_NUMBERS:
-        await call.answer(f"Лимит {MAX_NUMBERS} номера", show_alert=True)
+        await call.answer(t(lang, "limit_alert", max=MAX_NUMBERS), show_alert=True)
         return
     waiting_for_phone.add(call.from_user.id)
-    await call.answer("Введите номер: +79XXXXXXXXX")
+    await call.answer(t(lang, "enter_number"))
     await call.message.delete()
 
 @dp.callback_query(F.data.startswith("del:"))
 async def cb_del(call: CallbackQuery):
     """Remove the selected phone number from the user's account."""
     phone = call.data[4:]
+    lang = await get_lang(call.from_user.id, call.from_user.language_code)
     await remove_number(call.from_user.id, phone)
     numbers = await get_user_numbers(call.from_user.id)
-    await call.message.edit_text(status_text(numbers), reply_markup=numbers_keyboard(numbers))
+    await call.message.edit_text(status_text(numbers, lang), reply_markup=numbers_keyboard(numbers, lang))
     await call.answer()
 
 @dp.message()
@@ -217,22 +316,23 @@ async def handle_phone(message: Message, bot: Bot):
     """Validate and save the phone number sent after pressing the add button."""
     if message.from_user.id not in waiting_for_phone:
         return
+    lang = await get_lang(message.from_user.id, message.from_user.language_code)
     phone = message.text.strip()
     if not re.match(r"^\+?7\d{10}$", phone):
-        await message.answer("Неверный формат")
+        await message.answer(t(lang, "bad_format"))
         return
     result = await add_number(message.from_user.id, phone, bot.id)
     if result == "ok":
-        await message.answer("✅ Добавлен!")
+        await message.answer(t(lang, "added"))
     elif result == "limit":
-        await message.answer(f"❌ Лимит {MAX_NUMBERS}")
+        await message.answer(t(lang, "limit", max=MAX_NUMBERS))
     elif result == "taken":
-        await message.answer("❌ Занят")
+        await message.answer(t(lang, "taken"))
     elif result == "exists":
-        await message.answer("✅ Уже есть")
+        await message.answer(t(lang, "exists"))
     waiting_for_phone.discard(message.from_user.id)
     numbers = await get_user_numbers(message.from_user.id)
-    await message.answer(status_text(numbers), reply_markup=numbers_keyboard(numbers))
+    await message.answer(status_text(numbers, lang), reply_markup=numbers_keyboard(numbers, lang))
 
 async def send_code_to_owner(owner, digits, code, bot_id=None):
     """Send a login code to the Telegram user that owns the phone number.
@@ -244,7 +344,8 @@ async def send_code_to_owner(owner, digits, code, bot_id=None):
     if target_bot is None:
         logger.error("No bot available to send code for %s", digits)
         return
-    text = f"📱 Код для {digits}: <code>{code}</code>"
+    lang = await get_lang(owner)
+    text = t(lang, "code", phone=digits, code=code)
     try:
         await target_bot.send_message(owner, text, parse_mode="HTML")
         logger.info("Sent login code for %s to Telegram user %s via bot %s", digits, owner, target_bot.id)

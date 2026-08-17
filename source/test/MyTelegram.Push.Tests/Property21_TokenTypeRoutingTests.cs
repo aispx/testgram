@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 21: Маршрутизация по типу токена.
+// Feature: push-updates, Property 21: Routing by token type.
 //
 // For any device whose TokenType selects an implemented provider (with that provider enabled), the
 // PushDispatcher routes the payload to exactly one sender per the token-type table:
@@ -53,7 +53,7 @@ public class Property21_TokenTypeRoutingTests
                 select new RoutingCase(tokenType));
     }
 
-    // Property 21: Маршрутизация по типу токена
+    // Property 21: Routing by token type
     // Validates: Requirements 6.1, 6.2, 6.3
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(RoutingArbitraries) })]
     public void Dispatcher_routes_payload_to_sender_matching_token_type(RoutingCase routingCase)

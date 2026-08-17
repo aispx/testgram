@@ -6,7 +6,7 @@ using MyTelegram.Push.Tests.Infrastructure;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 31: Round-trip установки/снятия блокировки устройства.
+// Feature: push-updates, Property 31: Round-trip of setting and clearing the device lock.
 //
 // For any PermAuthKeyId and Period > 0, after DeviceLockStore.SetAsync(permAuthKeyId, Period) the lock
 // is active (IsLockedAsync == true); a subsequent SetAsync(permAuthKeyId, 0) clears it
@@ -23,7 +23,7 @@ public class Property31_DeviceLockRoundTripTests
     /// <summary>A strictly positive lock period in seconds.</summary>
     private static Gen<int> PositivePeriod => Gen.Choose(1, 86_400);
 
-    // Property 31: Round-trip установки/снятия блокировки устройства
+    // Property 31: Round-trip of setting and clearing the device lock
     // Validates: Requirements 9.1, 9.3
     [Property(MaxTest = 20)]
     public Property Set_then_clear_round_trips_lock_state()

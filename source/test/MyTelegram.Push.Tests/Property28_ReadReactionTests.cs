@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 28: Уведомление о прочтении реакций (read-reaction service push)
+// Feature: push-updates, Property 28: Read-reaction notification (read-reaction service push)
 using FsCheck;
 using FsCheck.Xunit;
 using MyTelegram.Messenger.QueryServer.DomainEventHandlers;
@@ -9,7 +9,7 @@ using Shouldly;
 namespace MyTelegram.Push.Tests;
 
 /// <summary>
-/// Property 28: Уведомление о прочтении реакций.
+/// Property 28: Read-reaction notification.
 ///
 /// <para>
 /// For any non-empty list of message ids and any peer, the service-push builder
@@ -32,7 +32,7 @@ public class Property28_ReadReactionTests
         from ids in GenHelpers.ArrayOfLength(n, Gen.Choose(1, 100000))
         select ids.ToList();
 
-    // Property 28: Уведомление о прочтении реакций
+    // Property 28: Read-reaction notification
     // Validates: Requirements 8.3
     [Property(MaxTest = 100)]
     public Property ReadReaction_uses_READ_REACTION_loc_key_and_carries_all_message_ids()

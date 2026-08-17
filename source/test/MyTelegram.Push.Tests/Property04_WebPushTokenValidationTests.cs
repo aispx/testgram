@@ -6,7 +6,7 @@ using Shouldly;
 
 namespace MyTelegram.Push.Tests;
 
-// Feature: push-updates, Property 4: Валидация Web-push токена даёт корректный исход
+// Feature: push-updates, Property 4: Web-push token validation yields the correct outcome
 //
 // For any JSON token at TokenType == 10:
 //   - endpoint + valid base64url keys.auth + valid base64url P-256 keys.p256dh => valid (null)

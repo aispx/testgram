@@ -1,4 +1,4 @@
-// Feature: push-updates, Property 17: Шифрование payload обратимо (round-trip)
+// Feature: push-updates, Property 17: Payload encryption is reversible (round-trip)
 //
 // For any JSON payload (built by PushPayloadEncryptor.BuildJson from a generated PushData) and any
 // 256-byte Secret, encrypting via the production PushPayloadEncryptor.EncryptForDevice and then
@@ -27,7 +27,7 @@ public class Property17_EncryptionRoundTripTests
     private static readonly IAuthKeyIdHelper AuthKeyIdHelper = new AuthKeyIdHelper();
     private static readonly IMtpHelper MtpHelper = new MtpHelper(new AesHelper());
 
-    // Property 17: Шифрование payload обратимо (round-trip)
+    // Property 17: Payload encryption is reversible (round-trip)
     // Validates: Requirements 5.5
     [Property(MaxTest = 100, Arbitrary = new[] { typeof(PushArbitraries) })]
     public Property Encrypting_then_decrypting_restores_the_original_json(PushData data)
