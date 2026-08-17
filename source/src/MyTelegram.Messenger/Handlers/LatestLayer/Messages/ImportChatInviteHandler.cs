@@ -24,7 +24,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IStarsSubscriptionService starsSubscriptionService) : RpcResultObjectHandler<RequestImportChatInvite, IUpdates>
+internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IStarsSubscriptionService starsSubscriptionService, IChatInvitePeekService chatInvitePeekService) : RpcResultObjectHandler<RequestImportChatInvite, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestImportChatInvite obj)
     {
@@ -107,6 +107,10 @@ internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAp
                 requestState = ChatInviteRequestState.WaitingForApproval;
             }
         }
+
+        // Membership now decides what the user may read, so the preview window granted by
+        // messages.checkChatInvite must not outlive it and keep working after they leave again.
+        await chatInvitePeekService.RevokeAsync(input.UserId, chatInviteReadModel.PeerId);
 
         var command = new ImportChatInviteCommand(ChatInviteId.Create(chatInviteReadModel.PeerId, chatInviteReadModel.InviteId), input.ToRequestInfo(), requestState, CurrentDate, subscriptionUntilDate);
         await commandBus.PublishAsync(command);

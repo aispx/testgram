@@ -3,6 +3,7 @@ namespace MyTelegram.Messenger.Services.Impl;
 public class ChannelAppService(IQueryProcessor queryProcessor,
     IReadModelCacheHelper<IChannelReadModel> channelReadModelCacheHelper,
     IRpcErrorHelper rpcErrorHelper,
+    IChatInvitePeekService chatInvitePeekService,
     IReadModelCacheHelper<IChannelFullReadModel> channelFullReadModelCacheHelper) :
     ReadModelWithCacheAppService<IChannelReadModel>(channelReadModelCacheHelper),
     IChannelAppService, ITransientDependency
@@ -49,9 +50,7 @@ public class ChannelAppService(IQueryProcessor queryProcessor,
 
     public async Task<bool> SendRpcErrorIfNotChannelMemberAsync(IRequestInput input, IChannelReadModel channelReadModel)
     {
-        if (string.IsNullOrEmpty(channelReadModel.UserName) &&
-            channelReadModel is { Broadcast: false, LinkedChatId: null } &&
-            !channelReadModel.IsMonoforum)
+        if (RequiresMembership(channelReadModel))
         {
             if (!await IsChannelMemberAsync(input.UserId, channelReadModel.ChannelId))
             {
@@ -62,5 +61,40 @@ public class ChannelAppService(IQueryProcessor queryProcessor,
         }
 
         return false;
+    }
+
+    public async Task<bool> SendRpcErrorIfNoReadAccessAsync(IRequestInput input, IChannelReadModel channelReadModel)
+    {
+        if (!RequiresMembership(channelReadModel))
+        {
+            return false;
+        }
+
+        if (await IsChannelMemberAsync(input.UserId, channelReadModel.ChannelId))
+        {
+            return false;
+        }
+
+        // messages.checkChatInvite may hand a non-member temporary read-only access to the chat,
+        // see https://corefork.telegram.org/constructor/chatInvitePeek
+        if (await chatInvitePeekService.HasActivePeekAsync(input.UserId, channelReadModel.ChannelId))
+        {
+            return false;
+        }
+
+        await rpcErrorHelper.ThrowRpcErrorAsync(input, RpcErrors.RpcErrors400.ChannelPrivate);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Only private chats keep non-members out: a public one, a discussion group of a channel and a
+    /// broadcast channel can all be read by anybody who has the peer.
+    /// </summary>
+    private static bool RequiresMembership(IChannelReadModel channelReadModel)
+    {
+        return string.IsNullOrEmpty(channelReadModel.UserName) &&
+               channelReadModel is { Broadcast: false, LinkedChatId: null } &&
+               !channelReadModel.IsMonoforum;
     }
 }

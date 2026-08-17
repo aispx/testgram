@@ -26,4 +26,28 @@ internal static class ChatInviteExportedFiller
 
         return exported;
     }
+
+    /// <summary>
+    /// The link a join request came in through, as it has to be reported in the admin log. Requests
+    /// made through a public username carry no link at all, which the API models with
+    /// <c>chatInvitePublicJoinRequests</c>.
+    /// </summary>
+    public static async Task<MyTelegram.Schema.IExportedChatInvite> ToRequestInviteAsync(
+        IChatInviteExportedConverterService converterService,
+        IQueryProcessor queryProcessor,
+        long peerId,
+        long? inviteId,
+        int layer)
+    {
+        if (inviteId is not > 0)
+        {
+            return new TChatInvitePublicJoinRequests();
+        }
+
+        var readModel = await queryProcessor.ProcessAsync(new GetChatInviteByInviteIdQuery(peerId, inviteId.Value));
+
+        return readModel == null
+            ? new TChatInvitePublicJoinRequests()
+            : await ToExportedChatInviteAsync(converterService, queryProcessor, readModel, layer);
+    }
 }

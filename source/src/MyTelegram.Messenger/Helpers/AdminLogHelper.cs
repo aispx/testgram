@@ -287,6 +287,26 @@ public static class AdminLogHelper
         await LogEventAsync(database, channelId, userId, action);
     }
 
+    /// <summary>
+    /// Logs that an admin let a <a href="https://corefork.telegram.org/api/invites#join-requests">join
+    /// request</a> through. The event belongs to the user who joined, the approving admin is carried
+    /// by <c>approved_by</c>.
+    /// </summary>
+    public static async Task LogParticipantJoinByRequest(
+        IMongoDatabase database,
+        long channelId,
+        long userId,
+        MyTelegram.Schema.IExportedChatInvite invite,
+        long approvedBy)
+    {
+        var action = new TChannelAdminLogEventActionParticipantJoinByRequest
+        {
+            Invite = invite,
+            ApprovedBy = approvedBy
+        };
+        await LogEventAsync(database, channelId, userId, action);
+    }
+
     public static async Task LogToggleSlowMode(
         IMongoDatabase database,
         long channelId,

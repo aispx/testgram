@@ -15,7 +15,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPhotoAppService photoAppService, IChannelAppService channelAppService, IChatConverterService chatConverterService, IUserConverterService userConverterService, ILayeredService<IPhotoConverter> layeredPhotoService, IStarsSubscriptionService starsSubscriptionService, MongoDB.Driver.IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestCheckChatInvite, IChatInvite>
+internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPhotoAppService photoAppService, IChannelAppService channelAppService, IChatConverterService chatConverterService, IUserConverterService userConverterService, ILayeredService<IPhotoConverter> layeredPhotoService, IStarsSubscriptionService starsSubscriptionService, IChatInvitePeekService chatInvitePeekService, MongoDB.Driver.IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestCheckChatInvite, IChatInvite>
 {
     private async Task<MyTelegram.Schema.IBotVerification?> GetBotVerificationAsync(long channelId)
     {
@@ -94,6 +94,25 @@ internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPh
                     Chat = channel
                 };
             }
+        }
+
+        // The link may instead grant a read-only preview of the chat: the caller can then read the
+        // history for a while and decide whether to join. Links that deliberately gate access -
+        // admin approval or a Star subscription - and chats that hide their history from
+        // non-members are never previewable.
+        // See https://corefork.telegram.org/api/invites
+        if (!chatInviteReadModel.RequestNeeded &&
+            chatInviteReadModel.SubscriptionPricingAmount is not > 0 &&
+            !channelReadModel.HiddenPreHistory)
+        {
+            var peek = await chatInvitePeekService.GrantAsync(input.UserId, channelReadModel.ChannelId,
+                chatInviteReadModel.Link);
+
+            return new TChatInvitePeek
+            {
+                Chat = chatConverterService.ToChannel(input, channelReadModel, chatPhoto, null, null, input.Layer),
+                Expires = peek.Expires
+            };
         }
 
         // A paid link either shows the price, or - when the buyer already paid and has not let the

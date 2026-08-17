@@ -97,7 +97,14 @@ internal sealed class GetAdminLogHandler(
             var eventTypes = new List<string>();
             var filter = obj.EventsFilter;
 
-            if (filter.Join) eventTypes.Add("TChannelAdminLogEventActionParticipantJoin");
+            // The join filter also covers joins through an invite link and requests let through by
+            // an admin, see https://corefork.telegram.org/constructor/channelAdminLogEventsFilter
+            if (filter.Join)
+            {
+                eventTypes.Add("TChannelAdminLogEventActionParticipantJoin");
+                eventTypes.Add("TChannelAdminLogEventActionParticipantJoinByInvite");
+                eventTypes.Add("TChannelAdminLogEventActionParticipantJoinByRequest");
+            }
             if (filter.Leave) eventTypes.Add("TChannelAdminLogEventActionParticipantLeave");
             if (filter.Invite) eventTypes.Add("TChannelAdminLogEventActionParticipantInvite");
             if (filter.Ban) eventTypes.Add("TChannelAdminLogEventActionParticipantToggleBan");

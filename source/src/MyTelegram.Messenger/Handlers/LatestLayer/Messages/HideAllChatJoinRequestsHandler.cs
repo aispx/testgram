@@ -1,3 +1,6 @@
+using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Converters.ConverterServices;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Dismiss or approve all <a href="https://corefork.telegram.org/api/invites#join-requests">join requests</a> related to a specific chat or channel.
@@ -17,7 +20,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class HideAllChatJoinRequestsHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChannelAppService channelAppService, IChatConverterService chatConverterService, IChannelAdminRightsChecker channelAdminRightsChecker, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestHideAllChatJoinRequests, MyTelegram.Schema.IUpdates>
+internal sealed class HideAllChatJoinRequestsHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChannelAppService channelAppService, IChatConverterService chatConverterService, IChannelAdminRightsChecker channelAdminRightsChecker, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper, IChatInviteExportedConverterService chatInviteExportedConverterService, MongoDB.Driver.IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestHideAllChatJoinRequests, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestHideAllChatJoinRequests obj)
     {
@@ -73,6 +76,10 @@ internal sealed class HideAllChatJoinRequestsHandler(IQueryProcessor queryProces
     {
         var pageSize = 1000;
         var hasMoreData = true;
+
+        // Requests approved in bulk usually share a handful of links at most, so the admin log
+        // entries below reuse the invite objects instead of re-reading one per requester.
+        var invites = new Dictionary<long, MyTelegram.Schema.IExportedChatInvite>();
         while (hasMoreData)
         {
             var chatInviteImporters = await queryProcessor.ProcessAsync(new GetChatInviteImportersQuery(channelId, ChatInviteRequestState.WaitingForApproval, inviteId, null, null, null, pageSize));
@@ -85,6 +92,20 @@ internal sealed class HideAllChatJoinRequestsHandler(IQueryProcessor queryProces
 
                 var command = new HideChatJoinRequestCommand(JoinChannelId.Create(channelId, joinChannelRequestReadModel.UserId), requestInfo, joinChannelRequestReadModel.UserId, approved, topMessageId, channelHistoryMinId, broadcast);
                 await commandBus.PublishAsync(command);
+
+                if (approved)
+                {
+                    var requestInviteId = joinChannelRequestReadModel.InviteId ?? 0;
+                    if (!invites.TryGetValue(requestInviteId, out var invite))
+                    {
+                        invite = await ChatInviteExportedFiller.ToRequestInviteAsync(chatInviteExportedConverterService,
+                            queryProcessor, channelId, joinChannelRequestReadModel.InviteId, MyTelegramConsts.Layer);
+                        invites[requestInviteId] = invite;
+                    }
+
+                    await AdminLogHelper.LogParticipantJoinByRequest(mongoDatabase, channelId,
+                        joinChannelRequestReadModel.UserId, invite, requestInfo.UserId);
+                }
             }
 
             hasMoreData = chatInviteImporters.Count == pageSize;

@@ -1,3 +1,6 @@
+using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Converters.ConverterServices;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Dismiss or approve a chat <a href="https://corefork.telegram.org/api/invites#join-requests">join request</a> related to a specific chat or channel.
@@ -19,7 +22,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class HideChatJoinRequestHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, ICommandBus commandBus) : RpcResultObjectHandler<RequestHideChatJoinRequest, IUpdates>
+internal sealed class HideChatJoinRequestHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, ICommandBus commandBus, IChatInviteExportedConverterService chatInviteExportedConverterService, MongoDB.Driver.IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestHideChatJoinRequest, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestHideChatJoinRequest obj)
     {
@@ -55,6 +58,15 @@ internal sealed class HideChatJoinRequestHandler(IQueryProcessor queryProcessor,
 
         var command = new HideChatJoinRequestCommand(JoinChannelId.Create(channelId, userPeer.PeerId), input.ToRequestInfo(), userPeer.PeerId, obj.Approved, topMessageId, channelHistoryMinId, broadcast);
         await commandBus.PublishAsync(command);
+
+        if (obj.Approved)
+        {
+            var invite = await ChatInviteExportedFiller.ToRequestInviteAsync(chatInviteExportedConverterService,
+                queryProcessor, channelId, joinRequestReadModel.InviteId, MyTelegramConsts.Layer);
+            await AdminLogHelper.LogParticipantJoinByRequest(mongoDatabase, channelId, userPeer.PeerId, invite,
+                input.UserId);
+        }
+
         return null!;
     }
 }

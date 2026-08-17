@@ -42,7 +42,9 @@ internal sealed class GetHistoryHandler(IMessageAppService messageAppService, IQ
             }
 
             var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
-            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel!))
+            // A user who checked an invite link may read the history before joining, until the
+            // peek window granted by messages.checkChatInvite runs out.
+            if (await channelAppService.SendRpcErrorIfNoReadAccessAsync(input, channelReadModel!))
             {
                 return null!;
             }

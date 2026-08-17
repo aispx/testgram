@@ -38,7 +38,9 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
                 RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
             }
 
-            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channelReadModel!))
+            // Peeking clients render the chat header from the full channel, so the peek window
+            // granted by messages.checkChatInvite has to be honoured here too.
+            if (await channelAppService.SendRpcErrorIfNoReadAccessAsync(input, channelReadModel!))
             {
                 return null !;
             }
