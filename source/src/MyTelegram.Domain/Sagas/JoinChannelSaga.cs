@@ -82,6 +82,8 @@ public class JoinChannelSaga : MyInMemoryAggregateSaga<JoinChannelSaga, JoinChan
             false,
             null,
             domainEvent.AggregateEvent.Broadcast,
+            // Joining by public username is never a paid subscription.
+            null,
             ChatJoinType.BySelf
         );
         Publish(command);

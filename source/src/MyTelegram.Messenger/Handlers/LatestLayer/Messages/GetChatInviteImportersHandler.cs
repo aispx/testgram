@@ -17,58 +17,179 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetChatInviteImportersHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IUserConverterService userConverterService) : RpcResultObjectHandler<RequestGetChatInviteImporters, IChatInviteImporters>
+internal sealed class GetChatInviteImportersHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IUserConverterService userConverterService, IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<RequestGetChatInviteImporters, IChatInviteImporters>
 {
     protected override async Task<IChatInviteImporters> HandleCoreAsync(IRequestInput input, RequestGetChatInviteImporters obj)
     {
-        if (obj.Peer is TInputPeerChannel inputPeerChannel)
+        if (obj.Peer is not TInputPeerChannel inputPeerChannel)
         {
-            var userPeer = peerHelper.GetPeer(obj.OffsetUser);
-            var channelAdminReadModel = await queryProcessor.ProcessAsync(new GetChatAdminQuery(inputPeerChannel.ChannelId, input.UserId));
-            if (channelAdminReadModel == null)
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (!string.IsNullOrEmpty(obj.Q) && !string.IsNullOrEmpty(obj.Link))
+        {
+            RpcErrors.RpcErrors400.SearchWithLinkNotSupported.ThrowRpcError();
+        }
+
+        var channelAdminReadModel = await queryProcessor.ProcessAsync(new GetChatAdminQuery(inputPeerChannel.ChannelId, input.UserId));
+        if (channelAdminReadModel == null)
+        {
+            RpcErrors.RpcErrors403.ChatAdminRequired.ThrowRpcError();
+        }
+
+        long? inviteId = null;
+        if (!string.IsNullOrEmpty(obj.Link))
+        {
+            var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteByLinkQuery(chatInviteLinkHelper.GetHashFromLink(obj.Link)));
+
+            // Invite hashes are global, so the link has to actually belong to the peer the caller
+            // is an admin of.
+            if (chatInviteReadModel == null || chatInviteReadModel.PeerId != inputPeerChannel.ChannelId)
             {
-                RpcErrors.RpcErrors403.ChatAdminRequired.ThrowRpcError();
+                RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
             }
 
-            long? inviteId = null;
-            if (!string.IsNullOrEmpty(obj.Link))
-            {
-                var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteByLinkQuery(obj.Link));
-                inviteId = chatInviteReadModel?.InviteId;
-            }
+            inviteId = chatInviteReadModel!.InviteId;
+        }
 
-            var inviteImporterReadModels = await queryProcessor.ProcessAsync(new GetChatInviteImportersQuery(inputPeerChannel.ChannelId, obj.Requested ? ChatInviteRequestState.WaitingForApproval : null, inviteId, obj.OffsetDate, userPeer.PeerId, obj.Q, obj.Limit));
-            var importers = new List<TChatInviteImporter>();
-            var userIds = new List<long>();
-            var users = await userConverterService.GetUserListAsync(input, userIds, false, false, input.Layer);
-            //var userDict = users.ToDictionary(k => k.Id);
-            foreach (var readModel in inviteImporterReadModels)
-            {
-                //userDict.TryGetValue(readModel.UserId, out var user);
-                var importer = new TChatInviteImporter
-                {
-                    //About = user?.About,
-                    ApprovedBy = readModel.ProcessedByUserId,
-                    Date = readModel.Date,
-                    Requested = !readModel.IsJoinRequestProcessed,
-                    UserId = readModel.UserId,
-                //ViaChatlist = readModel.ViaChatList
-                };
-                importers.Add(importer);
-                userIds.Add(readModel.UserId);
-            }
+        // q searches the requesting users by name/username, which the read model stores cannot
+        // express, so the matching user ids are resolved up front and used as a filter.
+        var searchUserIds = await ResolveSearchUserIdsAsync(obj.Q);
+        if (searchUserIds is { Count: 0 })
+        {
+            return EmptyResult();
+        }
 
-            return new TChatInviteImporters
+        var offsetUserPeer = peerHelper.GetPeer(obj.OffsetUser);
+        var offsetUserId = offsetUserPeer.PeerId > 0 ? offsetUserPeer.PeerId : (long?)null;
+        var offsetDate = obj.OffsetDate > 0 ? obj.OffsetDate : (int?)null;
+
+        var (importers, count) = obj.Requested
+            ? await GetPendingRequestsAsync(inputPeerChannel.ChannelId, inviteId, offsetDate, offsetUserId, searchUserIds, obj.Limit)
+            : await GetJoinedImportersAsync(inputPeerChannel.ChannelId, inviteId, offsetDate, offsetUserId, searchUserIds, obj.SubscriptionExpired, obj.Limit);
+
+        var userIds = importers.Select(p => p.UserId).Distinct().ToList();
+        var users = await userConverterService.GetUserListAsync(input, userIds, false, false, input.Layer);
+        var aboutByUserId = await GetAboutByUserIdAsync(userIds);
+
+        foreach (var importer in importers)
+        {
+            if (importer.About == null && aboutByUserId.TryGetValue(importer.UserId, out var about))
             {
-                Importers = [..importers],
-                Users = [..users],
-            };
+                importer.About = about;
+            }
         }
 
         return new TChatInviteImporters
         {
-            Importers = [],
-            Users = new TVector<IUser>(),
+            Count = count,
+            Importers = [.. importers],
+            Users = [.. users]
         };
+    }
+
+    private static TChatInviteImporters EmptyResult()
+    {
+        return new TChatInviteImporters
+        {
+            Count = 0,
+            Importers = new TVector<IChatInviteImporter>(),
+            Users = new TVector<IUser>()
+        };
+    }
+
+    private async Task<List<long>?> ResolveSearchUserIdsAsync(string? q)
+    {
+        if (string.IsNullOrWhiteSpace(q))
+        {
+            return null;
+        }
+
+        var userNameReadModels = await queryProcessor.ProcessAsync(new SearchUserNameQuery(q));
+        var userIds = userNameReadModels.Select(p => p.PeerId).ToList();
+
+        var users = await queryProcessor.ProcessAsync(new SearchUserByKeywordQuery(q, MaxSearchResults));
+        userIds.AddRange(users.Select(p => p.UserId));
+
+        return userIds.Distinct().ToList();
+    }
+
+    private const int MaxSearchResults = 100;
+
+    private async Task<Dictionary<long, string?>> GetAboutByUserIdAsync(List<long> userIds)
+    {
+        if (userIds.Count == 0)
+        {
+            return [];
+        }
+
+        var userReadModels = await queryProcessor.ProcessAsync(new GetUsersByUserIdListQuery(userIds));
+
+        return userReadModels.ToDictionary(p => p.UserId, p => p.About);
+    }
+
+    private async Task<(List<TChatInviteImporter> Importers, int Count)> GetPendingRequestsAsync(long channelId,
+        long? inviteId,
+        int? offsetDate,
+        long? offsetUserId,
+        List<long>? userIds,
+        int limit)
+    {
+        var readModels = await queryProcessor.ProcessAsync(new GetChatInviteImportersQuery(channelId,
+            ChatInviteRequestState.WaitingForApproval,
+            inviteId,
+            offsetDate,
+            offsetUserId,
+            userIds,
+            limit));
+
+        var count = await queryProcessor.ProcessAsync(new GetChatInviteRequestCountQuery(channelId, inviteId, userIds));
+
+        var importers = readModels
+            .OrderByDescending(p => p.Date)
+            .Select(p => new TChatInviteImporter
+            {
+                Date = p.Date,
+                Requested = true,
+                UserId = p.UserId
+            })
+            .ToList();
+
+        return (importers, count);
+    }
+
+    private async Task<(List<TChatInviteImporter> Importers, int Count)> GetJoinedImportersAsync(long channelId,
+        long? inviteId,
+        int? offsetDate,
+        long? offsetUserId,
+        List<long>? userIds,
+        bool subscriptionExpired,
+        int limit)
+    {
+        var readModels = await queryProcessor.ProcessAsync(new GetChatInviteImporterListQuery(channelId,
+            inviteId,
+            offsetDate,
+            offsetUserId,
+            userIds,
+            subscriptionExpired,
+            limit));
+
+        var count = await queryProcessor.ProcessAsync(new GetChatInviteImporterCountQuery(channelId, inviteId, userIds, subscriptionExpired));
+
+        var importers = readModels
+            .OrderByDescending(p => p.Date)
+            .Select(p => new TChatInviteImporter
+            {
+                About = p.About,
+                // approved_by is only meaningful for a member that was actually let in by an admin.
+                ApprovedBy = p.Approved ? p.ApprovedBy : null,
+                Date = p.Date,
+                UserId = p.UserId,
+                ViaChatlist = p.ViaChatList
+            })
+            .ToList();
+
+        return (importers, count);
     }
 }

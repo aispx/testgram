@@ -18,30 +18,37 @@ public class
     }
 
     public void ExportChatInvite(RequestInfo requestInfo, long channelId, long inviteId, string hash, long adminId, string? title,
-        bool requestNeeded, int? startDate, int? expireDate, int? usageLimit, bool permanent, int date, bool isBroadcast)
+        bool requestNeeded, int? startDate, int? expireDate, int? usageLimit, bool permanent, int date, bool isBroadcast,
+        int? subscriptionPricingPeriod, long? subscriptionPricingAmount)
     {
         Specs.AggregateIsNew.ThrowDomainErrorIfNotSatisfied(this);
-        Emit(new ChatInviteExportedEvent(requestInfo, channelId, inviteId, hash, adminId, title, requestNeeded, startDate, expireDate, usageLimit, permanent, date, isBroadcast));
+        Emit(new ChatInviteExportedEvent(requestInfo, channelId, inviteId, hash, adminId, title, requestNeeded, startDate, expireDate, usageLimit, permanent, date, isBroadcast, subscriptionPricingPeriod, subscriptionPricingAmount));
     }
 
     public void CreateChatInvite(RequestInfo requestInfo, long channelId, long inviteId, string hash, long adminId, string? title,
-        bool requestNeeded, int? startDate, int? expireDate, int? usageLimit, bool permanent, int date, bool isBroadcast)
+        bool requestNeeded, int? startDate, int? expireDate, int? usageLimit, bool permanent, int date, bool isBroadcast,
+        int? subscriptionPricingPeriod, long? subscriptionPricingAmount)
     {
         Specs.AggregateIsNew.ThrowDomainErrorIfNotSatisfied(this);
         Emit(new ChatInviteCreatedEvent(requestInfo, channelId, inviteId, hash, adminId, title, requestNeeded, startDate,
-            expireDate, usageLimit, permanent, date, isBroadcast));
+            expireDate, usageLimit, permanent, date, isBroadcast, subscriptionPricingPeriod, subscriptionPricingAmount));
     }
 
     public void EditChatInvite(RequestInfo requestInfo, long inviteId, string hash, string? newHash, long adminId,
         string? title, bool requestNeeded, int? startDate, int? expireDate, int? usageLimit, bool permanent, bool revoked)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+
+        // Star subscription pricing is immutable once the link exists, so it is carried over
+        // from the current state rather than taken from the request.
         Emit(new ChatInviteEditedEvent(requestInfo, _state.ChannelId, inviteId, hash, newHash, adminId, title, requestNeeded,
             _state.Date,
-            startDate, expireDate, usageLimit, permanent, revoked, _state.Requested, _state.Usage, _state.IsBroadcast));
+            startDate, expireDate, usageLimit, permanent, revoked, _state.Requested, _state.Usage, _state.IsBroadcast,
+            _state.SubscriptionPricingPeriod, _state.SubscriptionPricingAmount));
     }
 
-    public void ImportChatInvite(RequestInfo requestInfo, ChatInviteRequestState chatInviteRequestState, int date)
+    public void ImportChatInvite(RequestInfo requestInfo, ChatInviteRequestState chatInviteRequestState, int date,
+        int? subscriptionUntilDate)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
         if (_state.Revoked)
@@ -89,7 +96,8 @@ public class
             usage,
             _state.Hash,
             date,
-            _state.IsBroadcast));
+            _state.IsBroadcast,
+            subscriptionUntilDate));
     }
 
     public void DeleteExportedInvite(RequestInfo requestInfo)
@@ -120,7 +128,9 @@ public class
             _state.Revoked,
             _state.Usage,
             _state.Requested,
-            _state.IsBroadcast
+            _state.IsBroadcast,
+            _state.SubscriptionPricingPeriod,
+            _state.SubscriptionPricingAmount
         ));
     }
 

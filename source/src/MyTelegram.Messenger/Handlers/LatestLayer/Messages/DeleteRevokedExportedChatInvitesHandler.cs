@@ -14,22 +14,20 @@ internal sealed class DeleteRevokedExportedChatInvitesHandler(IQueryProcessor qu
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestDeleteRevokedExportedChatInvites obj)
     {
-        switch (obj.Peer)
+        if (obj.Peer is not TInputPeerChannel inputPeerChannel)
         {
-            case TInputPeerChannel inputPeerChannel:
-                var peer = peerHelper.GetPeer(obj.Peer);
-                var adminId = peerHelper.GetPeer(obj.AdminId, input.UserId);
-                await channelAdminRightsChecker.CheckAdminRightAsync(inputPeerChannel.ChannelId, input.UserId, (p) => p.ChangeInfo, RpcErrors.RpcErrors403.ChatAdminRequired);
-                var chatInvites = await queryProcessor.ProcessAsync(new GetRevokedChatInvitesQuery(peer.PeerId, adminId.PeerId));
-                foreach (var chatInviteReadModel in chatInvites)
-                {
-                    var command = new DeleteExportedInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteReadModel.InviteId), input.ToRequestInfo());
-                    await commandBus.PublishAsync(command, default);
-                }
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
+        }
 
-                break;
-            case TInputPeerChat inputPeerChat:
-                break;
+        var peer = peerHelper.GetPeer(obj.Peer);
+        var adminId = peerHelper.GetPeer(obj.AdminId, input.UserId);
+        await channelAdminRightsChecker.CheckAdminRightAsync(inputPeerChannel.ChannelId, input.UserId, (p) => p.InviteUsers, RpcErrors.RpcErrors403.ChatAdminRequired);
+        var chatInvites = await queryProcessor.ProcessAsync(new GetRevokedChatInvitesQuery(peer.PeerId, adminId.PeerId));
+        foreach (var chatInviteReadModel in chatInvites)
+        {
+            var command = new DeleteExportedInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteReadModel.InviteId), input.ToRequestInfo());
+            await commandBus.PublishAsync(command, default);
         }
 
         return new TBoolTrue();

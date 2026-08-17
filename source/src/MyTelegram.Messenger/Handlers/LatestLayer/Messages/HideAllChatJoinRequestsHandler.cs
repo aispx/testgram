@@ -17,7 +17,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class HideAllChatJoinRequestsHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChannelAppService channelAppService, IChatConverterService chatConverterService, IChannelAdminRightsChecker channelAdminRightsChecker, ICommandBus commandBus) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestHideAllChatJoinRequests, MyTelegram.Schema.IUpdates>
+internal sealed class HideAllChatJoinRequestsHandler(IQueryProcessor queryProcessor, IPeerHelper peerHelper, IChannelAppService channelAppService, IChatConverterService chatConverterService, IChannelAdminRightsChecker channelAdminRightsChecker, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestHideAllChatJoinRequests, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestHideAllChatJoinRequests obj)
     {
@@ -32,8 +32,10 @@ internal sealed class HideAllChatJoinRequestsHandler(IQueryProcessor queryProces
         long? inviteId = null;
         if (!string.IsNullOrEmpty(obj.Link))
         {
-            var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteByLinkQuery(obj.Link));
-            if (chatInviteReadModel == null)
+            var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteByLinkQuery(chatInviteLinkHelper.GetHashFromLink(obj.Link)));
+
+            // Invite hashes are global, so the link has to belong to the channel being managed.
+            if (chatInviteReadModel == null || chatInviteReadModel.PeerId != channelId)
             {
                 RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
             }

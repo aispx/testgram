@@ -29,14 +29,14 @@ internal sealed class PeerSettingsMapper
         destination.PhoneCountry = source.PhoneCountry;
         destination.NameChangeDate = source.NameChangeDate;
         destination.PhotoChangeDate = source.PhotoChangeDate;
+        destination.RequestChatBroadcast = source.RequestChatBroadcast;
+        destination.RequestChatTitle = source.RequestChatTitle;
+        destination.RequestChatDate = source.RequestChatDate;
         //destination.Autoarchived = source.Autoarchived;
         //destination.InviteMembers = source.InviteMembers;
-        //destination.RequestChatBroadcast = source.RequestChatBroadcast;
         //destination.BusinessBotPaused = source.BusinessBotPaused;
         //destination.BusinessBotCanReply = source.BusinessBotCanReply;
         //destination.GeoDistance = source.GeoDistance;
-        //destination.RequestChatTitle = source.RequestChatTitle;
-        //destination.RequestChatDate = source.RequestChatDate;
         //destination.BusinessBotId = source.BusinessBotId;
         //destination.BusinessBotManageUrl = source.BusinessBotManageUrl;
 

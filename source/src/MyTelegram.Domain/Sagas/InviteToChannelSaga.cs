@@ -55,7 +55,8 @@ public class InviteToChannelSaga :
             domainEvent.AggregateEvent.BotUserIds,
             domainEvent.AggregateEvent.ChannelHistoryMinId,
             domainEvent.AggregateEvent.MaxMessageId,
-            domainEvent.AggregateEvent.ChatJoinType
+            domainEvent.AggregateEvent.ChatJoinType,
+            domainEvent.AggregateEvent.MissingInviteeUserIds
         ));
 
         var date = DateTime.UtcNow.ToTimestamp();
@@ -86,7 +87,9 @@ public class InviteToChannelSaga :
             date,
             isBot,
             null,
-            isBroadcast
+            isBroadcast,
+            // Being added by an admin never involves a paid subscription.
+            null
         );
         Publish(command);
     }
@@ -163,7 +166,8 @@ public class InviteToChannelSaga :
                 _state.MemberUserIds,
                 _state.BotUserIds,
                 _state.HasLink,
-                _state.ChatJoinType
+                _state.ChatJoinType,
+                _state.MissingInviteeUserIds
             ));
         }
 

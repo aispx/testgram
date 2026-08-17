@@ -16,6 +16,7 @@ public class
     public int MaxMessageId { get; private set; }
     public IReadOnlyCollection<long> MemberUserIds { get; private set; } = [];
     public IReadOnlyCollection<long> BotUserIds { get; private set; } = [];
+    public IReadOnlyCollection<long> MissingInviteeUserIds { get; private set; } = [];
     public string MessageActionData { get; private set; } = null!;
 
     public long RandomId { get; private set; }
@@ -41,5 +42,6 @@ public class
         Broadcast = aggregateEvent.Broadcast;
         HasLink = aggregateEvent.HasLink;
         ChatJoinType = aggregateEvent.ChatJoinType;
+        MissingInviteeUserIds = aggregateEvent.MissingInviteeUserIds;
     }
 }

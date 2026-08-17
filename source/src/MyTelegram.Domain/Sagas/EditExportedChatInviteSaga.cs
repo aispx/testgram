@@ -63,7 +63,10 @@ public class EditExportedChatInviteSaga : MyInMemoryAggregateSaga<EditExportedCh
                 domainEvent.AggregateEvent.UsageLimit,
                 domainEvent.AggregateEvent.Permanent,
                 DateTime.UtcNow.ToTimestamp(),
-                domainEvent.AggregateEvent.IsBroadcast
+                domainEvent.AggregateEvent.IsBroadcast,
+                // Revoking a permanent link regenerates it with the same pricing.
+                domainEvent.AggregateEvent.SubscriptionPricingPeriod,
+                domainEvent.AggregateEvent.SubscriptionPricingAmount
             );
             Publish(command);
         }

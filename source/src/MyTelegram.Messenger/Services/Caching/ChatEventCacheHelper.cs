@@ -5,6 +5,7 @@ public class ChatEventCacheHelper : IChatEventCacheHelper, ISingletonDependency
     private readonly ConcurrentDictionary<long, ChannelCreatedEvent> _channelCreatedEvents = new();
     //private readonly ConcurrentDictionary<long, StartInviteToChannelEvent> _inviteToChannelEvents = new();
     private readonly ConcurrentDictionary<long, long> _chatIdToMigrateToChannelIds = new();
+    private readonly ConcurrentDictionary<Guid, IReadOnlyCollection<long>> _missingInvitees = new();
 
     public void Add(long chatId, long migrateToChannelId)
     {
@@ -41,5 +42,21 @@ public class ChatEventCacheHelper : IChatEventCacheHelper, ISingletonDependency
         [NotNullWhen(true)] out ChannelCreatedEvent? channelCreatedEvent)
     {
         return _channelCreatedEvents.TryRemove(channelId, out channelCreatedEvent);
+    }
+
+    public void AddMissingInvitees(Guid requestId, IReadOnlyCollection<long> userIds)
+    {
+        if (userIds.Count == 0)
+        {
+            return;
+        }
+
+        _missingInvitees.TryAdd(requestId, userIds);
+    }
+
+    public bool TryRemoveMissingInvitees(Guid requestId,
+        [NotNullWhen(true)] out IReadOnlyCollection<long>? userIds)
+    {
+        return _missingInvitees.TryRemove(requestId, out userIds);
     }
 }

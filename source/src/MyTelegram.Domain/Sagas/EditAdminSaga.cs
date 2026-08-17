@@ -41,7 +41,9 @@ public class EditAdminSaga : MyInMemoryAggregateSaga<EditAdminSaga, EditAdminSag
                 DateTime.UtcNow.ToTimestamp(),
                 domainEvent.AggregateEvent.IsBot,
                 null,
-                domainEvent.AggregateEvent.IsBroadcast
+                domainEvent.AggregateEvent.IsBroadcast,
+                // Promoting an admin never involves a paid subscription.
+                null
                 );
             Publish(command);
 
@@ -81,7 +83,10 @@ public class EditAdminSaga : MyInMemoryAggregateSaga<EditAdminSaga, EditAdminSag
                 null,
                 true,
                 DateTime.UtcNow.ToTimestamp(),
-                domainEvent.AggregateEvent.IsBroadcast
+                domainEvent.AggregateEvent.IsBroadcast,
+                // An admin's own permanent link is never a paid subscription link.
+                null,
+                null
             );
             Publish(createChatInviteCommand);
         }

@@ -37,6 +37,8 @@ public class ApproveJoinChannelSaga : MyInMemoryAggregateSaga<ApproveJoinChannel
                 false,
                 domainEvent.AggregateEvent.InviteId,
                 domainEvent.AggregateEvent.Broadcast,
+                // Paid invite links cannot also require approval, so this path is always free.
+                null,
                 ChatJoinType.ByRequest
             );
             Publish(command);

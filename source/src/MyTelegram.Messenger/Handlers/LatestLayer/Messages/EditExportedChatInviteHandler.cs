@@ -18,52 +18,68 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditExportedChatInviteHandler(IQueryProcessor queryProcessor, IChannelAppService channelAppService, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<Schema.Messages.RequestEditExportedChatInvite, IExportedChatInvite>
+internal sealed class EditExportedChatInviteHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IPeerHelper peerHelper) : RpcResultObjectHandler<Schema.Messages.RequestEditExportedChatInvite, IExportedChatInvite>
 {
     protected override async Task<IExportedChatInvite> HandleCoreAsync(IRequestInput input, RequestEditExportedChatInvite obj)
     {
-        switch (obj.Peer)
+        if (obj.Peer is not TInputPeerChannel inputPeerChannel)
         {
-            case TInputPeerChannel inputPeerChannel:
-            {
-                var link = chatInviteLinkHelper.GetHashFromLink(obj.Link);
-                var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteQuery(inputPeerChannel.ChannelId, link));
-                if (chatInviteReadModel == null)
-                {
-                    RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
-                }
-
-                var channelReadModel = await channelAppService.GetAsync(inputPeerChannel.ChannelId);
-                if (channelReadModel == null)
-                {
-                    RpcErrors.RpcErrors400.ChannelIdInvalid.ThrowRpcError();
-                }
-
-                var admin = channelReadModel!.AdminList.FirstOrDefault(p => p.UserId == input.UserId);
-                if (admin == null || !admin.AdminRights.ChangeInfo)
-                {
-                    RpcErrors.RpcErrors400.ChatAdminRequired.ThrowRpcError();
-                }
-
-                //var inviteId = chatInviteReadModel!.InviteId;
-                var hash = link;
-                string? newHash = null;
-                if (obj.Revoked)
-                {
-                    newHash = chatInviteLinkHelper.GenerateInviteLink();
-                }
-
-                var command = new EditChatInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteReadModel!.InviteId), input.ToRequestInfo(), chatInviteReadModel.InviteId, hash, newHash, input.UserId, obj.Title, obj.RequestNeeded ?? false, null, obj.ExpireDate, obj.UsageLimit, chatInviteReadModel.Permanent, obj.Revoked);
-                await commandBus.PublishAsync(command, default);
-                return null !;
-            }
-
-            case TInputPeerChat inputPeerChat:
-                break;
-            default:
-                throw new ArgumentOutOfRangeException();
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
         }
 
-        throw new NotImplementedException();
+        var link = chatInviteLinkHelper.GetHashFromLink(obj.Link);
+        var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteQuery(inputPeerChannel.ChannelId, link));
+        if (chatInviteReadModel == null)
+        {
+            RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
+        }
+
+        await channelAdminRightsChecker.CheckAdminRightAsync(inputPeerChannel.ChannelId, input.UserId, p => p.InviteUsers, RpcErrors.RpcErrors403.ChatAdminRequired);
+
+        // A permanent link has no expiry and no usage cap; the only edit it accepts is a revoke.
+        if (chatInviteReadModel!.Permanent && !obj.Revoked && (obj.ExpireDate.HasValue || obj.UsageLimit.HasValue))
+        {
+            RpcErrors.RpcErrors400.ChatInvitePermanent.ThrowRpcError();
+        }
+
+        if (obj.UsageLimit is <= 0)
+        {
+            RpcErrors.RpcErrors400.UsageLimitInvalid.ThrowRpcError();
+        }
+
+        if (obj.ExpireDate is > 0 && obj.ExpireDate.Value <= CurrentDate)
+        {
+            RpcErrors.RpcErrors400.ExpireDateInvalid.ThrowRpcError();
+        }
+
+        // Links created by a bot are off limits to regular users.
+        if (chatInviteReadModel.AdminId != input.UserId &&
+            peerHelper.IsBotUser(chatInviteReadModel.AdminId) &&
+            !peerHelper.IsBotUser(input.UserId))
+        {
+            RpcErrors.RpcErrors403.EditBotInviteForbidden.ThrowRpcError();
+        }
+
+        // Revoking a permanent link replaces it with a freshly generated one: the saga exports the
+        // new hash and the client is answered with messages.exportedChatInviteReplaced.
+        var newHash = obj.Revoked ? chatInviteLinkHelper.GenerateInviteLink() : null;
+
+        var command = new EditChatInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteReadModel.InviteId),
+            input.ToRequestInfo(),
+            chatInviteReadModel.InviteId,
+            link,
+            newHash,
+            input.UserId,
+            obj.Title,
+            obj.RequestNeeded ?? chatInviteReadModel.RequestNeeded,
+            null,
+            obj.ExpireDate,
+            obj.UsageLimit,
+            chatInviteReadModel.Permanent,
+            obj.Revoked);
+        await commandBus.PublishAsync(command, default);
+
+        return null!;
     }
 }

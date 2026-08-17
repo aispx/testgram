@@ -4,8 +4,10 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.PaidMedia;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Messenger.Services.Boosts;
+using MyTelegram.Messenger.Services.StarsSubscriptions;
 using MyTelegram.Schema.Payments;
 using MyTelegram.Services.Services;
+using MyTelegram.Domain.Aggregates.ChatInvite;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
@@ -14,12 +16,18 @@ internal sealed class SendStarsFormHandler(
     IMessageAppService messageAppService,
     IPeerHelper peerHelper,
     IServiceProvider services,
-    IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<RequestSendStarsForm, IPaymentResult>
+    IObjectMessageSender objectMessageSender,
+    ICommandBus commandBus,
+    IQueryProcessor queryProcessor,
+    IStarsSubscriptionService starsSubscriptionService) : RpcResultObjectHandler<RequestSendStarsForm, IPaymentResult>
 {
     protected override async Task<IPaymentResult> HandleCoreAsync(IRequestInput input, RequestSendStarsForm obj)
     {
         if (obj.Invoice is TInputInvoiceMessage paidMediaInvoice && await IsPaidMediaInvoiceAsync(input, paidMediaInvoice))
             return await HandlePaidMediaPaymentAsync(input, paidMediaInvoice);
+
+        if (obj.Invoice is TInputInvoiceChatInviteSubscription subscriptionInvoice)
+            return await HandleChatInviteSubscriptionAsync(input, subscriptionInvoice);
 
         // Handle Premium purchase with Stars
         if (obj.Invoice is TInputInvoicePremiumGiftStars premiumStars)
@@ -877,6 +885,83 @@ internal sealed class SendStarsFormHandler(
                         ExtendedMedia = revealed
                     }
                 },
+                Users = new TVector<IUser>(),
+                Chats = new TVector<IChat>(),
+                Date = DateTime.UtcNow.ToTimestamp(),
+                Seq = 0
+            }
+        };
+    }
+
+    /// <summary>
+    /// Buys one period of a channel's Telegram Star subscription through a paid invite link, then
+    /// joins the buyer to the channel.
+    /// See https://corefork.telegram.org/api/invites#paid-invite-links
+    /// </summary>
+    private async Task<IPaymentResult> HandleChatInviteSubscriptionAsync(IRequestInput input, TInputInvoiceChatInviteSubscription invoice)
+    {
+        if (string.IsNullOrEmpty(invoice.Hash))
+        {
+            RpcErrors.RpcErrors400.InviteHashEmpty.ThrowRpcError();
+        }
+
+        var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteByLinkQuery(invoice.Hash));
+        if (chatInviteReadModel == null || chatInviteReadModel.Revoked)
+        {
+            RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
+        }
+
+        if (chatInviteReadModel!.SubscriptionPricingAmount is not > 0 || chatInviteReadModel.SubscriptionPricingPeriod is not > 0)
+        {
+            RpcErrors.RpcErrors400.PricingChatInvalid.ThrowRpcError();
+        }
+
+        var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(chatInviteReadModel.PeerId));
+        if (channelReadModel == null)
+        {
+            RpcErrors.RpcErrors400.ChannelIdInvalid.ThrowRpcError();
+        }
+
+        var channelMember = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(chatInviteReadModel.PeerId, input.UserId));
+        if (channelMember is { Left: false, Kicked: false })
+        {
+            RpcErrors.RpcErrors400.UserAlreadyParticipant.ThrowRpcError();
+        }
+
+        if (channelMember is { Kicked: true })
+        {
+            RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
+        }
+
+        // An unexpired subscription may be re-fulfilled without paying again.
+        var subscription = await starsSubscriptionService.GetActiveSubscriptionAsync(input.UserId, chatInviteReadModel.PeerId);
+        subscription ??= await starsSubscriptionService.ChargeAsync(input.UserId,
+            chatInviteReadModel.PeerId,
+            chatInviteReadModel.Link,
+            chatInviteReadModel.SubscriptionPricingPeriod!.Value,
+            chatInviteReadModel.SubscriptionPricingAmount!.Value,
+            channelReadModel!.Title);
+
+        if (subscription == null)
+        {
+            RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
+        }
+
+        // The join itself runs through the regular event-sourced import path, so membership,
+        // dialogs and update pushes all behave exactly as for a free invite link.
+        var command = new ImportChatInviteCommand(
+            ChatInviteId.Create(chatInviteReadModel.PeerId, chatInviteReadModel.InviteId),
+            input.ToRequestInfo(),
+            ChatInviteRequestState.NoApprovalRequired,
+            DateTime.UtcNow.ToTimestamp(),
+            subscription!.UntilDate);
+        await commandBus.PublishAsync(command);
+
+        return new TPaymentResult
+        {
+            Updates = new TUpdates
+            {
+                Updates = new TVector<IUpdate>(),
                 Users = new TVector<IUser>(),
                 Chats = new TVector<IChat>(),
                 Date = DateTime.UtcNow.ToTimestamp(),

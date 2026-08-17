@@ -77,7 +77,8 @@ public class CreateChannelSaga :
             domainEvent.AggregateEvent.TtlPeriod,
             domainEvent.AggregateEvent.TtlFromDefaultSetting,
             domainEvent.AggregateEvent.MemberUserIds,
-            domainEvent.AggregateEvent.BotUserIds
+            domainEvent.AggregateEvent.BotUserIds,
+            domainEvent.AggregateEvent.MissingInviteeUserIds
             ));
         var ownerPeerId = domainEvent.AggregateEvent.ChannelId;
         await _idGenerator.NextIdAsync(IdType.Pts, ownerPeerId, cancellationToken: cancellationToken);
@@ -123,7 +124,10 @@ public class CreateChannelSaga :
             null,
             true,
             DateTime.UtcNow.ToTimestamp(),
-            domainEvent.AggregateEvent.Broadcast
+            domainEvent.AggregateEvent.Broadcast,
+            // The permanent link created with the channel is never a paid subscription link.
+            null,
+            null
         );
         Publish(createChatInviteCommand);
 
@@ -139,7 +143,10 @@ public class CreateChannelSaga :
                 1,
                 domainEvent.AggregateEvent.MemberUserIds,
                 domainEvent.AggregateEvent.BotUserIds,
-                ChatJoinType.InvitedByAdmin
+                ChatJoinType.InvitedByAdmin,
+                // The messages.createChat reply is built from the channel-created event, which
+                // carries the dropped invitees itself, so this sub-request reports none.
+                []
             );
             Publish(command);
         }

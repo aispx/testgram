@@ -63,7 +63,7 @@ internal sealed class GetExportedChatInviteHandler(
         var users = await userConverterService.GetUserListAsync(input, [chatInviteReadModel.AdminId], false, false, input.Layer);
         return new TExportedChatInvite
         {
-            Invite = chatInviteExportedConverterService.ToExportedChatInvite(chatInviteReadModel, input.Layer),
+            Invite = await ChatInviteExportedFiller.ToExportedChatInviteAsync(chatInviteExportedConverterService, queryProcessor, chatInviteReadModel, input.Layer),
             Users = [..users]
         };
     }

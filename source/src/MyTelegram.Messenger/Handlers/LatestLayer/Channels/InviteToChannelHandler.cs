@@ -32,9 +32,14 @@ internal sealed class InviteToChannelHandler(ICommandBus commandBus, IPeerHelper
 {
     protected override async Task<IInvitedUsers> HandleCoreAsync(IRequestInput input, RequestInviteToChannel obj)
     {
-        if (obj.Channel is TInputChannel inputChannel)
+        if (obj.Channel is not TInputChannel inputChannel)
         {
-            await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, adminRights => adminRights.ChangeInfo);
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        {
+            await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, adminRights => adminRights.InviteUsers);
             var channelId = inputChannel.ChannelId;
             var channelReadModel = await channelAppService.GetAsync(inputChannel.ChannelId);
             channelReadModel.ThrowExceptionIfChannelDeleted();
@@ -49,11 +54,17 @@ internal sealed class InviteToChannelHandler(ICommandBus commandBus, IPeerHelper
                 }
             }
 
-            // Check ChatInvite privacy for each user
+            // Users whose privacy settings forbid the invite are reported back as missingInvitee
+            // rather than failing the request, so the remaining users still get added.
             var privacyRestrictedUserIdList = new List<long>();
             await privacyAppService.ApplyPrivacyListAsync(input.UserId, userIds, (_, restrictedUserId) => privacyRestrictedUserIdList.Add(restrictedUserId), new List<PrivacyType> { PrivacyType.ChatInvite });
-            if (privacyRestrictedUserIdList.Count > 0)
+            userIds.RemoveAll(privacyRestrictedUserIdList.Contains);
+
+            // Nothing left to do means the caller learns nothing from an empty success.
+            if (userIds.Count == 0)
+            {
                 RpcErrors.RpcErrors403.UserPrivacyRestricted.ThrowRpcError();
+            }
 
             var inviterUserId = input.UserId;
             if (channelReadModel!.Broadcast || channelReadModel.HasLink)
@@ -61,11 +72,9 @@ internal sealed class InviteToChannelHandler(ICommandBus commandBus, IPeerHelper
                 inviterUserId = MyTelegramConsts.GroupAnonymousBotUserId;
             }
 
-            var command = new StartInviteToChannelCommand(TempId.New, input.ToRequestInfo(), channelId, channelReadModel.Broadcast, channelReadModel.HasLink, inviterUserId, channelReadModel.TopMessageId, channelReadModel.TopMessageId, userIds, botUserIds, ChatJoinType.InvitedByAdmin);
+            var command = new StartInviteToChannelCommand(TempId.New, input.ToRequestInfo(), channelId, channelReadModel.Broadcast, channelReadModel.HasLink, inviterUserId, channelReadModel.TopMessageId, channelReadModel.TopMessageId, userIds, botUserIds, ChatJoinType.InvitedByAdmin, privacyRestrictedUserIdList);
             await commandBus.PublishAsync(command);
             return null!;
         }
-
-        throw new NotImplementedException();
     }
 }

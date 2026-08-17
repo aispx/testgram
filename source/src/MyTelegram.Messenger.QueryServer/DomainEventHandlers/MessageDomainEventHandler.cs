@@ -150,7 +150,8 @@ public partial class MessageDomainEventHandler(
                 var invitedUsers = new TInvitedUsers
                 {
                     Updates = updates,
-                    MissingInvitees = []
+                    // Users messages.createChat had to skip for privacy reasons.
+                    MissingInvitees = [.. eventData.MissingInviteeUserIds.Select(userId => new TMissingInvitee { UserId = userId })]
                 };
 
                 rpcData = invitedUsers;
@@ -211,6 +212,14 @@ public partial class MessageDomainEventHandler(
         {
             invitedUserIds = messageActionChatAddUser.Users.ToList();
             invitedUserIds.Add(item.SenderUserId);
+        }
+
+        // Invitees the invite saga had to drop for privacy reasons are reported alongside the
+        // successful ones instead of failing the whole request.
+        if (invitedUsers is TInvitedUsers tInvitedUsers &&
+            chatEventCacheHelper.TryRemoveMissingInvitees(aggregateEvent.RequestInfo.RequestId, out var missingInviteeUserIds))
+        {
+            tInvitedUsers.MissingInvitees = [.. missingInviteeUserIds.Select(userId => new TMissingInvitee { UserId = userId })];
         }
 
         await UpdateChannelAndUserAsync(aggregateEvent.RequestInfo, invitedUsers.Updates, item.ToPeer.PeerId, invitedUserIds, layer: aggregateEvent.RequestInfo.Layer);

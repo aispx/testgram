@@ -25,6 +25,17 @@ public class ChatInviteState : AggregateState<ChatInviteAggregate, ChatInviteId,
     public int? Usage { get; private set; }
     public bool IsBroadcast { get; private set; }
 
+    /// <summary>
+    /// Period in seconds of the <a href="https://corefork.telegram.org/api/stars#star-subscriptions">Telegram Star subscription</a>
+    /// this link sells, or null for a free invite link.
+    /// </summary>
+    public int? SubscriptionPricingPeriod { get; private set; }
+
+    /// <summary>
+    /// Amount of Telegram Stars charged per <see cref="SubscriptionPricingPeriod"/>.
+    /// </summary>
+    public long? SubscriptionPricingAmount { get; private set; }
+
     public void Apply(ChatInviteCreatedEvent aggregateEvent)
     {
         ChannelId = aggregateEvent.ChannelId;
@@ -39,6 +50,8 @@ public class ChatInviteState : AggregateState<ChatInviteAggregate, ChatInviteId,
         Permanent = aggregateEvent.Permanent;
         IsBroadcast = aggregateEvent.IsBroadcast;
         Date = aggregateEvent.Date;
+        SubscriptionPricingPeriod = aggregateEvent.SubscriptionPricingPeriod;
+        SubscriptionPricingAmount = aggregateEvent.SubscriptionPricingAmount;
     }
 
     public void Apply(ChatInviteEditedEvent aggregateEvent)
@@ -50,6 +63,8 @@ public class ChatInviteState : AggregateState<ChatInviteAggregate, ChatInviteId,
         StartDate = aggregateEvent.StartDate;
         ExpireDate = aggregateEvent.ExpireDate;
         UsageLimit = aggregateEvent.UsageLimit;
+        SubscriptionPricingPeriod = aggregateEvent.SubscriptionPricingPeriod;
+        SubscriptionPricingAmount = aggregateEvent.SubscriptionPricingAmount;
     }
 
     public void LoadSnapshot(ChatInviteSnapshot snapshot)
@@ -68,6 +83,8 @@ public class ChatInviteState : AggregateState<ChatInviteAggregate, ChatInviteId,
         Usage = snapshot.Usage;
         Requested = snapshot.Requested;
         IsBroadcast = snapshot.IsBroadcast;
+        SubscriptionPricingPeriod = snapshot.SubscriptionPricingPeriod;
+        SubscriptionPricingAmount = snapshot.SubscriptionPricingAmount;
     }
 
     public void Apply(ChatInviteImportedEvent aggregateEvent)
@@ -95,6 +112,8 @@ public class ChatInviteState : AggregateState<ChatInviteAggregate, ChatInviteId,
         Permanent = aggregateEvent.Permanent;
         IsBroadcast = aggregateEvent.IsBroadcast;
         Date = aggregateEvent.Date;
+        SubscriptionPricingPeriod = aggregateEvent.SubscriptionPricingPeriod;
+        SubscriptionPricingAmount = aggregateEvent.SubscriptionPricingAmount;
     }
 
     public void Apply(ChatInviteReovkedEvent aggregateEvent)

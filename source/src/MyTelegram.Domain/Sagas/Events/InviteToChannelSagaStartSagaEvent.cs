@@ -10,10 +10,17 @@ public class InviteToChannelSagaStartSagaEvent(
     IReadOnlyCollection<long> botUserIds,
     int channelHistoryMinId,
     int maxMessageId,
-    ChatJoinType chatJoinType
+    ChatJoinType chatJoinType,
+    IReadOnlyCollection<long> missingInviteeUserIds
     )
     : RequestAggregateEvent2<InviteToChannelSaga, InviteToChannelSagaId>(requestInfo)
 {
+    /// <summary>
+    /// Invitees dropped because their privacy settings do not allow it. They are reported back to
+    /// the caller as <c>missingInvitee</c> instead of failing the whole request.
+    /// </summary>
+    public IReadOnlyCollection<long> MissingInviteeUserIds { get; } = missingInviteeUserIds;
+
     public IReadOnlyCollection<long> BotUserIds { get; } = botUserIds;
     public bool Broadcast { get; } = broadcast;
     public int ChannelHistoryMinId { get; } = channelHistoryMinId;

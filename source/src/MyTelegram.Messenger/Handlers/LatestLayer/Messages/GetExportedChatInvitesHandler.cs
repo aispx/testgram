@@ -18,7 +18,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetExportedChatInvitesHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelAppService channelAppService, IUserConverterService userConverterService, IChatInviteExportedConverterService chatInviteExportedConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetExportedChatInvites, MyTelegram.Schema.Messages.IExportedChatInvites>
+internal sealed class GetExportedChatInvitesHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelAppService channelAppService, IUserConverterService userConverterService, IChatInviteExportedConverterService chatInviteExportedConverterService, IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetExportedChatInvites, MyTelegram.Schema.Messages.IExportedChatInvites>
 {
     protected override async Task<MyTelegram.Schema.Messages.IExportedChatInvites> HandleCoreAsync(IRequestInput input, RequestGetExportedChatInvites obj)
     {
@@ -35,18 +35,31 @@ internal sealed class GetExportedChatInvitesHandler(IPeerHelper peerHelper, IQue
         }
 
         var admin = peerHelper.GetPeer(obj.AdminId, input.UserId);
-        var invites = await queryProcessor.ProcessAsync(new GetChatInvitesQuery(obj.Revoked, peer.PeerId, admin.PeerId, obj.OffsetDate, obj.OffsetLink ?? string.Empty, obj.Limit));
-        var userIds = invites.Select(p => p.AdminId).ToList();
+        // The read model stores bare hashes, but offset_link comes back from the client as the
+        // full https://…/+hash form.
+        var offsetLink = string.IsNullOrEmpty(obj.OffsetLink)
+            ? string.Empty
+            : chatInviteLinkHelper.GetHashFromLink(obj.OffsetLink);
+
+        var invites = await queryProcessor.ProcessAsync(new GetChatInvitesQuery(obj.Revoked, peer.PeerId, admin.PeerId, obj.OffsetDate, offsetLink, obj.Limit));
+
+        // count is the total number of matching links, not the size of this page.
+        var count = await queryProcessor.ProcessAsync(new GetChatInvitesCountQuery(obj.Revoked, peer.PeerId, admin.PeerId));
+
+        var userIds = invites.Select(p => p.AdminId).Distinct().ToList();
         var users = await userConverterService.GetUserListAsync(input, userIds, false, false, input.Layer);
-        //var tInvites = invites.Select(p => objectMapper.Map<IChatInviteReadModel, TChatInviteExported>(p)).ToList();
-        //tInvites.ForEach(p => p.Link = chatInviteLinkHelper.GetFullLink(options.Value.JoinChatDomain, p.Link));
-        var tInvites = invites.Select(p => chatInviteExportedConverterService.ToExportedChatInvite(p, input.Layer));
-        var r = new TExportedChatInvites
+
+        var tInvites = new List<MyTelegram.Schema.IExportedChatInvite>();
+        foreach (var invite in invites)
         {
-            Count = invites.Count,
+            tInvites.Add(await ChatInviteExportedFiller.ToExportedChatInviteAsync(chatInviteExportedConverterService, queryProcessor, invite, input.Layer));
+        }
+
+        return new TExportedChatInvites
+        {
+            Count = count,
             Invites = [.. tInvites],
             Users = [.. users],
         };
-        return r;
     }
 }

@@ -158,7 +158,7 @@ public class ChannelAggregateTests : TestsFor<ChannelAggregate>
                 Users = []
             },
             0, false, null, null, null,
-            false, false, [], [], false, false);
+            false, false, [], [], false, false, []);
         var bannedWriteMessageRights = new ChatBannedRights(false,
             true,
             true,
@@ -250,7 +250,7 @@ public class ChannelAggregateTests : TestsFor<ChannelAggregate>
                 Users = []
             },
             0, false, null, null, null,
-            false, false, [], [], false, false);
+            false, false, [], [], false, false, []);
         Sut.ApplyEvents([ADomainEvent<ChannelAggregate, ChannelId, ChannelCreatedEvent>(aggregateEvent, 1)]);
 
         Sut.CheckChannelState(A<RequestInfo>(), senderPeerId, 1, DateTime.UtcNow.ToTimestamp(), MessageSubType.Normal);

@@ -6,7 +6,14 @@ internal sealed class ChatInviteExportedMapper
         ITransientDependency
 {
     public int Layer => Layers.LayerLatest;
-    
+
+    internal static TStarsSubscriptionPricing? ToSubscriptionPricing(int? period, long? amount)
+    {
+        return period is > 0 && amount is > 0
+            ? new TStarsSubscriptionPricing { Period = period.Value, Amount = amount.Value }
+            : null;
+    }
+
 
     public TChatInviteExported Map(IChatInviteReadModel source)
     {
@@ -29,9 +36,9 @@ internal sealed class ChatInviteExportedMapper
         destination.UsageLimit = source.UsageLimit;
         destination.Usage = source.Usage;
         destination.Requested = source.Requested;
-        //destination.SubscriptionExpired = source.SubscriptionExpired;
         destination.Title = source.Title;
-        //destination.SubscriptionPricing = source.SubscriptionPricing;
+        destination.SubscriptionPricing = ToSubscriptionPricing(source.SubscriptionPricingPeriod, source.SubscriptionPricingAmount);
+        // SubscriptionExpired is derived from the importer read model, so the caller fills it in.
 
         return destination;
     }

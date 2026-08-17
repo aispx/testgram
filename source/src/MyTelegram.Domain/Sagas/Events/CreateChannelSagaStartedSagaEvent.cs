@@ -11,9 +11,15 @@ public class CreateChannelSagaStartedSagaEvent(
     int? ttlPeriod,
     bool isTtlFromDefaultSetting,
     List<long> memberUserIds,
-    List<long> botUserIds)
+    List<long> botUserIds,
+    List<long> missingInviteeUserIds)
     : AggregateEvent<CreateChannelSaga, CreateChannelSagaId>
 {
+    /// <summary>
+    /// Invitees dropped because their privacy settings do not allow being added to a chat.
+    /// </summary>
+    public List<long> MissingInviteeUserIds { get; } = missingInviteeUserIds;
+
     public RequestInfo RequestInfo { get; } = requestInfo;
     public long ChannelId { get; } = channelId;
     public string Title { get; } = title;

@@ -119,10 +119,11 @@ public class TempAggregate : AggregateRoot<TempAggregate, TempId>, ISkipAggregat
         int maxMessageId,
         List<long> memberUserIds,
         List<long> botUserIds,
-        ChatJoinType chatJoinType
+        ChatJoinType chatJoinType,
+        List<long> missingInviteeUserIds
     )
     {
-        Emit(new InviteToChannelStartedEvent(requestInfo, channelId, isBroadcast, hasLink, inviterId, channelHistoryMinId, maxMessageId, memberUserIds, botUserIds, chatJoinType));
+        Emit(new InviteToChannelStartedEvent(requestInfo, channelId, isBroadcast, hasLink, inviterId, channelHistoryMinId, maxMessageId, memberUserIds, botUserIds, chatJoinType, missingInviteeUserIds));
     }
 
     public void StartJoinChannel(RequestInfo requestInfo, long channelId, bool broadcast, int topMessageId, int channelHistoryMinId)

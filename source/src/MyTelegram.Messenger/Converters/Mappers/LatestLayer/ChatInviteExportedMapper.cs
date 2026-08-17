@@ -32,10 +32,8 @@ ILayeredMapper,
         destination.ExpireDate = source.ExpireDate;
         destination.UsageLimit = source.UsageLimit;
         destination.Usage = 0;
-        //destination.Requested = source.Requested;
-        //destination.SubscriptionExpired = source.SubscriptionExpired;
         destination.Title = source.Title;
-        //destination.SubscriptionPricing = source.SubscriptionPricing;
+        destination.SubscriptionPricing = ToSubscriptionPricing(source.SubscriptionPricingPeriod, source.SubscriptionPricingAmount);
 
         return destination;
     }
@@ -58,12 +56,18 @@ ILayeredMapper,
         destination.StartDate = source.StartDate;
         destination.ExpireDate = source.ExpireDate;
         destination.UsageLimit = source.UsageLimit;
-        destination.Usage = 0;
-        //destination.Requested = source.Requested;
-        //destination.SubscriptionExpired = source.SubscriptionExpired;
+        destination.Usage = source.Usage;
+        destination.Requested = source.Requested;
         destination.Title = source.Title;
-        //destination.SubscriptionPricing = source.SubscriptionPricing;
+        destination.SubscriptionPricing = ToSubscriptionPricing(source.SubscriptionPricingPeriod, source.SubscriptionPricingAmount);
 
         return destination;
+    }
+
+    private static TStarsSubscriptionPricing? ToSubscriptionPricing(int? period, long? amount)
+    {
+        return period is > 0 && amount is > 0
+            ? new TStarsSubscriptionPricing { Period = period.Value, Amount = amount.Value }
+            : null;
     }
 }

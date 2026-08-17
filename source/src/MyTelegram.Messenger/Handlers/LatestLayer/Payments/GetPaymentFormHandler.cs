@@ -25,6 +25,11 @@ internal sealed class GetPaymentFormHandler(
             return await HandleStarsTopupAsync(input, starsInvoice);
         }
 
+        if (obj.Invoice is TInputInvoiceChatInviteSubscription subscriptionInvoice)
+        {
+            return await HandleChatInviteSubscriptionAsync(input, subscriptionInvoice);
+        }
+
         if (obj.Invoice is TInputInvoiceStarGift starGiftInvoice)
         {
             var collection = mongoDatabase.GetCollection<StarGiftDocument>("star-gifts");
@@ -367,6 +372,51 @@ internal sealed class GetPaymentFormHandler(
             },
             SavedCredentials = await GetSavedCredentialsAsync(input.UserId),
             Users = new TVector<IUser>(),
+        };
+    }
+
+    /// <summary>
+    /// Payment form for a paid invite link, i.e. a Telegram Star subscription to a channel.
+    /// See https://corefork.telegram.org/api/invites#paid-invite-links
+    /// </summary>
+    private async Task<IPaymentForm> HandleChatInviteSubscriptionAsync(IRequestInput input, TInputInvoiceChatInviteSubscription invoice)
+    {
+        if (string.IsNullOrEmpty(invoice.Hash))
+        {
+            RpcErrors.RpcErrors400.InviteHashEmpty.ThrowRpcError();
+        }
+
+        var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteByLinkQuery(invoice.Hash));
+        if (chatInviteReadModel == null || chatInviteReadModel.Revoked)
+        {
+            RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
+        }
+
+        if (chatInviteReadModel!.SubscriptionPricingAmount is not > 0)
+        {
+            RpcErrors.RpcErrors400.PricingChatInvalid.ThrowRpcError();
+        }
+
+        var channelReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(chatInviteReadModel.PeerId));
+        if (channelReadModel == null)
+        {
+            RpcErrors.RpcErrors400.ChannelIdInvalid.ThrowRpcError();
+        }
+
+        return new TPaymentFormStars
+        {
+            // Form ids are not persisted: payments.sendStarsForm re-resolves the invite by hash,
+            // so the id only has to be unique for the client's bookkeeping.
+            FormId = Random.Shared.NextInt64(),
+            BotId = input.UserId,
+            Title = channelReadModel!.Title,
+            Description = channelReadModel.About ?? string.Empty,
+            Invoice = new TInvoice
+            {
+                Currency = "XTR",
+                Prices = [new TLabeledPrice { Label = "Subscription", Amount = chatInviteReadModel.SubscriptionPricingAmount!.Value }]
+            },
+            Users = new TVector<IUser>()
         };
     }
 

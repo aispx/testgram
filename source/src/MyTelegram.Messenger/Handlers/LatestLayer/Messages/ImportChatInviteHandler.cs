@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.StarsSubscriptions;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Import a chat invite and join a private chat/supergroup/channel
@@ -22,7 +24,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAppService channelAppService, IQueryProcessor queryProcessor) : RpcResultObjectHandler<RequestImportChatInvite, IUpdates>
+internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IStarsSubscriptionService starsSubscriptionService) : RpcResultObjectHandler<RequestImportChatInvite, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestImportChatInvite obj)
     {
@@ -83,6 +85,20 @@ internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAp
             RpcErrors.RpcErrors400.InviteRequestSent.ThrowRpcError();
         }
 
+        // A paid invite link can only be imported once the Star subscription has been paid for
+        // through payments.sendStarsForm, or while a previously paid one is still valid.
+        int? subscriptionUntilDate = null;
+        if (chatInviteReadModel.SubscriptionPricingAmount is > 0)
+        {
+            var subscription = await starsSubscriptionService.GetActiveSubscriptionAsync(input.UserId, chatInviteReadModel.PeerId);
+            if (subscription == null)
+            {
+                RpcErrors.RpcErrors400.StarsPaymentRequired.ThrowRpcError();
+            }
+
+            subscriptionUntilDate = subscription!.UntilDate;
+        }
+
         var requestState = chatInviteReadModel.RequestNeeded ? ChatInviteRequestState.WaitingForApproval : ChatInviteRequestState.NoApprovalRequired;
         if (!chatInviteReadModel.RequestNeeded)
         {
@@ -92,7 +108,7 @@ internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAp
             }
         }
 
-        var command = new ImportChatInviteCommand(ChatInviteId.Create(chatInviteReadModel.PeerId, chatInviteReadModel.InviteId), input.ToRequestInfo(), requestState, CurrentDate);
+        var command = new ImportChatInviteCommand(ChatInviteId.Create(chatInviteReadModel.PeerId, chatInviteReadModel.InviteId), input.ToRequestInfo(), requestState, CurrentDate, subscriptionUntilDate);
         await commandBus.PublishAsync(command);
         return null !;
     }

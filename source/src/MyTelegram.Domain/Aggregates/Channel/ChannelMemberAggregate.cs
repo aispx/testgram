@@ -26,6 +26,7 @@ public class ChannelMemberAggregate : SnapshotAggregateRoot<ChannelMemberAggrega
         bool isBot,
         long? chatInviteId,
         bool isBroadcast,
+        int? subscriptionUntilDate,
         ChatJoinType chatJoinType = ChatJoinType.InvitedByAdmin
         )
     {
@@ -53,7 +54,8 @@ public class ChannelMemberAggregate : SnapshotAggregateRoot<ChannelMemberAggrega
             isBot,
             chatInviteId,
             chatJoinType,
-            isBroadcast
+            isBroadcast,
+            subscriptionUntilDate
             ));
     }
 

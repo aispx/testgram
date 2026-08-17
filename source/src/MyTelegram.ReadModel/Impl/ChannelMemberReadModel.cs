@@ -85,6 +85,7 @@ public class ChannelMemberReadModel : IChannelMemberReadModel,
         ChatInviteId = domainEvent.AggregateEvent.ChatInviteId;
         ChatJoinType = domainEvent.AggregateEvent.ChatJoinType;
         IsBroadcast = domainEvent.AggregateEvent.IsBroadcast;
+        SubscriptionUntilDate = domainEvent.AggregateEvent.SubscriptionUntilDate;
 
         return Task.CompletedTask;
     }

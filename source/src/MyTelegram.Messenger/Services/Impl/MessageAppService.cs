@@ -509,6 +509,7 @@ public class MessageAppService(
                 isBot: false,
                 chatInviteId: null,
                 isBroadcast: channelReadModel.Broadcast,
+                subscriptionUntilDate: null,
                 ChatJoinType.BySelf));
 
             await commandBus.PublishAsync(new IncrementParticipantCountCommand(ChannelId.Create(channelId)));

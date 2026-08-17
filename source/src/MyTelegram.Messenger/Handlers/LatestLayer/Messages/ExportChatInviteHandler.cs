@@ -36,7 +36,23 @@ internal sealed class ExportChatInviteHandler(ICommandBus commandBus, IIdGenerat
                 return null!;
             }
 
-            await channelAdminRightsChecker.CheckAdminRightAsync(inputPeerChannel.ChannelId, input.UserId, (p) => p.ChangeInfo, RpcErrors.RpcErrors403.ChatAdminRequired);
+            await channelAdminRightsChecker.CheckAdminRightAsync(inputPeerChannel.ChannelId, input.UserId, (p) => p.InviteUsers, RpcErrors.RpcErrors403.ChatAdminRequired);
+
+            if (obj.ExpireDate is > 0 && obj.ExpireDate.Value <= CurrentDate)
+            {
+                RpcErrors.RpcErrors400.ExpireDateInvalid.ThrowRpcError();
+            }
+
+            if (obj.UsageLimit is <= 0)
+            {
+                RpcErrors.RpcErrors400.UsageLimitInvalid.ThrowRpcError();
+            }
+
+            var subscriptionPricing = ChatInviteSubscriptionPricing.Validate(obj.SubscriptionPricing,
+                channelReadModel.Broadcast,
+                obj.RequestNeeded,
+                obj.UsageLimit);
+
             if (obj.LegacyRevokePermanent)
             {
                 var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetPermanentChatInviteQuery(channelReadModel.ChannelId, input.UserId));
@@ -47,7 +63,7 @@ internal sealed class ExportChatInviteHandler(ICommandBus commandBus, IIdGenerat
                 }
             }
 
-            var command = new CreateChatInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteId), input.ToRequestInfo(), inputPeerChannel.ChannelId, chatInviteId, inviteHash, input.UserId, obj.Title, obj.RequestNeeded, null, obj.ExpireDate, obj.UsageLimit, obj.LegacyRevokePermanent, CurrentDate, channelReadModel.Broadcast);
+            var command = new CreateChatInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteId), input.ToRequestInfo(), inputPeerChannel.ChannelId, chatInviteId, inviteHash, input.UserId, obj.Title, obj.RequestNeeded, null, obj.ExpireDate, obj.UsageLimit, obj.LegacyRevokePermanent, CurrentDate, channelReadModel.Broadcast, subscriptionPricing?.Period, subscriptionPricing?.Amount);
             await commandBus.PublishAsync(command);
             return null!;
         }

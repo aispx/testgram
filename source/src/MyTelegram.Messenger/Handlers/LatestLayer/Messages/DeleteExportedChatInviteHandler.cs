@@ -16,28 +16,29 @@ internal sealed class DeleteExportedChatInviteHandler(IQueryProcessor queryProce
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestDeleteExportedChatInvite obj)
     {
-        switch (obj.Peer)
+        if (obj.Peer is not TInputPeerChannel inputPeerChannel)
         {
-            case TInputPeerChannel inputPeerChannel:
-                {
-                    var link = chatInviteLinkHelper.GetHashFromLink(obj.Link);
-                    var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteQuery(inputPeerChannel.ChannelId, link));
-                    if (chatInviteReadModel == null)
-                    {
-                        RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
-                    }
-
-                    await channelAdminRightsChecker.CheckAdminRightAsync(inputPeerChannel.ChannelId, input.UserId, (p) => p.ChangeInfo, RpcErrors.RpcErrors403.ChatAdminRequired);
-                    var command = new DeleteExportedInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteReadModel!.InviteId), input.ToRequestInfo());
-                    await commandBus.PublishAsync(command);
-                }
-
-                break;
-            case TInputPeerChat:
-                break;
-            default:
-                throw new ArgumentOutOfRangeException();
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            return null!;
         }
+
+        var link = chatInviteLinkHelper.GetHashFromLink(obj.Link);
+        var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetChatInviteQuery(inputPeerChannel.ChannelId, link));
+        if (chatInviteReadModel == null)
+        {
+            RpcErrors.RpcErrors400.InviteRevokedMissing.ThrowRpcError();
+        }
+
+        await channelAdminRightsChecker.CheckAdminRightAsync(inputPeerChannel.ChannelId, input.UserId, (p) => p.InviteUsers, RpcErrors.RpcErrors403.ChatAdminRequired);
+
+        // Only a revoked link can be deleted; an active one has to be revoked first.
+        if (!chatInviteReadModel!.Revoked)
+        {
+            RpcErrors.RpcErrors400.InviteRevokedMissing.ThrowRpcError();
+        }
+
+        var command = new DeleteExportedInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteReadModel.InviteId), input.ToRequestInfo());
+        await commandBus.PublishAsync(command);
 
         return new TBoolTrue();
     }

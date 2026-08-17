@@ -159,7 +159,8 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
         List<long>? memberUserIds = null,
         List<long>? botUserIds = null,
         bool forum = false,
-        bool forumTabs = false
+        bool forumTabs = false,
+        List<long>? missingInviteeUserIds = null
         )
     {
         Specs.AggregateIsNew.ThrowDomainErrorIfNotSatisfied(this);
@@ -186,7 +187,8 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
             memberUserIds ?? [],
             botUserIds ?? [],
             forum,
-            forumTabs
+            forumTabs,
+            missingInviteeUserIds ?? []
         ));
     }
 

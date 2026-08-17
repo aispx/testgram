@@ -285,6 +285,9 @@ public class ChatConverterService(
         {
             tChannel.Forum = channelReadModel.Forum;
             tChannel.ForumTabs = channelReadModel.ForumTabs;
+            // subscription_until_date describes the *requesting user's* Star subscription, so it
+            // comes from their membership rather than from the channel itself.
+            tChannel.SubscriptionUntilDate = channelMemberReadModel?.SubscriptionUntilDate;
             ApplyBotVerificationIcon(tChannel);
             ApplyStoriesInfo(tChannel, request);
         }

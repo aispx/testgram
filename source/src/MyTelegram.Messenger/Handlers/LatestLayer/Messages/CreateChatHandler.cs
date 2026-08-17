@@ -65,7 +65,10 @@ internal sealed class CreateChatHandler(ICommandBus commandBus, IIdGenerator idG
         }
 
         var createChannelCommand = new CreateChannelCommand(ChannelId.Create(channelId), input.ToRequestInfo(), channelId, input.UserId, //obj.Broadcast,
- false, true, obj.Title, string.Empty, null, null, accessHash, date, randomHelper.NextInt64(), new TMessageActionChannelCreate { Title = obj.Title }, ttl, false, null, null, null, true, ttlFromDefaultSetting, memberUserIds, botUserIds);
+ false, true, obj.Title, string.Empty, null, null, accessHash, date, randomHelper.NextInt64(), new TMessageActionChannelCreate { Title = obj.Title }, ttl, false, null, null, null, true, ttlFromDefaultSetting, memberUserIds, botUserIds,
+            // Users whose privacy settings forbid the invite are reported back as missingInvitee
+            // instead of failing the whole request.
+            missingInviteeUserIds: privacyRestrictedUserIdList);
         await commandBus.PublishAsync(createChannelCommand);
         return null!;
     }

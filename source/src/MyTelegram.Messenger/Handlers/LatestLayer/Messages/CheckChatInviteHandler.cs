@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.StarsSubscriptions;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -14,7 +15,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPhotoAppService photoAppService, IChannelAppService channelAppService, IChatConverterService chatConverterService, ILayeredService<IPhotoConverter> layeredPhotoService, MongoDB.Driver.IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestCheckChatInvite, IChatInvite>
+internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPhotoAppService photoAppService, IChannelAppService channelAppService, IChatConverterService chatConverterService, IUserConverterService userConverterService, ILayeredService<IPhotoConverter> layeredPhotoService, IStarsSubscriptionService starsSubscriptionService, MongoDB.Driver.IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestCheckChatInvite, IChatInvite>
 {
     private async Task<MyTelegram.Schema.IBotVerification?> GetBotVerificationAsync(long channelId)
     {
@@ -23,6 +24,25 @@ internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPh
         if (doc == null) return null;
         return new TBotVerification { BotId = doc.BotId, Icon = doc.Icon, Description = doc.Description };
     }
+
+    /// <summary>
+    /// A few of the members, shown as avatars on the join sheet before the user commits.
+    /// </summary>
+    private async Task<TVector<IUser>> GetParticipantsPreviewAsync(IRequestInput input, long channelId)
+    {
+        var members = await queryProcessor.ProcessAsync(new GetChannelMembersByChannelIdQuery(channelId, [], 0, ParticipantsPreviewCount));
+        var userIds = members.Select(p => p.UserId).Distinct().ToList();
+        if (userIds.Count == 0)
+        {
+            return new TVector<IUser>();
+        }
+
+        var users = await userConverterService.GetUserListAsync(input, userIds, false, false, input.Layer);
+
+        return [.. users];
+    }
+
+    private const int ParticipantsPreviewCount = 10;
 
     protected override async Task<IChatInvite> HandleCoreAsync(IRequestInput input, RequestCheckChatInvite obj)
     {
@@ -43,6 +63,11 @@ internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPh
             {
                 RpcErrors.RpcErrors400.InviteHashExpired.ThrowRpcError();
             }
+        }
+
+        if (chatInviteReadModel.Revoked)
+        {
+            RpcErrors.RpcErrors400.InviteHashExpired.ThrowRpcError();
         }
 
         var channelReadModel = await channelAppService.GetAsync(chatInviteReadModel.PeerId);
@@ -71,6 +96,29 @@ internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPh
             }
         }
 
+        // A paid link either shows the price, or - when the buyer already paid and has not let the
+        // subscription lapse - lets them re-join for free.
+        TStarsSubscriptionPricing? subscriptionPricing = null;
+        var canRefulfillSubscription = false;
+        long? subscriptionFormId = null;
+        if (chatInviteReadModel.SubscriptionPricingAmount is > 0 && chatInviteReadModel.SubscriptionPricingPeriod is > 0)
+        {
+            subscriptionPricing = new TStarsSubscriptionPricing
+            {
+                Period = chatInviteReadModel.SubscriptionPricingPeriod.Value,
+                Amount = chatInviteReadModel.SubscriptionPricingAmount.Value
+            };
+
+            var subscription = await starsSubscriptionService.GetActiveSubscriptionAsync(input.UserId, channelReadModel.ChannelId);
+            canRefulfillSubscription = subscription != null;
+            if (!canRefulfillSubscription)
+            {
+                // Form ids are not persisted: payments.sendStarsForm resolves the invite from the
+                // hash, so this only has to be unique for the client's own bookkeeping.
+                subscriptionFormId = Random.Shared.NextInt64();
+            }
+        }
+
         return new TChatInvite
         {
             About = channelReadModel.About,
@@ -79,9 +127,17 @@ internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPh
             Public = !string.IsNullOrEmpty(channelReadModel.UserName),
             Megagroup = channelReadModel.MegaGroup,
             ParticipantsCount = channelReadModel.ParticipantsCount ?? 0,
+            Participants = await GetParticipantsPreviewAsync(input, channelReadModel.ChannelId),
             Photo = layeredPhotoService.GetConverter(input.Layer).ToPhoto(chatPhoto),
             RequestNeeded = chatInviteReadModel.RequestNeeded,
             Title = channelReadModel.Title,
+            Verified = channelReadModel.Verified,
+            Scam = channelReadModel.Scam,
+            Fake = channelReadModel.Fake,
+            Color = channelReadModel.Color?.Color ?? 0,
+            SubscriptionPricing = subscriptionPricing,
+            SubscriptionFormId = subscriptionFormId,
+            CanRefulfillSubscription = canRefulfillSubscription,
             BotVerification = await GetBotVerificationAsync(channelReadModel.ChannelId),
         };
     }

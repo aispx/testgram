@@ -78,6 +78,12 @@ public record GetChatInvitesQuery(
     int Limit)
     : IQuery<IReadOnlyCollection<IChatInviteReadModel>>;
 
+public record GetChatInvitesCountQuery(
+    bool Revoked,
+    long PeerId,
+    long AdminId)
+    : IQuery<int>;
+
 public record GetChosenVoteAnswersQuery(List<long> PollIds, long VoterPeerId)
     : IQuery<IReadOnlyCollection<IPollAnswerVoterReadModel>>;
 
@@ -419,16 +425,34 @@ public record GetChatInviteQuery(long PeerId, string Link) : IQuery<IChatInviteR
 
 public record GetChatInviteByLinkQuery(string Link) : IQuery<IChatInviteReadModel?>;
 
+public record GetChatInviteByInviteIdQuery(long PeerId, long InviteId) : IQuery<IChatInviteReadModel?>;
+
 public record GetRevokedChatInvitesQuery(long PeerId, long AdminId) : IQuery<IReadOnlyCollection<IChatInviteReadModel>>;
 
-//public record GetChatInviteImportersQuery(
-//    long PeerId,
-//    ChatInviteRequestState? ChatInviteRequestState,
-//    int? InviteId,
-//    int OffsetDate,
-//    long OffsetUserId,
-//    string? Q,
-//    int Limit) : IQuery<IReadOnlyCollection<IChatInviteImporterReadModel>>;
+/// <summary>
+/// Users that actually joined a chat through an invite link, as opposed to
+/// <see cref="GetChatInviteImportersQuery"/>, which lists pending join requests.
+/// Backs messages.getChatInviteImporters when the <c>requested</c> flag is not set.
+/// </summary>
+public record GetChatInviteImporterListQuery(
+    long PeerId,
+    long? InviteId,
+    int? OffsetDate,
+    long? OffsetUserId,
+    List<long>? UserIds,
+    bool SubscriptionExpired,
+    int Limit) : IQuery<IReadOnlyCollection<IChatInviteImporterReadModel>>;
+
+public record GetChatInviteImporterCountQuery(
+    long PeerId,
+    long? InviteId,
+    List<long>? UserIds,
+    bool SubscriptionExpired) : IQuery<int>;
+
+public record GetChatInviteRequestCountQuery(
+    long ChannelId,
+    long? InviteId,
+    List<long>? UserIds) : IQuery<int>;
 
 public record GetUserNameListByNamesQuery(List<string> UserNames, PeerType? PeerType = null)
     : IQuery<IReadOnlyCollection<IUserNameReadModel>>;
@@ -708,13 +732,20 @@ public record GetChatInviteImportersQuery(long ChannelId,
     long? InviteId,
     int? OffsetDate,
     long? OffsetUserId,
-    string? Q,
+    List<long>? UserIds,
     int Limit) : IQuery<IReadOnlyCollection<IJoinChannelRequestReadModel>>;
 
 public record GetLeftChannelCountQuery(long UserId) : IQuery<int>;
 public record GetLeftChannelIdsQuery(long UserId, List<long>? ChannelIds = null, int OffsetChannelId = 0, int Limit = 500) : IQuery<IReadOnlyCollection<long>>;
 public record GetBotMembersByChannelIdQuery(long ChannelId) : IQuery<IReadOnlyCollection<IChannelMemberReadModel>>;
 public record GetJoinRequestQuery(long ChannelId, long UserId) : IQuery<IJoinChannelRequestReadModel?>;
+
+/// <summary>
+/// Join requests a user made since <paramref name="MinDate"/>, newest first. Backs the
+/// request_chat_* action bar on a chat opened by the admin of a chat the user asked to join.
+/// </summary>
+public record GetJoinRequestsByUserIdQuery(long UserId, int MinDate, int Limit)
+    : IQuery<IReadOnlyCollection<IJoinChannelRequestReadModel>>;
 public record GetPhotoListQuery(long UserId, List<long> PhotoIds) : IQuery<IReadOnlyCollection<IPhotoReadModel>>;
 public record GetChatlistInvitesCountQuery(long UserId, int FolderId) : IQuery<int>;
 public record GetShareableFolderCountQuery(long UserId) : IQuery<int>;

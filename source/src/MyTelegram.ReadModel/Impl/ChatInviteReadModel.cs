@@ -27,6 +27,8 @@ IAmReadModelFor<ChatInviteAggregate, ChatInviteId, ChatInviteReovkedEvent>
     public virtual int? UsageLimit { get; private set; }
     public virtual int? Requested { get; private set; }
     public bool IsBroadcast { get; private set; }
+    public virtual int? SubscriptionPricingPeriod { get; private set; }
+    public virtual long? SubscriptionPricingAmount { get; private set; }
     public virtual long? Version { get; set; }
 
     public Task ApplyAsync(IReadModelContext context, IDomainEvent<ChatInviteAggregate, ChatInviteId, ChatInviteCreatedEvent> domainEvent, CancellationToken cancellationToken)
@@ -46,6 +48,8 @@ IAmReadModelFor<ChatInviteAggregate, ChatInviteId, ChatInviteReovkedEvent>
         RequestNeeded = domainEvent.AggregateEvent.RequestNeeded;
         InviteId = domainEvent.AggregateEvent.InviteId;
         IsBroadcast = domainEvent.AggregateEvent.IsBroadcast;
+        SubscriptionPricingPeriod = domainEvent.AggregateEvent.SubscriptionPricingPeriod;
+        SubscriptionPricingAmount = domainEvent.AggregateEvent.SubscriptionPricingAmount;
 
         return Task.CompletedTask;
     }
@@ -59,6 +63,8 @@ IAmReadModelFor<ChatInviteAggregate, ChatInviteId, ChatInviteReovkedEvent>
         UsageLimit = domainEvent.AggregateEvent.UsageLimit;
         Title = domainEvent.AggregateEvent.Title;
         RequestNeeded = domainEvent.AggregateEvent.RequestNeeded;
+        SubscriptionPricingPeriod = domainEvent.AggregateEvent.SubscriptionPricingPeriod;
+        SubscriptionPricingAmount = domainEvent.AggregateEvent.SubscriptionPricingAmount;
 
         return Task.CompletedTask;
     }
@@ -95,6 +101,8 @@ IAmReadModelFor<ChatInviteAggregate, ChatInviteId, ChatInviteReovkedEvent>
         RequestNeeded = domainEvent.AggregateEvent.RequestNeeded;
         InviteId = domainEvent.AggregateEvent.InviteId;
         IsBroadcast = domainEvent.AggregateEvent.IsBroadcast;
+        SubscriptionPricingPeriod = domainEvent.AggregateEvent.SubscriptionPricingPeriod;
+        SubscriptionPricingAmount = domainEvent.AggregateEvent.SubscriptionPricingAmount;
 
         return Task.CompletedTask;
     }

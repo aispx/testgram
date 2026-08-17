@@ -15,7 +15,9 @@ public class ChatInviteSnapshot(
     bool revoked,
     int? usage,
     int? requested,
-    bool isBroadcast
+    bool isBroadcast,
+    int? subscriptionPricingPeriod = null,
+    long? subscriptionPricingAmount = null
     )
     : ISnapshot
 {
@@ -34,4 +36,15 @@ public class ChatInviteSnapshot(
     public int? Usage { get; } = usage;
     public int? Requested { get; } = requested;
     public bool IsBroadcast { get; } = isBroadcast;
+
+    /// <summary>
+    /// Period in seconds of the <a href="https://corefork.telegram.org/api/stars#star-subscriptions">Telegram Star subscription</a>
+    /// this link sells, or null for a free invite link.
+    /// </summary>
+    public int? SubscriptionPricingPeriod { get; } = subscriptionPricingPeriod;
+
+    /// <summary>
+    /// Amount of Telegram Stars charged per <see cref="SubscriptionPricingPeriod"/>.
+    /// </summary>
+    public long? SubscriptionPricingAmount { get; } = subscriptionPricingAmount;
 }

@@ -23,12 +23,87 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+/// <para>
+/// This fork has no separate basic-group aggregate - messages.createChat allocates a channel id -
+/// so a chat id here is a supergroup id and the invite runs through the same path as
+/// channels.inviteToChannel.
+/// </para>
+/// <para>
+/// fwd_limit is accepted for protocol compatibility but has no effect: how much history a new
+/// member sees is governed by the channel's hidden-prehistory setting, not per invite.
+/// </para>
 /// </remarks>
-internal sealed class AddChatUserHandler
+internal sealed class AddChatUserHandler(
+    ICommandBus commandBus,
+    IPeerHelper peerHelper,
+    IPrivacyAppService privacyAppService,
+    IChannelAppService channelAppService,
+    IQueryProcessor queryProcessor,
+    IChannelAdminRightsChecker channelAdminRightsChecker)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestAddChatUser, MyTelegram.Schema.Messages.IInvitedUsers>
 {
-    protected override Task<MyTelegram.Schema.Messages.IInvitedUsers> HandleCoreAsync(IRequestInput input, RequestAddChatUser obj)
+    protected override async Task<MyTelegram.Schema.Messages.IInvitedUsers> HandleCoreAsync(IRequestInput input, RequestAddChatUser obj)
     {
-        throw new NotImplementedException();
+        if (obj.ChatId <= 0)
+        {
+            RpcErrors.RpcErrors400.ChatIdInvalid.ThrowRpcError();
+        }
+
+        var channelId = obj.ChatId;
+        var channelReadModel = await channelAppService.GetAsync(channelId);
+        if (channelReadModel == null)
+        {
+            RpcErrors.RpcErrors400.ChatIdInvalid.ThrowRpcError();
+        }
+
+        channelReadModel.ThrowExceptionIfChannelDeleted();
+
+        await channelAdminRightsChecker.CheckAdminRightAsync(channelId, input.UserId, p => p.InviteUsers, RpcErrors.RpcErrors403.ChatAdminRequired);
+
+        var targetPeer = peerHelper.GetPeer(obj.UserId, input.UserId);
+        if (targetPeer.PeerType != PeerType.User || targetPeer.PeerId <= 0)
+        {
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+        }
+
+        var targetUserId = targetPeer.PeerId;
+        var channelMember = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channelId, targetUserId));
+        if (channelMember is { Left: false, Kicked: false })
+        {
+            RpcErrors.RpcErrors400.UserAlreadyParticipant.ThrowRpcError();
+        }
+
+        // With a single invitee there is nothing left to add when privacy blocks them, so this
+        // reports the error instead of answering with an empty success.
+        var privacyRestrictedUserIdList = new List<long>();
+        await privacyAppService.ApplyPrivacyListAsync(input.UserId, [targetUserId], (_, restrictedUserId) => privacyRestrictedUserIdList.Add(restrictedUserId), [PrivacyType.ChatInvite]);
+        if (privacyRestrictedUserIdList.Count > 0)
+        {
+            RpcErrors.RpcErrors403.UserPrivacyRestricted.ThrowRpcError();
+        }
+
+        var inviterUserId = input.UserId;
+        if (channelReadModel!.Broadcast || channelReadModel.HasLink)
+        {
+            inviterUserId = MyTelegramConsts.GroupAnonymousBotUserId;
+        }
+
+        var botUserIds = peerHelper.IsBotUser(targetUserId) ? new List<long> { targetUserId } : [];
+        var command = new StartInviteToChannelCommand(TempId.New,
+            input.ToRequestInfo(),
+            channelId,
+            channelReadModel.Broadcast,
+            channelReadModel.HasLink,
+            inviterUserId,
+            channelReadModel.TopMessageId,
+            channelReadModel.TopMessageId,
+            [targetUserId],
+            botUserIds,
+            ChatJoinType.InvitedByAdmin,
+            []);
+        await commandBus.PublishAsync(command);
+
+        // The reply is pushed by the invite saga once the member has been created.
+        return null!;
     }
 }

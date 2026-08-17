@@ -60,6 +60,8 @@ public class ImportChatInviteSaga :
                 false, // Bot can only be invited by admin
                 domainEvent.AggregateEvent.InviteId,
                 domainEvent.AggregateEvent.IsBroadcast,
+                // Set for paid invite links so channel.subscription_until_date reaches the client.
+                domainEvent.AggregateEvent.SubscriptionUntilDate,
                 ChatJoinType.ByLink
             );
             Publish(command);

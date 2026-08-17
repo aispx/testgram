@@ -1,4 +1,5 @@
 using MyTelegram.Domain.Aggregates.ChatInvite;
+using MyTelegram.Messenger.Services.Bots;
 using MyTelegram.Messenger.Services.Caching;
 using MyTelegram.Messenger.Services.Interfaces;
 using TChannelParticipant = MyTelegram.Schema.TChannelParticipant;
@@ -18,7 +19,8 @@ public class ChannelDomainEventHandler(
     IChatConverterService chatConverterService,
     IChatInviteExportedConverterService chatInviteExportedConverterService,
     IUserConverterService userConverterService,
-    IUpdatesConverterService updatesConverterService
+    IUpdatesConverterService updatesConverterService,
+    IBotUpdatesSender botUpdatesSender
     )
     : DomainEventHandlerBase(objectMessageSender,
             commandBus,
@@ -391,6 +393,11 @@ public class ChannelDomainEventHandler(
         IDomainEvent<InviteToChannelSaga, InviteToChannelSagaId, InviteToChannelCompletedSagaEvent> domainEvent,
         CancellationToken cancellationToken)
     {
+        // For a supergroup the messages.invitedUsers reply is assembled later, by the service
+        // message pipeline, which does not see the saga event - hand the dropped invitees over.
+        chatEventCacheHelper.AddMissingInvitees(domainEvent.AggregateEvent.RequestInfo.RequestId,
+            domainEvent.AggregateEvent.MissingInviteeUserIds);
+
         // When domainEvent.AggregateEvent.Broadcast==false, a service message will be sent
         if (domainEvent.AggregateEvent.Broadcast || domainEvent.AggregateEvent.HasLink)
         {
@@ -415,7 +422,7 @@ public class ChannelDomainEventHandler(
                         Chats = [channel],
                         Date = date
                     },
-                    MissingInvitees = []
+                    MissingInvitees = ToMissingInvitees(domainEvent.AggregateEvent.MissingInviteeUserIds)
                 };
                 await SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, invitedUsers);
             }
@@ -651,6 +658,64 @@ public class ChannelDomainEventHandler(
             RpcErrors.RpcErrors400.InviteRequestSent.ToRpcError());
         var channelId = domainEvent.AggregateEvent.ChannelId;
         await NotifyChannelAdminUpdatePendingJoinRequestsAsync(channelId);
+        await NotifyBotAdminsChatInviteRequesterAsync(domainEvent.AggregateEvent);
+    }
+
+    /// <summary>
+    /// Bot admins do not receive updatePendingJoinRequests; the spec gives them one
+    /// updateBotChatInviteRequester per request instead.
+    /// See https://corefork.telegram.org/api/invites#join-requests
+    /// </summary>
+    private async Task NotifyBotAdminsChatInviteRequesterAsync(JoinChannelRequestCreatedEvent aggregateEvent)
+    {
+        var channelId = aggregateEvent.ChannelId;
+        var botMembers = await queryProcessor.ProcessAsync(new GetBotMembersByChannelIdQuery(channelId));
+        if (botMembers.Count == 0)
+        {
+            return;
+        }
+
+        var channelReadModel = await channelAppService.GetAsync(channelId);
+        var botAdminIds = botMembers
+            .Select(p => p.UserId)
+            .Where(botId => channelReadModel.AdminList.Any(a => a.UserId == botId && a.AdminRights.InviteUsers))
+            .ToList();
+
+        if (botAdminIds.Count == 0)
+        {
+            return;
+        }
+
+        if (aggregateEvent.InviteId is not > 0)
+        {
+            return;
+        }
+
+        var chatInviteReadModel = await queryProcessor.ProcessAsync(
+            new GetChatInviteByInviteIdQuery(channelId, aggregateEvent.InviteId.Value));
+        if (chatInviteReadModel == null)
+        {
+            return;
+        }
+
+        var invite = chatInviteExportedConverterService.ToExportedChatInvite(chatInviteReadModel, Layers.LayerLatest);
+        var userReadModel = await userAppService.GetAsync(aggregateEvent.UserId);
+        var users = await userConverterService.GetUserListAsync(RequestInfo.Empty, [aggregateEvent.UserId]);
+
+        foreach (var botId in botAdminIds)
+        {
+            await botUpdatesSender.PushUpdateToBotAsync(botId,
+                qts => new TUpdateBotChatInviteRequester
+                {
+                    Peer = channelId.ToChannelPeer().ToPeer(),
+                    Date = aggregateEvent.Date,
+                    UserId = aggregateEvent.UserId,
+                    About = userReadModel?.About ?? string.Empty,
+                    Invite = invite,
+                    Qts = qts
+                },
+                [.. users]);
+        }
     }
 
     public async Task HandleAsync(IDomainEvent<ApproveJoinChannelSaga, ApproveJoinChannelSagaId, ApproveJoinChannelCompletedSagaEvent> domainEvent, CancellationToken cancellationToken)
@@ -687,6 +752,16 @@ public class ChannelDomainEventHandler(
         }
 
         await NotifyChannelAdminUpdatePendingJoinRequestsAsync(domainEvent.AggregateEvent.ChannelId);
+    }
+
+    /// <summary>
+    /// Users that could not be invited because of their privacy settings. Reporting them lets the
+    /// rest of the invite succeed instead of failing the whole request.
+    /// See https://corefork.telegram.org/api/invites#direct-invites
+    /// </summary>
+    private static TVector<IMissingInvitee> ToMissingInvitees(IReadOnlyCollection<long> userIds)
+    {
+        return [.. userIds.Select(userId => new TMissingInvitee { UserId = userId })];
     }
 
     private async Task NotifyChannelAdminUpdatePendingJoinRequestsAsync(long channelId)

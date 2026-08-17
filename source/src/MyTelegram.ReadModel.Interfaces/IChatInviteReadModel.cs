@@ -19,4 +19,15 @@ public interface IChatInviteReadModel : IReadModel
     int? UsageLimit { get; }
     int? Requested { get; }
     bool IsBroadcast { get; }
+
+    /// <summary>
+    /// Period in seconds of the <a href="https://corefork.telegram.org/api/stars#star-subscriptions">Telegram Star subscription</a>
+    /// this link sells, or null for a free invite link.
+    /// </summary>
+    int? SubscriptionPricingPeriod { get; }
+
+    /// <summary>
+    /// Amount of Telegram Stars charged per <see cref="SubscriptionPricingPeriod"/>.
+    /// </summary>
+    long? SubscriptionPricingAmount { get; }
 }
