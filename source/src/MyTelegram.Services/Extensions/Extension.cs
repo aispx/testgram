@@ -126,13 +126,18 @@ public static class Extension
         return null!;
     }
 
-    public static IMessageReplyHeader? ToMessageReplyHeader(this IInputReplyTo? inputReplyTo)
+    /// <summary>
+    /// Builds the reply header of a message. <paramref name="forumTopic"/> must come from the message
+    /// itself: <c>top_msg_id</c> is set for both forum topics and comment threads, so it cannot be used
+    /// to tell them apart. See https://corefork.telegram.org/api/threads
+    /// </summary>
+    public static IMessageReplyHeader? ToMessageReplyHeader(this IInputReplyTo? inputReplyTo, bool forumTopic = false)
     {
         return inputReplyTo switch
         {
             TInputReplyToMessage inputReplyToMessage => new TMessageReplyHeader
             {
-                ForumTopic = inputReplyToMessage.TopMsgId.HasValue,
+                ForumTopic = forumTopic,
                 Quote = !string.IsNullOrEmpty(inputReplyToMessage.QuoteText),
                 QuoteEntities = inputReplyToMessage.QuoteEntities,
                 QuoteText = inputReplyToMessage.QuoteText,

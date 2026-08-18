@@ -293,11 +293,27 @@ public class ChannelDomainEventHandler(
     //    return SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, updates);
     //}
 
-    public Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, DiscussionGroupUpdatedEvent> domainEvent,
+    public async Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, DiscussionGroupUpdatedEvent> domainEvent,
         CancellationToken cancellationToken)
     {
-        return SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo,
-            new TBoolTrue());
+        var e = domainEvent.AggregateEvent;
+        await SendRpcMessageToClientAsync(e.RequestInfo, new TBoolTrue());
+
+        // The comment button on the channel and the "linked channel" bar in the group both come from
+        // the channel object, so every side of the change has to be pushed out; otherwise clients only
+        // notice after a restart. See https://corefork.telegram.org/api/discussion
+        var notifyInfo = e.RequestInfo with { ReqMsgId = 0 };
+        await NotifyUpdateChannelAsync(notifyInfo, e.BroadcastChannelId);
+
+        if (e.GroupChannelId.HasValue)
+        {
+            await NotifyUpdateChannelAsync(notifyInfo, e.GroupChannelId.Value);
+        }
+
+        if (e.OldGroupChannelId.HasValue && e.OldGroupChannelId != e.GroupChannelId)
+        {
+            await NotifyUpdateChannelAsync(notifyInfo, e.OldGroupChannelId.Value);
+        }
     }
 
     public async Task HandleAsync(

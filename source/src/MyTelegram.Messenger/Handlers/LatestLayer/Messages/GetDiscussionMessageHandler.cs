@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Discussion;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Get <a href="https://corefork.telegram.org/api/threads">discussion message</a> from the <a href="https://corefork.telegram.org/api/discussion">associated discussion group</a> of a channel to show it on top of the comment section, without actually joining the group
@@ -14,7 +16,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelAppService channelAppService, //ILayeredService<IChannelConverter> layeredChatService,
- IChatConverterService chatConverterService, IMessageConverterService messageConverterService, IPhotoAppService photoAppService) : RpcResultObjectHandler<RequestGetDiscussionMessage, IDiscussionMessage>
+ IChatConverterService chatConverterService, IMessageConverterService messageConverterService, IUserConverterService userConverterService, IThreadReadStateService threadReadStateService, IPhotoAppService photoAppService) : RpcResultObjectHandler<RequestGetDiscussionMessage, IDiscussionMessage>
 {
     protected override async Task<IDiscussionMessage> HandleCoreAsync(IRequestInput input, RequestGetDiscussionMessage obj)
     {
@@ -47,27 +49,44 @@ internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQuery
             };
         }
 
-        var dialogReadModel = await queryProcessor.ProcessAsync(new GetDialogByIdQuery(DialogId.Create(input.UserId, PeerType.Channel, messageReadModel.ToPeerId).Value), default);
-        List<long> channelIds = [peer.PeerId, messageReadModel.ToPeerId];
+        // The thread lives in the discussion group and carries its own read state; the group dialog's
+        // read state describes the whole group and says nothing about this comment section.
+        // See https://corefork.telegram.org/api/threads
+        var threadChannelId = messageReadModel.ToPeerId;
+        var topMsgId = messageReadModel.MessageId;
+        var readState = await threadReadStateService.GetAsync(input.UserId, threadChannelId, topMsgId);
+        var readInboxMaxId = readState?.ReadInboxMaxId ?? 0;
+        var unreadCount = await threadReadStateService.GetUnreadCountAsync(threadChannelId, topMsgId, readInboxMaxId, input.UserId);
+
+        List<long> channelIds = [peer.PeerId, threadChannelId];
         var channelReadModels = await channelAppService.GetListAsync(channelIds);
-        var readMaxId = 0;
-        if (dialogReadModel != null)
-        {
-            readMaxId = Math.Max(dialogReadModel.ReadInboxMaxId, dialogReadModel.ReadOutboxMaxId);
-        }
 
         var message = messageConverterService.ToMessage(input.UserId, messageReadModel, layer: input.Layer);
         var photoReadModels = await photoAppService.GetPhotosAsync(channelReadModels);
         var channelMemberReadModels = await queryProcessor.ProcessAsync(new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIds));
         var chats = chatConverterService.ToChannelList(input, channelReadModels, photoReadModels, channelMemberReadModels, layer: input.Layer);
+
+        // messages.discussionMessage carries the users referenced by the returned messages; without
+        // them the client cannot render the sender of the thread starter.
+        var userIds = new List<long>();
+        if (messageReadModel.SenderUserId > 0)
+        {
+            userIds.Add(messageReadModel.SenderUserId);
+        }
+
+        var users = userIds.Count == 0
+            ? []
+            : await userConverterService.GetUserListAsync(input, userIds, layer: input.Layer);
+
         return new TDiscussionMessage
         {
             Chats = [.. chats],
             Messages = new TVector<IMessage>(message),
-            Users = new TVector<IUser>(),
-            MaxId = readMaxId,
-            ReadInboxMaxId = dialogReadModel?.ReadInboxMaxId,
-            ReadOutboxMaxId = dialogReadModel?.ReadOutboxMaxId
+            Users = [.. users],
+            MaxId = messageReadModel.Reply?.MaxId,
+            ReadInboxMaxId = readState?.ReadInboxMaxId,
+            ReadOutboxMaxId = readState?.ReadOutboxMaxId,
+            UnreadCount = unreadCount
         };
     }
 }

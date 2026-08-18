@@ -175,6 +175,8 @@ public class OrderedAccessChecksPropertyTests
         public Task CheckAdminRightAsync(long channelId, long userId, Func<ChatAdminRights, bool> checkAdminRightsFunc, RpcError? rpcError = null) =>
             throw new NotSupportedException();
         public Task ThrowIfNotChannelOwnerAsync(IInputChannel channel, long userId) => throw new NotSupportedException();
+        public Task ThrowIfNotChannelOwnerAsync(long channelId, long userId) => throw new NotSupportedException();
+        public long? GetChannelId(IInputChannel channel) => throw new NotSupportedException();
     }
 
     /// <summary>Fake peer helper: reports bot status for bot callers; nothing else is exercised here.</summary>

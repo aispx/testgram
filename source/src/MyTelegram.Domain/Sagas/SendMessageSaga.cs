@@ -364,7 +364,10 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
         {
             switch (replyTo)
             {
-                case TInputReplyToMessage inputReplyToMessage:
+                // A reply that names another peer (reply_to_peer_id) points at a message living in
+                // that peer, so its id must stay as it is - remapping it into this dialog's id space
+                // would make it point at an unrelated message.
+                case TInputReplyToMessage { ReplyToPeerId: null } inputReplyToMessage:
                     inputReplyToMessage.ReplyToMsgId = replyToMsgId;
                     break;
                 // A story reply carries the story id, which is the same for every recipient; it must not

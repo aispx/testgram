@@ -248,8 +248,23 @@ public class DeleteChannelMessagesSaga : MyInMemoryAggregateSaga<DeleteChannelMe
         {
             await HandleUpdateChannelPostMessageReplyAsync(domainEvent.AggregateEvent.PostChannelId.Value, domainEvent.AggregateEvent.PostMessageId.Value);
         }
+        else if (domainEvent.AggregateEvent.ThreadRootMessageId > 0)
+        {
+            await HandleDecrementThreadReplyCountAsync(domainEvent.AggregateEvent.ChannelId,
+                domainEvent.AggregateEvent.ThreadRootMessageId!.Value);
+        }
 
         HandleDeleteCompleted();
+    }
+
+    /// <summary>
+    /// A deleted comment must no longer be counted in its thread root's <c>messageReplies.replies</c>.
+    /// </summary>
+    private async Task HandleDecrementThreadReplyCountAsync(long channelId, int threadRootMessageId)
+    {
+        var pts = await _idGenerator.NextIdAsync(IdType.Pts, channelId);
+        var command = new DecrementMessageReplyCommand(MessageId.Create(channelId, threadRootMessageId), pts);
+        Publish(command);
     }
 
     private async Task HandleUpdateChannelPostMessageReplyAsync(long postChannelId, int postChannelMessageId)

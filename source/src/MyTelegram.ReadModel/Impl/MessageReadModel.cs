@@ -20,6 +20,7 @@ public class MessageReadModel : IMessageReadModel,
     IAmReadModelFor<MessageAggregate, MessageId, ReplyChannelMessageCompletedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, ChannelMessagePinnedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageReplyUpdatedEvent>,
+    IAmReadModelFor<MessageAggregate, MessageId, MessageReplyCountDecrementedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, ChannelMessageDeletedEvent>,
     IAmReadModelFor<SendMessageSaga, SendMessageSagaId, PostChannelIdUpdatedSagaEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageUnpinnedEvent>,
@@ -58,6 +59,7 @@ public class MessageReadModel : IMessageReadModel,
     public int Pts { get; private set; }
     public int? ReplyToMsgId { get; private set; }
     public int? TopMsgId { get; private set; }
+    public bool ForumTopic { get; private set; }
     public int SenderMessageId { get; private set; }
     public long SenderPeerId { get; private set; }
     public long SenderUserId { get; private set; }
@@ -155,6 +157,7 @@ public class MessageReadModel : IMessageReadModel,
         ReplyMarkup2 = messageItem.ReplyMarkup;
         ReplyTo = messageItem.InputReplyTo;
         ReplyToMsgId = messageItem.InputReplyTo.ToReplyToMsgId();
+        ForumTopic = messageItem.ForumTopic;
         SendAs = messageItem.SendAs;
         Reply = messageItem.Reply;
         EditHide = messageItem.EditHide;
@@ -221,6 +224,7 @@ public class MessageReadModel : IMessageReadModel,
         ReplyMarkup2 = messageItem.ReplyMarkup;
         ReplyTo = messageItem.InputReplyTo;
         ReplyToMsgId = messageItem.InputReplyTo.ToReplyToMsgId();
+        ForumTopic = messageItem.ForumTopic;
         //RandomId = messageItem.RandomId;
         if (messageItem.BatchId.HasValue)
         {
@@ -410,6 +414,17 @@ public class MessageReadModel : IMessageReadModel,
         if (Reply != null)
         {
             Reply.ChannelId = domainEvent.AggregateEvent.ChannelId;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<MessageAggregate, MessageId, MessageReplyCountDecrementedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        if (Reply != null)
+        {
+            Reply.Replies = domainEvent.AggregateEvent.Replies;
+            Reply.RepliesPts = domainEvent.AggregateEvent.Pts;
         }
 
         return Task.CompletedTask;

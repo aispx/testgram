@@ -21,6 +21,14 @@ public class MyTelegramConsts
     public const long AnonymousUserId = 2666000;
     public const long DefaultSupportUserId = 569999;
 
+    /// <summary>
+    /// The <c>@replies</c> peer. A user who commented on a channel post without joining the discussion
+    /// group receives replies to their comments as messages from this peer; official clients render it
+    /// as a read-only supergroup. The id matches the one official clients special-case.
+    /// See https://corefork.telegram.org/api/discussion#replies
+    /// </summary>
+    public const long RepliesServiceUserId = 1271266957;
+
     public const long DeletedChannelIdForChannelPost = 777;
 
     public const string VideoMimeType = "video";

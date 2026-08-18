@@ -62,7 +62,13 @@ public record MessageItem
     bool PaidSuggestedPostStars = false,
     bool PaidSuggestedPostTon = false,
     bool NoForwards = false,
-    int? ReportDeliveryUntilDate = null
+    int? ReportDeliveryUntilDate = null,
+    /// <summary>
+    /// True only when <see cref="TopMsgId"/> points at a forum topic. A comment thread also carries a
+    /// TopMsgId but is not a forum topic, so the two must not be conflated in messageReplyHeader.
+    /// See https://corefork.telegram.org/api/threads
+    /// </summary>
+    bool ForumTopic = false
 //int? DefaultHistoryTtl = null,
 //int? Ttl = null
 );

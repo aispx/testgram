@@ -15,5 +15,6 @@ public record DataSeederConfig
     public bool IsUserNameIdMigrated { get; set; }
     public bool IsChatAdminMigrated { get; set; }
     public bool IsServiceNotificationAccountBioUpdated { get; set; }
+    public bool IsRepliesUserCreated { get; set; }
     public Dictionary<string, int> ImportedLanguagePackVersions { get; set; } = [];
 }

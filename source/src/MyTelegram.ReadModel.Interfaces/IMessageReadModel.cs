@@ -26,6 +26,12 @@ public interface IMessageReadModel : IReadModel, IReactionItem
     int Pts { get; }
     int? ReplyToMsgId { get; }
     int? TopMsgId { get; }
+
+    /// <summary>
+    /// True only when <see cref="TopMsgId"/> is a forum topic; a comment thread also has a TopMsgId
+    /// but is not a forum topic. See https://corefork.telegram.org/api/threads
+    /// </summary>
+    bool ForumTopic { get; }
     int SenderMessageId { get; }
     long SenderPeerId { get; }
     long SenderUserId { get; }

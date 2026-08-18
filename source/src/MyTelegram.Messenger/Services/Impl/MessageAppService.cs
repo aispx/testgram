@@ -762,6 +762,7 @@ public class MessageAppService(
         var ownerPeerId = input.ToPeer.PeerType == PeerType.Channel ? input.ToPeer.PeerId : input.SenderUserId;
         var replyToMsgId = input.InputReplyTo.ToReplyToMsgId();
         await ClearTodoItemIdIfNotChecklistAsync(input, ownerPeerId, replyToMsgId);
+        var topMsgId = await ResolveThreadRootAsync(input, ownerPeerId);
 
         // Reply to group: ToPeerId=input.ToPeerId,SenderUserId=input.UserId
         // Reply to user:  ToPeerId=Input.UserId,OwnerPeerId=input.ToPeerId,MessageId=replyToMsgId
@@ -891,7 +892,8 @@ public class MessageAppService(
             PollId: input.PollId,
             Post: post,
             ReplyMarkup: input.ReplyMarkup,
-            TopMsgId: input.TopMsgId,
+            TopMsgId: topMsgId,
+            ForumTopic: topMsgId.HasValue && channelReadModel?.Forum == true,
             PostAuthor: postAuthor,
             SendAs: sendAs,
             Effect: input.Effect,
@@ -921,6 +923,36 @@ public class MessageAppService(
         var sendMessageItem = new SendMessageItem(messageItem, input.ClearDraft, mentionedUserIds, []);
 
         return sendMessageItem;
+    }
+
+    /// <summary>
+    /// Resolves the thread root a message belongs to. Clients normally send it as
+    /// <c>inputReplyToMessage.top_msg_id</c>, but a reply posted from a plain message view carries only
+    /// <c>reply_to_msg_id</c>; without the root, a reply to a comment would be invisible in the thread.
+    /// The resolved value is also written back onto the request so the message keeps
+    /// <c>reply_to_top_id</c>. See https://corefork.telegram.org/api/threads
+    /// </summary>
+    private async Task<int?> ResolveThreadRootAsync(SendMessageInput input, long ownerPeerId)
+    {
+        var inputReplyToMessage = input.InputReplyTo as TInputReplyToMessage;
+        var topMsgId = input.TopMsgId ?? inputReplyToMessage?.TopMsgId;
+        if (topMsgId.HasValue || inputReplyToMessage == null || input.ToPeer.PeerType != PeerType.Channel)
+        {
+            return topMsgId;
+        }
+
+        var repliedTo = await queryProcessor.ProcessAsync(
+            new GetMessageByIdQuery(MessageId.Create(ownerPeerId, inputReplyToMessage.ReplyToMsgId).Value));
+
+        // Only a reply to a message that is itself inside a thread inherits a root. A reply to a
+        // top-level message keeps reply_to_msg_id alone, which already identifies the thread.
+        topMsgId = repliedTo?.TopMsgId ?? (repliedTo?.ReplyToMsgId > 0 ? repliedTo.ReplyToMsgId : null);
+        if (topMsgId.HasValue)
+        {
+            inputReplyToMessage.TopMsgId = topMsgId;
+        }
+
+        return topMsgId;
     }
 
     private async Task<bool> IsPrivateChatNoForwardsEnabledAsync(long ownerUserId, long peerUserId)

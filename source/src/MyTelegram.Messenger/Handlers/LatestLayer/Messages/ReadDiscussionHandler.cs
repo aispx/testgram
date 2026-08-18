@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Discussion;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -15,15 +16,15 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class ReadDiscussionHandler(
-    ICommandBus commandBus,
     IPeerHelper peerHelper,
     IQueryProcessor queryProcessor,
-    IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadDiscussion, IBool>
+    IMongoDatabase mongoDatabase,
+    IThreadReadStateService threadReadStateService,
+    IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadDiscussion, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestReadDiscussion obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
-        var selfDialogId = DialogId.Create(input.UserId, peer);
         var messageReadModel = await queryProcessor.ProcessAsync(new GetMessageByIdQuery(MessageId.Create(peer.PeerId, obj.MsgId).Value));
 
         if (messageReadModel == null)
@@ -48,20 +49,56 @@ internal sealed class ReadDiscussionHandler(
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
         }
 
-        var dialogReadModel = await queryProcessor.ProcessAsync(new GetDialogByIdQuery(DialogId.Create(input.UserId, peer).Value));
-        if (dialogReadModel == null)
-        {
-            return new TBoolTrue();
-        //RpcErrors.RpcErrors400.ChannelIdInvalid.ThrowRpcError();
-        }
-
-        if (dialogReadModel!.ReadInboxMaxId >= obj.ReadMaxId)
+        // The read pointer belongs to the thread, not to the discussion group: reading the comments
+        // of one post must leave the rest of the group unread.
+        // See https://corefork.telegram.org/api/threads
+        if (!await threadReadStateService.SetInboxAsync(input.UserId, peer.PeerId, obj.MsgId, obj.ReadMaxId))
         {
             return new TBoolFalse();
         }
 
-        var command = new UpdateReadChannelInboxCommand(selfDialogId, input.ToRequestInfo(), messageReadModel!.SenderUserId, obj.ReadMaxId);
-        await commandBus.PublishAsync(command);
-        return null !;
+        var update = new TUpdateReadChannelDiscussionInbox
+        {
+            ChannelId = peer.PeerId,
+            TopMsgId = obj.MsgId,
+            ReadMaxId = obj.ReadMaxId,
+            // Present when the thread is the comment section of a channel post, so that clients can
+            // clear the unread comment badge shown on the post itself.
+            BroadcastId = messageReadModel!.PostChannelId,
+            BroadcastPost = messageReadModel.PostMessageId
+        };
+
+        var updates = new TUpdates
+        {
+            Updates = new TVector<IUpdate>(update),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = DateTime.UtcNow.ToTimestamp()
+        };
+
+        await objectMessageSender.PushMessageToPeerAsync(input.UserId.ToUserPeer(), updates, input.AuthKeyId);
+
+        // Everyone whose comments were just read learns about it through
+        // updateReadChannelDiscussionOutbox, which drives the read marks on their own messages.
+        var readAuthorUserIds = await threadReadStateService.MarkOutboxReadAsync(peer.PeerId, obj.MsgId, obj.ReadMaxId, input.UserId);
+        foreach (var authorUserId in readAuthorUserIds)
+        {
+            var outboxUpdates = new TUpdates
+            {
+                Updates = new TVector<IUpdate>(new TUpdateReadChannelDiscussionOutbox
+                {
+                    ChannelId = peer.PeerId,
+                    TopMsgId = obj.MsgId,
+                    ReadMaxId = obj.ReadMaxId
+                }),
+                Users = new TVector<IUser>(),
+                Chats = new TVector<IChat>(),
+                Date = DateTime.UtcNow.ToTimestamp()
+            };
+
+            await objectMessageSender.PushMessageToPeerAsync(authorUserId.ToUserPeer(), outboxUpdates);
+        }
+
+        return new TBoolTrue();
     }
 }

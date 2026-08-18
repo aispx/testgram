@@ -70,7 +70,7 @@ internal sealed class SendMessageConverterService(
                         Pts = item.Pts,
                         PtsCount = 1,
                         Mentioned = true,
-                        ReplyTo = item.InputReplyTo.ToMessageReplyHeader(),
+                        ReplyTo = item.InputReplyTo.ToMessageReplyHeader(item.ForumTopic),
                         Silent = item.Silent,
                         TtlPeriod = item.TtlPeriod
                     };
@@ -90,7 +90,7 @@ internal sealed class SendMessageConverterService(
                         ChatId = item.ToPeer.PeerId,
                         Pts = item.Pts,
                         PtsCount = 1,
-                        ReplyTo = item.InputReplyTo.ToMessageReplyHeader(),
+                        ReplyTo = item.InputReplyTo.ToMessageReplyHeader(item.ForumTopic),
                         Silent = item.Silent,
                         TtlPeriod = item.TtlPeriod
                     };
@@ -164,7 +164,7 @@ internal sealed class SendMessageConverterService(
                         item.FwdHeader == null
                             ? null
                             : objectMapper.Map<MessageFwdHeader, TMessageFwdHeader>(item.FwdHeader),
-                    ReplyTo = item.InputReplyTo.ToMessageReplyHeader(),
+                    ReplyTo = item.InputReplyTo.ToMessageReplyHeader(item.ForumTopic),
                     Entities = item.Entities,
                     Silent = item.Silent,
                     TtlPeriod = item.TtlPeriod
@@ -182,7 +182,7 @@ internal sealed class SendMessageConverterService(
                     PtsCount = 1,
                     Date = item.Date,
                     Entities = item.Entities,
-                    ReplyTo = item.InputReplyTo.ToMessageReplyHeader(),
+                    ReplyTo = item.InputReplyTo.ToMessageReplyHeader(item.ForumTopic),
                     FwdFrom =
                         item.FwdHeader == null
                             ? null

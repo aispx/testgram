@@ -27,6 +27,7 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
     IApply<ChannelMessagePinnedEvent>,
     IApply<ChannelMessageDeletedEvent>,
     IApply<MessageReplyUpdatedEvent>,
+    IApply<MessageReplyCountDecrementedEvent>,
     IApply<MessageUnpinnedEvent>,
     IApply<MessagePinnedUpdatedEvent>,
     IApply<OutboxMessageEditedEventV2>,
@@ -123,6 +124,15 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
         if (MessageItem.Reply != null)
         {
             MessageItem.Reply.ChannelId = aggregateEvent.ChannelId;
+        }
+    }
+
+    public void Apply(MessageReplyCountDecrementedEvent aggregateEvent)
+    {
+        if (MessageItem.Reply != null)
+        {
+            MessageItem.Reply.Replies = aggregateEvent.Replies;
+            MessageItem.Reply.RepliesPts = aggregateEvent.Pts;
         }
     }
 

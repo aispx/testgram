@@ -47,7 +47,7 @@ internal sealed class MessageMapper
         //destination.ViaBotId = source.ViaBotId;
         //destination.ViaBusinessBotId = source.ViaBusinessBotId;
         //destination.ReplyTo = source.ReplyTo;
-        destination.ReplyTo = source.ReplyTo.ToMessageReplyHeader();
+        destination.ReplyTo = source.ReplyTo.ToMessageReplyHeader(source.ForumTopic);
         destination.Date = source.Date;
         destination.Message = source.Message;
         destination.Media = source.Media2 ?? source.Media.ToTObject<IMessageMedia>();
@@ -140,7 +140,7 @@ internal sealed class MessageMapper
         //destination.FwdFrom = source.FwdFrom;
         //destination.ViaBotId = source.ViaBotId;
         //destination.ViaBusinessBotId = source.ViaBusinessBotId;
-        destination.ReplyTo = source.InputReplyTo.ToMessageReplyHeader();
+        destination.ReplyTo = source.InputReplyTo.ToMessageReplyHeader(source.ForumTopic);
         destination.Date = source.Date;
         destination.Message = source.Message;
         destination.Media = source.Media;

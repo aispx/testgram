@@ -36,6 +36,14 @@ public class MongoDbIndexesCreator(
         // Resolves a poll back to the message carrying it.
         await CreateIndexAsync<MessageReadModel>(p => p.PollId);
 
+        // A message thread is read through either leg of "ReplyToMsgId == root || TopMsgId == root"
+        // (see GetMessagesQueryHandler), and both legs are scoped to the chat the thread lives in.
+        // See https://corefork.telegram.org/api/threads
+        await CreateCompoundIndexAsync<MessageReadModel>("idx_message_owner_replyto_msgid",
+            p => p.OwnerPeerId, p => p.ReplyToMsgId, p => p.MessageId);
+        await CreateCompoundIndexAsync<MessageReadModel>("idx_message_owner_topmsg_msgid",
+            p => p.OwnerPeerId, p => p.TopMsgId, p => p.MessageId);
+
         await CreateIndexAsync<UserReadModel>(p => p.UserId);
         await CreateIndexAsync<UserReadModel>(p => p.PhoneNumber);
         await CreateIndexAsync<UserReadModel>(p => p.FirstName);

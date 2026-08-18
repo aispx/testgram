@@ -50,9 +50,11 @@ public class MessageConverterService(
         IMessageMedia? pollMedia = null,
         IReadOnlyCollection<IUserReactionReadModel>? userReactionReadModels = null,
         int layer = 0,
-        IReadOnlyDictionary<string, IFactCheck>? factChecks = null
+        IReadOnlyDictionary<string, IFactCheck>? factChecks = null,
+        IReadOnlyDictionary<string, int>? threadReadMaxIds = null
     )
     {
+        threadReadMaxIds ??= LoadThreadReadMaxIds(selfUserId, [readModel]);
         var fromId = new Peer(PeerType.User, readModel.SenderPeerId).ToPeer();
         switch (readModel.SendMessageType)
         {
@@ -131,7 +133,8 @@ public class MessageConverterService(
 
                     if (readModel.ToPeerType == PeerType.Channel)
                     {
-                        m.Replies = ToMessageReplies(readModel.Post, readModel.Reply);
+                        m.Replies = ToMessageReplies(readModel.Post, readModel.Reply,
+                            GetThreadReadMaxId(threadReadMaxIds, readModel));
                         if (m.Replies != null && readModel.FwdHeader != null) // forward from linked channel
                         {
                             m.FromId = readModel.FwdHeader.FromId.ToPeer();
@@ -254,6 +257,7 @@ public class MessageConverterService(
 
         var pollConverter = pollLayeredService.GetConverter(layer);
         var factChecks = LoadFactChecks(messageReadModels);
+        var threadReadMaxIds = LoadThreadReadMaxIds(selfUserId, messageReadModels);
 
         foreach (var readModel in messageReadModels)
         {
@@ -276,7 +280,7 @@ public class MessageConverterService(
                 }
             }
 
-            messages.Add(ToMessage(selfUserId, readModel, media, null, layer, factChecks));
+            messages.Add(ToMessage(selfUserId, readModel, media, null, layer, factChecks, threadReadMaxIds));
         }
 
         return messages;
@@ -442,7 +446,69 @@ public class MessageConverterService(
         }
     }
 
-    protected IMessageReplies? ToMessageReplies(bool post, MessageReply? reply)
+    /// <summary>
+    /// How far the user has read each thread whose root is in <paramref name="messageReadModels"/>,
+    /// keyed by <c>{channelId}-{rootMessageId}</c>. Only threads living in the chat itself are looked
+    /// up: the comment count shown on a channel post belongs to a thread in the linked discussion
+    /// group, whose read state the client obtains from messages.getDiscussionMessage instead.
+    /// See https://corefork.telegram.org/api/threads
+    /// </summary>
+    private IReadOnlyDictionary<string, int> LoadThreadReadMaxIds(long selfUserId,
+        IReadOnlyCollection<IMessageReadModel> messageReadModels)
+    {
+        var empty = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (selfUserId <= 0)
+        {
+            return empty;
+        }
+
+        var ids = messageReadModels
+            .Where(p => p is { Post: false, Reply: not null, ToPeerType: PeerType.Channel })
+            .Select(p => $"{selfUserId}-{p.OwnerPeerId}-{p.MessageId}")
+            .Distinct()
+            .ToList();
+
+        if (ids.Count == 0)
+        {
+            return empty;
+        }
+
+        try
+        {
+            var documents = mongoDatabase.GetCollection<BsonDocument>("thread_read_state")
+                .Find(Builders<BsonDocument>.Filter.In("_id", ids))
+                .ToList();
+
+            var result = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var document in documents)
+            {
+                var key = $"{document.GetValue("ChannelId", 0L).ToInt64()}-{document.GetValue("TopMsgId", 0).ToInt32()}";
+                result[key] = document.GetValue("ReadInboxMaxId", 0).ToInt32();
+            }
+
+            return result;
+        }
+        catch (MongoException ex)
+        {
+            logger.LogWarning(ex, "Failed to load thread read state batch");
+            return empty;
+        }
+    }
+
+    private static int? GetThreadReadMaxId(IReadOnlyDictionary<string, int>? threadReadMaxIds,
+        IMessageReadModel readModel)
+    {
+        if (threadReadMaxIds == null)
+        {
+            return null;
+        }
+
+        return threadReadMaxIds.TryGetValue($"{readModel.OwnerPeerId}-{readModel.MessageId}", out var readMaxId)
+            ? readMaxId
+            : null;
+    }
+
+    protected IMessageReplies? ToMessageReplies(bool post, MessageReply? reply, int? readMaxId = null)
     {
         if (reply == null)
         {
@@ -463,6 +529,7 @@ public class MessageConverterService(
             MaxId = reply.MaxId,
             Replies = reply.Replies,
             RepliesPts = reply.RepliesPts,
+            ReadMaxId = readMaxId
         };
 
         if (post)

@@ -33,7 +33,7 @@ internal sealed class MessageServiceMapper
         var peer = new Peer(source.ToPeerType, source.ToPeerId);
         destination.PeerId = peer.ToPeer();
 
-        destination.ReplyTo = source.ReplyTo.ToMessageReplyHeader();
+        destination.ReplyTo = source.ReplyTo.ToMessageReplyHeader(source.ForumTopic);
         destination.Date = source.Date;
         destination.Action = source.MessageAction ?? source.MessageActionData?.ToBytes().ToTObject<IMessageAction>() ?? new TMessageActionEmpty();
         //destination.Reactions = source.Reactions;
@@ -80,7 +80,7 @@ internal sealed class MessageServiceMapper
 
         destination.PeerId = source.ToPeer.ToPeer();
 
-        destination.ReplyTo = source.InputReplyTo.ToMessageReplyHeader();
+        destination.ReplyTo = source.InputReplyTo.ToMessageReplyHeader(source.ForumTopic);
         destination.Date = source.Date;
         destination.Action = source.MessageAction ?? new TMessageActionEmpty();
         //destination.Reactions = source.Reactions;

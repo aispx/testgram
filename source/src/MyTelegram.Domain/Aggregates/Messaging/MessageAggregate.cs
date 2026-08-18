@@ -142,12 +142,18 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
         var channelId = _state.MessageItem.OwnerPeer.PeerId;
         var postChannelId = _state.MessageItem.FwdHeader?.SavedFromPeer?.PeerId;
         var postMessageId = _state.MessageItem.FwdHeader?.SavedFromMsgId;
+
+        // Root of the thread this message belongs to, so the reply counter of that root can be
+        // decremented once the message is gone. See https://corefork.telegram.org/api/threads
+        var threadRootMessageId = _state.MessageItem.TopMsgId ??
+                                  (_state.MessageItem.InputReplyTo as TInputReplyToMessage)?.ReplyToMsgId;
         Emit(new ChannelMessageDeletedEvent(requestInfo,
             channelId,
             _state.MessageItem.MessageId,
             _state.MessageItem.IsForwardFromChannelPost,
             postChannelId,
-            postMessageId));
+            postMessageId,
+            threadRootMessageId));
     }
 
     [DoNotInheritRequestCommand]
@@ -363,6 +369,13 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
         var reply = _state.MessageItem.Reply ?? new MessageReply(null, 0, repliesPts, messageId, new List<Peer>());
         reply.Replies++;
+
+        // messageReplies.max_id is the id of the latest message in the comment section and
+        // replies_pts the pts that goes with it, so both must follow every new reply — not just
+        // the first one. See https://corefork.telegram.org/api/discussion
+        reply.MaxId = messageId;
+        reply.RepliesPts = repliesPts;
+
         var recentRepliers = reply.RecentRepliers ?? new List<Peer>();
         var peer = recentRepliers.FirstOrDefault(p => p.PeerId == replierPeer.PeerId);
         if (peer != null)
@@ -370,12 +383,11 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
             recentRepliers.Remove(peer);
         }
 
-        if (recentRepliers.Count > MyTelegramConsts.MaxRecentRepliersCount)
-        {
-            recentRepliers.RemoveAt(MyTelegramConsts.MaxRecentRepliersCount - 1);
-        }
-
         recentRepliers.Insert(0, replierPeer);
+        while (recentRepliers.Count > MyTelegramConsts.MaxRecentRepliersCount)
+        {
+            recentRepliers.RemoveAt(recentRepliers.Count - 1);
+        }
 
         long? postChannelId = null;
         int? postMessageId = null;
@@ -413,6 +425,28 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
             date,
             item.ToPeer,
             _state.Pts));
+    }
+
+    /// <summary>
+    /// Decrements the reply counter of a thread root after one of its replies was deleted, so
+    /// <c>messageReplies.replies</c> keeps matching the number of messages actually left in the
+    /// thread. See https://corefork.telegram.org/api/threads
+    /// </summary>
+    public void DecrementMessageReply(int pts)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        var reply = _state.MessageItem.Reply;
+        if (reply == null || reply.Replies <= 0)
+        {
+            return;
+        }
+
+        var ownerChannelId = _state.MessageItem.OwnerPeer.PeerId;
+        var replies = reply.Replies - 1;
+        Emit(new MessageReplyCountDecrementedEvent(ownerChannelId,
+            _state.MessageItem.MessageId,
+            replies,
+            pts));
     }
 
     public void UpdateMessageRely(int pts)

@@ -56,7 +56,10 @@ public class
                 .WhereIf(query.Pts > 0, p => p.Pts > query.Pts)
                 .WhereIf(query.Peer != null && query.Peer.PeerType != PeerType.Empty,
                     p => p.ToPeerType == query.Peer!.PeerType && p.ToPeerId == query.Peer.PeerId)
-                .WhereIf(query.ReplyToMsgId > 0, p => p.ReplyToMsgId == query.ReplyToMsgId)
+                // A thread holds every message whose reply chain leads back to the root, not only the
+                // direct replies to it: a reply to a comment carries the root in TopMsgId instead.
+                // See https://corefork.telegram.org/api/threads
+                .WhereIf(query.ReplyToMsgId > 0, p => p.ReplyToMsgId == query.ReplyToMsgId || p.TopMsgId == query.ReplyToMsgId)
                 .WhereIf(query.BroadcastsOnly, p => p.ToPeerType == PeerType.Channel && p.Post)
                 .WhereIf(query.GroupsOnly, p => p.ToPeerType == PeerType.Channel && !p.Post)
                 .WhereIf(query.UsersOnly, p => p.ToPeerType == PeerType.User)
@@ -150,7 +153,10 @@ public class
                 //.WhereIf(query.Pts > 0, p => p.Pts > query.Pts)
                 .WhereIf(query.Peer != null && query.Peer.PeerType != PeerType.Empty,
                     p => p.ToPeerType == query.Peer!.PeerType && p.ToPeerId == query.Peer.PeerId)
-                .WhereIf(query.ReplyToMsgId > 0, p => p.ReplyToMsgId == query.ReplyToMsgId)
+                // A thread holds every message whose reply chain leads back to the root, not only the
+                // direct replies to it: a reply to a comment carries the root in TopMsgId instead.
+                // See https://corefork.telegram.org/api/threads
+                .WhereIf(query.ReplyToMsgId > 0, p => p.ReplyToMsgId == query.ReplyToMsgId || p.TopMsgId == query.ReplyToMsgId)
                 .WhereIf(query.BroadcastsOnly, p => p.ToPeerType == PeerType.Channel && p.Post)
                 .WhereIf(query.GroupsOnly, p => p.ToPeerType == PeerType.Channel && !p.Post)
                 .WhereIf(query.UsersOnly, p => p.ToPeerType == PeerType.User)

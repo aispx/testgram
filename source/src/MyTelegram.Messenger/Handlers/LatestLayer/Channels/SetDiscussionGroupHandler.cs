@@ -19,47 +19,73 @@ using MyTelegram.Messenger.Helpers;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetDiscussionGroupHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetDiscussionGroup, IBool>
+internal sealed class SetDiscussionGroupHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IChannelAppService channelAppService, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSetDiscussionGroup, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestSetDiscussionGroup obj)
     {
-        if (obj.Broadcast is TInputChannel broadcastChannel)
+        var broadcastChannelId = channelAdminRightsChecker.GetChannelId(obj.Broadcast);
+        if (broadcastChannelId == null)
         {
-        }
-        else
-        {
-            throw new NotImplementedException();
+            RpcErrors.RpcErrors400.BroadcastIdInvalid.ThrowRpcError();
         }
 
-        await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Broadcast, input.UserId);
-        await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Group, input.UserId);
+        var broadcastReadModel = await channelAppService.GetAsync((long?)broadcastChannelId!.Value);
+        if (broadcastReadModel == null || !broadcastReadModel.Broadcast)
+        {
+            RpcErrors.RpcErrors400.BroadcastIdInvalid.ThrowRpcError();
+        }
+
+        await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(broadcastChannelId.Value, input.UserId);
+
+        var prevGroupId = broadcastReadModel!.LinkedChatId;
+
+        // inputChannelEmpty unlinks the current discussion group; any other constructor links the
+        // supergroup it points at. See https://corefork.telegram.org/api/discussion
         long? groupId = null;
-        if (obj.Group is TInputChannel groupChannel)
+        if (obj.Group is not TInputChannelEmpty)
         {
+            groupId = channelAdminRightsChecker.GetChannelId(obj.Group);
+            if (groupId == null)
+            {
+                RpcErrors.RpcErrors400.MegagroupIdInvalid.ThrowRpcError();
+            }
+
+            var groupReadModel = await channelAppService.GetAsync((long?)groupId!.Value);
+            if (groupReadModel == null || !groupReadModel.MegaGroup)
+            {
+                RpcErrors.RpcErrors400.MegagroupIdInvalid.ThrowRpcError();
+            }
+
+            // Access to the group's old messages must be enabled before it can host a comment
+            // section, otherwise users reaching a thread from the channel would see nothing.
+            if (groupReadModel!.HiddenPreHistory)
+            {
+                RpcErrors.RpcErrors400.MegagroupPrehistoryHidden.ThrowRpcError();
+            }
+
+            await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(groupId.Value, input.UserId);
         }
 
-        switch (obj.Group)
+        if (prevGroupId == groupId)
         {
-            case TInputChannel inputChannel:
-                groupId = inputChannel.ChannelId;
-                break;
-            case TInputChannelEmpty _:
-                break;
-            case TInputChannelFromMessage _:
-                break;
-            default:
-                throw new ArgumentOutOfRangeException();
+            RpcErrors.RpcErrors400.LinkNotModified.ThrowRpcError();
         }
 
-        // Get previous linked chat IDs for admin log
-        var broadcastReadModel = await queryProcessor.ProcessAsync(new GetChannelByIdQuery(broadcastChannel.ChannelId));
-        var prevGroupId = broadcastReadModel?.LinkedChatId;
+        // Log the change on both sides, the way the official server does: the channel admin log
+        // records the group it gained or lost, the group's log records the channel.
+        await AdminLogHelper.LogChangeLinkedChat(mongoDatabase, broadcastChannelId.Value, input.UserId, prevGroupId ?? 0, groupId ?? 0);
+        if (groupId.HasValue)
+        {
+            await AdminLogHelper.LogChangeLinkedChat(mongoDatabase, groupId.Value, input.UserId, 0, broadcastChannelId.Value);
+        }
 
-        // Log discussion group change in admin log for broadcast channel
-        await AdminLogHelper.LogChangeLinkedChat(mongoDatabase, broadcastChannel.ChannelId, input.UserId, prevGroupId ?? 0, groupId ?? 0);
+        if (prevGroupId.HasValue)
+        {
+            await AdminLogHelper.LogChangeLinkedChat(mongoDatabase, prevGroupId.Value, input.UserId, broadcastChannelId.Value, 0);
+        }
 
-        var command = new StartSetChannelDiscussionGroupCommand(TempId.New, input.ToRequestInfo(), broadcastChannel.ChannelId, groupId);
+        var command = new StartSetChannelDiscussionGroupCommand(TempId.New, input.ToRequestInfo(), broadcastChannelId.Value, groupId);
         await commandBus.PublishAsync(command);
-        return null !;
+        return null!;
     }
 }
