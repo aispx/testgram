@@ -155,5 +155,54 @@ public class MongoDbIndexesCreator(
         // Order, Title. The collection is seeded outside EventFlow, so it only had the default
         // _id_ index and every category lookup was a collection scan.
         await CreateRawIndexAsync("emoji_groups", "For", "Order", "Title");
+
+        await CreateCallIndexesAsync();
+        await CreateBusinessBotIndexesAsync();
+        await CreateBotFatherIndexesAsync();
+    }
+
+    /// <summary>
+    /// Indexes of the call session store. The one on Date is a TTL index: a call session is only
+    /// interesting for as long as the client may still ask about it, and the collection would otherwise
+    /// grow without bound. See https://corefork.telegram.org/api/end-to-end/voice-calls
+    /// </summary>
+    private async Task CreateCallIndexesAsync()
+    {
+        const string collection = "call_sessions";
+
+        await CreateRawIndexAsync(collection, "idx_callid_accesshash", ["CallId", "AccessHash"], unique: true);
+        await CreateRawIndexAsync(collection, "idx_callerid_date", ["CallerId", "-Date"]);
+        await CreateRawIndexAsync(collection, "idx_calleeid_date", ["CalleeId", "-Date"]);
+        await CreateRawIndexAsync(collection, "idx_state_date", ["State", "-Date"]);
+        await CreateRawIndexAsync(collection, "idx_date", ["-Date"], expireAfterSeconds: 30 * 24 * 60 * 60);
+    }
+
+    /// <summary>
+    /// Indexes of the connected-business-bot store. A bot may hold one connection per user, which the
+    /// unique indexes enforce. See https://corefork.telegram.org/api/business#connected-bots
+    /// </summary>
+    private async Task CreateBusinessBotIndexesAsync()
+    {
+        const string connectedBots = "connected_business_bots";
+
+        await CreateRawIndexAsync(connectedBots, "idx_userid", ["UserId"]);
+        await CreateRawIndexAsync(connectedBots, "idx_botid", ["BotId"]);
+        await CreateRawIndexAsync(connectedBots, "idx_connectionid", ["ConnectionId"], unique: true);
+        await CreateRawIndexAsync(connectedBots, "idx_userid_botid", ["UserId", "BotId"], unique: true);
+
+        await CreateRawIndexAsync("paused_business_bot_chats", "idx_userid_peerid", ["UserId", "PeerId"], unique: true);
+        await CreateRawIndexAsync("paused_business_bot_chats", "idx_userid", ["UserId"]);
+    }
+
+    /// <summary>
+    /// Indexes of the BotFather conversation state. One bot per username and per bot user id.
+    /// </summary>
+    private async Task CreateBotFatherIndexesAsync()
+    {
+        const string collection = "botfather-bot-state";
+
+        await CreateRawIndexAsync(collection, "idx_ownerid", ["OwnerId"]);
+        await CreateRawIndexAsync(collection, "idx_username", ["Username"], unique: true);
+        await CreateRawIndexAsync(collection, "idx_botuserid", ["BotUserId"], unique: true);
     }
 }

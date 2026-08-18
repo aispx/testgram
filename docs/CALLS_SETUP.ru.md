@@ -15,7 +15,7 @@ Testgram поддерживает полный набор методов `phone.
 |--------|-------|------------|
 | `coturn` | `coturn/coturn:latest` | STUN/TURN сервер для WebRTC (1:1 и групповые звонки) |
 | `rtmp-server` | `bluenviron/mediamtx:latest` | Приём RTMP + воспроизведение HLS для трансляций |
-| `call-init` | `mongo:8` | Создаёт индексы MongoDB для звонков при первом запуске |
+| `data-seeder` | `mytelegram-data-seeder` | Создаёт индексы MongoDB для звонков при первом запуске |
 
 Устанавливать Coturn на хост **больше не нужно**. Достаточно настроить `.env` и
 запустить стек. Внешний/ручной Coturn по-прежнему поддерживается как альтернатива
@@ -89,14 +89,14 @@ docker compose up -d
 ```
 
 При первом запуске автоматически:
-- Контейнер `call-init` создаёт индексы для коллекций `call_sessions` / `group_calls`
+- Контейнер `data-seeder` создаёт индексы для коллекций `call_sessions` / `group_calls`
   и настраивает TTL-очистку старых записей.
 - `coturn` и `rtmp-server` запускаются вместе с сервисами мессенджера.
 
 Проверьте вспомогательные сервисы:
 
 ```bash
-docker compose logs call-init      # создание индексов
+docker compose logs data-seeder    # создание индексов
 docker compose logs coturn         # TURN сервер
 docker compose logs rtmp-server    # RTMP/HLS сервер
 ```

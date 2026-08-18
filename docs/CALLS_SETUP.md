@@ -16,7 +16,7 @@ this for you:
 |---------|-------|---------|
 | `coturn` | `coturn/coturn:latest` | STUN/TURN server for WebRTC (1:1 and group calls) |
 | `rtmp-server` | `bluenviron/mediamtx:latest` | RTMP ingest + HLS playback for live streams |
-| `call-init` | `mongo:8` | Creates MongoDB call indexes on first start |
+| `data-seeder` | `mytelegram-data-seeder` | Creates the MongoDB call indexes on first start |
 
 You **no longer need to install Coturn on the host**. Just configure `.env` and start
 the stack. Manual/external Coturn is still supported as an alternative (see below).
@@ -88,14 +88,14 @@ docker compose up -d
 ```
 
 On first startup, automatically:
-- The `call-init` container creates indexes for the `call_sessions` / `group_calls`
+- The `data-seeder` container creates indexes for the `call_sessions` / `group_calls`
   collections and configures TTL cleanup for old records.
 - `coturn` and `rtmp-server` start alongside the messenger services.
 
 Verify the helper services:
 
 ```bash
-docker compose logs call-init      # index creation
+docker compose logs data-seeder    # index creation
 docker compose logs coturn         # TURN server
 docker compose logs rtmp-server    # RTMP/HLS server
 ```

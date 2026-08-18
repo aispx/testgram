@@ -130,7 +130,7 @@ RTMP_PORT=1935
 RTMP_HLS_PORT=8888
 ```
 
-MongoDB call indexes are created **automatically** on first start via the `call-init`
+MongoDB call indexes are created **automatically** on first start by the `data-seeder`
 container. To run them manually:
 
 ```bash

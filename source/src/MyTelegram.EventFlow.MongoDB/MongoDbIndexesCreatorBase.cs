@@ -73,4 +73,36 @@ public abstract class MongoDbIndexesCreatorBase(
             .CreateOneAsync(new CreateIndexModel<BsonDocument>(indexDefine,
                 new CreateIndexOptions { Name = $"idx_{collectionName}_{string.Join("_", fieldNames).ToLowerInvariant()}" }));
     }
+
+    /// <summary>
+    /// Like <see cref="CreateRawIndexAsync"/>, but with a chosen name and the options a plain ascending
+    /// index cannot express: uniqueness, a descending key (for "newest first" queries) and a TTL.
+    /// A field name prefixed with <c>-</c> is indexed descending.
+    /// </summary>
+    protected async Task CreateRawIndexAsync(string collectionName,
+        string name,
+        string[] fieldNames,
+        bool unique = false,
+        int? expireAfterSeconds = null)
+    {
+        var indexDefine = Builders<BsonDocument>.IndexKeys.Combine(
+            fieldNames.Select(fieldName =>
+            {
+                var descending = fieldName.StartsWith('-');
+                var field = new StringFieldDefinition<BsonDocument, BsonValue>(descending ? fieldName[1..] : fieldName);
+
+                return descending
+                    ? Builders<BsonDocument>.IndexKeys.Descending(field)
+                    : Builders<BsonDocument>.IndexKeys.Ascending(field);
+            }));
+
+        var options = new CreateIndexOptions { Name = name, Unique = unique };
+        if (expireAfterSeconds.HasValue)
+        {
+            options.ExpireAfter = TimeSpan.FromSeconds(expireAfterSeconds.Value);
+        }
+
+        await database.GetCollection<BsonDocument>(collectionName).Indexes
+            .CreateOneAsync(new CreateIndexModel<BsonDocument>(indexDefine, options));
+    }
 }

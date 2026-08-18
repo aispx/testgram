@@ -28,7 +28,7 @@ public class UserDataSeeder(
         await CreateDefaultSupportUserAsync();
         await CreateAnonymousUserAsync();
         await CreateGroupAnonymousBotUserAsync();
-        await CreateUserIfNeededAsync(MyTelegramConsts.BotFatherUserId, "0", "botfather", null, "botfather", true);
+        await CreateBotFatherUserAsync();
 
         if (options.CurrentValue.CreateTestUsers)
         {
@@ -155,6 +155,29 @@ public class UserDataSeeder(
         {
             await commandBus.PublishAsync(
                 new SetVerifiedCommand(UserId.Create(MyTelegramConsts.GroupAnonymousBotUserId), true));
+        }
+    }
+
+    /// <summary>
+    /// The bot that creates and manages other bots. Installs that predate this seeder have it inserted
+    /// straight into the read model instead, in which case <see cref="CreateUserIfNeededAsync"/> leaves
+    /// it alone and <see cref="BotFatherMigrator"/> repairs whatever is around it.
+    /// </summary>
+    private async Task CreateBotFatherUserAsync()
+    {
+        var created = await CreateUserIfNeededAsync(MyTelegramConsts.BotFatherUserId,
+            "0",
+            "BotFather",
+            null,
+            "botfather",
+            true);
+
+        if (created)
+        {
+            await commandBus.PublishAsync(
+                new SetVerifiedCommand(UserId.Create(MyTelegramConsts.BotFatherUserId), true));
+            await UpdateUserBioAsync(MyTelegramConsts.BotFatherUserId,
+                "I can help you create and manage bots. Use /start to begin.");
         }
     }
 
