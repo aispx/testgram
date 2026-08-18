@@ -21,7 +21,9 @@ internal sealed class SendInlineBotResultHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IMessageAppService messageAppService,
-    IBotUpdatesSender botUpdatesSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendInlineBotResult, MyTelegram.Schema.IUpdates>
+    IBotUpdatesSender botUpdatesSender,
+    IChannelAppService channelAppService,
+    IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendInlineBotResult, MyTelegram.Schema.IUpdates>
 {
     private const string ResultsCollection = "inline_bot_results";
 
@@ -62,6 +64,7 @@ internal sealed class SendInlineBotResultHandler(
         }
 
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        await CheckSendInlineRightAsync(input.UserId, peer);
         var sendMessage = InlineResultConverter.ToBotInlineMessage(GetSendMessage(selected!));
 
         var sendInput = new SendMessageInput(
@@ -103,6 +106,42 @@ internal sealed class SendInlineBotResultHandler(
             Date = DateTime.UtcNow.ToTimestamp(),
             Seq = 0
         };
+    }
+
+    /// <summary>
+    /// The <c>send_inline</c> banned right forbids posting the result of an inline query in a group.
+    /// Admins and the owner are exempt, like with every other restriction.
+    /// See https://corefork.telegram.org/api/rights
+    /// </summary>
+    private async Task CheckSendInlineRightAsync(long userId, Peer peer)
+    {
+        if (peer.PeerType != PeerType.Channel)
+        {
+            return;
+        }
+
+        var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
+        if (channelReadModel == null ||
+            channelReadModel.CreatorId == userId ||
+            channelReadModel.AdminList.Any(p => p.UserId == userId))
+        {
+            return;
+        }
+
+        var defaultBannedRights = channelReadModel.DefaultBannedRights ?? ChatBannedRights.CreateDefaultBannedRights();
+        if (defaultBannedRights.SendInline)
+        {
+            RpcErrors.RpcErrors403.ChatSendInlineForbidden.ThrowRpcError();
+        }
+
+        var channelMemberReadModel =
+            await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(peer.PeerId, userId));
+        var memberBannedRights =
+            Helpers.BannedRightsHelper.GetEffectiveBannedRights(channelMemberReadModel, CurrentDate);
+        if (memberBannedRights?.SendInline == true)
+        {
+            RpcErrors.RpcErrors403.ChatSendInlineForbidden.ThrowRpcError();
+        }
     }
 
     private static IInputBotInlineResult? FindResult(TVector<IInputBotInlineResult>? results, string id)

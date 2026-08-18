@@ -383,20 +383,6 @@ public class MessageAppService(
             }
         }
 
-        var bannedDefaultRights = channelReadModel.DefaultBannedRights ?? ChatBannedRights.CreateDefaultBannedRights();
-        if (bannedDefaultRights.SendMessages)
-        {
-            RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
-        }
-
-        // send_polls is a right of its own: a group can allow messages and media while
-        // still forbidding polls. Checked for everyone via the chat default, and again
-        // per-member below.
-        if (bannedDefaultRights.SendPolls && IsPoll(input))
-        {
-            RpcErrors.RpcErrors403.ChatSendPollForbidden.ThrowRpcError();
-        }
-
         var channelMemberReadModel =
             await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channelReadModel.ChannelId,
                 input.SenderUserId));
@@ -435,30 +421,36 @@ public class MessageAppService(
             }
         }
 
-        if (channelMemberReadModel != null && channelMemberReadModel.BannedRights != 0)
+        // Admins and the owner are never subject to the chat defaults or to a leftover restriction,
+        // and service messages (gifts, joins, …) are not sent on behalf of a restricted user.
+        var isPrivilegedSender = input.SendMessageType == SendMessageType.MessageService
+                                 || channelReadModel.CreatorId == input.SenderUserId
+                                 || channelReadModel.AdminList.Any(p => p.UserId == input.SenderUserId);
+
+        if (!isPrivilegedSender)
         {
-            var memberBannedRights =
-                ChatBannedRights.FromValue(channelMemberReadModel.BannedRights, channelMemberReadModel.UntilDate);
-            if (!string.IsNullOrEmpty(input.Message))
+            var bannedDefaultRights =
+                channelReadModel.DefaultBannedRights ?? ChatBannedRights.CreateDefaultBannedRights();
+            if (bannedDefaultRights.SendMessages)
             {
-                if (memberBannedRights.SendMessages)
-                {
-                    RpcErrors.RpcErrors400.UserBannedInChannel.ThrowRpcError();
-                }
+                RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
             }
 
-            if (input.Media != null)
+            // A member restriction only applies while its until_date has not passed yet.
+            var memberBannedRights = BannedRightsHelper.GetEffectiveBannedRights(channelMemberReadModel,
+                DateTime.UtcNow.ToTimestamp());
+            if (memberBannedRights?.SendMessages == true)
             {
-                if (memberBannedRights.SendMedia)
-                {
-                    RpcErrors.RpcErrors400.UserBannedInChannel.ThrowRpcError();
-                }
+                RpcErrors.RpcErrors400.UserBannedInChannel.ThrowRpcError();
             }
 
-            if (memberBannedRights.SendPolls && IsPoll(input))
-            {
-                RpcErrors.RpcErrors403.ChatSendPollForbidden.ThrowRpcError();
-            }
+            // The chat defaults and the per-member restriction stack: a right is denied when either
+            // of them denies it.
+            var effectiveBannedRights = ChatBannedRights.FromValue(
+                bannedDefaultRights.ToIntValue() | (memberBannedRights?.ToIntValue() ?? 0),
+                memberBannedRights?.UntilDate ?? bannedDefaultRights.UntilDate);
+
+            CheckContentBannedRights(input, effectiveBannedRights);
         }
 
         //if (channelReadModel.SlowModeEnabled)
@@ -467,6 +459,123 @@ public class MessageAppService(
         //}
 
         return channelReadModel;
+    }
+
+    /// <summary>
+    /// Applies the granular banned rights to the content of the message being sent.
+    /// Every media type has a right of its own, so a group that allows photos but not voice
+    /// messages has to be enforced here and not only in the client UI.
+    /// See https://corefork.telegram.org/api/rights
+    /// </summary>
+    private static void CheckContentBannedRights(SendMessageInput input, ChatBannedRights bannedRights)
+    {
+        if (IsPoll(input))
+        {
+            if (bannedRights.SendPolls)
+            {
+                RpcErrors.RpcErrors403.ChatSendPollForbidden.ThrowRpcError();
+            }
+
+            return;
+        }
+
+        if (input.Media is not null and not TMessageMediaEmpty)
+        {
+            // send_media is the umbrella right: when it is denied no media of any kind may be sent.
+            if (bannedRights.SendMedia)
+            {
+                RpcErrors.RpcErrors403.ChatSendMediaForbidden.ThrowRpcError();
+            }
+
+            GetMediaBannedRightsError(input.Media, bannedRights)?.ThrowRpcError();
+        }
+        else if (bannedRights.SendPlain)
+        {
+            // send_plain covers text-only messages; media captions are governed by the media rights.
+            RpcErrors.RpcErrors403.ChatSendPlainForbidden.ThrowRpcError();
+        }
+
+        if (bannedRights.EmbedLinks && HasLink(input))
+        {
+            RpcErrors.RpcErrors403.ChatSendWebpageForbidden.ThrowRpcError();
+        }
+    }
+
+    /// <summary>
+    /// The error for the media-specific right that forbids this media, or <c>null</c> when the media
+    /// is allowed. Media without a right of its own (contacts, geo, venues, web pages) is only
+    /// governed by <c>send_media</c>, which the caller has already checked.
+    /// </summary>
+    private static RpcError? GetMediaBannedRightsError(IMessageMedia media, ChatBannedRights bannedRights)
+    {
+        return media switch
+        {
+            TMessageMediaPhoto or TMessageMediaPaidMedia =>
+                bannedRights.SendPhotos ? RpcErrors.RpcErrors403.ChatSendPhotosForbidden : null,
+            TMessageMediaDocument document => GetDocumentBannedRightsError(document, bannedRights),
+            TMessageMediaGame or TMessageMediaDice =>
+                bannedRights.SendGames ? RpcErrors.RpcErrors403.ChatSendGameForbidden : null,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Documents carry the actual kind in their attributes: stickers, GIFs, round video messages,
+    /// voice notes, videos and music each map to a different banned right. The order follows the
+    /// client's own classification (sticker → animation → round → voice → video → audio → file).
+    /// </summary>
+    private static RpcError? GetDocumentBannedRightsError(TMessageMediaDocument media,
+        ChatBannedRights bannedRights)
+    {
+        var attributes = (media.Document as TDocument)?.Attributes;
+        var video = attributes?.OfType<TDocumentAttributeVideo>().FirstOrDefault();
+        var audio = attributes?.OfType<TDocumentAttributeAudio>().FirstOrDefault();
+
+        if (attributes?.Any(p => p is TDocumentAttributeSticker or TDocumentAttributeCustomEmoji) == true)
+        {
+            return bannedRights.SendStickers ? RpcErrors.RpcErrors403.ChatSendStickersForbidden : null;
+        }
+
+        if (attributes?.Any(p => p is TDocumentAttributeAnimated) == true)
+        {
+            return bannedRights.SendGifs ? RpcErrors.RpcErrors403.ChatSendGifsForbidden : null;
+        }
+
+        if (media.Round || video?.RoundMessage == true)
+        {
+            return bannedRights.SendRoundVideos ? RpcErrors.RpcErrors403.ChatSendRoundvideosForbidden : null;
+        }
+
+        if (media.Voice || audio?.Voice == true)
+        {
+            return bannedRights.SendVoices ? RpcErrors.RpcErrors403.ChatSendVoicesForbidden : null;
+        }
+
+        if (media.Video || video != null)
+        {
+            return bannedRights.SendVideos ? RpcErrors.RpcErrors403.ChatSendVideosForbidden : null;
+        }
+
+        if (audio != null)
+        {
+            return bannedRights.SendAudios ? RpcErrors.RpcErrors403.ChatSendAudiosForbidden : null;
+        }
+
+        return bannedRights.SendDocs ? RpcErrors.RpcErrors403.ChatSendDocsForbidden : null;
+    }
+
+    /// <summary>
+    /// True when the message contains a link, either as a text entity or as an attached web page
+    /// preview, so the <c>embed_links</c> right applies.
+    /// </summary>
+    private static bool HasLink(SendMessageInput input)
+    {
+        if (input.Media is TMessageMediaWebPage)
+        {
+            return true;
+        }
+
+        return input.Entities?.Any(p => p is TMessageEntityUrl or TMessageEntityTextUrl) == true;
     }
 
     /// <summary>

@@ -12,7 +12,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class UnpinAllMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IPtsHelper ptsHelper, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUnpinAllMessages, MyTelegram.Schema.Messages.IAffectedHistory>
+internal sealed class UnpinAllMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IPtsHelper ptsHelper, IQueryProcessor queryProcessor, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUnpinAllMessages, MyTelegram.Schema.Messages.IAffectedHistory>
 {
     protected override async Task<MyTelegram.Schema.Messages.IAffectedHistory> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestUnpinAllMessages obj)
     {
@@ -20,7 +20,12 @@ internal sealed class UnpinAllMessagesHandler(ICommandBus commandBus, IPeerHelpe
         var ownerPeerId = input.UserId;
         if (peer.PeerType == PeerType.Channel)
         {
-            await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId, rights => rights is { PinMessages: true, EditMessages: true }, RpcErrors.RpcErrors400.ChatAdminRequired);
+            // pin_messages in groups, edit_messages in broadcast channels — same split as
+            // messages.updatePinnedMessage.
+            var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
+            await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId,
+                rights => channelReadModel!.Broadcast ? rights.EditMessages : rights.PinMessages,
+                RpcErrors.RpcErrors400.ChatAdminRequired);
             ownerPeerId = peer.PeerId;
         }
 

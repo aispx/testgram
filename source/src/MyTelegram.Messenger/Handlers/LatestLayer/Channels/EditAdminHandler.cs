@@ -45,13 +45,15 @@ internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppServic
         if (obj.Channel is TInputChannel inputChannel)
         {
             var channelReadModel = await channelAppService.GetAsync(inputChannel.ChannelId);
+
+            AdminRankHelper.ValidateOrThrow(obj.Rank);
+
+            // Without add_admins the user is not allowed to touch admins at all…
+            await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, p => p.AddAdmins);
+
+            // …and with it, they may only hand out rights they hold themselves.
             await channelAdminRightsChecker.CheckAdminRightAsync(obj.Channel, input.UserId, p =>
             {
-                if (!p.AddAdmins)
-                {
-                    return false;
-                }
-
                 if (obj.AdminRights.ChangeInfo && !p.ChangeInfo)
                 {
                     return false;
@@ -127,12 +129,17 @@ internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppServic
                     return false;
                 }
 
+                if (obj.AdminRights.ManageRanks && !p.ManageRanks)
+                {
+                    return false;
+                }
+
                 return true;
-            });
+            }, RpcErrors.RpcErrors403.RightForbidden);
             var peer = peerHelper.GetPeer(obj.UserId, input.UserId);
             if (peer.PeerId == channelReadModel.CreatorId && input.UserId != channelReadModel.CreatorId)
             {
-                RpcErrors.RpcErrors400.ChatAdminRequired.ThrowRpcError();
+                RpcErrors.RpcErrors400.UserCreator.ThrowRpcError();
             }
 
             var chatInviteReadModel = await queryProcessor.ProcessAsync(new GetPermanentChatInviteQuery(channelReadModel.ChannelId, peer.PeerId));
@@ -168,10 +175,17 @@ internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppServic
                 Date = CurrentDate
             };
 
+            // The promoted admin may be edited again by whoever promoted them, and always by the owner.
+            var canEdit = input.UserId == channelReadModel.CreatorId ||
+                          channelMember?.PromotedBy == input.UserId ||
+                          channelMember?.AdminRights == 0;
+
+            var command = new EditChannelAdminCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), input.UserId, canEdit, peer.PeerId, isBot, channelMember != null, new ChatAdminRights(obj.AdminRights.Flags), obj.Rank, CurrentDate, shouldCreatePermanentChatInvite);
+            await commandBus.PublishAsync(command);
+
+            // Logged only once the command went through, so a rejected change leaves no admin log entry.
             await Helpers.AdminLogHelper.LogEditAdmin(mongoDatabase, inputChannel.ChannelId, input.UserId, prevParticipant, newParticipant);
 
-            var command = new EditChannelAdminCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), input.UserId, false, peer.PeerId, isBot, channelMember != null, new ChatAdminRights(obj.AdminRights.Flags), obj.Rank, CurrentDate, shouldCreatePermanentChatInvite);
-            await commandBus.PublishAsync(command);
             return null !;
         }
 

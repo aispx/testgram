@@ -34,6 +34,7 @@ internal sealed class ChatAdminRightsMapper
         destination.EditStories = source.EditStories;
         destination.DeleteStories = source.DeleteStories;
         destination.ManageDirectMessages = source.ManageDirectMessages;
+        destination.ManageRanks = source.ManageRanks;
 
         return destination;
     }

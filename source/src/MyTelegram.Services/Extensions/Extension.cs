@@ -57,7 +57,9 @@ public static class Extension
             ManageTopics = source.ManageTopics,
             PostStories = source.PostStories,
             EditStories = source.EditStories,
-            DeleteStories = source.DeleteStories
+            DeleteStories = source.DeleteStories,
+            ManageDirectMessages = source.ManageDirectMessages,
+            ManageRanks = source.ManageRanks
         };
     }
 
@@ -90,6 +92,7 @@ public static class Extension
             SendVoices = source.SendVoices,
             SendDocs = source.SendDocs,
             SendPlain = source.SendPlain,
+            EditRank = source.EditRank,
             UntilDate = source.UntilDate
         };
     }

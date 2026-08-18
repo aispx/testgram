@@ -42,7 +42,8 @@ internal sealed class JoinChannelHandler(
             var channelMemberReadModel = await queryProcessor.ProcessAsync(new GetChannelMemberByUserIdQuery(channelReadModel.ChannelId, input.UserId));
             if (channelMemberReadModel != null)
             {
-                if (channelMemberReadModel.Kicked)
+                // An expired ban must not keep the user out any more.
+                if (BannedRightsHelper.IsCurrentlyKicked(channelMemberReadModel, CurrentDate))
                 {
                     RpcErrors.RpcErrors400.ChannelPrivate.ThrowRpcError();
                 }

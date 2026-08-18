@@ -38,6 +38,7 @@ internal sealed class ChatBannedRightsMapper
         destination.SendVoices = source.SendVoices;
         destination.SendDocs = source.SendDocs;
         destination.SendPlain = source.SendPlain;
+        destination.EditRank = source.EditRank;
         destination.UntilDate = source.UntilDate;
 
         return destination;

@@ -139,8 +139,10 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                             RpcErrors.RpcErrors403.ChatWriteForbidden.ThrowRpcError();
                         }
                     }
-                    else
+                    else if (admin == null)
                     {
+                        // Admins are not subject to the chat defaults; the granular rights of a
+                        // plain member are enforced per message in MessageAppService.
                         var bannedDefaultRights = targetChannelReadModel.DefaultBannedRights ?? ChatBannedRights.CreateDefaultBannedRights();
                         if (bannedDefaultRights.SendMessages)
                         {

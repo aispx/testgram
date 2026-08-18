@@ -1,4 +1,8 @@
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
+
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 /// <summary>
 /// Edit the default banned rights of a <a href="https://corefork.telegram.org/api/channel">channel/supergroup/group</a>.
 /// Possible errors
@@ -17,28 +21,62 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditChatDefaultBannedRightsHandler(ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditChatDefaultBannedRights, MyTelegram.Schema.IUpdates>
+internal sealed class EditChatDefaultBannedRightsHandler(
+    ICommandBus commandBus,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
+    IPeerHelper peerHelper,
+    IChannelAppService channelAppService,
+    IMongoDatabase mongoDatabase)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditChatDefaultBannedRights, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestEditChatDefaultBannedRights obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
-        switch (peer.PeerType)
-        {
-            case PeerType.Channel:
-                {
-                    await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId, p => p.BanUsers);
-                    var command = new EditChannelDefaultBannedRightsCommand(ChannelId.Create(peer.PeerId), input.ToRequestInfo(), GetChatBannedRights(obj.BannedRights), input.UserId);
-                    await commandBus.PublishAsync(command);
-                }
 
-                break;
+        // Basic groups are stored as megagroups in this server (see CreateChatHandler), so a chat
+        // peer resolves to the very same channel aggregate.
+        if (peer.PeerType is not (PeerType.Channel or PeerType.Chat))
+        {
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }
 
-        return null!;
-    }
+        // "All flags can be used except for view_messages" — a chat cannot hide itself from
+        // everyone. See https://corefork.telegram.org/api/rights
+        if (obj.BannedRights.ViewMessages)
+        {
+            RpcErrors.RpcErrors400.BannedRightsInvalid.ThrowRpcError();
+        }
 
-    private ChatBannedRights GetChatBannedRights(IChatBannedRights chatBannedRights)
-    {
-        return ChatBannedRights.FromValue(chatBannedRights.Flags, chatBannedRights.UntilDate);
+        if (obj.BannedRights.UntilDate < 0)
+        {
+            RpcErrors.RpcErrors400.UntilDateInvalid.ThrowRpcError();
+        }
+
+        var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
+        if (channelReadModel == null)
+        {
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+        }
+
+        await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId, p => p.BanUsers);
+
+        var prevBannedRights = channelReadModel!.DefaultBannedRights ?? ChatBannedRights.CreateDefaultBannedRights();
+        var newBannedRights = ChatBannedRights.FromValue(obj.BannedRights.Flags,
+            ChatBannedRights.NormalizeUntilDate(obj.BannedRights.UntilDate, CurrentDate));
+
+        if (prevBannedRights.ToIntValue() == newBannedRights.ToIntValue() &&
+            prevBannedRights.UntilDate == newBannedRights.UntilDate)
+        {
+            RpcErrors.RpcErrors400.ChatNotModified.ThrowRpcError();
+        }
+
+        var command = new EditChannelDefaultBannedRightsCommand(ChannelId.Create(peer.PeerId),
+            input.ToRequestInfo(), newBannedRights, input.UserId);
+        await commandBus.PublishAsync(command);
+
+        await AdminLogHelper.LogDefaultBannedRights(mongoDatabase, peer.PeerId, input.UserId,
+            prevBannedRights.ToChatBannedRights()!, newBannedRights.ToChatBannedRights()!);
+
+        return null!;
     }
 }

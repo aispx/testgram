@@ -171,7 +171,7 @@ public class ChannelAggregateTests : TestsFor<ChannelAggregate>
             true,
             true,
             true,
-            true, true, true, true, true, true, true, true,
+            true, true, true, true, true, true, true, true, true,
             int.MaxValue);
         Sut.EditChannelDefaultBannedRights(requestInfo, bannedWriteMessageRights, creatorId);
 

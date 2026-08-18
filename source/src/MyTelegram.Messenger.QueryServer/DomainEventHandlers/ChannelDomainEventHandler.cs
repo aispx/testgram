@@ -139,6 +139,23 @@ public class ChannelDomainEventHandler(
     {
         await NotifyUpdateChannelAsync(domainEvent.AggregateEvent.RequestInfo,
             domainEvent.AggregateEvent.ChannelId);
+
+        // Official clients apply the new chat-wide permissions from this update instead of waiting
+        // for the next channel refetch. See https://corefork.telegram.org/api/rights
+        var updates = new TUpdates
+        {
+            Updates = new TVector<IUpdate>(new TUpdateChatDefaultBannedRights
+            {
+                Peer = new TPeerChannel { ChannelId = domainEvent.AggregateEvent.ChannelId },
+                DefaultBannedRights = domainEvent.AggregateEvent.DefaultBannedRights.ToChatBannedRights()!,
+                Version = 0
+            }),
+            Users = [],
+            Chats = [],
+            Date = DateTime.UtcNow.ToTimestamp()
+        };
+
+        await PushUpdatesToPeerAsync(new Peer(PeerType.Channel, domainEvent.AggregateEvent.ChannelId), updates);
     }
 
     public async Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, ChannelDeletedEvent> domainEvent,

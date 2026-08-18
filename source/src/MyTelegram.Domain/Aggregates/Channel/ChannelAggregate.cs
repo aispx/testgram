@@ -255,7 +255,9 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
         long selfUserId)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
-        CheckAdminRights(requestInfo, r => r.Other);
+        // Editing the chat-wide permissions is governed by ban_users, like every other restriction.
+        // See https://corefork.telegram.org/api/rights
+        CheckAdminRights(requestInfo, r => r.BanUsers);
         Emit(new ChannelDefaultBannedRightsEditedEvent(requestInfo, defaultBannedRights, _state.ChannelId));
     }
 

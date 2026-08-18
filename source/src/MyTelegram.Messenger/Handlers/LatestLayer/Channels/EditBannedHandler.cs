@@ -33,13 +33,32 @@ internal sealed class EditBannedHandler(IPeerHelper peerHelper, ICommandBus comm
             var peer = peerHelper.GetPeer(obj.Participant);
             var channelReadModel = await channelAppService.GetAsync(channel.PeerId);
             await channelAdminRightsChecker.CheckAdminRightAsync(inputChannel.ChannelId, input.UserId, p => p.BanUsers && peer.PeerId != channelReadModel.CreatorId, RpcErrors.RpcErrors400.ChatAdminRequired);
+
+            if (obj.BannedRights.UntilDate < 0)
+            {
+                RpcErrors.RpcErrors400.UntilDateInvalid.ThrowRpcError();
+            }
+
+            // Only the owner may restrict another admin.
+            if (channelReadModel.CreatorId != input.UserId &&
+                channelReadModel.AdminList.Any(p => p.UserId == peer.PeerId))
+            {
+                RpcErrors.RpcErrors400.UserAdminInvalid.ThrowRpcError();
+            }
+
+            // send_plain is the modern flag; the legacy send_messages flag is kept in sync so older
+            // clients and the stored flags agree. SetBit returns a new value, it does not mutate.
             if (obj.BannedRights.SendPlain)
             {
                 obj.BannedRights.SendMessages = true;
-                obj.BannedRights.Flags.SetBit(1);
+                obj.BannedRights.Flags = obj.BannedRights.Flags.SetBit(1);
             }
 
-            var bannedRights = ChatBannedRights.FromValue(obj.BannedRights.Flags, obj.BannedRights.UntilDate);
+            // A restriction shorter than 30 seconds or longer than 366 days means "forever".
+            // See https://corefork.telegram.org/constructor/chatBannedRights
+            var untilDate = ChatBannedRights.NormalizeUntilDate(obj.BannedRights.UntilDate, CurrentDate);
+            obj.BannedRights.UntilDate = untilDate;
+            var bannedRights = ChatBannedRights.FromValue(obj.BannedRights.Flags, untilDate);
 
             var memberUserId = peer.PeerId;
             if (peer.PeerType == PeerType.Channel)
@@ -76,10 +95,11 @@ internal sealed class EditBannedHandler(IPeerHelper peerHelper, ICommandBus comm
                 Date = CurrentDate
             };
 
-            await Helpers.AdminLogHelper.LogEditBanned(mongoDatabase, channel.PeerId, input.UserId, prevParticipant, newParticipant);
-
             var command = new EditBannedCommand(ChannelMemberId.Create(channel.PeerId, memberUserId), input.ToRequestInfo(), input.UserId, channel.PeerId, memberUserId, bannedRights);
             await commandBus.PublishAsync(command);
+
+            // Logged only once the command went through, so a rejected change leaves no admin log entry.
+            await Helpers.AdminLogHelper.LogEditBanned(mongoDatabase, channel.PeerId, input.UserId, prevParticipant, newParticipant);
             return null!;
         }
 

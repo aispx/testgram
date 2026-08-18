@@ -36,7 +36,11 @@ internal sealed class UpdatePinnedMessageHandler(ICommandBus commandBus, IPeerHe
             var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
             if (channelReadModel!.DefaultBannedRights?.PinMessages ?? true)
             {
-                await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId, rights => rights.PinMessages && rights.EditMessages, RpcErrors.RpcErrors400.ChatAdminRequired);
+                // Pinning is governed by pin_messages in groups and by edit_messages in broadcast
+                // channels, mirroring ChatObject.canUserDoAction in the official client.
+                await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId,
+                    rights => channelReadModel.Broadcast ? rights.EditMessages : rights.PinMessages,
+                    RpcErrors.RpcErrors400.ChatAdminRequired);
             }
         }
 

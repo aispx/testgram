@@ -74,7 +74,8 @@ internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAp
             RpcErrors.RpcErrors400.UserAlreadyParticipant.ThrowRpcError();
         }
 
-        if (channelMember is { Kicked: true })
+        // A ban whose until_date has passed no longer blocks the invite link.
+        if (MyTelegram.Messenger.Helpers.BannedRightsHelper.IsCurrentlyKicked(channelMember, CurrentDate))
         {
             RpcErrors.RpcErrors400.InviteHashInvalid.ThrowRpcError();
         }

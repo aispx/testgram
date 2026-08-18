@@ -1,5 +1,6 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Messenger.Services.Stories;
 using IChannelParticipant = MyTelegram.Schema.IChannelParticipant;
@@ -261,7 +262,9 @@ public class ChatConverterService(
             accessHash = accessHashHelper2.GenerateAccessHash(request.UserId, request.AccessHashKeyId,
                  channelReadModel.ChannelId, AccessHashType.Channel);
         }
-        if (channelMemberReadModel is { Kicked: true })
+        // A ban with an until_date that has expired no longer hides the channel from the user.
+        if (channelMemberReadModel is { Kicked: true } &&
+            BannedRightsHelper.IsCurrentlyKicked(channelMemberReadModel, DateTime.UtcNow.ToTimestamp()))
         {
             return new TChannelForbidden
             {
@@ -304,12 +307,14 @@ public class ChatConverterService(
             }
         }
 
-        if (channelMemberReadModel != null && channelMemberReadModel.BannedRights != 0)
+        // A restriction with an until_date that has already passed no longer applies, so it must
+        // not be reported to the client either.
+        var effectiveBannedRights = BannedRightsHelper.GetEffectiveBannedRights(channelMemberReadModel,
+            DateTime.UtcNow.ToTimestamp());
+        if (effectiveBannedRights != null)
         {
-            var bannedRights = chatBannedRightsLayeredService.GetConverter(layer)
-                .ToChatBannedRights(ChatBannedRights.FromValue(channelMemberReadModel.BannedRights,
-                    channelMemberReadModel.UntilDate));
-            channel.BannedRights = bannedRights;
+            channel.BannedRights = chatBannedRightsLayeredService.GetConverter(layer)
+                .ToChatBannedRights(effectiveBannedRights);
         }
 
         if (channel.Creator)
@@ -580,16 +585,17 @@ public class ChatConverterService(
         int layer
     )
     {
-        var bannedRights = ChatBannedRights.FromValue(channelMemberReadModel.BannedRights,
-            channelMemberReadModel.UntilDate).ToChatBannedRights();
-        if (channelMemberReadModel.Kicked ||
-            (channelMemberReadModel.BannedRights != 0 &&
-             channelMemberReadModel.BannedRights != ChatBannedRights.CreateDefaultBannedRights().ToIntValue() &&
-             !channelMemberReadModel.Left))
+        // Once the until_date of the restriction has passed the member is a normal participant again.
+        var effectiveBannedRights = BannedRightsHelper.GetEffectiveBannedRights(channelMemberReadModel,
+            DateTime.UtcNow.ToTimestamp());
+        if (effectiveBannedRights != null &&
+            (channelMemberReadModel.Kicked ||
+             (channelMemberReadModel.BannedRights != ChatBannedRights.CreateDefaultBannedRights().ToIntValue() &&
+              !channelMemberReadModel.Left)))
         {
             return new TChannelParticipantBanned
             {
-                BannedRights = bannedRights,
+                BannedRights = effectiveBannedRights.ToChatBannedRights(),
                 Date = channelMemberReadModel.Date,
                 Peer = new TPeerUser { UserId = channelMemberReadModel.UserId },
                 KickedBy = channelMemberReadModel.KickedBy,

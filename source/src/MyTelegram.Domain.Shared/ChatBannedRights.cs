@@ -7,10 +7,21 @@ public class ChatBannedRights
     //public static readonly ChatBannedRights Default = new(false, false, false, false, false, false, false, false, false,
     //    true, true, true, true, false, false, false, false, false, false, false, int.MaxValue);
 
+    /// <summary>
+    ///     A restriction with an until_date closer than this is meaningless, Telegram treats it as
+    ///     "forever". See https://corefork.telegram.org/constructor/chatBannedRights
+    /// </summary>
+    private const int MinUntilDateSeconds = 30;
+
+    /// <summary>
+    ///     A restriction longer than 366 days is treated as "forever" as well.
+    /// </summary>
+    private const int MaxUntilDateSeconds = 366 * 24 * 60 * 60;
+
     public static ChatBannedRights CreateDefaultBannedRights()
     {
         return new(false, false, false, false, false, false, false, false, false,
-            true, true, true, true, false, false, false, false, false, false, false, int.MaxValue);
+            true, true, true, true, false, false, false, false, false, false, false, false, int.MaxValue);
     }
 
     //private BitArray _flags = new(32);
@@ -50,6 +61,7 @@ public class ChatBannedRights
         bool sendVoices,
         bool sendDocs,
         bool sendPlain,
+        bool editRank,
         int untilDate
     )
     {
@@ -74,6 +86,7 @@ public class ChatBannedRights
         SendVoices = sendVoices;
         SendDocs = sendDocs;
         SendPlain = sendPlain;
+        EditRank = editRank;
     }
 
     public bool ChangeInfo { get; set; } = true;
@@ -107,8 +120,43 @@ public class ChatBannedRights
     public bool SendDocs { get; set; }
     public bool SendPlain { get; set; }
 
+    /// <summary>
+    ///     Forbids the user from changing their own admin rank (title).
+    /// </summary>
+    public bool EditRank { get; set; }
+
     //public BitArray Flags { get; init; } = new(32);
     public bool ViewMessages { get; set; }
+
+    /// <summary>
+    ///     True when the restriction never lapses.
+    /// </summary>
+    public bool IsForever => UntilDate is 0 or int.MaxValue;
+
+    /// <summary>
+    ///     True when the restriction had an expiry date and that date has already passed, so the
+    ///     rights must no longer be applied to the user.
+    /// </summary>
+    public bool IsExpired(int now)
+    {
+        return !IsForever && UntilDate <= now;
+    }
+
+    /// <summary>
+    ///     Telegram treats an until_date less than 30 seconds or more than 366 days away as "forever".
+    ///     See https://corefork.telegram.org/constructor/chatBannedRights
+    /// </summary>
+    public static int NormalizeUntilDate(int untilDate, int now)
+    {
+        if (untilDate <= 0)
+        {
+            return int.MaxValue;
+        }
+
+        var duration = (long)untilDate - now;
+
+        return duration is < MinUntilDateSeconds or > MaxUntilDateSeconds ? int.MaxValue : untilDate;
+    }
 
     public static ChatBannedRights FromValue(int value,
         int untilDate)
@@ -135,6 +183,7 @@ public class ChatBannedRights
             flags[23],
             flags[24],
             flags[25],
+            flags[26],
             untilDate
         );
         return rights;
@@ -191,6 +240,8 @@ public class ChatBannedRights
         if (SendDocs) flag[24] = true;
 
         if (SendPlain) flag[25] = true;
+
+        if (EditRank) flag[26] = true;
 
         return flag;
     }

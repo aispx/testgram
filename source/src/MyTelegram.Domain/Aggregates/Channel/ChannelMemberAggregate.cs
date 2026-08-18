@@ -30,8 +30,10 @@ public class ChannelMemberAggregate : SnapshotAggregateRoot<ChannelMemberAggrega
         ChatJoinType chatJoinType = ChatJoinType.InvitedByAdmin
         )
     {
-        // Kicked user can not join channel by invite link
-        if (_state.KickedBy != 0 && userId == inviterId)
+        // Kicked user can not join channel by invite link, unless the ban carried an until_date
+        // that has already passed. See https://corefork.telegram.org/api/rights
+        var banExpired = _state.BannedRights?.IsExpired(date) == true;
+        if (_state.KickedBy != 0 && !banExpired && userId == inviterId)
         {
             //ThrowHelper.ThrowUserFriendlyException(RpcErrorMessages.ChannelPrivate);
             RpcErrors.RpcErrors400.ChannelPrivate.ThrowRpcError();
