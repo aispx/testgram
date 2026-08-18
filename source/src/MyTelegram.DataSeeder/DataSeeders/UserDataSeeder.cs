@@ -1,13 +1,17 @@
-﻿namespace MyTelegram.DataSeeder.DataSeeders;
+using EventFlow.Queries;
+using MyTelegram.Queries;
+
+namespace MyTelegram.DataSeeder.DataSeeders;
 
 public class UserDataSeeder(
     ICommandBus commandBus,
     IEventStore eventStore,
+    IQueryProcessor queryProcessor,
     ILogger<UserDataSeeder> logger,
     IOptionsMonitor<MyTelegramDataSeederOptions> options,
     IDataSeederHelper dataSeederHelper,
     ISnapshotStore snapshotStore)
-    : IUserDataSeeder, ITransientDependency
+    : IDataSeeder, ITransientDependency
 {
     public async Task SeedAsync()
     {
@@ -23,6 +27,7 @@ public class UserDataSeeder(
         await CreateOfficialUserAsync();
         await CreateDefaultSupportUserAsync();
         await CreateAnonymousUserAsync();
+        await CreateGroupAnonymousBotUserAsync();
         await CreateUserIfNeededAsync(MyTelegramConsts.BotFatherUserId, "0", "botfather", null, "botfather", true);
 
         if (options.CurrentValue.CreateTestUsers)
@@ -39,6 +44,9 @@ public class UserDataSeeder(
                     false);
             }
         }
+
+        config.IsUserCreated = true;
+        await dataSeederHelper.SaveDataSeederConfigAsync();
     }
 
     public async Task<bool> CreateUserIfNeededAsync(long userId,
@@ -51,34 +59,54 @@ public class UserDataSeeder(
         var aggregateId = UserId.Create(userId);
         var u = new UserAggregate(aggregateId);
         await u.LoadAsync(eventStore, snapshotStore, CancellationToken.None);
-        if (u.IsNew)
+        if (!u.IsNew)
         {
-            var accessHash = Random.Shared.NextInt64();
-            var createUserCommand =
-                new CreateUserCommand(aggregateId,
-                    RequestInfo.Empty with { Date = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
-                    userId,
-                    accessHash,
-                    phoneNumber,
-                    firstName,
-                    lastName,
-                    userName,
-                    bot
-                );
-            await commandBus.PublishAsync(createUserCommand);
-
-            if (userId != MyTelegramConsts.NotificationServiceUserId)
-            {
-                var command = new UpdateUserPremiumStatusCommand(u.Id, true);
-                await commandBus.PublishAsync(command);
-            }
-
-            logger.LogInformation("User {UserName} created successfully", userName ?? firstName);
-
-            return true;
+            return false;
         }
 
-        return false;
+        // Some accounts are inserted straight into the read model by an init container rather than
+        // through an aggregate (BotFather is), so their aggregate looks new while the user already
+        // exists. Creating it again would leave two read-model documents for one user id, and
+        // GetUserByIdQuery would then return either of them at random.
+        var existingUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(userId));
+        if (existingUser != null)
+        {
+            logger.LogInformation("User {UserId} already exists outside the event store — skipping", userId);
+
+            return false;
+        }
+
+        var accessHash = Random.Shared.NextInt64();
+        var createUserCommand =
+            new CreateUserCommand(aggregateId,
+                // The request id seeds the deterministic source id of every command the create-user
+                // saga chain publishes. Left at Guid.Empty, the follow-up UpdateUserNameCommand2 of
+                // the second seeded user collides with an operation already performed, and the whole
+                // seeding run dies with a DuplicateOperationException.
+                RequestInfo.Empty with
+                {
+                    RequestId = Guid.NewGuid(),
+                    Date = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                },
+                userId,
+                accessHash,
+                phoneNumber,
+                firstName,
+                lastName,
+                userName,
+                bot
+            );
+        await commandBus.PublishAsync(createUserCommand);
+
+        if (userId != MyTelegramConsts.NotificationServiceUserId)
+        {
+            var command = new UpdateUserPremiumStatusCommand(u.Id, true);
+            await commandBus.PublishAsync(command);
+        }
+
+        logger.LogInformation("User {UserName} created successfully", userName ?? firstName);
+
+        return true;
     }
 
     private async Task CreateDefaultSupportUserAsync()
@@ -107,6 +135,27 @@ public class UserDataSeeder(
         var userId = MyTelegramConsts.AnonymousUserId;
         var firstName = "Anonymous User";
         await CreateUserIfNeededAsync(userId, string.Empty, firstName, null, null, false);
+    }
+
+    /// <summary>
+    /// The peer that authors messages sent anonymously by a group admin. Clients resolve it like any
+    /// other sender, so it has to exist as a user.
+    /// See https://corefork.telegram.org/api/channel#anonymous-admins
+    /// </summary>
+    private async Task CreateGroupAnonymousBotUserAsync()
+    {
+        var created = await CreateUserIfNeededAsync(MyTelegramConsts.GroupAnonymousBotUserId,
+            string.Empty,
+            "Group",
+            null,
+            null,
+            true);
+
+        if (created)
+        {
+            await commandBus.PublishAsync(
+                new SetVerifiedCommand(UserId.Create(MyTelegramConsts.GroupAnonymousBotUserId), true));
+        }
     }
 
     private async Task CreateOfficialUserAsync()
