@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -27,6 +28,7 @@ internal sealed class ToggleNoForwardsHandler(
             {
                 var command = new ToggleChannelNoForwardsCommand(ChannelId.Create(inputPeerChannel.ChannelId), input.ToRequestInfo(), obj.Enabled);
                 await commandBus.PublishAsync(command);
+                await AdminLogHelper.LogToggleNoForwards(mongoDatabase, inputPeerChannel.ChannelId, input.UserId, obj.Enabled);
             }
 
                 return null !;
@@ -34,6 +36,7 @@ internal sealed class ToggleNoForwardsHandler(
             {
                 var command = new ToggleChannelNoForwardsCommand(ChannelId.Create(inputPeerChat.ChatId), input.ToRequestInfo(), obj.Enabled);
                 await commandBus.PublishAsync(command);
+                await AdminLogHelper.LogToggleNoForwards(mongoDatabase, inputPeerChat.ChatId, input.UserId, obj.Enabled);
                 return null!;
             }
             case TInputPeerUser inputPeerUser:

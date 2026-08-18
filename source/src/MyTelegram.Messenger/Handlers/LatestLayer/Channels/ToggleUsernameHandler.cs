@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 
@@ -111,6 +112,8 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
             return null!;
         }
 
+        var prevActiveUsernames = AdminLogHelper.ActiveUsernames(usernamesV2);
+
         // Update username active state
         targetUsername["Active"] = obj.Active;
         usernamesV2[targetIndex] = targetUsername;
@@ -118,6 +121,9 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         // Save back to MongoDB
         var update = Builders<BsonDocument>.Update.Set("Usernames", usernamesV2);
         await channelCollection.UpdateOneAsync(channelFilter, update);
+
+        await AdminLogHelper.LogChangeUsernames(_database, channelId, input.UserId,
+            prevActiveUsernames, AdminLogHelper.ActiveUsernames(usernamesV2));
 
         return new TBoolTrue();
     }

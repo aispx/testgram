@@ -1,3 +1,5 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.StarsSubscriptions;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -24,7 +26,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IStarsSubscriptionService starsSubscriptionService, IChatInvitePeekService chatInvitePeekService) : RpcResultObjectHandler<RequestImportChatInvite, IUpdates>
+internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IStarsSubscriptionService starsSubscriptionService, IChatInvitePeekService chatInvitePeekService, IChatInviteExportedConverterService chatInviteExportedConverterService, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestImportChatInvite, IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestImportChatInvite obj)
     {
@@ -115,6 +117,18 @@ internal sealed class ImportChatInviteHandler(ICommandBus commandBus, IChannelAp
 
         var command = new ImportChatInviteCommand(ChatInviteId.Create(chatInviteReadModel.PeerId, chatInviteReadModel.InviteId), input.ToRequestInfo(), requestState, CurrentDate, subscriptionUntilDate);
         await commandBus.PublishAsync(command);
+
+        // A join still awaiting approval is not a join yet: it is logged as participantJoinByRequest
+        // once an admin lets it through.
+        if (requestState == ChatInviteRequestState.NoApprovalRequired)
+        {
+            var exportedInvite = await ChatInviteExportedFiller.ToExportedChatInviteAsync(
+                chatInviteExportedConverterService, queryProcessor, chatInviteReadModel, input.Layer);
+
+            await AdminLogHelper.LogParticipantJoinByInvite(mongoDatabase, channelId, input.UserId,
+                viaChatlist: false, exportedInvite);
+        }
+
         return null !;
     }
 }

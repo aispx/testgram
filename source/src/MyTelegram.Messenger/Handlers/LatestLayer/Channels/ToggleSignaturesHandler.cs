@@ -28,8 +28,10 @@ internal sealed class ToggleSignaturesHandler(
             await channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(obj.Channel, input.UserId);
             await commandBus.PublishAsync(new ToggleSignatureCommand(ChannelId.Create(inputChannel.ChannelId), input.ToRequestInfo(), obj.SignaturesEnabled, obj.ProfilesEnabled));
 
-            // Log to admin log
+            // Log to admin log. Signatures and author profiles are two separate settings toggled by the
+            // same method, and the client renders them as two distinct entries.
             await AdminLogHelper.LogToggleSignatures(mongoDatabase, inputChannel.ChannelId, input.UserId, obj.SignaturesEnabled);
+            await AdminLogHelper.LogToggleSignatureProfiles(mongoDatabase, inputChannel.ChannelId, input.UserId, obj.ProfilesEnabled);
 
             return null !;
         }

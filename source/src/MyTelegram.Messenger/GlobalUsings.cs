@@ -44,6 +44,7 @@ global using MyTelegram.Messenger.Converters.ConverterServices.Messages;
 global using MyTelegram.Messenger.Converters.TLObjects.Interfaces;
 global using MyTelegram.Messenger.Extensions;
 global using MyTelegram.Messenger.Services;
+global using MyTelegram.Messenger.Services.AdminLog;
 global using MyTelegram.Messenger.Services.Caching;
 global using MyTelegram.Messenger.Services.Interfaces;
 global using MyTelegram.Queries;

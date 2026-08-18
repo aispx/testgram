@@ -62,11 +62,28 @@ internal sealed class SetEmojiStickersHandler(
         // Update MongoDB
         var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-channelreadmodel");
         var filter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
+        var channelDoc = await collection.Find(filter).FirstOrDefaultAsync();
         var update = stickersetId.HasValue
             ? Builders<BsonDocument>.Update.Set("EmojiSet", stickersetId.Value)
             : Builders<BsonDocument>.Update.Unset("EmojiSet");
         await collection.UpdateOneAsync(filter, update);
 
+        // An unset stickerset is reported as inputStickerSetEmpty, the fields are not nullable.
+        var prevStickersetId = channelDoc != null && channelDoc.Contains("EmojiSet") && !channelDoc["EmojiSet"].IsBsonNull
+            ? channelDoc["EmojiSet"].ToInt64()
+            : (long?)null;
+
+        await AdminLogHelper.LogChangeEmojiStickerSet(mongoDatabase, channelId, input.UserId,
+            ToInputStickerSet(prevStickersetId),
+            ToInputStickerSet(stickersetId));
+
         return new MyTelegram.Schema.TBoolTrue();
+    }
+
+    private static IInputStickerSet ToInputStickerSet(long? stickersetId)
+    {
+        return stickersetId.HasValue
+            ? new TInputStickerSetID { Id = stickersetId.Value, AccessHash = 0 }
+            : new TInputStickerSetEmpty();
     }
 }

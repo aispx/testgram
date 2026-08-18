@@ -281,6 +281,7 @@ NullReferenceException.
 | `quickreplys` | Quick replies | UserId, ShortcutId |
 | `star-gifts` | Star gifts | GiftId, Stars |
 | `fragment_collectibles` | Fragment NFT | type, username/phone |
+| `channel_admin_log` | Admin log (recent actions) | channel_id, event_id (per-channel counter), filters[], search_text, date (TTL 48 h) |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash

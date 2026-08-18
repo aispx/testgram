@@ -62,6 +62,8 @@ internal sealed class ToggleAntiSpamHandler(
         var update = Builders<BsonDocument>.Update.Set("AntiSpamEnabled", obj.Enabled);
         await collection.UpdateOneAsync(filter, update);
 
+        await AdminLogHelper.LogToggleAntiSpam(mongoDatabase, channelId, input.UserId, obj.Enabled);
+
         return new TUpdates
         {
             Chats = new TVector<IChat>(),

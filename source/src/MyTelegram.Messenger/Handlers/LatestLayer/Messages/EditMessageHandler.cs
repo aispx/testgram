@@ -301,8 +301,6 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
 
     private async Task CreateEditMessageAdminLogAsync(IRequestInput input, Peer peer, IMessageReadModel oldMessage, string newMessageText, byte[]? newEncryptedData)
     {
-        var adminLogCol = mongoDatabase.GetCollection<BsonDocument>("channel_admin_log");
-
         // Decrypt old message text if needed
         var oldMessageText = oldMessage.Message ?? string.Empty;
         if (string.IsNullOrEmpty(oldMessageText) && oldMessage.EncryptedData.HasValue && oldMessage.EncryptedData.Value.Length > 0)
@@ -361,34 +359,7 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         if (!string.IsNullOrEmpty(oldMessage.PostAuthor))
             newMessage.PostAuthor = oldMessage.PostAuthor;
 
-        // Create admin log action
-        var action = new TChannelAdminLogEventActionEditMessage
-        {
-            PrevMessage = prevMessage,
-            NewMessage = newMessage
-        };
-
-        // Serialize action
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        action.Serialize(buffer);
-        var actionData = buffer.WrittenSpan.ToArray();
-
-        var eventId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var logEntry = new BsonDocument
-        {
-            ["_id"] = $"adminlog-{peer.PeerId}-{eventId}",
-            ["channel_id"] = peer.PeerId,
-            ["event_id"] = eventId,
-            ["user_id"] = input.UserId,
-            ["date"] = DateTime.UtcNow,
-            ["action"] = new BsonDocument
-            {
-                ["type"] = "TChannelAdminLogEventActionEditMessage",
-                ["data"] = actionData
-            }
-        };
-
-        await adminLogCol.InsertOneAsync(logEntry);
+        await AdminLogHelper.LogEditMessage(mongoDatabase, peer.PeerId, input.UserId, prevMessage, newMessage);
     }
 
     /// <summary>
@@ -396,8 +367,6 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
     /// </summary>
     private async Task CreateStopPollAdminLogAsync(IRequestInput input, Peer peer, IMessageReadModel pollMessage)
     {
-        var adminLogCol = mongoDatabase.GetCollection<BsonDocument>("channel_admin_log");
-
         var messageText = pollMessage.Message ?? string.Empty;
         if (string.IsNullOrEmpty(messageText) && pollMessage.EncryptedData is { Length: > 0 })
         {
@@ -428,25 +397,6 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
             message.PostAuthor = pollMessage.PostAuthor;
         }
 
-        var action = new TChannelAdminLogEventActionStopPoll { Message = message };
-
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        action.Serialize(buffer);
-        var actionData = buffer.WrittenSpan.ToArray();
-
-        var eventId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        await adminLogCol.InsertOneAsync(new BsonDocument
-        {
-            ["_id"] = $"adminlog-{peer.PeerId}-{eventId}",
-            ["channel_id"] = peer.PeerId,
-            ["event_id"] = eventId,
-            ["user_id"] = input.UserId,
-            ["date"] = DateTime.UtcNow,
-            ["action"] = new BsonDocument
-            {
-                ["type"] = "TChannelAdminLogEventActionStopPoll",
-                ["data"] = actionData
-            }
-        });
+        await AdminLogHelper.LogStopPoll(mongoDatabase, peer.PeerId, input.UserId, message);
     }
 }

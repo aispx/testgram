@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Schema;
 
@@ -79,6 +80,10 @@ internal sealed class EditGroupCallParticipantHandler(
             await GroupCallStateHelper.EnsureCanManageCallAsync(groupCall, input.UserId, channelAdminRightsChecker);
         }
 
+        var prevMuted = participant.Muted;
+        var prevVolume = participant.Volume;
+        var actedOnSomeoneElse = !GroupCallStateHelper.IsParticipantControlledByUser(groupCall, participant, input.UserId);
+
         if (obj.Muted.HasValue) participant.Muted = obj.Muted.Value;
         if (obj.Volume.HasValue) participant.Volume = obj.Volume.Value;
         if (obj.RaiseHand.HasValue) participant.RaiseHand = obj.RaiseHand.Value;
@@ -89,6 +94,8 @@ internal sealed class EditGroupCallParticipantHandler(
 
         await _groupCallCollection.ReplaceOneAsync(filter, groupCall);
 
+        await LogAdminActionAsync(input, groupCall, participant, actedOnSomeoneElse, prevMuted, prevVolume);
+
         var updates = GroupCallStateHelper.Updates(
             GroupCallStateHelper.CreateParticipantsUpdate(groupCall, input.UserId, peerHelper, [participant]));
         await GroupCallStateHelper.PushUpdatesToCallSubscribersAsync(
@@ -97,5 +104,42 @@ internal sealed class EditGroupCallParticipantHandler(
             updates,
             input.UserId);
         return updates;
+    }
+
+    /// <summary>
+    /// Only what an admin does to somebody else belongs in the admin log: a participant muting themselves
+    /// or changing their own volume is not a moderation action.
+    /// </summary>
+    private async Task LogAdminActionAsync(
+        IRequestInput input,
+        GroupCallDocument groupCall,
+        GroupCallParticipantDoc participant,
+        bool actedOnSomeoneElse,
+        bool prevMuted,
+        int? prevVolume)
+    {
+        if (!actedOnSomeoneElse || groupCall.PeerType != (int)PeerType.Channel)
+        {
+            return;
+        }
+
+        var tlParticipant = GroupCallStateHelper.ToParticipant(participant, input.UserId, peerHelper, call: groupCall);
+
+        if (participant.Muted != prevMuted)
+        {
+            if (participant.Muted)
+            {
+                await AdminLogHelper.LogParticipantMute(mongoDatabase, groupCall.PeerId, input.UserId, tlParticipant);
+            }
+            else
+            {
+                await AdminLogHelper.LogParticipantUnmute(mongoDatabase, groupCall.PeerId, input.UserId, tlParticipant);
+            }
+        }
+
+        if (participant.Volume != prevVolume)
+        {
+            await AdminLogHelper.LogParticipantVolume(mongoDatabase, groupCall.PeerId, input.UserId, tlParticipant);
+        }
     }
 }

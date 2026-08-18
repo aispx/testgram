@@ -349,7 +349,8 @@ public sealed class InMemoryMongoCollection<TDocument> : IMongoCollection<TDocum
         BsonValue? renderedUpdate,
         SortDefinition<TDocument>? sort,
         ReturnDocument returnDocument,
-        bool delete)
+        bool delete,
+        bool isUpsert = false)
     {
         var filterDoc = BsonQueryEngine.RenderFilter(filter);
         var sortDoc = sort != null ? BsonQueryEngine.RenderSort(sort) : new BsonDocument();
@@ -358,7 +359,21 @@ public sealed class InMemoryMongoCollection<TDocument> : IMongoCollection<TDocum
             var index = FirstMatchIndex(filterDoc, sortDoc);
             if (index < 0)
             {
-                return default!;
+                if (!isUpsert || delete)
+                {
+                    return default!;
+                }
+
+                // Upsert: the server seeds the new document from the equality clauses of the filter
+                // and then applies the update to it. Counters (findOneAndUpdate + $inc + upsert)
+                // depend on this, and on getting the new document back.
+                var created = UpsertSeed(filterDoc);
+                BsonQueryEngine.ApplyUpdate(created, renderedUpdate!);
+                Docs.Add(created);
+
+                return returnDocument == ReturnDocument.After
+                    ? BsonQueryEngine.Deserialize<TProjection>(created)
+                    : default!;
             }
 
             var before = (BsonDocument)Docs[index].DeepClone();
@@ -374,6 +389,33 @@ public sealed class InMemoryMongoCollection<TDocument> : IMongoCollection<TDocum
             var result = returnDocument == ReturnDocument.After ? after : before;
             return BsonQueryEngine.Deserialize<TProjection>(result);
         }
+    }
+
+    /// <summary>
+    /// The document an upsert starts from: every top-level equality clause of the filter, which is
+    /// what MongoDB itself carries over into the created document. Operator clauses ($gt, $in, …)
+    /// contribute nothing.
+    /// </summary>
+    private static BsonDocument UpsertSeed(BsonDocument filterDoc)
+    {
+        var seed = new BsonDocument();
+
+        foreach (var element in filterDoc)
+        {
+            if (element.Name.StartsWith('$'))
+            {
+                continue;
+            }
+
+            if (element.Value is BsonDocument nested && nested.Any(e => e.Name.StartsWith('$')))
+            {
+                continue;
+            }
+
+            seed[element.Name] = element.Value;
+        }
+
+        return seed;
     }
 
     // ---- find ------------------------------------------------------------------------------------
@@ -608,7 +650,7 @@ public sealed class InMemoryMongoCollection<TDocument> : IMongoCollection<TDocum
     // ---- find-one-and-* --------------------------------------------------------------------------
 
     public TProjection FindOneAndUpdate<TProjection>(FilterDefinition<TDocument> filter, UpdateDefinition<TDocument> update, FindOneAndUpdateOptions<TDocument, TProjection>? options = null, CancellationToken cancellationToken = default)
-        => FindOneAndModify<TProjection>(filter, BsonQueryEngine.RenderUpdate(update), options?.Sort, options?.ReturnDocument ?? ReturnDocument.Before, delete: false);
+        => FindOneAndModify<TProjection>(filter, BsonQueryEngine.RenderUpdate(update), options?.Sort, options?.ReturnDocument ?? ReturnDocument.Before, delete: false, isUpsert: options?.IsUpsert ?? false);
 
     public TProjection FindOneAndUpdate<TProjection>(IClientSessionHandle session, FilterDefinition<TDocument> filter, UpdateDefinition<TDocument> update, FindOneAndUpdateOptions<TDocument, TProjection>? options = null, CancellationToken cancellationToken = default)
         => FindOneAndUpdate(filter, update, options, cancellationToken);

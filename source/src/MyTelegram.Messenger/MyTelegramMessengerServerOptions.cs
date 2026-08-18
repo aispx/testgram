@@ -48,6 +48,13 @@ public class MyTelegramMessengerServerOptions
     public int RpcResultExpirationMinutes { get; set; }
     public string RtmpStreamUrl { get; set; } = "rtmp://testgram.xie.su:1935/live";
     public string RtmpHlsUrl { get; set; } = "http://rtmp-server:8888/live";
+    /// <summary>
+    /// How long entries of the <a href="https://corefork.telegram.org/api/recent-actions">admin log</a>
+    /// are kept. The official server keeps the last 48 hours.
+    /// </summary>
+    [Range(3600, int.MaxValue)]
+    public int AdminLogRetentionSeconds { get; set; } = 48 * 60 * 60;
+
     public EncryptionConfig EncryptionConfig { get; set; }
     public StripeConfig Stripe { get; set; } = new();
     public PushConfig Push { get; set; } = new();

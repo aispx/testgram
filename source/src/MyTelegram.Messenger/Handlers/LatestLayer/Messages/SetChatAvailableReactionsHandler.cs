@@ -1,4 +1,6 @@
+using MongoDB.Driver;
 using MyTelegram.Messenger.Extensions;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 
@@ -17,6 +19,8 @@ internal sealed class SetChatAvailableReactionsHandler(
     IQueryProcessor queryProcessor,
     IPeerHelper peerHelper,
     IChannelAdminRightsChecker channelAdminRightsChecker,
+    IChannelAppService channelAppService,
+    IMongoDatabase mongoDatabase,
     IAppConfigHelper appConfigHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSetChatAvailableReactions, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSetChatAvailableReactions obj)
@@ -33,6 +37,8 @@ internal sealed class SetChatAvailableReactionsHandler(
         var (reactionType, availableReactions, allowCustom) = ParseChatReactions(obj.AvailableReactions,
             appConfigHelper.GetInt32Value("reactions_in_chat_max", 100));
 
+        var prevReactions = await GetCurrentReactionsAsync(peer.PeerId);
+
         // paid_enabled is optional: when the client omits it, keep whatever the channel had.
         var paidEnabled = obj.PaidEnabled ?? await GetCurrentPaidEnabledAsync(peer.PeerId);
 
@@ -45,8 +51,37 @@ internal sealed class SetChatAvailableReactionsHandler(
             paidEnabled);
         await commandBus.PublishAsync(command);
 
+        await AdminLogHelper.LogChangeAvailableReactions(mongoDatabase, peer.PeerId, input.UserId,
+            prevReactions, obj.AvailableReactions);
+
         // The updated channel is pushed by ChannelDomainEventHandler via updateChannel.
         return null!;
+    }
+
+    /// <summary>
+    /// The reactions currently allowed, rebuilt in the same shape <c>channelFull.available_reactions</c>
+    /// reports them (see ChannelFullMapper), so the admin log entry shows the real previous value.
+    /// </summary>
+    private async Task<IChatReactions> GetCurrentReactionsAsync(long channelId)
+    {
+        var channelFull = await channelAppService.GetChannelFullAsync(channelId);
+        if (channelFull == null)
+        {
+            return new TChatReactionsNone();
+        }
+
+        return channelFull.ReactionType switch
+        {
+            // ReactionNone means "never configured", which behaves as all reactions allowed.
+            ReactionType.ReactionNone => new TChatReactionsAll(),
+            ReactionType.ReactionAll => new TChatReactionsAll { AllowCustom = channelFull.AllowCustomReaction },
+            ReactionType.ReactionSome when channelFull.AvailableReactions?.Count > 0 => new TChatReactionsSome
+            {
+                Reactions = new TVector<IReaction>(
+                    channelFull.AvailableReactions.Select(p => new TReactionEmoji { Emoticon = p }))
+            },
+            _ => new TChatReactionsNone()
+        };
     }
 
     private static (ReactionType ReactionType, List<string>? AvailableReactions, bool AllowCustom) ParseChatReactions(

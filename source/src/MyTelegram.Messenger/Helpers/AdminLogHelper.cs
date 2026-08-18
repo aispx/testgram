@@ -138,6 +138,319 @@ public static class AdminLogHelper
         await LogEventAsync(database, channelId, adminUserId, action);
     }
 
+    /// <summary>
+    /// Logs a change of the "show author profiles next to posts" setting, toggled together with
+    /// signatures by <a href="https://corefork.telegram.org/method/channels.toggleSignatures">channels.toggleSignatures</a>.
+    /// </summary>
+    public static async Task LogToggleSignatureProfiles(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        bool newValue)
+    {
+        var action = new TChannelAdminLogEventActionToggleSignatureProfiles
+        {
+            NewValue = newValue
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs a change of the <a href="https://corefork.telegram.org/api/antispam">native antispam</a> setting.
+    /// </summary>
+    public static async Task LogToggleAntiSpam(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        bool newValue)
+    {
+        var action = new TChannelAdminLogEventActionToggleAntiSpam
+        {
+            NewValue = newValue
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs a change of the automatic post translation setting.
+    /// </summary>
+    public static async Task LogToggleAutotranslation(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        bool newValue)
+    {
+        var action = new TChannelAdminLogEventActionToggleAutotranslation
+        {
+            NewValue = newValue
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs a change of the "restrict saving content" setting.
+    /// </summary>
+    public static async Task LogToggleNoForwards(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        bool newValue)
+    {
+        var action = new TChannelAdminLogEventActionToggleNoForwards
+        {
+            NewValue = newValue
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs a change of the <a href="https://corefork.telegram.org/api/reactions">reactions</a> allowed in
+    /// the channel.
+    /// </summary>
+    public static async Task LogChangeAvailableReactions(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IChatReactions prevValue,
+        IChatReactions newValue)
+    {
+        var action = new TChannelAdminLogEventActionChangeAvailableReactions
+        {
+            PrevValue = prevValue,
+            NewValue = newValue
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs a change of the <a href="https://corefork.telegram.org/api/wallpapers">wallpaper</a> of a
+    /// channel or supergroup.
+    /// </summary>
+    public static async Task LogChangeWallpaper(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IWallPaper prevValue,
+        IWallPaper newValue)
+    {
+        var action = new TChannelAdminLogEventActionChangeWallpaper
+        {
+            PrevValue = prevValue,
+            NewValue = newValue
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs a change of the list of active usernames, see
+    /// <a href="https://corefork.telegram.org/api/usernames">usernames</a>.
+    /// </summary>
+    public static async Task LogChangeUsernames(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IEnumerable<string> prevValue,
+        IEnumerable<string> newValue)
+    {
+        var action = new TChannelAdminLogEventActionChangeUsernames
+        {
+            PrevValue = new TVector<string>(prevValue),
+            NewValue = new TVector<string>(newValue)
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// The active usernames of a channel read model, in stored order — the value the admin log reports as
+    /// the previous or the new username list.
+    /// </summary>
+    public static List<string> ActiveUsernames(BsonValue? usernames)
+    {
+        if (usernames is not BsonArray array)
+        {
+            return [];
+        }
+
+        return array
+            .OfType<BsonDocument>()
+            .Where(d => d.GetValue("Active", false).ToBoolean() && d.Contains("Username"))
+            .Select(d => d["Username"].AsString)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Logs a change of the group's
+    /// <a href="https://corefork.telegram.org/api/custom-emoji">custom emoji stickerset</a>.
+    /// </summary>
+    public static async Task LogChangeEmojiStickerSet(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IInputStickerSet prevStickerset,
+        IInputStickerSet newStickerset)
+    {
+        var action = new TChannelAdminLogEventActionChangeEmojiStickerSet
+        {
+            PrevStickerset = prevStickerset,
+            NewStickerset = newStickerset
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs that an admin added a user to the channel directly.
+    /// </summary>
+    public static async Task LogParticipantInvite(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        MyTelegram.Schema.IChannelParticipant participant)
+    {
+        var action = new TChannelAdminLogEventActionParticipantInvite
+        {
+            Participant = participant
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs that only the custom title of an admin changed, see the <c>edit_rank</c> flag of
+    /// <a href="https://corefork.telegram.org/constructor/channelAdminLogEventsFilter">channelAdminLogEventsFilter</a>.
+    /// </summary>
+    public static async Task LogParticipantEditRank(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        long userId,
+        string prevRank,
+        string newRank)
+    {
+        var action = new TChannelAdminLogEventActionParticipantEditRank
+        {
+            UserId = userId,
+            PrevRank = prevRank,
+            NewRank = newRank
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogParticipantMute(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IGroupCallParticipant participant)
+    {
+        var action = new TChannelAdminLogEventActionParticipantMute
+        {
+            Participant = participant
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogParticipantUnmute(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IGroupCallParticipant participant)
+    {
+        var action = new TChannelAdminLogEventActionParticipantUnmute
+        {
+            Participant = participant
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogParticipantVolume(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IGroupCallParticipant participant)
+    {
+        var action = new TChannelAdminLogEventActionParticipantVolume
+        {
+            Participant = participant
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs an edit of an <a href="https://corefork.telegram.org/api/invites">invite link</a>. A revocation
+    /// is reported with its own constructor, as the client renders the two differently.
+    /// </summary>
+    public static async Task LogExportedInviteEdit(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        MyTelegram.Schema.IExportedChatInvite prevInvite,
+        MyTelegram.Schema.IExportedChatInvite newInvite)
+    {
+        var action = new TChannelAdminLogEventActionExportedInviteEdit
+        {
+            PrevInvite = prevInvite,
+            NewInvite = newInvite
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogExportedInviteRevoke(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        MyTelegram.Schema.IExportedChatInvite invite)
+    {
+        var action = new TChannelAdminLogEventActionExportedInviteRevoke
+        {
+            Invite = invite
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    public static async Task LogExportedInviteDelete(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        MyTelegram.Schema.IExportedChatInvite invite)
+    {
+        var action = new TChannelAdminLogEventActionExportedInviteDelete
+        {
+            Invite = invite
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs a post published in a channel, see the <c>send</c> flag of
+    /// <a href="https://corefork.telegram.org/constructor/channelAdminLogEventsFilter">channelAdminLogEventsFilter</a>.
+    /// </summary>
+    public static async Task LogSendMessage(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IMessage message)
+    {
+        var action = new TChannelAdminLogEventActionSendMessage
+        {
+            Message = message
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
+    /// <summary>
+    /// Logs that a <a href="https://corefork.telegram.org/api/poll">poll</a> was stopped.
+    /// </summary>
+    public static async Task LogStopPoll(
+        IMongoDatabase database,
+        long channelId,
+        long adminUserId,
+        IMessage message)
+    {
+        var action = new TChannelAdminLogEventActionStopPoll
+        {
+            Message = message
+        };
+        await LogEventAsync(database, channelId, adminUserId, action);
+    }
+
     public static async Task LogParticipantJoin(
         IMongoDatabase database,
         long channelId,
@@ -516,14 +829,19 @@ public static class AdminLogHelper
         await LogEventAsync(database, call.PeerId, adminUserId, action);
     }
 
+    /// <summary>
+    /// Writes one admin log entry. The filter tags, the search text and the referenced peers are derived
+    /// from the action once, here, so that <c>channels.getAdminLog</c> never has to deserialize the TL blob
+    /// to decide whether an entry matches a query.
+    /// </summary>
     private static async Task LogEventAsync(
         IMongoDatabase database,
         long channelId,
         long adminUserId,
         IChannelAdminLogEventAction action)
     {
-        var collection = database.GetCollection<BsonDocument>("channel_admin_log");
-        var eventId = Random.Shared.NextInt64();
+        var collection = database.GetCollection<BsonDocument>(AdminLogCollection.Name);
+        var eventId = await NextEventIdAsync(database, channelId);
 
         var buffer = new ArrayBufferWriter<byte>();
         action.Serialize(buffer);
@@ -535,11 +853,33 @@ public static class AdminLogHelper
             ["channel_id"] = channelId,
             ["user_id"] = adminUserId,
             ["date"] = DateTime.UtcNow,
+            ["filters"] = new BsonArray(AdminLogMetadata.Filters(action)),
+            ["search_text"] = AdminLogMetadata.SearchText(action),
+            ["related_user_ids"] = new BsonArray(AdminLogMetadata.RelatedUserIds(action)),
+            ["related_channel_ids"] = new BsonArray(AdminLogMetadata.RelatedChannelIds(action)),
             ["action"] = new BsonDocument
             {
                 ["type"] = action.GetType().Name,
                 ["data"] = buffer.WrittenMemory.ToArray()
             }
         });
+    }
+
+    /// <summary>
+    /// Event ids must increase within a channel: clients paginate by passing the id of the oldest event
+    /// they already have as <c>max_id</c>, so a random or wall-clock id makes the log unpaginatable.
+    /// </summary>
+    private static async Task<long> NextEventIdAsync(IMongoDatabase database, long channelId)
+    {
+        var result = await database.GetCollection<BsonDocument>("counters").FindOneAndUpdateAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", $"adminlog_event_id_{channelId}"),
+            Builders<BsonDocument>.Update.Inc("seq", 1L),
+            new FindOneAndUpdateOptions<BsonDocument>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After
+            });
+
+        return result["seq"].ToInt64();
     }
 }

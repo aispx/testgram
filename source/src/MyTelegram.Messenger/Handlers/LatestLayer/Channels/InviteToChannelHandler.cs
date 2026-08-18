@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
 /// Invite users to a channel/supergroup
@@ -28,7 +31,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class InviteToChannelHandler(ICommandBus commandBus, IPeerHelper peerHelper, IPrivacyAppService privacyAppService, IChannelAppService channelAppService, IUserAppService userAppService, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker) : RpcResultObjectHandler<RequestInviteToChannel, IInvitedUsers>
+internal sealed class InviteToChannelHandler(ICommandBus commandBus, IPeerHelper peerHelper, IPrivacyAppService privacyAppService, IChannelAppService channelAppService, IUserAppService userAppService, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestInviteToChannel, IInvitedUsers>
 {
     protected override async Task<IInvitedUsers> HandleCoreAsync(IRequestInput input, RequestInviteToChannel obj)
     {
@@ -74,6 +77,19 @@ internal sealed class InviteToChannelHandler(ICommandBus commandBus, IPeerHelper
 
             var command = new StartInviteToChannelCommand(TempId.New, input.ToRequestInfo(), channelId, channelReadModel.Broadcast, channelReadModel.HasLink, inviterUserId, channelReadModel.TopMessageId, channelReadModel.TopMessageId, userIds, botUserIds, ChatJoinType.InvitedByAdmin, privacyRestrictedUserIdList);
             await commandBus.PublishAsync(command);
+
+            // One admin log entry per user actually invited; the privacy-restricted ones were removed
+            // from the list above and never join.
+            foreach (var invitedUserId in userIds)
+            {
+                await AdminLogHelper.LogParticipantInvite(mongoDatabase, channelId, input.UserId,
+                    new MyTelegram.Schema.TChannelParticipant
+                    {
+                        UserId = invitedUserId,
+                        Date = CurrentDate
+                    });
+            }
+
             return null!;
         }
     }

@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 
@@ -44,6 +45,8 @@ internal sealed class DeactivateAllUsernamesHandler : RpcResultObjectHandler<MyT
             ? channel["Usernames"].AsBsonArray
             : new BsonArray();
 
+        var prevActiveUsernames = AdminLogHelper.ActiveUsernames(usernamesV2);
+
         // Deactivate all non-editable (Fragment) usernames
         foreach (var item in usernamesV2)
         {
@@ -63,6 +66,9 @@ internal sealed class DeactivateAllUsernamesHandler : RpcResultObjectHandler<MyT
         // Save back to MongoDB
         var update = Builders<BsonDocument>.Update.Set("Usernames", usernamesV2);
         await channelCollection.UpdateOneAsync(channelFilter, update);
+
+        await AdminLogHelper.LogChangeUsernames(_database, channelId, input.UserId,
+            prevActiveUsernames, AdminLogHelper.ActiveUsernames(usernamesV2));
 
         return new TBoolTrue();
     }

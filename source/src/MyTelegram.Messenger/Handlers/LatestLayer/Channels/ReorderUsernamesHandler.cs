@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 
@@ -110,6 +111,9 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         // Save back to MongoDB
         var update = Builders<BsonDocument>.Update.Set("Usernames", reorderedUsernames);
         await channelCollection.UpdateOneAsync(channelFilter, update);
+
+        await AdminLogHelper.LogChangeUsernames(_database, channelId, input.UserId,
+            AdminLogHelper.ActiveUsernames(usernamesV2), AdminLogHelper.ActiveUsernames(reorderedUsernames));
 
         return new TBoolTrue();
     }

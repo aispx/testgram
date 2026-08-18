@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Dialog;
+using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Schema;
 using MyTelegram.Schema.Messages;
@@ -68,6 +69,12 @@ public class SetHistoryTTLHandler : RpcResultObjectHandler<RequestSetHistoryTTL,
 
         var update = Builders<DialogReadModel>.Update.Set(d => d.TtlPeriod, period);
         await dialogCollection.UpdateOneAsync(filter, update);
+
+        if (peerType == PeerType.Channel)
+        {
+            await AdminLogHelper.LogChangeHistoryTTL(_mongoDatabase, peerId, input.UserId,
+                dialog?.TtlPeriod ?? 0, period);
+        }
 
         var action = new TMessageActionSetMessagesTTL { Period = period };
         var toPeer = new Peer(peerType, peerId);

@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <summary>
@@ -51,6 +52,8 @@ internal sealed class ToggleAutotranslationHandler(
         var filter = Builders<BsonDocument>.Filter.Eq("ChannelId", channelId);
         var update = Builders<BsonDocument>.Update.Set("TranslationsDisabled", !enabled);
         await collection.UpdateOneAsync(filter, update);
+
+        await AdminLogHelper.LogToggleAutotranslation(mongoDatabase, channelId, input.UserId, enabled);
 
         return new TUpdates { Chats = new TVector<IChat>(), Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Date = CurrentDate };
     }

@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Delete a chat invite
@@ -12,7 +15,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class DeleteExportedChatInviteHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IChatInviteLinkHelper chatInviteLinkHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDeleteExportedChatInvite, IBool>
+internal sealed class DeleteExportedChatInviteHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IChannelAdminRightsChecker channelAdminRightsChecker, IChatInviteLinkHelper chatInviteLinkHelper, IChatInviteExportedConverterService chatInviteExportedConverterService, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDeleteExportedChatInvite, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestDeleteExportedChatInvite obj)
     {
@@ -39,6 +42,10 @@ internal sealed class DeleteExportedChatInviteHandler(IQueryProcessor queryProce
 
         var command = new DeleteExportedInviteCommand(ChatInviteId.Create(inputPeerChannel.ChannelId, chatInviteReadModel.InviteId), input.ToRequestInfo());
         await commandBus.PublishAsync(command);
+
+        var exportedInvite = await ChatInviteExportedFiller.ToExportedChatInviteAsync(
+            chatInviteExportedConverterService, queryProcessor, chatInviteReadModel, input.Layer);
+        await AdminLogHelper.LogExportedInviteDelete(mongoDatabase, inputPeerChannel.ChannelId, input.UserId, exportedInvite);
 
         return new TBoolTrue();
     }

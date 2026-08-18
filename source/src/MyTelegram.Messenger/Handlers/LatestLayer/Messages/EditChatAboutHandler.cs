@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Edit the description of a <a href="https://corefork.telegram.org/api/channel">group/supergroup/channel</a>.
@@ -17,7 +20,11 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditChatAboutHandler(ICommandBus commandBus, IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditChatAbout, IBool>
+internal sealed class EditChatAboutHandler(
+    ICommandBus commandBus,
+    IPeerHelper peerHelper,
+    IChannelAppService channelAppService,
+    IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditChatAbout, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestEditChatAbout obj)
     {
@@ -26,8 +33,15 @@ internal sealed class EditChatAboutHandler(ICommandBus commandBus, IPeerHelper p
         {
             case PeerType.Channel:
                 {
+                    // Read before publishing: the command updates the read model asynchronously.
+                    var channelFull = await channelAppService.GetChannelFullAsync(peer.PeerId);
+
                     var command = new EditChannelAboutCommand(ChannelId.Create(peer.PeerId), input.ToRequestInfo(), input.UserId, obj.About);
                     await commandBus.PublishAsync(command, CancellationToken.None);
+
+                    await AdminLogHelper.LogChangeAbout(mongoDatabase, peer.PeerId, input.UserId,
+                        channelFull?.About ?? string.Empty, obj.About ?? string.Empty);
+
                     //return new TBoolTrue();
                     return null!;
                 }

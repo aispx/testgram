@@ -184,7 +184,21 @@ internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppServic
             await commandBus.PublishAsync(command);
 
             // Logged only once the command went through, so a rejected change leaves no admin log entry.
-            await Helpers.AdminLogHelper.LogEditAdmin(mongoDatabase, inputChannel.ChannelId, input.UserId, prevParticipant, newParticipant);
+            // A change that only touches the custom title has its own constructor, which is what the
+            // edit_rank filter of channelAdminLogEventsFilter selects.
+            var prevRank = channelMember?.Rank ?? string.Empty;
+            var newRank = obj.Rank ?? string.Empty;
+            var rightsUnchanged = (channelMember?.AdminRights ?? 0) == obj.AdminRights.Flags;
+
+            if (rightsUnchanged && !string.Equals(prevRank, newRank, StringComparison.Ordinal))
+            {
+                await Helpers.AdminLogHelper.LogParticipantEditRank(mongoDatabase, inputChannel.ChannelId,
+                    input.UserId, peer.PeerId, prevRank, newRank);
+            }
+            else
+            {
+                await Helpers.AdminLogHelper.LogEditAdmin(mongoDatabase, inputChannel.ChannelId, input.UserId, prevParticipant, newParticipant);
+            }
 
             return null !;
         }

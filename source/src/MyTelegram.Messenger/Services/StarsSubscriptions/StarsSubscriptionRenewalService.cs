@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
+using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.Localization;
 
 namespace MyTelegram.Messenger.Services.StarsSubscriptions;
@@ -173,6 +174,19 @@ public class StarsSubscriptionRenewalService(
             subscription.Id, subscription.Amount, renewed.UntilDate);
     }
 
+    private static MyTelegram.Schema.IChannelParticipant BuildSubscriptionParticipant(
+        long userId,
+        int date,
+        int? subscriptionUntilDate)
+    {
+        return new MyTelegram.Schema.TChannelParticipant
+        {
+            UserId = userId,
+            Date = date,
+            SubscriptionUntilDate = subscriptionUntilDate
+        };
+    }
+
     /// <summary>
     /// Keeps <c>channel.subscription_until_date</c> in step with the subscription. A user who has
     /// left the channel keeps the subscription (they can re-join through
@@ -185,6 +199,12 @@ public class StarsSubscriptionRenewalService(
         {
             return;
         }
+
+        // Reported in the admin log under the sub_extend filter, so admins see who kept their
+        // paid subscription. See https://corefork.telegram.org/api/recent-actions
+        await AdminLogHelper.LogParticipantSubExtend(database, channelId, userId,
+            BuildSubscriptionParticipant(userId, member.Date, member.SubscriptionUntilDate),
+            BuildSubscriptionParticipant(userId, member.Date, untilDate));
 
         var command = new ExtendChannelMemberSubscriptionCommand(
             ChannelMemberId.Create(channelId, userId),

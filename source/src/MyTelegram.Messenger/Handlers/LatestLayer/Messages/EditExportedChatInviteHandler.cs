@@ -1,3 +1,5 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 using IExportedChatInvite = MyTelegram.Schema.Messages.IExportedChatInvite;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -18,7 +20,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditExportedChatInviteHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IPeerHelper peerHelper) : RpcResultObjectHandler<Schema.Messages.RequestEditExportedChatInvite, IExportedChatInvite>
+internal sealed class EditExportedChatInviteHandler(IQueryProcessor queryProcessor, ICommandBus commandBus, IChatInviteLinkHelper chatInviteLinkHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IPeerHelper peerHelper, IChatInviteExportedConverterService chatInviteExportedConverterService, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<Schema.Messages.RequestEditExportedChatInvite, IExportedChatInvite>
 {
     protected override async Task<IExportedChatInvite> HandleCoreAsync(IRequestInput input, RequestEditExportedChatInvite obj)
     {
@@ -80,6 +82,69 @@ internal sealed class EditExportedChatInviteHandler(IQueryProcessor queryProcess
             obj.Revoked);
         await commandBus.PublishAsync(command, default);
 
+        await LogAdminLogAsync(input, inputPeerChannel.ChannelId, chatInviteReadModel, obj);
+
         return null!;
+    }
+
+    /// <summary>
+    /// A revoke is reported with its own constructor, any other edit as a before/after pair. The new value
+    /// is derived from the request because the read model is only updated asynchronously by the command.
+    /// </summary>
+    private async Task LogAdminLogAsync(
+        IRequestInput input,
+        long channelId,
+        IChatInviteReadModel chatInviteReadModel,
+        RequestEditExportedChatInvite obj)
+    {
+        var prevInvite = await ChatInviteExportedFiller.ToExportedChatInviteAsync(
+            chatInviteExportedConverterService, queryProcessor, chatInviteReadModel, input.Layer);
+
+        if (prevInvite is not TChatInviteExported exported)
+        {
+            return;
+        }
+
+        if (obj.Revoked)
+        {
+            await AdminLogHelper.LogExportedInviteRevoke(mongoDatabase, channelId, input.UserId,
+                CopyWith(exported, invite => invite.Revoked = true));
+            return;
+        }
+
+        var newInvite = CopyWith(exported, invite =>
+        {
+            invite.Title = obj.Title ?? exported.Title;
+            invite.ExpireDate = obj.ExpireDate ?? exported.ExpireDate;
+            invite.UsageLimit = obj.UsageLimit ?? exported.UsageLimit;
+            invite.RequestNeeded = obj.RequestNeeded ?? exported.RequestNeeded;
+        });
+
+        await AdminLogHelper.LogExportedInviteEdit(mongoDatabase, channelId, input.UserId, prevInvite, newInvite);
+    }
+
+    private static TChatInviteExported CopyWith(TChatInviteExported source, Action<TChatInviteExported> apply)
+    {
+        var copy = new TChatInviteExported
+        {
+            Revoked = source.Revoked,
+            Permanent = source.Permanent,
+            RequestNeeded = source.RequestNeeded,
+            Link = source.Link,
+            AdminId = source.AdminId,
+            Date = source.Date,
+            StartDate = source.StartDate,
+            ExpireDate = source.ExpireDate,
+            UsageLimit = source.UsageLimit,
+            Usage = source.Usage,
+            Requested = source.Requested,
+            SubscriptionExpired = source.SubscriptionExpired,
+            Title = source.Title,
+            SubscriptionPricing = source.SubscriptionPricing
+        };
+
+        apply(copy);
+
+        return copy;
     }
 }
