@@ -5,6 +5,7 @@
     IAmReadModelFor<ForwardMessageSaga, ForwardMessageSagaId, MessageReplyCreatedSagaEvent>,
         IAmReadModelFor<MessageAggregate, MessageId, ReplyChannelMessageCompletedEvent>,
     IAmReadModelFor<SendMessageSaga, SendMessageSagaId, ReplyBroadcastChannelCompletedSagaEvent>,
+    IAmReadModelFor<MessageAggregate, MessageId, MessageReplyCountDecrementedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageReplyUpdatedEvent>
     {
         public string Id { get; private set; } = default!;
@@ -64,6 +65,19 @@
             RepliesPts = domainEvent.AggregateEvent.Reply.RepliesPts;
             MaxId = domainEvent.AggregateEvent.Reply.MaxId;
             RecentRepliers = domainEvent.AggregateEvent.Reply.RecentRepliers;
+
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// One event updates two rows - the thread root and, for a comment section, the channel post -
+        /// so the row being written is taken from the context instead of being rebuilt from the event.
+        /// </summary>
+        public Task ApplyAsync(IReadModelContext context, IDomainEvent<MessageAggregate, MessageId, MessageReplyCountDecrementedEvent> domainEvent, CancellationToken cancellationToken)
+        {
+            Id = context.ReadModelId;
+            Replies = domainEvent.AggregateEvent.Replies;
+            RepliesPts = domainEvent.AggregateEvent.Pts;
 
             return Task.CompletedTask;
         }

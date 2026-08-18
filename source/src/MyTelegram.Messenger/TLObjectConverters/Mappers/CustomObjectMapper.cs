@@ -30,7 +30,11 @@ public class CustomObjectMapper : ILayeredMapper,
             source.SelfUserId,
             0,
             FilterSenderUserId: source.FilterSenderUserId,
-            SavedPeerId: source.SavedPeerId);
+            SavedPeerId: source.SavedPeerId,
+            // max_id/min_id bound the page from both sides when a client fills a hole in the history;
+            // dropping them here returned an unrelated page.
+            MinId: source.MinId,
+            MaxId: source.MaxId);
     }
 
     public GetMessagesQuery Map(GetMessagesInput source)
@@ -71,7 +75,13 @@ public class CustomObjectMapper : ILayeredMapper,
             null,
             source.SelfUserId,
             0,
-            source.ReplyToMsgId);
+            source.ReplyToMsgId,
+            // A thread page is bounded exactly like a history page: messages.getReplies carries
+            // max_id/min_id and offset_date. See https://corefork.telegram.org/api/threads
+            MinDate: source.MinDate,
+            MaxDate: source.MaxDate,
+            MinId: source.MinId,
+            MaxId: source.MaxId);
     }
 
     public TState Map(IPtsReadModel source)

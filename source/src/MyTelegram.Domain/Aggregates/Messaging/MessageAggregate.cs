@@ -145,8 +145,7 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
 
         // Root of the thread this message belongs to, so the reply counter of that root can be
         // decremented once the message is gone. See https://corefork.telegram.org/api/threads
-        var threadRootMessageId = _state.MessageItem.TopMsgId ??
-                                  (_state.MessageItem.InputReplyTo as TInputReplyToMessage)?.ReplyToMsgId;
+        var threadRootMessageId = MessageThreadHelper.GetThreadRootMessageId(_state.MessageItem);
         Emit(new ChannelMessageDeletedEvent(requestInfo,
             channelId,
             _state.MessageItem.MessageId,
@@ -441,12 +440,25 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
             return;
         }
 
+        // When the thread root is the auto-forwarded copy of a channel post, the comment counter
+        // shown on the post itself must follow the same way it does when a comment is added
+        // (see ReplyToMessage); otherwise deleting a comment leaves the post counting it forever.
+        long? postChannelId = null;
+        int? postMessageId = null;
+        if (_state.MessageItem.FwdHeader?.ForwardFromLinkedChannel ?? false)
+        {
+            postChannelId = _state.MessageItem.PostChannelId;
+            postMessageId = _state.MessageItem.PostMessageId;
+        }
+
         var ownerChannelId = _state.MessageItem.OwnerPeer.PeerId;
         var replies = reply.Replies - 1;
         Emit(new MessageReplyCountDecrementedEvent(ownerChannelId,
             _state.MessageItem.MessageId,
             replies,
-            pts));
+            pts,
+            postChannelId,
+            postMessageId));
     }
 
     public void UpdateMessageRely(int pts)

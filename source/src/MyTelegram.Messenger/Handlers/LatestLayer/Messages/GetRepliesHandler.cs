@@ -61,7 +61,33 @@ internal sealed class GetRepliesHandler(
         // value meant "no limit at all" and returned the whole thread in one response.
         var limit = obj.Limit is <= 0 or > MaxRepliesLimit ? MaxRepliesLimit : obj.Limit;
 
-        var getMessageOutput = await messageAppService.GetRepliesAsync(new GetRepliesInput { ReplyToMsgId = obj.MsgId, OwnerPeerId = peer.PeerId, AddOffset = obj.AddOffset, Limit = limit, OffsetId = obj.OffsetId, MinDate = obj.OffsetDate, SelfUserId = input.UserId });
+        var getMessageOutput = await messageAppService.GetRepliesAsync(new GetRepliesInput
+        {
+            ReplyToMsgId = obj.MsgId,
+            OwnerPeerId = peer.PeerId,
+            AddOffset = obj.AddOffset,
+            Limit = limit,
+            OffsetId = obj.OffsetId,
+            // offset_date is an upper bound ("only messages older than this date"), exactly as in
+            // messages.getHistory - reading it as a lower bound paged the thread in the wrong direction.
+            MaxDate = obj.OffsetDate,
+            MaxId = obj.MaxId,
+            MinId = obj.MinId,
+            SelfUserId = input.UserId
+        });
+
+        // The hash covers the returned message ids, so a client re-reading an unchanged page gets
+        // nothing back. See https://corefork.telegram.org/api/offsets#hash-generation
+        if (obj.Hash != 0)
+        {
+            var hash = getMessageOutput.MessageList.Aggregate(0L,
+                (current, message) => MessageSearchMongoHelper.CalcHash(current, message.MessageId));
+            if (hash == obj.Hash)
+            {
+                return new TMessagesNotModified { Count = getMessageOutput.MessageList.Count };
+            }
+        }
+
         return getHistoryConverterService.ToMessages(input, getMessageOutput, input.Layer);
     }
 }

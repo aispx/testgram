@@ -89,7 +89,7 @@ public class RepliesNotificationSubscriber(
         }
 
         var replierPeer = item.SendAs ?? new Peer(PeerType.User, item.SenderUserId);
-        var threadRootId = item.TopMsgId ?? inputReplyToMessage.TopMsgId ?? inputReplyToMessage.ReplyToMsgId;
+        var threadRootId = MessageThreadHelper.GetThreadRootMessageId(item) ?? inputReplyToMessage.ReplyToMsgId;
 
         var fwdHeader = new MessageFwdHeader
         {

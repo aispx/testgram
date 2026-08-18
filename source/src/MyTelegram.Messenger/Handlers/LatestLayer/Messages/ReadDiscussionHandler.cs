@@ -39,9 +39,15 @@ internal sealed class ReadDiscussionHandler(
                 );
                 var topic = await topicsCol.Find(topicFilter).FirstOrDefaultAsync();
 
-                // If it's a forum topic, return success (topics don't use readDiscussion)
+                // A forum topic is a thread as well, so it gets the same read pointer even when the
+                // message that opened it is already gone. See https://corefork.telegram.org/api/threads
                 if (topic != null)
                 {
+                    if (await threadReadStateService.SetInboxAsync(input.UserId, peer.PeerId, obj.MsgId, obj.ReadMaxId))
+                    {
+                        await PushReadInboxAsync(input, peer.PeerId, obj.MsgId, obj.ReadMaxId, null, null);
+                    }
+
                     return new TBoolTrue();
                 }
             }
@@ -57,26 +63,14 @@ internal sealed class ReadDiscussionHandler(
             return new TBoolFalse();
         }
 
-        var update = new TUpdateReadChannelDiscussionInbox
-        {
-            ChannelId = peer.PeerId,
-            TopMsgId = obj.MsgId,
-            ReadMaxId = obj.ReadMaxId,
+        await PushReadInboxAsync(input,
+            peer.PeerId,
+            obj.MsgId,
+            obj.ReadMaxId,
             // Present when the thread is the comment section of a channel post, so that clients can
             // clear the unread comment badge shown on the post itself.
-            BroadcastId = messageReadModel!.PostChannelId,
-            BroadcastPost = messageReadModel.PostMessageId
-        };
-
-        var updates = new TUpdates
-        {
-            Updates = new TVector<IUpdate>(update),
-            Users = new TVector<IUser>(),
-            Chats = new TVector<IChat>(),
-            Date = DateTime.UtcNow.ToTimestamp()
-        };
-
-        await objectMessageSender.PushMessageToPeerAsync(input.UserId.ToUserPeer(), updates, input.AuthKeyId);
+            messageReadModel!.PostChannelId,
+            messageReadModel.PostMessageId);
 
         // Everyone whose comments were just read learns about it through
         // updateReadChannelDiscussionOutbox, which drives the read marks on their own messages.
@@ -100,5 +94,33 @@ internal sealed class ReadDiscussionHandler(
         }
 
         return new TBoolTrue();
+    }
+
+    /// <summary>
+    /// Tells the other sessions of the reader how far this thread has been read.
+    /// </summary>
+    private Task PushReadInboxAsync(IRequestInput input,
+        long channelId,
+        int topMsgId,
+        int readMaxId,
+        long? broadcastId,
+        int? broadcastPost)
+    {
+        var updates = new TUpdates
+        {
+            Updates = new TVector<IUpdate>(new TUpdateReadChannelDiscussionInbox
+            {
+                ChannelId = channelId,
+                TopMsgId = topMsgId,
+                ReadMaxId = readMaxId,
+                BroadcastId = broadcastId,
+                BroadcastPost = broadcastPost
+            }),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = DateTime.UtcNow.ToTimestamp()
+        };
+
+        return objectMessageSender.PushMessageToPeerAsync(input.UserId.ToUserPeer(), updates, input.AuthKeyId);
     }
 }

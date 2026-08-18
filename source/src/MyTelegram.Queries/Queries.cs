@@ -206,6 +206,13 @@ public record GetMessagesByIdListQuery(IList<string> MessageIdList) : IQuery<IRe
 
 public record GetMessagesByMessageIdListQuery(List<int> MessageIdList) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
 
+/// <summary>
+/// All messages of one album (grouped media) inside a single chat.
+/// </summary>
+public record GetMessagesByGroupedIdQuery(
+    long OwnerPeerId,
+    long GroupedId) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
+
 public record GetMessagesByUserIdQuery(
     long OwnerPeerId,
     long ToPeerId) : IQuery<IReadOnlyCollection<IMessageReadModel>>;

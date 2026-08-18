@@ -284,7 +284,14 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
             switch (outboxMessageItem.InputReplyTo)
             {
                 case TInputReplyToMessage inputReplyToMessage:
-                    ReplyToMessage(outboxMessageItem, inputReplyToMessage.ReplyToMsgId);
+                    // The reply counter belongs to the root of the thread, not to the message that was
+                    // directly answered: answering a comment must grow the counter of the thread
+                    // starter (and, for a comment section, of the channel post behind it), the same
+                    // root MessageAggregate.DeleteChannelMessage decrements when a comment is deleted.
+                    var threadRootMessageId =
+                        MessageThreadHelper.GetThreadRootMessageId(outboxMessageItem)
+                        ?? inputReplyToMessage.ReplyToMsgId;
+                    ReplyToMessage(outboxMessageItem, threadRootMessageId);
                     return true;
                 case TInputReplyToMonoForum:
                     // Sending to a monoforum topic is not a thread/discussion reply:

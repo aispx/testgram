@@ -34,6 +34,20 @@ public class ReplyReadModelLocator : IReplyReadModelLocator, ITransientDependenc
             case ReplyChannelMessageCompletedEvent replyChannelMessageCompletedEvent:
                 yield return ReplyId.Create(replyChannelMessageCompletedEvent.ChannelId, replyChannelMessageCompletedEvent.ReplyToMessageId).Value;
                 break;
+            // Deleting a comment lowers the counter of the thread root and, when that root is the
+            // auto-forwarded channel post, of the post itself — the two rows messages.getMessagesViews
+            // reads. See https://corefork.telegram.org/api/threads
+            case MessageReplyCountDecrementedEvent messageReplyCountDecrementedEvent:
+                yield return ReplyId.Create(messageReplyCountDecrementedEvent.OwnerChannelId,
+                    messageReplyCountDecrementedEvent.MessageId).Value;
+                if (messageReplyCountDecrementedEvent is { PostChannelId: not null, PostMessageId: not null })
+                {
+                    yield return ReplyId.Create(messageReplyCountDecrementedEvent.PostChannelId.Value,
+                        messageReplyCountDecrementedEvent.PostMessageId.Value).Value;
+                }
+
+                break;
+
             case MessageReplyCreatedSagaEvent messageReplyCreatedSagaEvent:
 
                 yield return ReplyId

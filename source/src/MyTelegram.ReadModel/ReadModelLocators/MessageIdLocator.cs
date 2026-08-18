@@ -17,6 +17,15 @@ public class MessageIdLocator : IMessageIdLocator, ITransientDependency
                 }
             }
 
+            // A deleted comment must disappear from the counter on the channel post as well, the same
+            // way a new comment reaches it above. See https://corefork.telegram.org/api/threads
+            if (aggregateEvent is MessageReplyCountDecrementedEvent
+                { PostChannelId: not null, PostMessageId: not null } messageReplyCountDecrementedEvent)
+            {
+                yield return MessageId.Create(messageReplyCountDecrementedEvent.PostChannelId.Value,
+                    messageReplyCountDecrementedEvent.PostMessageId.Value).Value;
+            }
+
             yield return domainEvent.GetIdentity().Value;
         }
         else if (domainEvent.AggregateType == typeof(SendMessageSaga))

@@ -71,7 +71,13 @@ internal static class MessageSearchMongoHelper
         }
         else if (topMsgId.HasValue)
         {
-            filterDef &= builder.Eq("TopMsgId", topMsgId.Value);
+            // A thread holds every message whose reply chain leads back to the root: a reply to a
+            // comment carries the root in TopMsgId, while a direct reply to the root carries it in
+            // ReplyToMsgId alone. Matching only one leg lost half the thread.
+            // See https://corefork.telegram.org/api/threads
+            filterDef &= builder.Or(
+                builder.Eq("TopMsgId", topMsgId.Value),
+                builder.Eq("ReplyToMsgId", topMsgId.Value));
         }
 
         if (offsetId.HasValue && offsetId.Value > 0)

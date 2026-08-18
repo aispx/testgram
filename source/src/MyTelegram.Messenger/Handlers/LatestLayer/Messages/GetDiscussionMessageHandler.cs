@@ -49,11 +49,17 @@ internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQuery
             };
         }
 
+        // An album post is auto-forwarded to the discussion group as several grouped messages, and the
+        // whole group has to be returned in reverse chronological order: the last message of the
+        // response is the one that started the comment section, and it is the thread root.
+        // See https://corefork.telegram.org/api/discussion
+        var threadMessages = await GetThreadStarterMessagesAsync(messageReadModel);
+
         // The thread lives in the discussion group and carries its own read state; the group dialog's
         // read state describes the whole group and says nothing about this comment section.
         // See https://corefork.telegram.org/api/threads
         var threadChannelId = messageReadModel.ToPeerId;
-        var topMsgId = messageReadModel.MessageId;
+        var topMsgId = threadMessages[^1].MessageId;
         var readState = await threadReadStateService.GetAsync(input.UserId, threadChannelId, topMsgId);
         var readInboxMaxId = readState?.ReadInboxMaxId ?? 0;
         var unreadCount = await threadReadStateService.GetUnreadCountAsync(threadChannelId, topMsgId, readInboxMaxId, input.UserId);
@@ -61,18 +67,20 @@ internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQuery
         List<long> channelIds = [peer.PeerId, threadChannelId];
         var channelReadModels = await channelAppService.GetListAsync(channelIds);
 
-        var message = messageConverterService.ToMessage(input.UserId, messageReadModel, layer: input.Layer);
+        var messages = threadMessages
+            .Select(p => messageConverterService.ToMessage(input.UserId, p, layer: input.Layer))
+            .ToList();
         var photoReadModels = await photoAppService.GetPhotosAsync(channelReadModels);
         var channelMemberReadModels = await queryProcessor.ProcessAsync(new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIds));
         var chats = chatConverterService.ToChannelList(input, channelReadModels, photoReadModels, channelMemberReadModels, layer: input.Layer);
 
         // messages.discussionMessage carries the users referenced by the returned messages; without
         // them the client cannot render the sender of the thread starter.
-        var userIds = new List<long>();
-        if (messageReadModel.SenderUserId > 0)
-        {
-            userIds.Add(messageReadModel.SenderUserId);
-        }
+        var userIds = threadMessages
+            .Where(p => p.SenderUserId > 0)
+            .Select(p => p.SenderUserId)
+            .Distinct()
+            .ToList();
 
         var users = userIds.Count == 0
             ? []
@@ -81,12 +89,36 @@ internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQuery
         return new TDiscussionMessage
         {
             Chats = [.. chats],
-            Messages = new TVector<IMessage>(message),
+            Messages = [.. messages],
             Users = [.. users],
-            MaxId = messageReadModel.Reply?.MaxId,
+            MaxId = threadMessages[^1].Reply?.MaxId,
             ReadInboxMaxId = readState?.ReadInboxMaxId,
             ReadOutboxMaxId = readState?.ReadOutboxMaxId,
             UnreadCount = unreadCount
         };
+    }
+
+    /// <summary>
+    /// The messages that start the thread, in reverse chronological order. A single post produces one
+    /// message; an album is auto-forwarded to the discussion group as a whole group of messages, and
+    /// then the oldest one - the last of the response - is the thread root replies are attached to.
+    /// See https://corefork.telegram.org/api/discussion
+    /// </summary>
+    private async Task<IReadOnlyList<IMessageReadModel>> GetThreadStarterMessagesAsync(IMessageReadModel messageReadModel)
+    {
+        if (messageReadModel.GroupedId is not > 0)
+        {
+            return [messageReadModel];
+        }
+
+        var albumMessages = await queryProcessor.ProcessAsync(
+            new GetMessagesByGroupedIdQuery(messageReadModel.OwnerPeerId, messageReadModel.GroupedId.Value));
+
+        if (albumMessages.Count == 0)
+        {
+            return [messageReadModel];
+        }
+
+        return [.. albumMessages.OrderByDescending(p => p.MessageId)];
     }
 }
