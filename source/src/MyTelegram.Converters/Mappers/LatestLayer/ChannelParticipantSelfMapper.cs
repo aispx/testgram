@@ -22,6 +22,8 @@ internal sealed class ChannelParticipantSelfMapper
         destination.InviterId = source.InviterId;
         destination.Date = source.Date;
         destination.SubscriptionUntilDate = source.SubscriptionUntilDate;
+        // Ordinary members carry a tag too. See https://corefork.telegram.org/api/rank
+        destination.Rank = string.IsNullOrEmpty(source.Rank) ? null : source.Rank;
 
         return destination;
     }

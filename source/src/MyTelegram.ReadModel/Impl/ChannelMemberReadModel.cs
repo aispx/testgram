@@ -7,6 +7,7 @@ public class ChannelMemberReadModel : IChannelMemberReadModel,
     IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelMemberBannedRightsChangedEvent>,
     IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelMemberLeftEvent>,
     IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelAdminEditedEvent2>,
+    IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelMemberRankEditedEvent>,
     IAmReadModelFor<ChannelMemberAggregate, ChannelMemberId, ChannelMemberSubscriptionExtendedEvent>
 
 {
@@ -104,6 +105,19 @@ public class ChannelMemberReadModel : IChannelMemberReadModel,
         CancellationToken cancellationToken)
     {
         SubscriptionUntilDate = domainEvent.AggregateEvent.SubscriptionUntilDate;
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// messages.editChatParticipantRank only changes the tag: admin rights and the admin flag stay
+    /// exactly as they were. See https://corefork.telegram.org/api/rank
+    /// </summary>
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<ChannelMemberAggregate, ChannelMemberId, ChannelMemberRankEditedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        Rank = domainEvent.AggregateEvent.Rank;
 
         return Task.CompletedTask;
     }

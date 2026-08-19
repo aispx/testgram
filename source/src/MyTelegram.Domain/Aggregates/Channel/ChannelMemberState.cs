@@ -9,6 +9,7 @@ public class ChannelMemberState : AggregateState<ChannelMemberAggregate, Channel
     IApply<ChannelMemberLeftEvent>,
     IApply<ChannelMemberLeftEvent2>,
     IApply<ChannelAdminEditedEvent2>,
+    IApply<ChannelMemberRankEditedEvent>,
     IApply<ChannelMemberSubscriptionExtendedEvent>
 {
     public bool Banned { get; private set; }
@@ -21,6 +22,7 @@ public class ChannelMemberState : AggregateState<ChannelMemberAggregate, Channel
     public bool IsBot { get; private set; }
     public bool Broadcast { get; private set; }
     public bool IsAdmin { get; private set; }
+
     public void Apply(ChannelCreatorCreatedEvent aggregateEvent)
     {
     }
@@ -80,5 +82,11 @@ public class ChannelMemberState : AggregateState<ChannelMemberAggregate, Channel
     public void Apply(ChannelAdminEditedEvent2 aggregateEvent)
     {
         IsAdmin = aggregateEvent.IsAdmin;
+    }
+
+    // The tag lives on the read model only; the aggregate emits the event so channelParticipant.rank
+    // and message.from_rank can follow it. See https://corefork.telegram.org/api/rank
+    public void Apply(ChannelMemberRankEditedEvent aggregateEvent)
+    {
     }
 }

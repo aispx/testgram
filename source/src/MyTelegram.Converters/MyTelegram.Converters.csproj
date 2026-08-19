@@ -9,6 +9,11 @@
     <PackageReference Include="MaxMind.GeoIP2" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The TL mappers are internal sealed (they are only ever resolved through ILayeredService), so the
+         test project cannot construct one without this. -->
+    <InternalsVisibleTo Include="MyTelegram.Messenger.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\MyTelegram.Domain.Shared\MyTelegram.Domain.Shared.csproj" />
     <ProjectReference Include="..\MyTelegram.ReadModel.Interfaces\MyTelegram.ReadModel.Interfaces.csproj" />
     <ProjectReference Include="..\MyTelegram.Schema\MyTelegram.Schema.csproj" />

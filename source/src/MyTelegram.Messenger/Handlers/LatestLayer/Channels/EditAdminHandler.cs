@@ -188,9 +188,12 @@ internal sealed class EditAdminHandler(ICommandBus commandBus, IChannelAppServic
             // edit_rank filter of channelAdminLogEventsFilter selects.
             var prevRank = channelMember?.Rank ?? string.Empty;
             var newRank = obj.Rank ?? string.Empty;
+            // A brand-new admin is a promotion even when the rights happen to compare equal, so the
+            // edit_rank shortcut only applies to someone who already held admin rights.
+            var wasAdmin = (channelMember?.AdminRights ?? 0) != 0;
             var rightsUnchanged = (channelMember?.AdminRights ?? 0) == obj.AdminRights.Flags;
 
-            if (rightsUnchanged && !string.Equals(prevRank, newRank, StringComparison.Ordinal))
+            if (wasAdmin && rightsUnchanged && !string.Equals(prevRank, newRank, StringComparison.Ordinal))
             {
                 await Helpers.AdminLogHelper.LogParticipantEditRank(mongoDatabase, inputChannel.ChannelId,
                     input.UserId, peer.PeerId, prevRank, newRank);

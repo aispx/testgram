@@ -599,7 +599,9 @@ public class ChatConverterService(
                 Date = channelMemberReadModel.Date,
                 Peer = new TPeerUser { UserId = channelMemberReadModel.UserId },
                 KickedBy = channelMemberReadModel.KickedBy,
-                Left = false
+                Left = false,
+                // A restriction does not wipe the tag. See https://corefork.telegram.org/api/rank
+                Rank = string.IsNullOrEmpty(channelMemberReadModel.Rank) ? null : channelMemberReadModel.Rank
             };
         }
 
@@ -616,7 +618,9 @@ public class ChatConverterService(
             {
                 UserId = channelMemberReadModel.UserId,
                 AdminRights = creatorRights.ToChatAdminRights(),
-                Rank = channelMemberReadModel.Rank
+                // No tag means no flag at all: clients then fall back to showing "Owner".
+                // See https://corefork.telegram.org/api/rank
+                Rank = string.IsNullOrEmpty(channelMemberReadModel.Rank) ? null : channelMemberReadModel.Rank
             };
         }
 
@@ -630,7 +634,9 @@ public class ChatConverterService(
                 AdminRights = new ChatAdminRights(channelMemberReadModel.AdminRights).ToChatAdminRights(),
                 Date = channelMemberReadModel.Date,
                 InviterId = channelMemberReadModel.InviterId,
-                Rank = channelMemberReadModel.Rank,
+                // No tag means no flag at all: clients then show the default "Admin" label.
+                // See https://corefork.telegram.org/api/rank
+                Rank = string.IsNullOrEmpty(channelMemberReadModel.Rank) ? null : channelMemberReadModel.Rank,
                 UserId = channelMemberReadModel.UserId,
                 Self = channelMemberReadModel.UserId == request.UserId,
                 CanEdit = channelMemberReadModel.CanEdit,

@@ -3,8 +3,8 @@ using System.Globalization;
 namespace MyTelegram.Messenger.Helpers;
 
 /// <summary>
-/// Validation of the custom admin rank (title) shown next to an admin in a supergroup.
-/// See https://corefork.telegram.org/method/channels.editAdmin
+/// Validation of the custom rank (tag) shown next to a member in a supergroup, and of the rights
+/// needed to change it. See https://corefork.telegram.org/api/rank
 /// </summary>
 public static class AdminRankHelper
 {
@@ -12,6 +12,19 @@ public static class AdminRankHelper
     /// The client refuses anything longer than this and so does the server.
     /// </summary>
     public const int MaxRankLength = 16;
+
+    /// <summary>
+    /// May a member without the <c>manage_ranks</c> admin right change their own tag?
+    /// Per https://corefork.telegram.org/api/rank it is allowed when the chat's default rights
+    /// <i>or</i> the member's own banned rights permit <c>edit_rank</c>.
+    /// A chat whose default rights were never configured counts as "not permitted": the tag stays
+    /// an admin-granted thing until the owner opens the right explicitly.
+    /// </summary>
+    public static bool CanEditOwnRank(ChatBannedRights? defaultBannedRights,
+        ChatBannedRights? memberBannedRights)
+    {
+        return defaultBannedRights is { EditRank: false } || memberBannedRights is { EditRank: false };
+    }
 
     /// <summary>
     /// Throws ADMIN_RANK_INVALID for a rank that is too long and ADMIN_RANK_EMOJI_NOT_ALLOWED when it

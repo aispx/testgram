@@ -51,10 +51,12 @@ public class MessageConverterService(
         IReadOnlyCollection<IUserReactionReadModel>? userReactionReadModels = null,
         int layer = 0,
         IReadOnlyDictionary<string, IFactCheck>? factChecks = null,
-        IReadOnlyDictionary<string, int>? threadReadMaxIds = null
+        IReadOnlyDictionary<string, int>? threadReadMaxIds = null,
+        IReadOnlyDictionary<string, string>? fromRanks = null
     )
     {
         threadReadMaxIds ??= LoadThreadReadMaxIds(selfUserId, [readModel]);
+        fromRanks ??= LoadFromRanks(ToFromRankKeys([readModel]));
         var fromId = new Peer(PeerType.User, readModel.SenderPeerId).ToPeer();
         switch (readModel.SendMessageType)
         {
@@ -188,6 +190,8 @@ public class MessageConverterService(
                         ApplyFactCheck(message, factChecks, readModel.OwnerPeerId, readModel.MessageId);
                     }
 
+                    ApplyFromRank(m, fromRanks, readModel.ToPeerType, readModel.ToPeerId, readModel.Post);
+
                     // Set ChosenOrder for current user's reactions
                     if (m.Reactions is TMessageReactions mr && mr.Results?.Count > 0 && readModel.RecentReactions2 != null)
                     {
@@ -258,6 +262,7 @@ public class MessageConverterService(
         var pollConverter = pollLayeredService.GetConverter(layer);
         var factChecks = LoadFactChecks(messageReadModels);
         var threadReadMaxIds = LoadThreadReadMaxIds(selfUserId, messageReadModels);
+        var fromRanks = LoadFromRanks(ToFromRankKeys(messageReadModels));
 
         foreach (var readModel in messageReadModels)
         {
@@ -280,7 +285,8 @@ public class MessageConverterService(
                 }
             }
 
-            messages.Add(ToMessage(selfUserId, readModel, media, null, layer, factChecks, threadReadMaxIds));
+            messages.Add(ToMessage(selfUserId, readModel, media, null, layer, factChecks, threadReadMaxIds,
+                fromRanks));
         }
 
         return messages;
@@ -394,6 +400,12 @@ public class MessageConverterService(
                         m.Message = DecryptMessage(item.OwnerPeer.PeerId, item.MessageId, item.EncryptedData);
                     }
 
+                    if (item.ToPeer.PeerType == PeerType.Channel && !item.Post)
+                    {
+                        ApplyFromRank(m, LoadFromRanks([(item.ToPeer.PeerId, item.SenderUserId)]),
+                            item.ToPeer.PeerType, item.ToPeer.PeerId, item.Post);
+                    }
+
                     return m;
                 }
         }
@@ -492,6 +504,101 @@ public class MessageConverterService(
         {
             logger.LogWarning(ex, "Failed to load thread read state batch");
             return empty;
+        }
+    }
+
+    /// <summary>
+    /// The tag of every message sender listed in <paramref name="senders"/>, keyed by
+    /// <c>{channelId}-{userId}</c>. message.from_rank always has to carry the <i>current</i> tag, so
+    /// it is resolved when the message is read instead of being frozen into it when it was sent.
+    /// See https://corefork.telegram.org/api/rank
+    /// </summary>
+    private IReadOnlyDictionary<string, string> LoadFromRanks(
+        IReadOnlyCollection<(long ChannelId, long UserId)> senders)
+    {
+        var empty = new Dictionary<string, string>(StringComparer.Ordinal);
+        var pairs = senders.Where(p => p is { ChannelId: > 0, UserId: > 0 }).Distinct().ToList();
+        if (pairs.Count == 0)
+        {
+            return empty;
+        }
+
+        try
+        {
+            var ids = pairs.Select(p => ChannelMemberId.Create(p.ChannelId, p.UserId).Value).ToList();
+            var documents = mongoDatabase.GetCollection<BsonDocument>("eventflow-channelmemberreadmodel")
+                .Find(Builders<BsonDocument>.Filter.In("_id", ids))
+                .Project(Builders<BsonDocument>.Projection
+                    .Include("ChannelId")
+                    .Include("UserId")
+                    .Include("Rank"))
+                .ToList();
+
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var document in documents)
+            {
+                var rank = document.GetValue("Rank", BsonNull.Value);
+                if (rank.BsonType != BsonType.String || rank.AsString.Length == 0)
+                {
+                    continue;
+                }
+
+                var key = FromRankKey(document.GetValue("ChannelId", 0L).ToInt64(),
+                    document.GetValue("UserId", 0L).ToInt64());
+                result[key] = rank.AsString;
+            }
+
+            return result;
+        }
+        catch (MongoException ex)
+        {
+            logger.LogWarning(ex, "Failed to load from_rank batch");
+            return empty;
+        }
+    }
+
+    private static string FromRankKey(long channelId, long userId)
+    {
+        return $"{channelId}-{userId}";
+    }
+
+    /// <summary>
+    /// The (supergroup, sender) pairs whose tag has to be resolved. Channel posts carry no sender and
+    /// therefore no tag.
+    /// </summary>
+    private static List<(long ChannelId, long UserId)> ToFromRankKeys(
+        IReadOnlyCollection<IMessageReadModel> messageReadModels)
+    {
+        return messageReadModels
+            .Where(p => p is { ToPeerType: PeerType.Channel, Post: false, SendMessageType: not SendMessageType.MessageService })
+            .Select(p => (p.ToPeerId, p.SenderPeerId))
+            .Distinct()
+            .ToList();
+    }
+
+    /// <summary>
+    /// Sets message.from_rank for a message sent by a member of a supergroup. Channel posts and
+    /// messages sent on behalf of a peer other than a user carry no tag.
+    /// </summary>
+    private static void ApplyFromRank(IMessage message,
+        IReadOnlyDictionary<string, string>? fromRanks,
+        PeerType toPeerType,
+        long toPeerId,
+        bool post)
+    {
+        if (fromRanks == null || fromRanks.Count == 0 || post || toPeerType != PeerType.Channel)
+        {
+            return;
+        }
+
+        if (message is not TMessage tMessage || tMessage.FromId is not TPeerUser fromUser)
+        {
+            return;
+        }
+
+        if (fromRanks.TryGetValue(FromRankKey(toPeerId, fromUser.UserId), out var rank))
+        {
+            tMessage.FromRank = rank;
         }
     }
 

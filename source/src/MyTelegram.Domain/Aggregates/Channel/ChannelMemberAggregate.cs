@@ -17,6 +17,17 @@ public class ChannelMemberAggregate : SnapshotAggregateRoot<ChannelMemberAggrega
         Emit(new ChannelAdminEditedEvent2(requestInfo, channelId, userId, adminRights, rank, isAdmin));
     }
 
+    /// <summary>
+    /// Changes the tag (rank) shown next to a member's name. Unlike <see cref="EditChannelAdmin2"/>
+    /// this touches nothing but the tag, so an ordinary member can carry one without becoming an
+    /// admin. See https://corefork.telegram.org/api/rank
+    /// </summary>
+    public void EditMemberRank(RequestInfo requestInfo, long channelId, long userId, string rank, string prevRank)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new ChannelMemberRankEditedEvent(requestInfo, channelId, userId, rank, prevRank));
+    }
+
     public void CreateChannelMember(
         RequestInfo requestInfo,
         long channelId,
