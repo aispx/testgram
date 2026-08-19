@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Mentions;
 using System.Text.RegularExpressions;
 
 namespace MyTelegram.Messenger.Handlers.Messages;
@@ -15,7 +16,8 @@ namespace MyTelegram.Messenger.Handlers.Messages;
 internal sealed class GetForumTopicsHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopics, MyTelegram.Schema.Messages.IForumTopics>
+    IChannelAppService channelAppService,
+    IMentionReadStateService mentionReadStateService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopics, MyTelegram.Schema.Messages.IForumTopics>
 {
     private const int MinSearchQueryLength = 2;
     private const int MaxLimit = 100;
@@ -84,10 +86,14 @@ internal sealed class GetForumTopicsHandler(
 
         var topicDocs = await topicsCol.Find(filter).Sort(sort).Limit(limit).ToListAsync();
 
+        var mentionCounts = await mentionReadStateService.GetTopicMentionCountsAsync(input.UserId, peer);
+
         var topics = new TVector<IForumTopic>();
         foreach (var doc in topicDocs)
         {
-            topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId));
+            var topicId = ForumTopicHelper.GetTopicId(doc);
+            mentionCounts.TryGetValue(topicId, out var unreadMentionsCount);
+            topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId, unreadMentionsCount));
         }
 
         return new TForumTopics

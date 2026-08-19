@@ -1333,20 +1333,34 @@ public class MessageAppService(
             }
         }
 
-        if (toPeer.PeerType == PeerType.Channel)
+        if (mentionedUserNames.Count > 0 || mentionedUserIds.Count > 0)
         {
             var mentionedUsers =
                 await queryProcessor.ProcessAsync(new GetUserNameListByNamesQuery(mentionedUserNames, PeerType.User));
             mentionedUserIds.AddRange(mentionedUsers.Select(p => p.PeerId).Distinct().ToList());
-
-            var memberUserIds =
-                await queryProcessor.ProcessAsync(new GetChannelMemberIdListQuery(toPeer.PeerId, mentionedUserIds));
-
-            mentionedUserIds = memberUserIds.ToList();
         }
-        else
+
+        switch (toPeer.PeerType)
         {
-            mentionedUserIds = [];
+            case PeerType.Channel:
+                // Only members can be mentioned: a badge in a chat the user cannot open is a dead end.
+                var memberUserIds =
+                    await queryProcessor.ProcessAsync(new GetChannelMemberIdListQuery(toPeer.PeerId, mentionedUserIds));
+                mentionedUserIds = memberUserIds.ToList();
+                break;
+
+            // In a private chat the only person who can be mentioned is the other party; naming a third
+            // user is just text. Clients do count mentions here — tdlib bumps unread_mention_count for
+            // every dialog type, and Android calls messages.readMentions for private chats too.
+            case PeerType.User:
+                mentionedUserIds = mentionedUserIds.Contains(toPeer.PeerId) ? [toPeer.PeerId] : [];
+                break;
+
+            // Legacy basic chats have no member read model in this fork, so membership cannot be
+            // verified and no mention is recorded.
+            default:
+                mentionedUserIds = [];
+                break;
         }
 
         return mentionedUserIds;

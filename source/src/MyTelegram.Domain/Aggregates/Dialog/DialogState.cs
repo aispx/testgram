@@ -19,6 +19,8 @@ public class DialogState : AggregateState<DialogAggregate, DialogId, DialogState
     //IApply<DeleteUserMessagesStartedEvent>,
     IApply<MentionCreatedEvent>,
     IApply<MentionReadEvent>,
+    IApply<UnreadMentionsReadEvent>,
+    IApply<UnreadMentionsCountSyncedEvent>,
     IApply<UnreadReactionCreatedEvent>,
     IApply<UnreadReactionsReadEvent>,
     IApply<PollVoteCreatedEvent>,
@@ -114,6 +116,16 @@ public class DialogState : AggregateState<DialogAggregate, DialogId, DialogState
     }
 
     public void Apply(MentionReadEvent aggregateEvent)
+    {
+        UnreadMentionsCount = aggregateEvent.UnreadMentionsCount;
+    }
+
+    public void Apply(UnreadMentionsReadEvent aggregateEvent)
+    {
+        UnreadMentionsCount = aggregateEvent.UnreadMentionsCount;
+    }
+
+    public void Apply(UnreadMentionsCountSyncedEvent aggregateEvent)
     {
         UnreadMentionsCount = aggregateEvent.UnreadMentionsCount;
     }

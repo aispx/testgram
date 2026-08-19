@@ -1,5 +1,6 @@
 using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
+using MyTelegram.Messenger.Services.Mentions;
 using System.Linq;
 using MongoDB.Driver;
 
@@ -27,6 +28,7 @@ internal sealed class DeleteMessagesHandler(
     IMongoDatabase mongoDatabase,
     IMessageConverterService messageConverterService,
     IMessageAppService messageAppService,
+    IMentionCleanupService mentionCleanupService,
     MyTelegram.Services.Services.IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestDeleteMessages, MyTelegram.Schema.Messages.IAffectedMessages>
 {
@@ -63,6 +65,10 @@ internal sealed class DeleteMessagesHandler(
                         var message = messageConverterService.ToMessage(input.UserId, msg, layer: input.Layer);
                         await AdminLogHelper.LogDeleteMessage(mongoDatabase, inputChannel.ChannelId, input.UserId, message);
                     }
+
+                    // Read models are gone once the delete command lands, so the mention counters of
+                    // everyone mentioned in them have to be settled while the messages still exist.
+                    await mentionCleanupService.OnMessagesDeletedAsync(messages);
                 }
 
                 if (!await channelAdminRightsChecker.HasChatAdminRightAsync(inputChannel.ChannelId, input.UserId, p => p.DeleteMessages))

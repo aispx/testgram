@@ -84,8 +84,21 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
         ));
     }
 
+    /// <summary>
+    /// Increments the unread mention counter shown as an @ badge in the dialog list.
+    /// See https://corefork.telegram.org/api/mentions
+    /// </summary>
     public void CreateMention(int messageId)
     {
+        // The command is published from the send-message saga, which cannot know whether the
+        // mentioned user already has a dialog with the peer. Emitting on a fresh aggregate would
+        // store an event with a null ToPeer, so skip instead: the dialog gets its counter on the
+        // next mention, once joining or receiving a message has created it.
+        if (IsNew)
+        {
+            return;
+        }
+
         var unreadMentionsCount = _state.UnreadMentionsCount + 1;
         var ownerUserId = _state.OwnerId;
         Emit(new MentionCreatedEvent(ownerUserId, _state.ToPeer, messageId, unreadMentionsCount));
@@ -212,6 +225,10 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
             toPeer, date));
     }
 
+    /// <summary>
+    /// Decrements the unread mention counter for a single message, called from
+    /// messages.readMessageContents / channels.readMessageContents.
+    /// </summary>
     public void ReadMention(int messageId)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
@@ -222,6 +239,32 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
         }
         var ownerUserId = _state.OwnerId;
         Emit(new MentionReadEvent(ownerUserId, _state.ToPeer, messageId, unreadMentionsCount));
+    }
+
+    /// <summary>
+    /// Puts the unread mention counter back in step with the messages that actually still carry an
+    /// unread mention. Deleting a history or clearing a chat removes mentions without going through
+    /// ReadMention, so the counter is re-synced whenever the exact number is computed anyway.
+    /// </summary>
+    public void SyncUnreadMentionsCount(int unreadMentionsCount)
+    {
+        if (IsNew || unreadMentionsCount < 0 || unreadMentionsCount == _state.UnreadMentionsCount)
+        {
+            return;
+        }
+
+        Emit(new UnreadMentionsCountSyncedEvent(_state.OwnerId, _state.ToPeer, unreadMentionsCount));
+    }
+
+    /// <summary>
+    /// Clears the unread mention counter, called from messages.readMentions.
+    /// </summary>
+    public void ReadUnreadMentions()
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        var ownerUserId = _state.OwnerId;
+        var unreadMentionsCount = 0;
+        Emit(new UnreadMentionsReadEvent(ownerUserId, _state.ToPeer, unreadMentionsCount));
     }
 
     [DoNotInheritRequestCommand]

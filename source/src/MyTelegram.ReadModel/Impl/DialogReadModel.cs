@@ -26,6 +26,10 @@ public class DialogReadModel : IDialogReadModel,
     IAmReadModelFor<DialogAggregate, DialogId, DialogFolderUpdatedEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, UnreadReactionCreatedEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, UnreadReactionsReadEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, MentionCreatedEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, MentionReadEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, UnreadMentionsReadEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, UnreadMentionsCountSyncedEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, PollVoteCreatedEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, PollVotesReadEvent>
 {
@@ -135,6 +139,38 @@ public class DialogReadModel : IDialogReadModel,
         CancellationToken cancellationToken)
     {
         UnreadReactionsCount = domainEvent.AggregateEvent.UnreadReactionsCount;
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, MentionCreatedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        UnreadMentionsCount = domainEvent.AggregateEvent.UnreadMentionsCount;
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, MentionReadEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        UnreadMentionsCount = domainEvent.AggregateEvent.UnreadMentionsCount;
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, UnreadMentionsReadEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        UnreadMentionsCount = domainEvent.AggregateEvent.UnreadMentionsCount;
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, UnreadMentionsCountSyncedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        UnreadMentionsCount = domainEvent.AggregateEvent.UnreadMentionsCount;
         return Task.CompletedTask;
     }
 

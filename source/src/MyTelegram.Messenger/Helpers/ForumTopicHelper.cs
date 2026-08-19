@@ -46,7 +46,14 @@ internal static class ForumTopicHelper
         return await topicsCol.Find(filter).FirstOrDefaultAsync();
     }
 
-    public static TForumTopic ToForumTopic(BsonDocument doc, long channelId, long currentUserId = 0)
+    public static int GetTopicId(BsonDocument doc) => GetInt32(doc, "TopicId", GeneralTopicId);
+
+    /// <param name="unreadMentionsCount">
+    /// Unread mentions of the current user inside this topic. A forum keeps a mention counter per
+    /// topic on top of the dialog one, see https://corefork.telegram.org/api/mentions
+    /// </param>
+    public static TForumTopic ToForumTopic(BsonDocument doc, long channelId, long currentUserId = 0,
+        int unreadMentionsCount = 0)
     {
         var topicId = GetInt32(doc, "TopicId", GeneralTopicId);
         var creatorId = GetInt64(doc, "CreatorId", 0);
@@ -65,7 +72,7 @@ internal static class ForumTopicHelper
             ReadInboxMaxId = 0,
             ReadOutboxMaxId = 0,
             UnreadCount = 0,
-            UnreadMentionsCount = 0,
+            UnreadMentionsCount = unreadMentionsCount,
             UnreadReactionsCount = 0,
             UnreadPollVotesCount = 0,
             FromId = new TPeerUser { UserId = creatorId },

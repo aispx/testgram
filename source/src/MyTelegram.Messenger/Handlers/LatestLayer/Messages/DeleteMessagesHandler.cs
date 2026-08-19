@@ -2,6 +2,8 @@ using MongoDB.Bson;
 
 using MongoDB.Driver;
 
+using MyTelegram.Messenger.Services.Mentions;
+
 
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -34,7 +36,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 
 /// </remarks>
 
-internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper ptsHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDeleteMessages, MyTelegram.Schema.Messages.IAffectedMessages>
+internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper ptsHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMentionCleanupService mentionCleanupService, IObjectMessageSender objectMessageSender) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDeleteMessages, MyTelegram.Schema.Messages.IAffectedMessages>
 
 {
 
@@ -84,6 +86,10 @@ internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper p
 
 
 
+            // Read models are gone once the delete command lands, so the mention counters of everyone
+            // mentioned in them have to be settled while the messages still exist.
+            await ClearMentionsAsync(messageItemsToBeDeletedList);
+
             var command = new StartDeleteMessagesCommand(TempId.New, input.ToRequestInfo(), messageItemsToBeDeletedList, obj.Revoke, obj.Revoke, newTopMessageId, newTopMessageIdForOtherParticipant);
 
             await commandBus.PublishAsync(command);
@@ -113,6 +119,26 @@ internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper p
             PtsCount = 0
 
         };
+
+    }
+
+
+
+    private async Task ClearMentionsAsync(IReadOnlyCollection<MessageItemToBeDeleted> itemsToBeDeleted)
+
+    {
+
+        foreach (var group in itemsToBeDeleted.GroupBy(p => p.OwnerUserId))
+
+        {
+
+            var messages = await queryProcessor.ProcessAsync(
+
+                new GetMessagesByOwnerAndMessageIdListQuery(group.Key, group.Select(p => p.MessageId).ToList()));
+
+            await mentionCleanupService.OnMessagesDeletedAsync(messages);
+
+        }
 
     }
 

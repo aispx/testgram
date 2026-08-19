@@ -3,6 +3,7 @@ using System.Text;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Mentions;
 using MyTelegram.Messenger.Services.PaidMedia;
 
 namespace MyTelegram.Messenger.Converters.ConverterServices;
@@ -52,11 +53,13 @@ public class MessageConverterService(
         int layer = 0,
         IReadOnlyDictionary<string, IFactCheck>? factChecks = null,
         IReadOnlyDictionary<string, int>? threadReadMaxIds = null,
-        IReadOnlyDictionary<string, string>? fromRanks = null
+        IReadOnlyDictionary<string, string>? fromRanks = null,
+        IReadOnlyDictionary<string, MentionReadStateDocument>? mentionReadStates = null
     )
     {
         threadReadMaxIds ??= LoadThreadReadMaxIds(selfUserId, [readModel]);
         fromRanks ??= LoadFromRanks(ToFromRankKeys([readModel]));
+        mentionReadStates ??= LoadMentionReadStates(selfUserId, [readModel]);
         var fromId = new Peer(PeerType.User, readModel.SenderPeerId).ToPeer();
         switch (readModel.SendMessageType)
         {
@@ -86,7 +89,7 @@ public class MessageConverterService(
                     if (readModel.MentionedUserIds?.Contains(selfUserId) ?? false)
                     {
                         m.Mentioned = true;
-                        m.MediaUnread = true;
+                        m.MediaUnread = IsMentionUnread(mentionReadStates, readModel);
                     }
 
                     return m;
@@ -172,7 +175,7 @@ public class MessageConverterService(
                     if (readModel.MentionedUserIds?.Contains(selfUserId) ?? false)
                     {
                         m.Mentioned = true;
-                        m.MediaUnread = true;
+                        m.MediaUnread = IsMentionUnread(mentionReadStates, readModel);
                     }
 
                     if (readModel.EncryptedData?.Length > 0)
@@ -263,6 +266,7 @@ public class MessageConverterService(
         var factChecks = LoadFactChecks(messageReadModels);
         var threadReadMaxIds = LoadThreadReadMaxIds(selfUserId, messageReadModels);
         var fromRanks = LoadFromRanks(ToFromRankKeys(messageReadModels));
+        var mentionReadStates = LoadMentionReadStates(selfUserId, messageReadModels);
 
         foreach (var readModel in messageReadModels)
         {
@@ -286,7 +290,7 @@ public class MessageConverterService(
             }
 
             messages.Add(ToMessage(selfUserId, readModel, media, null, layer, factChecks, threadReadMaxIds,
-                fromRanks));
+                fromRanks, mentionReadStates));
         }
 
         return messages;
@@ -505,6 +509,64 @@ public class MessageConverterService(
             logger.LogWarning(ex, "Failed to load thread read state batch");
             return empty;
         }
+    }
+
+    /// <summary>
+    /// Which mentions in <paramref name="messageReadModels"/> the user has already read, keyed by
+    /// <c>{peerType}-{peerId}</c>. Without it every mention would keep <c>media_unread</c> set and the
+    /// @ badge would come back on the next sync. See https://corefork.telegram.org/api/mentions
+    /// </summary>
+    private IReadOnlyDictionary<string, MentionReadStateDocument> LoadMentionReadStates(long selfUserId,
+        IReadOnlyCollection<IMessageReadModel> messageReadModels)
+    {
+        var empty = new Dictionary<string, MentionReadStateDocument>(StringComparer.Ordinal);
+        if (selfUserId <= 0)
+        {
+            return empty;
+        }
+
+        var peers = messageReadModels
+            .Where(p => p.MentionedUserIds?.Contains(selfUserId) ?? false)
+            .Select(p => new Peer(p.ToPeerType, p.ToPeerId))
+            .Distinct()
+            .ToList();
+
+        if (peers.Count == 0)
+        {
+            return empty;
+        }
+
+        try
+        {
+            var ids = peers.Select(p => $"{selfUserId}-{(int)p.PeerType}-{p.PeerId}").ToList();
+            var documents = mongoDatabase.GetCollection<MentionReadStateDocument>("mention_read_state")
+                .Find(Builders<MentionReadStateDocument>.Filter.In(p => p.Id, ids))
+                .ToList();
+
+            return documents.ToDictionary(
+                p => IMentionReadStateService.Key(new Peer((PeerType)p.PeerType, p.PeerId)),
+                p => p,
+                StringComparer.Ordinal);
+        }
+        catch (MongoException ex)
+        {
+            logger.LogWarning(ex, "Failed to load mention read state batch");
+            return empty;
+        }
+    }
+
+    private static bool IsMentionUnread(IReadOnlyDictionary<string, MentionReadStateDocument>? mentionReadStates,
+        IMessageReadModel readModel)
+    {
+        if (mentionReadStates == null)
+        {
+            return true;
+        }
+
+        mentionReadStates.TryGetValue(IMentionReadStateService.Key(new Peer(readModel.ToPeerType, readModel.ToPeerId)),
+            out var state);
+
+        return IMentionReadStateService.IsUnread(state, readModel.MessageId);
     }
 
     /// <summary>

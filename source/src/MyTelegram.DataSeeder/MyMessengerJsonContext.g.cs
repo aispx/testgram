@@ -85,6 +85,8 @@ namespace MyTelegram.Messenger.NativeAot;
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Dialog.InboxMessageReceivedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Dialog.MentionCreatedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Dialog.MentionReadEvent))]
+[JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Dialog.UnreadMentionsReadEvent))]
+[JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Dialog.UnreadMentionsCountSyncedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Dialog.OutboxMessageHasReadEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Dialog.ParticipantHistoryClearedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Dialog.PinnedOrderChangedEvent))]

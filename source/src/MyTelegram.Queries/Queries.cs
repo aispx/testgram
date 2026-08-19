@@ -207,6 +207,13 @@ public record GetMessagesByIdListQuery(IList<string> MessageIdList) : IQuery<IRe
 public record GetMessagesByMessageIdListQuery(List<int> MessageIdList) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
 
 /// <summary>
+/// Messages of a single owner by id. Unlike <see cref="GetMessagesByMessageIdListQuery"/> this is
+/// scoped to one peer, so a caller cannot reach another user's box with a guessed message id.
+/// </summary>
+public record GetMessagesByOwnerAndMessageIdListQuery(long OwnerPeerId, List<int> MessageIdList)
+    : IQuery<IReadOnlyCollection<IMessageReadModel>>;
+
+/// <summary>
 /// All messages of one album (grouped media) inside a single chat.
 /// </summary>
 public record GetMessagesByGroupedIdQuery(
@@ -804,6 +811,51 @@ public record GetMessagesWithUnreadReactionsQuery(
     int? TopMsgId,
     Peer? SavedPeerId) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
 
-public record GetMessagesWithUnreadMentionsQuery(long OwnerPeerId, long UserId, int OffsetId, int Limit, int MaxId, int MinId) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
+/// <summary>
+/// Messages of <paramref name="OwnerPeerId"/> that still mention <paramref name="UserId"/> unread,
+/// see https://corefork.telegram.org/api/mentions. <paramref name="ReadMaxId"/> and
+/// <paramref name="ReadIds"/> come from the user's mention read state.
+/// </summary>
+public record GetMessagesWithUnreadMentionsQuery(
+    long OwnerPeerId,
+    long UserId,
+    Peer ToPeer,
+    int? TopMsgId,
+    int ReadMaxId,
+    IReadOnlyList<int> ReadIds,
+    int OffsetId,
+    int AddOffset,
+    int Limit,
+    int MaxId,
+    int MinId) : IQuery<IReadOnlyCollection<IMessageReadModel>>;
+
+/// <summary>Total number of unread mentions matching <see cref="GetMessagesWithUnreadMentionsQuery"/>.</summary>
+public record GetUnreadMentionsCountQuery(
+    long OwnerPeerId,
+    long UserId,
+    Peer ToPeer,
+    int? TopMsgId,
+    int ReadMaxId,
+    IReadOnlyList<int> ReadIds) : IQuery<int>;
+
+/// <summary>
+/// Unread mention count per forum topic of one channel, keyed by top_msg_id. Answered with a single
+/// grouping query so listing topics does not turn into one count per topic.
+/// </summary>
+public record GetUnreadMentionCountByTopicQuery(
+    long ChannelId,
+    long UserId,
+    int ReadMaxId,
+    IReadOnlyList<int> ReadIds) : IQuery<IReadOnlyDictionary<int, int>>;
+
+/// <summary>Ids of the unread mentions in a dialog, used by messages.readMentions.</summary>
+public record GetUnreadMentionIdListQuery(
+    long OwnerPeerId,
+    long UserId,
+    Peer ToPeer,
+    int? TopMsgId,
+    int ReadMaxId,
+    IReadOnlyList<int> ReadIds,
+    int Limit) : IQuery<IReadOnlyCollection<int>>;
 
 public record GetMonoforumDialogsQuery(long MonoforumChannelId, int Limit, int OffsetId) : IQuery<IReadOnlyCollection<IDialogReadModel>>;

@@ -127,7 +127,7 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
 
         await CreateInboxMessageAsync(domainEvent.AggregateEvent);
 
-        CreateMentions(domainEvent.AggregateEvent.MentionedUserIds, domainEvent.AggregateEvent.OutboxMessageItem.MessageId);
+        CreateMentions(domainEvent.AggregateEvent);
         ClearDraft(domainEvent.AggregateEvent);
     }
 
@@ -141,18 +141,35 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
         }
     }
 
-    private void CreateMentions(List<long>? mentionedUserIds, int messageId)
+    /// <summary>
+    /// Bumps the @ badge of every mentioned member, see https://corefork.telegram.org/api/mentions.
+    /// Mentions are only resolved for channel/supergroup members
+    /// (<see cref="MyTelegram.Messenger"/> MessageAppService.ProcessMessageEntityMentionAsync),
+    /// so the mentioned user always already has a dialog with the peer.
+    /// </summary>
+    private void CreateMentions(OutboxMessageCreatedEvent aggregateEvent)
     {
-        if (mentionedUserIds?.Count > 0)
+        var mentionedUserIds = aggregateEvent.MentionedUserIds;
+        if (!(mentionedUserIds?.Count > 0))
         {
-            // Only create mention for super group members
+            return;
+        }
 
-            //foreach (var mentionedUserId in mentionedUserIds)
-            //{
-            //    var command = new CreateMentionCommand(DialogId.Create(mentionedUserId, _state.FirstMessageItem.MessageItem.ToPeer),
-            //        mentionedUserId, /*_state.MessageItem.ToPeer.PeerId,*/ messageId);
-            //    Publish(command);
-            //}
+        var item = aggregateEvent.OutboxMessageItem;
+        if (item.ToPeer.PeerType != PeerType.Channel)
+        {
+            return;
+        }
+
+        foreach (var mentionedUserId in mentionedUserIds.Distinct())
+        {
+            // Mentioning yourself must not light up your own badge.
+            if (mentionedUserId == item.SenderPeer.PeerId)
+            {
+                continue;
+            }
+
+            Publish(new CreateMentionCommand(DialogId.Create(mentionedUserId, item.ToPeer), item.MessageId));
         }
     }
 
@@ -168,6 +185,13 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
             domainEvent.AggregateEvent.InboxMessageItem.OwnerPeer.PeerId,
             domainEvent.AggregateEvent.InboxMessageItem.ToPeer);
         Publish(command);
+
+        // Published right after the command that creates the dialog, so the mention lands on an
+        // aggregate that already exists. See https://corefork.telegram.org/api/mentions
+        if (item.MentionedUserIds?.Contains(item.OwnerPeer.PeerId) ?? false)
+        {
+            Publish(new CreateMentionCommand(DialogId.Create(item.OwnerPeer.PeerId, item.ToPeer), item.MessageId));
+        }
 
         return HandleReceiveInboxMessageCompletedAsync(item, domainEvent.AggregateEvent.SenderMessageId);
     }

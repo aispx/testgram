@@ -1,3 +1,6 @@
+using EventFlow.Exceptions;
+using MyTelegram.Messenger.Services.Mentions;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Mark mentions as read
@@ -7,16 +10,121 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// 400 CHANNEL_PRIVATE You haven't joined this channel/supergroup.
 /// 400 MSG_ID_INVALID Invalid message ID provided.
 /// 400 PEER_ID_INVALID The provided peer id is invalid.
-/// 400 SAVED_PEER_INVALID  
+/// 400 SAVED_PEER_INVALID
 /// <para><c>See <a href="https://corefork.telegram.org/method/messages.readMentions"/> </c></para>
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ReadMentionsHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadMentions, MyTelegram.Schema.Messages.IAffectedHistory>
+internal sealed class ReadMentionsHandler(
+    IQueryProcessor queryProcessor,
+    IPtsHelper ptsHelper,
+    IPeerHelper peerHelper,
+    ICommandBus commandBus,
+    IChannelAppService channelAppService,
+    IMentionReadStateService mentionReadStateService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReadMentions, MyTelegram.Schema.Messages.IAffectedHistory>
 {
-    protected override Task<MyTelegram.Schema.Messages.IAffectedHistory> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReadMentions obj)
+    /// <summary>
+    /// Upper bound for a single topic-scoped read. The counter it clears is a badge, so a dialog is
+    /// never expected to hold more unread mentions than this.
+    /// </summary>
+    private const int MaxTopicMentions = 1000;
+
+    protected override async Task<MyTelegram.Schema.Messages.IAffectedHistory> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestReadMentions obj)
     {
-        throw new NotImplementedException();
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer.PeerType == PeerType.Channel)
+        {
+            var channel = await channelAppService.GetAsync((long?)peer.PeerId);
+            if (channel == null)
+            {
+                RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+            }
+
+            // This call advances the channel's pts, so a non-member could inflate it and force every
+            // member's client into getDifference resync loops. Require membership first; GetPeer
+            // validates no access hash.
+            if (await channelAppService.SendRpcErrorIfNotChannelMemberAsync(input, channel!))
+            {
+                return null!;
+            }
+        }
+
+        var ownerPeerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
+        var readState = await mentionReadStateService.GetAsync(input.UserId, peer);
+
+        if (obj.TopMsgId.HasValue)
+        {
+            // A topic-scoped read must not clear the mentions of the rest of the dialog, so the
+            // affected ids are marked one by one instead of moving the watermark.
+            var messageIds = await queryProcessor.ProcessAsync(
+                new GetUnreadMentionIdListQuery(
+                    ownerPeerId,
+                    input.UserId,
+                    peer,
+                    obj.TopMsgId,
+                    readState?.ReadMaxId ?? 0,
+                    readState?.ReadIds ?? [],
+                    MaxTopicMentions));
+
+            await mentionReadStateService.MarkReadAsync(input.UserId, peer, messageIds.ToList());
+
+            foreach (var messageId in messageIds)
+            {
+                await PublishReadMentionAsync(input.UserId, peer, messageId);
+            }
+        }
+        else
+        {
+            // The watermark is the newest mention that is unread right now, never an open-ended
+            // value: a mention arriving after this call has to light the badge up again.
+            var newest = await queryProcessor.ProcessAsync(
+                new GetUnreadMentionIdListQuery(
+                    ownerPeerId,
+                    input.UserId,
+                    peer,
+                    null,
+                    readState?.ReadMaxId ?? 0,
+                    readState?.ReadIds ?? [],
+                    1));
+
+            if (newest.Count > 0)
+            {
+                await mentionReadStateService.MarkAllReadAsync(input.UserId, peer, newest.First());
+            }
+
+            try
+            {
+                await commandBus.PublishAsync(new ReadUnreadMentionsCommand(DialogId.Create(input.UserId, peer)));
+            }
+            catch (DomainError)
+            {
+                // No dialog aggregate (for example a legacy chat): nothing to clear.
+            }
+        }
+
+        // Advance pts so the client's difference loop notices the read state on other sessions.
+        var currentPts = ptsHelper.GetCachedPts(ownerPeerId);
+        var pts = await ptsHelper.IncrementPtsAsync(ownerPeerId, currentPts, 1, input.PermAuthKeyId);
+
+        return new TAffectedHistory
+        {
+            Pts = pts,
+            PtsCount = 1,
+            Offset = 0
+        };
+    }
+
+    private async Task PublishReadMentionAsync(long userId, Peer peer, int messageId)
+    {
+        try
+        {
+            await commandBus.PublishAsync(new ReadMentionCommand(DialogId.Create(userId, peer), messageId));
+        }
+        catch (DomainError)
+        {
+            // No dialog aggregate: the badge is best-effort.
+        }
     }
 }

@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Mentions;
 
 namespace MyTelegram.Messenger.Handlers.Messages;
 
@@ -14,7 +15,8 @@ namespace MyTelegram.Messenger.Handlers.Messages;
 internal sealed class GetForumTopicsByIDHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
-    IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopicsByID, MyTelegram.Schema.Messages.IForumTopics>
+    IChannelAppService channelAppService,
+    IMentionReadStateService mentionReadStateService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopicsByID, MyTelegram.Schema.Messages.IForumTopics>
 {
     protected override async Task<MyTelegram.Schema.Messages.IForumTopics> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetForumTopicsByID obj)
     {
@@ -41,6 +43,8 @@ internal sealed class GetForumTopicsByIDHandler(
         var topicDocs = await topicsCol.Find(filter).ToListAsync();
         var byId = topicDocs.ToDictionary(d => d["TopicId"].AsInt32);
 
+        var mentionCounts = await mentionReadStateService.GetTopicMentionCountsAsync(input.UserId, peer);
+
         var topics = new TVector<IForumTopic>();
         var messages = new TVector<IMessage>();
 
@@ -48,7 +52,8 @@ internal sealed class GetForumTopicsByIDHandler(
         {
             if (byId.TryGetValue(topicId, out var doc))
             {
-                topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId));
+                mentionCounts.TryGetValue(topicId, out var unreadMentionsCount);
+                topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId, unreadMentionsCount));
             }
         }
 
