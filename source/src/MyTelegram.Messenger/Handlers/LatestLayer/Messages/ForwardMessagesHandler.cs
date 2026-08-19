@@ -238,22 +238,29 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
         var fromNames = await BuildAnonymousFromNamesAsync(input.UserId, messagesToCheck);
 
-        if (!isMonoforum)
+        // The forward saga has no notion of a schedule queue, so a scheduled forward is built here and
+        // handed to the same path a scheduled sendMessage takes.
+        // See https://corefork.telegram.org/api/scheduled-messages
+        if (!isMonoforum && !obj.ScheduleDate.HasValue)
         {
             var command = new StartForwardMessagesCommand(TempId.New, input.ToRequestInfo(), obj.Silent, obj.Background, obj.WithMyScore, obj.DropAuthor, obj.DropMediaCaptions, obj.Noforwards || targetNoForwards, fromPeer, toPeer, obj.Id.ToList(), obj.RandomId.ToList(), obj.ScheduleDate, sendAs, false, post, fromNames);
             await commandBus.PublishAsync(command);
             return null!;
         }
 
-        var savedPeerId = await ResolveMonoforumSavedPeerAsync(toPeer, obj.ReplyTo, input.UserId);
-        var (_, chargedStars) = await MonoforumCompatibilityHelper.TryChargeMonoforumMessageAsync(
-            input,
-            toPeer,
-            savedPeerId,
-            obj.AllowPaidStars,
-            queryProcessor,
-            mongoDatabase);
-        paidMessageStars = chargedStars ?? paidMessageStars;
+        Peer? savedPeerId = null;
+        if (isMonoforum)
+        {
+            savedPeerId = await ResolveMonoforumSavedPeerAsync(toPeer, obj.ReplyTo, input.UserId);
+            var (_, chargedStars) = await MonoforumCompatibilityHelper.TryChargeMonoforumMessageAsync(
+                input,
+                toPeer,
+                savedPeerId,
+                obj.AllowPaidStars,
+                queryProcessor,
+                mongoDatabase);
+            paidMessageStars = chargedStars ?? paidMessageStars;
+        }
 
         var messageMap = messagesToCheck.ToDictionary(m => m.SenderMessageId == 0 ? int.Parse(m.Id.Split('-', StringSplitOptions.RemoveEmptyEntries).Last()) : m.SenderMessageId);
         var inputs = new List<SendMessageInput>();
@@ -307,11 +314,13 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                 sendMessageType: media == null ? SendMessageType.Text : SendMessageType.Media,
                 messageType: sourceMessage.MessageType,
                 topMsgId: obj.TopMsgId,
-                sendAs: null,
+                sendAs: isMonoforum ? null : sendAs,
                 inputQuickReplyShortcut: obj.QuickReplyShortcut,
                 effect: effect,
                 silent: obj.Silent,
                 scheduleDate: obj.ScheduleDate,
+                // "schedule_repeat_period can only be used when sending/forwarding a single message"
+                scheduleRepeatPeriod: obj.Id.Count == 1 ? obj.ScheduleRepeatPeriod : null,
                 paidMessageStars: paidMessageStars,
                 savedPeerId: savedPeerId,
                 suggestedPost: inputs.Count == 0 ? obj.SuggestedPost : null,
@@ -321,7 +330,7 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
                 views: MessageForwardViewsHelper.ResolveForwardedViews(post, fwdHeader),
                 pollId: sourceMessage.PollId,
                 invertMedia: sourceMessage.InvertMedia,
-                noForwards: obj.Noforwards
+                noForwards: obj.Noforwards || targetNoForwards
             );
             inputs.Add(sendInput);
         }

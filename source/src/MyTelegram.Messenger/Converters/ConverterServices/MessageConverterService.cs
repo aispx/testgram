@@ -396,7 +396,7 @@ public class MessageConverterService(
 
                     if (m.Out)
                     {
-                        m.FromScheduled = item.ScheduleDate.HasValue;
+                        m.FromScheduled = item.ScheduleDate.HasValue || item.FromScheduled;
                     }
 
                     if (item.EncryptedData?.Length > 0)

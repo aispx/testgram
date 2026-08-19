@@ -1,5 +1,4 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Scheduled;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -15,48 +14,36 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class DeleteScheduledMessagesHandler(
-    IMongoDatabase mongoDatabase,
-    IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDeleteScheduledMessages, MyTelegram.Schema.IUpdates>
+    IPeerHelper peerHelper,
+    IScheduledMessageStore scheduledMessageStore,
+    IObjectMessageSender objectMessageSender)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestDeleteScheduledMessages, MyTelegram.Schema.IUpdates>
 {
-    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestDeleteScheduledMessages obj)
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestDeleteScheduledMessages obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         if (peer == null)
+        {
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+        }
 
-        // Delete scheduled messages from MongoDB
-        var collection = mongoDatabase.GetCollection<BsonDocument>("scheduled_messages");
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("SenderUserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("PeerId", peer.PeerId),
-            Builders<BsonDocument>.Filter.Eq("PeerType", peer.PeerType.ToString()),
-            Builders<BsonDocument>.Filter.In("ScheduledMessageId", obj.Id)
-        );
+        var sharedQueue = await scheduledMessageStore.CheckQueueAccessAsync(peer, input.UserId);
+        var documents = await scheduledMessageStore.GetQueueAsync(peer, input.UserId, sharedQueue, obj.Id.ToList());
 
-        await collection.DeleteManyAsync(filter);
+        // Deleting an entry that already left the queue (it fired a moment ago, or another session
+        // removed it) is not an error: the client only has to learn that it is gone.
+        await scheduledMessageStore.DeleteAsync(documents.Select(p => p.Id));
 
-        // Generate updateDeleteScheduledMessages
-        var peerObj = peer.PeerType switch
+        var updates = scheduledMessageStore.BuildDeleteScheduledUpdates(peer, obj.Id.ToList());
+
+        // The requesting session gets the update as the rpc result, the other ones by push.
+        foreach (var senderUserId in documents.Select(p => p.SenderUserId).Distinct())
         {
-            PeerType.User => (IPeer)new TPeerUser { UserId = peer.PeerId },
-            PeerType.Chat => (IPeer)new TPeerChat { ChatId = peer.PeerId },
-            PeerType.Channel => (IPeer)new TPeerChannel { ChannelId = peer.PeerId },
-            _ => (IPeer)new TPeerUser { UserId = peer.PeerId }
-        };
+            await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, senderUserId), updates,
+                excludeAuthKeyId: senderUserId == input.UserId ? input.AuthKeyId : null);
+        }
 
-        return new TUpdates
-        {
-            Updates = new TVector<IUpdate>
-            {
-                new TUpdateDeleteScheduledMessages
-                {
-                    Peer = peerObj,
-                    Messages = obj.Id
-                }
-            },
-            Chats = new TVector<IChat>(),
-            Users = new TVector<IUser>(),
-            Date = CurrentDate
-        };
+        return updates;
     }
 }

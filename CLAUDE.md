@@ -282,6 +282,7 @@ NullReferenceException.
 | `star-gifts` | Star gifts | GiftId, Stars |
 | `fragment_collectibles` | Fragment NFT | type, username/phone |
 | `channel_admin_log` | Admin log (recent actions) | channel_id, event_id (per-channel counter), filters[], search_text, date (TTL 48 h) |
+| `scheduled_messages` | Schedule queue | ScheduledMessageId, PeerId/PeerType, SenderUserId, ScheduleDate (`0x7FFFFFFE` = when online), RepeatPeriod, Item (full `MessageItem`), ClaimedUntil |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -291,6 +292,34 @@ db.getCollectionNames()
 db["eventflow-stickersetreadmodel"].findOne({ ShortName: "mypack" })
 db["eventflow-documentreadmodel"].find({ DocumentId: NumberLong("123") })
 ```
+
+---
+
+## Files and server-side video processing
+
+File bodies live in the MinIO bucket `tg-files` under the plain file id (`{fileId}`, thumbnails as
+`{fileId}_{sizeType}`). A body uploaded by a client is AES-256-CTR encrypted, and its key/iv sit in
+`eventflow-filereadmodel`; a body created by the server (stickers, video renditions) is stored as-is
+and has no entry there. Document metadata belongs to the **file-server** (external image, native
+build, no source) and is created through its gRPC `MediaService` — `App__FileServerGrpcServiceUrl`.
+
+```
+gRPC SaveFile(id, accessHash, data, thumbSize)   # writes a body, max ~4 MB per call
+gRPC CreateDocument(...)                          # registers the document read model
+```
+
+Because `SaveFile` caps at 4 MB, larger bodies (video renditions) are written straight to MinIO with
+an AWS SigV4 PUT (`StoredFileStorage`, credentials from `Minio__AccessKey`/`Minio__SecretKey`), and
+only the metadata goes through `CreateDocument`.
+
+`messages.sendMedia` with a video addressed to a broadcast channel of at least
+`App__VideoProcessing__MinChannelParticipants` members parks the message in the schedule queue with
+`video_processing_pending`, converts it with **ffmpeg** (installed in the messenger-command-server
+image) into `App__VideoProcessing__Heights` renditions, attaches them as
+`messageMediaDocument.alt_documents` and only then sends it — see
+https://corefork.telegram.org/api/scheduled-messages#automatic-video-processing .
+Conversion runs in `VideoProcessingBackgroundService`; after 3 failed attempts the video is delivered
+unconverted rather than lost.
 
 ---
 

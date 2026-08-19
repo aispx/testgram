@@ -171,7 +171,7 @@ public class MessageReadModel : IMessageReadModel,
         Effect = messageItem.Effect;
         MessageAction = messageItem.MessageAction;
         Pts = messageItem.Pts;
-        FromScheduled = messageItem.ScheduleDate.HasValue;
+        FromScheduled = messageItem.ScheduleDate.HasValue || messageItem.FromScheduled;
         ScheduleDate = messageItem.ScheduleDate;
         TtlPeriod = messageItem.TtlPeriod;
         if (messageItem.TtlPeriod.HasValue && messageItem.TtlPeriod != 0)
@@ -233,7 +233,7 @@ public class MessageReadModel : IMessageReadModel,
         Effect = messageItem.Effect;
         MessageAction = messageItem.MessageAction;
         Pts = messageItem.Pts;
-        FromScheduled = messageItem.ScheduleDate.HasValue;
+        FromScheduled = messageItem.ScheduleDate.HasValue || messageItem.FromScheduled;
         ScheduleDate = messageItem.ScheduleDate;
         TtlPeriod = messageItem.TtlPeriod;
         if (messageItem.TtlPeriod.HasValue && messageItem.TtlPeriod != 0)

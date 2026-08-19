@@ -2,6 +2,7 @@ using System.Text;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Scheduled;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -63,7 +64,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IPeerHelper peerHelper, IMessageAppService messageAppService, IDataEncryptionHelper dataEncryptionHelper,
     IChannelAdminRightsChecker channelAdminRightsChecker,
-    IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender, IMessageConverterService messageConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender, IMessageConverterService messageConverterService,
+    IScheduledMessageStore scheduledMessageStore,
+    IScheduledMessageDispatcher scheduledMessageDispatcher) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
 {
     private static byte[]? _encryptionKey;
     private static KeyConfig? _keyConfig;
@@ -104,6 +107,15 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         var messageReadModel = await queryProcessor.ProcessAsync(new GetMessageByIdQuery(MessageId.Create(ownerPeerId, obj.Id).Value));
         if (messageReadModel == null)
         {
+            // The id may address the schedule queue of the peer instead of the history: clients edit and
+            // reschedule queued messages with this very method.
+            // See https://corefork.telegram.org/api/scheduled-messages
+            var scheduledUpdates = await TryEditScheduledMessageAsync(input, obj, peer, media);
+            if (scheduledUpdates != null)
+            {
+                return scheduledUpdates;
+            }
+
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
         }
 
@@ -219,6 +231,80 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         await NotifyBusinessBotsEditAsync(input.UserId, peer.PeerId, obj.Id, obj.Message ?? message);
 
         return null !;
+    }
+
+    /// <summary>
+    /// Edits an entry of the schedule queue: text, media, keyboard and the schedule date itself.
+    /// Returns null when the id does not belong to the queue of this peer.
+    /// See https://corefork.telegram.org/api/scheduled-messages
+    /// </summary>
+    private async Task<IUpdates?> TryEditScheduledMessageAsync(IRequestInput input, RequestEditMessage obj, Peer peer,
+        IMessageMedia? media)
+    {
+        var sharedQueue = await scheduledMessageStore.CheckQueueAccessAsync(peer, input.UserId);
+        var document = (await scheduledMessageStore.GetQueueAsync(peer, input.UserId, sharedQueue, [obj.Id]))
+            .FirstOrDefault();
+        if (document == null)
+        {
+            return null;
+        }
+
+        if (document.SenderUserId != input.UserId)
+        {
+            // In a channel every admin sees the shared queue, but only the author may rewrite a post.
+            RpcErrors.RpcErrors403.MessageAuthorRequired.ThrowRpcError();
+        }
+
+        var item = document.Item;
+        if (!string.IsNullOrEmpty(obj.Message))
+        {
+            item = item with { Message = obj.Message, Entities = obj.Entities };
+        }
+
+        if (media != null)
+        {
+            item = item with
+            {
+                Media = media,
+                SendMessageType = SendMessageType.Media,
+                MessageType = mediaHelper.GeMessageType(media)
+            };
+        }
+
+        if (obj.ReplyMarkup != null)
+        {
+            item = item with { ReplyMarkup = obj.ReplyMarkup };
+        }
+
+        document.Item = item with { InvertMedia = obj.InvertMedia };
+        document.EditDate = CurrentDate;
+
+        if (obj.ScheduleRepeatPeriod.HasValue)
+        {
+            document.RepeatPeriod = obj.ScheduleRepeatPeriod;
+        }
+
+        if (obj.ScheduleDate.HasValue)
+        {
+            await scheduledMessageStore.ValidateAsync(document.SenderUserId, peer, obj.ScheduleDate.Value,
+                document.RepeatPeriod, 0);
+            document.ScheduleDate = obj.ScheduleDate.Value;
+        }
+
+        // Moving a queued message to (almost) now means sending it, exactly like
+        // messages.sendScheduledMessages would.
+        if (ScheduledMessageRules.ShouldSendImmediately(document.ScheduleDate, CurrentDate))
+        {
+            return await scheduledMessageDispatcher.FlushAsync([document], input.ToRequestInfo());
+        }
+
+        await scheduledMessageStore.ReplaceAsync(document);
+
+        var updates = scheduledMessageStore.BuildNewScheduledUpdates([document], input.UserId, input.Layer);
+        await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, document.SenderUserId), updates,
+            excludeAuthKeyId: input.AuthKeyId);
+
+        return updates;
     }
 
     private async Task NotifyBusinessBotsEditAsync(long userId, long peerId, int messageId, string newText)

@@ -2,6 +2,8 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Scheduled;
+using MyTelegram.Messenger.Services.VideoProcessing;
 
 namespace MyTelegram.Messenger.Services.Impl;
 
@@ -20,7 +22,9 @@ public class MessageAppService(
     IOptionsMonitor<MyTelegramMessengerServerOptions> options,
     IIdGenerator idGenerator,
     IMongoDatabase mongoDatabase,
-    IObjectMessageSender objectMessageSender)
+    IObjectMessageSender objectMessageSender,
+    IScheduledMessageStore scheduledMessageStore,
+    IVideoProcessingService videoProcessingService)
     : BaseAppService, IMessageAppService, ITransientDependency
 {
     private const string HashtagPattern = "#(\\w+)";
@@ -303,19 +307,32 @@ public class MessageAppService(
         }
 
         List<SendMessageItem> sendMessageItems = [];
-        List<SendMessageItem> scheduledItems = [];
+        List<ScheduledQueueItem> scheduledItems = [];
         var firstInput = inputs.First();
         var requestInfo = firstInput.RequestInfo;
+
+        await ValidateScheduledMessagesAsync(inputs);
 
         foreach (var input in inputs)
         {
             CheckBotPermission(input.RequestInfo.UserId, input.ToPeer);
-            var item = await CreateSendMessageItemAsync(input);
+
+            // A video posted to a big channel is converted server side before it is delivered, so it
+            // goes through the schedule queue even though the client never asked for a schedule date.
+            // See https://corefork.telegram.org/api/scheduled-messages#automatic-video-processing
+            var videoProcessingPending = !input.ScheduleDate.HasValue &&
+                                         await videoProcessingService.ShouldProcessAsync(input.Media, input.ToPeer);
+            var conversionDate = videoProcessingPending
+                ? CurrentDate + videoProcessingService.EstimateConversionSeconds(input.Media)
+                : (int?)null;
+
+            var item = await CreateSendMessageItemAsync(input, conversionDate);
 
             // Separate scheduled messages from immediate messages
             if (item.MessageItem.ScheduleDate.HasValue)
             {
-                scheduledItems.Add(item);
+                scheduledItems.Add(new ScheduledQueueItem(item.MessageItem, input.ScheduleRepeatPeriod,
+                    input.MessageId, videoProcessingPending));
             }
             else
             {
@@ -323,7 +340,7 @@ public class MessageAppService(
             }
         }
 
-        // Save scheduled messages to MongoDB
+        // Save scheduled messages to the schedule queue
         if (scheduledItems.Count > 0)
         {
             await SaveScheduledMessagesAsync(scheduledItems, requestInfo);
@@ -736,7 +753,12 @@ public class MessageAppService(
         }
     }
 
-    private async Task<SendMessageItem> CreateSendMessageItemAsync(SendMessageInput input)
+    /// <param name="scheduleDateOverride">
+    /// Set when the server itself queues the message (video processing), so it is queued at the
+    /// estimated conversion date even though the client asked for an immediate send.
+    /// </param>
+    private async Task<SendMessageItem> CreateSendMessageItemAsync(SendMessageInput input,
+        int? scheduleDateOverride = null)
     {
         //await CheckSendAsAsync(input);
         await CheckGlobalPrivacySettingsAsync(input);
@@ -820,19 +842,14 @@ public class MessageAppService(
         postAuthor = input.PostAuthor ?? postAuthor;
         views = input.Views ?? views;
 
-        var scheduleDate = input.ScheduleDate;
-        if (scheduleDate.HasValue)
+        var scheduleDate = scheduleDateOverride ?? input.ScheduleDate;
+        if (scheduleDate.HasValue && !scheduleDateOverride.HasValue &&
+            ScheduledMessageRules.ShouldSendImmediately(scheduleDate.Value, CurrentDate))
         {
-            // If the schedule_date is less than 20 seconds in the future, the message will be sent immediately,
-            // generating a normal updateNewMessage/updateNewChannelMessage.
-            if (scheduleDate.Value - CurrentDate < 20)
-            {
-                scheduleDate = null;
-            }
-            else
-            {
-                idType = IdType.ScheduleMessageId;
-            }
+            // "If the schedule_date is less than 10 seconds in the future, the message will be sent
+            // immediately, generating a normal updateNewMessage/updateNewChannelMessage."
+            // See https://corefork.telegram.org/api/scheduled-messages
+            scheduleDate = null;
         }
 
         var pts = 0;
@@ -845,9 +862,14 @@ public class MessageAppService(
         var messageId = input.MessageId ?? await idGenerator.NextIdAsync(idType, ownerPeerId);
         //var messageId = 0;
         int? scheduleMessageId = null;
-        if (idType == IdType.ScheduleMessageId)
+        if (scheduleDate.HasValue)
         {
-            scheduleMessageId = await idGenerator.NextIdAsync(IdType.ScheduleMessageId, ownerPeerId);
+            // The id inside the schedule queue comes from the same per peer sequence as real message ids:
+            // clients address a queued message with a plain message id (messages.editMessage,
+            // messages.deleteScheduledMessages), so the two id spaces must never overlap.
+            scheduleMessageId = input.MessageId.HasValue
+                ? await idGenerator.NextIdAsync(IdType.MessageId, ownerPeerId)
+                : messageId;
         }
 
         var date = CurrentDate;
@@ -993,115 +1015,48 @@ public class MessageAppService(
         return hashtags;
     }
 
-    private async Task SaveScheduledMessagesAsync(List<SendMessageItem> scheduledItems, RequestInfo requestInfo)
+    /// <summary>
+    /// Puts the messages into the schedule queue of their peer and answers the client with the
+    /// <c>updateNewScheduledMessage</c> updates it expects.
+    /// See https://corefork.telegram.org/api/scheduled-messages
+    /// </summary>
+    private async Task SaveScheduledMessagesAsync(List<ScheduledQueueItem> scheduledItems, RequestInfo requestInfo)
     {
-        var collection = mongoDatabase.GetCollection<BsonDocument>("scheduled_messages");
+        var documents = await scheduledMessageStore.SaveAsync(scheduledItems, requestInfo);
+        var updates = scheduledMessageStore.BuildNewScheduledUpdates(documents, requestInfo.UserId, requestInfo.Layer);
 
-        foreach (var item in scheduledItems)
+        // Nothing else answers the request: a scheduled message never reaches the send saga, so the
+        // domain event handler that normally produces the rpc result never runs.
+        if (requestInfo.ReqMsgId != 0)
         {
-            var messageItem = item.MessageItem;
-
-            var doc = new BsonDocument
-            {
-                ["_id"] = $"scheduled-{messageItem.OwnerPeer.PeerId}-{messageItem.ScheduleMessageId ?? messageItem.MessageId}",
-                ["ScheduledMessageId"] = messageItem.ScheduleMessageId ?? messageItem.MessageId,
-                ["SenderUserId"] = messageItem.SenderPeer.PeerId,
-                ["PeerId"] = messageItem.ToPeer.PeerId,
-                ["PeerType"] = messageItem.ToPeer.PeerType.ToString(),
-                ["Message"] = messageItem.Message,
-                ["ScheduleDate"] = messageItem.ScheduleDate!.Value,
-                ["RandomId"] = messageItem.RandomId,
-                ["CreatedAt"] = DateTime.UtcNow
-            };
-
-            if (messageItem.InputReplyTo != null)
-            {
-                var replyToMsgId = messageItem.InputReplyTo.ToReplyToMsgId();
-                if (replyToMsgId.HasValue)
-                {
-                    doc["ReplyToMsgId"] = replyToMsgId.Value;
-                }
-            }
-
-            if (messageItem.Entities != null && messageItem.Entities.Count > 0)
-            {
-                doc["Entities"] = System.Text.Json.JsonSerializer.Serialize(messageItem.Entities);
-            }
-
-            if (messageItem.Media != null)
-            {
-                doc["MediaType"] = messageItem.Media.GetType().Name;
-                doc["MediaData"] = System.Text.Json.JsonSerializer.Serialize(messageItem.Media);
-            }
-
-            if (messageItem.ReplyMarkup != null)
-            {
-                doc["ReplyMarkup"] = System.Text.Json.JsonSerializer.Serialize(messageItem.ReplyMarkup);
-            }
-
-            doc["Silent"] = messageItem.Silent;
-            doc["NoForwards"] = messageItem.NoForwards;
-
-            await collection.InsertOneAsync(doc);
+            await objectMessageSender.SendRpcMessageToClientAsync(requestInfo, updates);
         }
 
-        // Send updateNewScheduledMessage to client
-        foreach (var item in scheduledItems)
-        {
-            var messageItem = item.MessageItem;
-
-            var message = new TMessage
-            {
-                Id = messageItem.ScheduleMessageId ?? messageItem.MessageId,
-                Out = true,
-                FromId = new TPeerUser { UserId = messageItem.SenderPeer.PeerId },
-                PeerId = ConvertToPeer(messageItem.ToPeer),
-                Date = messageItem.ScheduleDate!.Value,
-                Message = messageItem.Message,
-                Entities = messageItem.Entities ?? new TVector<IMessageEntity>(),
-                Silent = messageItem.Silent,
-                Noforwards = messageItem.NoForwards
-            };
-
-            if (messageItem.InputReplyTo != null)
-            {
-                var replyToMsgId = messageItem.InputReplyTo.ToReplyToMsgId();
-                if (replyToMsgId.HasValue)
-                {
-                    message.ReplyTo = new TMessageReplyHeader { ReplyToMsgId = replyToMsgId.Value };
-                }
-            }
-
-            var update = new TUpdateNewScheduledMessage
-            {
-                Message = message
-            };
-
-            var updates = new TUpdates
-            {
-                Updates = new TVector<IUpdate> { update },
-                Users = new TVector<IUser>(),
-                Chats = new TVector<IChat>(),
-                Date = CurrentDate
-            };
-
-            await objectMessageSender.PushMessageToPeerAsync(
-                new Peer(PeerType.User, messageItem.SenderPeer.PeerId),
-                updates,
-                pts: 0
-            );
-        }
+        await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, requestInfo.UserId), updates,
+            excludeAuthKeyId: requestInfo.AuthKeyId);
     }
 
-    private static IPeer ConvertToPeer(Peer peer)
+    /// <summary>
+    /// Validates every scheduling request of the batch before anything is written.
+    /// </summary>
+    private async Task ValidateScheduledMessagesAsync(List<SendMessageInput> inputs)
     {
-        return peer.PeerType switch
+        var scheduledInputs = inputs.Where(p => p.ScheduleDate.HasValue).ToList();
+        if (scheduledInputs.Count == 0)
         {
-            PeerType.User => new TPeerUser { UserId = peer.PeerId },
-            PeerType.Chat => new TPeerChat { ChatId = peer.PeerId },
-            PeerType.Channel => new TPeerChannel { ChannelId = peer.PeerId },
-            _ => new TPeerUser { UserId = peer.PeerId }
-        };
+            return;
+        }
+
+        foreach (var input in scheduledInputs)
+        {
+            if (ScheduledMessageRules.ShouldSendImmediately(input.ScheduleDate!.Value, CurrentDate))
+            {
+                continue;
+            }
+
+            await scheduledMessageStore.ValidateAsync(input.SenderUserId, input.ToPeer, input.ScheduleDate.Value,
+                input.ScheduleRepeatPeriod, scheduledInputs.Count);
+        }
     }
 
     private async Task CheckGlobalPrivacySettingsAsync(SendMessageInput input)

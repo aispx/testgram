@@ -447,6 +447,15 @@ services:
       App__ReadModelDatabaseName: ${App__ReadModelDatabaseName}
       App__AccessHashSecretKey: ${App__AccessHashSecretKey}
       App__FileServerGrpcServiceUrl: ${App__FileServerGrpcServiceUrl}
+      # Server side video processing (alternative qualities of videos posted to big channels):
+      # ffmpeg runs inside this container, the renditions are stored in the same MinIO bucket the
+      # file server uses. See https://corefork.telegram.org/api/scheduled-messages
+      Minio__Endpoint: ${Minio__Endpoint:-minio:9000}
+      Minio__AccessKey: ${Minio__AccessKey}
+      Minio__SecretKey: ${Minio__SecretKey}
+      Minio__BucketName: ${Minio__BucketName:-tg-files}
+      App__VideoProcessing__Enabled: ${App__VideoProcessing__Enabled:-True}
+      App__VideoProcessing__MinChannelParticipants: ${App__VideoProcessing__MinChannelParticipants:-1}
       App__FixedVerifyCode: ${App__FixedVerifyCode}
       App__VerificationCodeLength: ${App__VerificationCodeLength}
       App__VerificationCodeExpirationSeconds: ${App__VerificationCodeExpirationSeconds}

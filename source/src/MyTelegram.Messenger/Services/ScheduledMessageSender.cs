@@ -1,54 +1,51 @@
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Caching;
+using MyTelegram.Messenger.Services.Scheduled;
 
 namespace MyTelegram.Messenger.Services;
 
-public class ScheduledMessageSender : BackgroundService
+/// <summary>
+/// Fires the schedule queues: sends the messages whose time has come and the ones waiting for their
+/// peer to come online.
+/// See https://corefork.telegram.org/api/scheduled-messages
+/// </summary>
+public class ScheduledMessageSender(
+    IServiceScopeFactory serviceScopeFactory,
+    IMongoDatabase mongoDatabase,
+    ILogger<ScheduledMessageSender> logger)
+    : BackgroundService
 {
-    private readonly IMongoDatabase _mongoDatabase;
-    private readonly IMessageAppService _messageAppService;
-    private readonly ILogger<ScheduledMessageSender> _logger;
+    /// <summary>
+    /// How long a claimed entry stays reserved for this process.
+    /// </summary>
+    private const int LeaseSeconds = 60;
 
-    public ScheduledMessageSender(
-        IMongoDatabase mongoDatabase,
-        IMessageAppService messageAppService,
-        ILogger<ScheduledMessageSender> logger)
-    {
-        _mongoDatabase = mongoDatabase;
-        _messageAppService = messageAppService;
-        _logger = logger;
-    }
+    private const int BatchSize = 100;
+
+    /// <summary>
+    /// The loop never sleeps longer than this, so newly queued, re-scheduled and when-online entries are
+    /// picked up quickly.
+    /// </summary>
+    private static readonly TimeSpan MaxIdleDelay = TimeSpan.FromSeconds(10);
+
+    private const int MaxAttempts = 5;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("ScheduledMessageSender started");
+        logger.LogInformation("ScheduledMessageSender started");
+
+        await EnsureIndexesAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var nextScheduleTime = await GetNextScheduleTimeAsync(stoppingToken);
-
-                if (nextScheduleTime.HasValue)
+                var processed = await ProcessAsync(stoppingToken);
+                if (processed == 0)
                 {
-                    var delay = nextScheduleTime.Value - DateTimeOffset.UtcNow;
-                    if (delay > TimeSpan.Zero)
-                    {
-                        _logger.LogDebug("Next scheduled message at {Time}, waiting {Delay}s",
-                            nextScheduleTime.Value, delay.TotalSeconds);
-                        await Task.Delay(delay, stoppingToken);
-                    }
+                    await Task.Delay(await GetIdleDelayAsync(stoppingToken), stoppingToken);
                 }
-                else
-                {
-                    // No scheduled messages, check again in 30 seconds
-                    await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
-                    continue;
-                }
-
-                await ProcessScheduledMessagesAsync(stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -56,110 +53,142 @@ public class ScheduledMessageSender : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing scheduled messages");
+                logger.LogError(ex, "Error processing scheduled messages");
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
         }
 
-        _logger.LogInformation("ScheduledMessageSender stopped");
+        logger.LogInformation("ScheduledMessageSender stopped");
     }
 
-    private async Task<DateTimeOffset?> GetNextScheduleTimeAsync(CancellationToken cancellationToken)
+    private async Task EnsureIndexesAsync(CancellationToken cancellationToken)
     {
-        var collection = _mongoDatabase.GetCollection<BsonDocument>("scheduled_messages");
-        var doc = await collection.Find(FilterDefinition<BsonDocument>.Empty)
-            .Sort(Builders<BsonDocument>.Sort.Ascending("ScheduleDate"))
-            .Limit(1)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (doc == null)
-            return null;
-
-        var scheduleDate = doc["ScheduleDate"].AsInt32;
-        return DateTimeOffset.FromUnixTimeSeconds(scheduleDate);
-    }
-
-    private async Task ProcessScheduledMessagesAsync(CancellationToken cancellationToken)
-    {
-        var collection = _mongoDatabase.GetCollection<BsonDocument>("scheduled_messages");
-        var currentTime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-        // Find messages that should be sent now
-        var filter = Builders<BsonDocument>.Filter.Lte("ScheduleDate", currentTime);
-        var docs = await collection.Find(filter).ToListAsync(cancellationToken);
-
-        if (docs.Count == 0)
-            return;
-
-        _logger.LogInformation("Found {Count} scheduled messages to send", docs.Count);
-
-        // Group by sender and peer
-        var groupedMessages = docs.GroupBy(d => new
+        try
         {
-            SenderUserId = d["SenderUserId"].AsInt64,
-            PeerId = d["PeerId"].AsInt64,
-            PeerType = d["PeerType"].AsString
-        });
+            using var scope = serviceScopeFactory.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<IScheduledMessageStore>()
+                .EnsureIndexesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not create the indexes of the scheduled messages collection");
+        }
+    }
 
-        foreach (var group in groupedMessages)
+    private async Task<int> ProcessAsync(CancellationToken cancellationToken)
+    {
+        using var scope = serviceScopeFactory.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IScheduledMessageStore>();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<IScheduledMessageDispatcher>();
+
+        var now = DateTime.UtcNow.ToTimestamp();
+        var documents = await store.ClaimDueAsync(now, BatchSize, LeaseSeconds, cancellationToken);
+
+        var onlineUserIds = await GetOnlineUserIdsAsync(cancellationToken);
+        documents.AddRange(await store.ClaimWhenOnlineAsync(onlineUserIds, BatchSize, LeaseSeconds,
+            cancellationToken));
+
+        if (documents.Count == 0)
+        {
+            return 0;
+        }
+
+        logger.LogInformation("Flushing {Count} scheduled messages", documents.Count);
+
+        // Failures are isolated per group: one broken message must not hold up the rest of the queue, and
+        // it must not be retried in a tight loop either. An album stays one group so its parts are still
+        // sent together.
+        foreach (var batch in BuildBatches(documents))
         {
             try
             {
-                var peerType = Enum.Parse<PeerType>(group.Key.PeerType);
-                var peer = new Peer(peerType, group.Key.PeerId);
-
-                var sendInputs = new List<SendMessageInput>();
-                var scheduledIds = new List<int>();
-
-                foreach (var doc in group)
-                {
-                    var entities = doc.Contains("Entities") && !doc["Entities"].IsBsonNull
-                        ? System.Text.Json.JsonSerializer.Deserialize<TVector<IMessageEntity>>(doc["Entities"].AsString)
-                        : null;
-
-                    var sendInput = new SendMessageInput(
-                        new RequestInfo(
-                            ConnectionId: "scheduled",
-                            SessionId: 0,
-                            ReqMsgId: 0,
-                            UserId: group.Key.SenderUserId,
-                            AccessHashKeyId: 0,
-                            AuthKeyId: 0,
-                            PermAuthKeyId: 0,
-                            RequestId: Guid.NewGuid(),
-                            Layer: 222,
-                            Date: DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                        ),
-                        group.Key.SenderUserId,
-                        peer,
-                        doc["Message"].AsString,
-                        doc["RandomId"].AsInt64,
-                        entities: entities,
-                        sendMessageType: SendMessageType.Text,
-                        messageType: MessageType.Text,
-                        silent: doc.Contains("Silent") && doc["Silent"].AsBoolean,
-                        noForwards: doc.Contains("NoForwards") && doc["NoForwards"].AsBoolean
-                    );
-
-                    sendInputs.Add(sendInput);
-                    scheduledIds.Add(doc["ScheduledMessageId"].AsInt32);
-                }
-
-                // Send messages
-                await _messageAppService.SendMessageAsync(sendInputs);
-
-                // Delete from scheduled queue
-                var deleteFilter = Builders<BsonDocument>.Filter.In("ScheduledMessageId", scheduledIds);
-                await collection.DeleteManyAsync(deleteFilter, cancellationToken);
-
-                _logger.LogInformation("Sent {Count} scheduled messages for user {UserId} to peer {PeerId}",
-                    scheduledIds.Count, group.Key.SenderUserId, group.Key.PeerId);
+                await dispatcher.FlushAsync(batch);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending scheduled messages for user {UserId}",
-                    group.Key.SenderUserId);
+                foreach (var document in batch)
+                {
+                    var nextAttemptDate = now + Math.Min(60 * (int)Math.Pow(2, document.Attempts), 3600);
+                    await store.ReleaseAsync(document, nextAttemptDate);
+
+                    if (document.Attempts + 1 >= MaxAttempts)
+                    {
+                        logger.LogError(ex,
+                            "Scheduled message {Id} failed {Attempts} times, next attempt at {NextAttemptDate}",
+                            document.Id, document.Attempts + 1, nextAttemptDate);
+                    }
+                    else
+                    {
+                        logger.LogWarning(ex,
+                            "Could not send scheduled message {Id}, next attempt at {NextAttemptDate}",
+                            document.Id, nextAttemptDate);
+                    }
+                }
             }
         }
+
+        return documents.Count;
+    }
+
+    /// <summary>
+    /// Album parts must be sent in one go, everything else is flushed on its own so a single broken
+    /// message cannot take the rest of the batch down with it.
+    /// </summary>
+    private static List<List<ScheduledMessageDocument>> BuildBatches(List<ScheduledMessageDocument> documents)
+    {
+        var batches = new List<List<ScheduledMessageDocument>>();
+        foreach (var group in documents.GroupBy(p => new { p.SenderUserId, p.PeerId, p.PeerType, p.Item.GroupId }))
+        {
+            if (group.Key.GroupId.HasValue)
+            {
+                batches.Add(group.ToList());
+                continue;
+            }
+
+            batches.AddRange(group.Select(p => new List<ScheduledMessageDocument> { p }));
+        }
+
+        return batches;
+    }
+
+    /// <summary>
+    /// Users that are online right now, for the entries scheduled with the special "when online" date.
+    /// </summary>
+    private async Task<List<long>> GetOnlineUserIdsAsync(CancellationToken cancellationToken)
+    {
+        var since = DateTime.UtcNow.AddSeconds(-OnlineWindowSeconds);
+        var collection = mongoDatabase.GetCollection<UserStatusMongoModel>("user_status");
+
+        var statuses = await collection
+            .Find(Builders<UserStatusMongoModel>.Filter.And(
+                Builders<UserStatusMongoModel>.Filter.Eq(p => p.Online, true),
+                Builders<UserStatusMongoModel>.Filter.Gte(p => p.LastOnline, since)))
+            .Project(Builders<UserStatusMongoModel>.Projection.Include(p => p.UserId))
+            .ToListAsync(cancellationToken);
+
+        return statuses.Select(p => p["UserId"].AsInt64).ToList();
+    }
+
+    /// <summary>
+    /// Same window the user status cache uses to consider a presence report still valid.
+    /// </summary>
+    private const int OnlineWindowSeconds = 90;
+
+    private async Task<TimeSpan> GetIdleDelayAsync(CancellationToken cancellationToken)
+    {
+        using var scope = serviceScopeFactory.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IScheduledMessageStore>();
+
+        var nextScheduleDate = await store.GetNextScheduleDateAsync(cancellationToken);
+        if (!nextScheduleDate.HasValue)
+        {
+            return MaxIdleDelay;
+        }
+
+        var delay = TimeSpan.FromSeconds(nextScheduleDate.Value - DateTime.UtcNow.ToTimestamp());
+
+        // A due entry that could not be claimed belongs to another command server or is waiting out its
+        // retry backoff, so there is nothing to gain from spinning on it.
+        return delay <= TimeSpan.Zero || delay > MaxIdleDelay ? MaxIdleDelay : delay;
     }
 }

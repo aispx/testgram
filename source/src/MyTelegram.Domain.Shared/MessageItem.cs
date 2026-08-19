@@ -68,7 +68,13 @@ public record MessageItem
     /// TopMsgId but is not a forum topic, so the two must not be conflated in messageReplyHeader.
     /// See https://corefork.telegram.org/api/threads
     /// </summary>
-    bool ForumTopic = false
+    bool ForumTopic = false,
+    /// <summary>
+    /// True when the message was flushed from the schedule queue. <see cref="ScheduleDate"/> is cleared
+    /// at that point, so the <c>from_scheduled</c> flag has to be carried separately.
+    /// See https://corefork.telegram.org/api/scheduled-messages
+    /// </summary>
+    bool FromScheduled = false
 //int? DefaultHistoryTtl = null,
 //int? Ttl = null
 );

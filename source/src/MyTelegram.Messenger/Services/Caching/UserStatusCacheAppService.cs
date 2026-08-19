@@ -6,6 +6,12 @@ public class UserStatusMongoModel
 {
     public long UserId { get; set; }
     public DateTime LastOnline { get; set; }
+
+    /// <summary>
+    /// Last reported presence. The in-memory cache lives inside a single process, so background work in
+    /// other services (the scheduled message sender waiting for a user to come online) reads it here.
+    /// </summary>
+    public bool Online { get; set; }
 }
 
 public class UserStatusCacheAppService(
@@ -39,7 +45,9 @@ public class UserStatusCacheAppService(
         // Persist to MongoDB
         Collection.UpdateOneAsync(
             Builders<UserStatusMongoModel>.Filter.Eq(x => x.UserId, userId),
-            Builders<UserStatusMongoModel>.Update.Set(x => x.LastOnline, item.LastUpdateDate),
+            Builders<UserStatusMongoModel>.Update
+                .Set(x => x.LastOnline, item.LastUpdateDate)
+                .Set(x => x.Online, online),
             new UpdateOptions { IsUpsert = true });
     }
 

@@ -62,6 +62,59 @@ public class MyTelegramMessengerServerOptions
     public RatesConfig Rates { get; set; } = new();
     public CallsConfig Calls { get; set; } = new();
     public WebAppsConfig WebApps { get; set; } = new();
+    public VideoProcessingConfig VideoProcessing { get; set; } = new();
+}
+
+/// <summary>
+/// Server side video processing: videos posted to a big channel are converted into alternative
+/// qualities before the message is delivered, and the extra renditions ride along in
+/// <c>messageMediaDocument.alt_documents</c>.
+/// See https://corefork.telegram.org/api/scheduled-messages#automatic-video-processing
+/// </summary>
+public class VideoProcessingConfig
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// How many participants a broadcast channel needs before its videos are converted. Telegram
+    /// only does this for "big channels"; on a self hosted server the bar is a configuration choice.
+    /// </summary>
+    public int MinChannelParticipants { get; set; } = 1;
+
+    /// <summary>
+    /// Heights of the alternative qualities to generate. A rung is skipped when the source video is
+    /// not taller than it, so a 480p upload never gets a 720p "alternative".
+    /// </summary>
+    public List<int> Heights { get; set; } = [360, 480, 720];
+
+    public string FfmpegPath { get; set; } = "ffmpeg";
+
+    public string FfprobePath { get; set; } = "ffprobe";
+
+    public string Preset { get; set; } = "veryfast";
+
+    [Range(0, 51)]
+    public int Crf { get; set; } = 28;
+
+    public string AudioBitrate { get; set; } = "96k";
+
+    /// <summary>Videos larger than this are delivered untouched.</summary>
+    public long MaxSourceSizeBytes { get; set; } = 200L * 1024 * 1024;
+
+    /// <summary>Videos longer than this are delivered untouched.</summary>
+    public int MaxDurationSeconds { get; set; } = 30 * 60;
+
+    /// <summary>Wall clock limit for one ffmpeg run.</summary>
+    public int TimeoutSeconds { get; set; } = 30 * 60;
+
+    /// <summary>
+    /// Seconds of conversion assumed per second of video, used for the estimated conversion date the
+    /// client shows while the message sits in the queue.
+    /// </summary>
+    public double EstimateSecondsPerSecond { get; set; } = 0.5;
+
+    [Range(5, int.MaxValue)]
+    public int MinEstimateSeconds { get; set; } = 15;
 }
 
 /// <summary>

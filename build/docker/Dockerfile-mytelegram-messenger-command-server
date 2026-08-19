@@ -1,4 +1,9 @@
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS base
+# ffmpeg/ffprobe are what generate the alternative video qualities of the messages parked in the
+# schedule queue. See https://corefork.telegram.org/api/scheduled-messages#automatic-video-processing
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 USER $APP_UID
 WORKDIR /app
 

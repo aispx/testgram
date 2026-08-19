@@ -45,7 +45,9 @@ public record SendMessageInput
         MessageSubType messageSubType = MessageSubType.Normal,
         string? postAuthor = null,
         int? views = null,
-        bool noForwards = false
+        bool noForwards = false,
+        bool fromScheduled = false,
+        int? scheduleRepeatPeriod = null
         )
     {
         RequestInfo = requestInfo;
@@ -88,6 +90,8 @@ public record SendMessageInput
         PostAuthor = postAuthor;
         Views = views;
         NoForwards = noForwards;
+        FromScheduled = fromScheduled;
+        ScheduleRepeatPeriod = scheduleRepeatPeriod;
     }
 
     public bool ClearDraft { get; }
@@ -106,6 +110,12 @@ public record SendMessageInput
     public bool IsSendQuickReplyMessage { get; }
     public bool Silent { get; }
     public int? ScheduleDate { get; }
+
+    /// <summary>
+    /// <c>schedule_repeat_period</c>: the message is re-scheduled this many seconds after every send.
+    /// Premium only, single messages only.
+    /// </summary>
+    public int? ScheduleRepeatPeriod { get; }
     public bool InvertMedia { get; }
     public long? PaidMessageStars { get; }
     public int? TtlPeriod { get; }
@@ -117,6 +127,12 @@ public record SendMessageInput
     public string? PostAuthor { get; }
     public int? Views { get; }
     public bool NoForwards { get; }
+
+    /// <summary>
+    /// Set when the message is being flushed from the schedule queue, so the sent message keeps the
+    /// <c>from_scheduled</c> flag. See https://corefork.telegram.org/api/scheduled-messages
+    /// </summary>
+    public bool FromScheduled { get; }
     public IMessageMedia? Media { get; }
     public IInputMedia? InputMedia { get; }
 
