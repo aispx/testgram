@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// <a href="https://corefork.telegram.org/api/pin">Unpin</a> all pinned messages
@@ -12,24 +15,25 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class UnpinAllMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IPtsHelper ptsHelper, IQueryProcessor queryProcessor, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUnpinAllMessages, MyTelegram.Schema.Messages.IAffectedHistory>
+internal sealed class UnpinAllMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IPinRightsChecker pinRightsChecker, IPtsHelper ptsHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUnpinAllMessages, MyTelegram.Schema.Messages.IAffectedHistory>
 {
     protected override async Task<MyTelegram.Schema.Messages.IAffectedHistory> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestUnpinAllMessages obj)
     {
-        var peer = peerHelper.GetPeer(obj.Peer);
-        var ownerPeerId = input.UserId;
-        if (peer.PeerType == PeerType.Channel)
+        // Without the self user id inputPeerSelf resolves to peer id 0, and unpinning in Saved Messages
+        // would silently match nothing.
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        if (peer == null || peer.PeerType == PeerType.Empty)
         {
-            // pin_messages in groups, edit_messages in broadcast channels — same split as
-            // messages.updatePinnedMessage.
-            var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
-            await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId,
-                rights => channelReadModel!.Broadcast ? rights.EditMessages : rights.PinMessages,
-                RpcErrors.RpcErrors400.ChatAdminRequired);
-            ownerPeerId = peer.PeerId;
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }
 
-        var messageItems = await queryProcessor.ProcessAsync(new GetSimpleMessageListQuery(ownerPeerId, peer, null, true, true, MyTelegramConsts.UnPinAllMessagesDefaultPageSize));
+        await pinRightsChecker.CheckPinRightsAsync(input, peer!);
+
+        var ownerPeerId = peer!.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
+        var savedPeer = obj.SavedPeerId == null ? null : peerHelper.GetPeer(obj.SavedPeerId, input.UserId);
+
+        var messageItems = await queryProcessor.ProcessAsync(new GetSimpleMessageListQuery(ownerPeerId, peer, null,
+            true, true, MyTelegramConsts.UnPinAllMessagesDefaultPageSize, obj.TopMsgId, savedPeer));
         if (messageItems.Count == 0)
         {
             return new TAffectedHistory
@@ -40,8 +44,41 @@ internal sealed class UnpinAllMessagesHandler(ICommandBus commandBus, IPeerHelpe
             };
         }
 
-        var command = new StartUnpinAllMessagesCommand(TempId.New, input.ToRequestInfo(), messageItems, peer);
+        // A full page means more pinned messages may be left; the saga turns this into the
+        // affectedHistory offset the client loops on.
+        var lastBatch = PinPagingHelper.IsLastBatch(messageItems.Count);
+
+        var command = new StartUnpinAllMessagesCommand(TempId.New, input.ToRequestInfo(), messageItems, peer, lastBatch);
         await commandBus.PublishAsync(command);
+
+        if (peer.PeerType == PeerType.Channel)
+        {
+            await LogUnpinAsync(input, peer, messageItems);
+        }
+
         return null!;
+    }
+
+    /// <summary>
+    /// Recent actions show every unpin, not only the ones made one by one through
+    /// messages.updatePinnedMessage. The <c>pinned</c> flag left unset is what marks the entry as an unpin.
+    /// </summary>
+    private async Task LogUnpinAsync(IRequestInput input, Peer peer, IReadOnlyCollection<SimpleMessageItem> messageItems)
+    {
+        foreach (var item in messageItems)
+        {
+            var message = new TMessage
+            {
+                Id = item.MessageId,
+                PeerId = new TPeerChannel { ChannelId = peer.PeerId },
+                Message = string.Empty,
+                Date = CurrentDate,
+                Pinned = false,
+                Media = new TMessageMediaEmpty(),
+                Entities = new TVector<IMessageEntity>()
+            };
+
+            await AdminLogHelper.LogUpdatePinned(mongoDatabase, peer.PeerId, input.UserId, message);
+        }
     }
 }

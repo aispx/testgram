@@ -19,7 +19,8 @@ internal sealed class GetFullChatHandler(
     IChatConverterService chatConverterService,
     IPhotoAppService photoAppService,
     IChannelAppService channelAppService,
-    IMongoDatabase mongoDatabase)
+    IMongoDatabase mongoDatabase,
+    IPinnedMessageResolver pinnedMessageResolver)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetFullChat, MyTelegram.Schema.Messages.IChatFull>
 {
     protected override async Task<MyTelegram.Schema.Messages.IChatFull> HandleCoreAsync(IRequestInput input, RequestGetFullChat obj)
@@ -42,6 +43,14 @@ internal sealed class GetFullChatHandler(
                 if (activeCall != null)
                 {
                     GroupCallStateHelper.ApplyActiveCallToChatFull(chatFull, activeCall, input.UserId);
+                }
+
+                // ChannelFullReadModel.PinnedMsgId is never written, so the latest pinned message has to
+                // be resolved live here just like channels.getFullChannel does.
+                var pinnedMsgId = await pinnedMessageResolver.GetChannelPinnedMsgIdAsync(obj.ChatId);
+                if (pinnedMsgId.HasValue && chatFull.FullChat is TChannelFull tChannelFull)
+                {
+                    tChannelFull.PinnedMsgId = pinnedMsgId.Value;
                 }
 
                 return chatFull;

@@ -13,7 +13,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// Returns extended user info by ID.
 /// <para><c>See <a href="https://corefork.telegram.org/method/users.getFullUser"/> </c></para>
 /// </summary>
-internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
+internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IPinnedMessageResolver pinnedMessageResolver, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
 {
     protected override async Task<MyTelegram.Schema.Users.IUserFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetFullUser obj)
     {
@@ -646,30 +646,10 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
 
     private async Task SetPinnedMsgIdAsync(long selfUserId, long targetUserId, IUserFull userFull)
     {
-        try
+        var pinnedMsgId = await pinnedMessageResolver.GetPrivateChatPinnedMsgIdAsync(selfUserId, targetUserId);
+        if (pinnedMsgId.HasValue)
         {
-            // Query latest pinned message in private chat
-            var collection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
-            var filter = Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("OwnerPeerId", selfUserId),
-                Builders<BsonDocument>.Filter.Eq("ToPeerType", 0), // PeerType.User
-                Builders<BsonDocument>.Filter.Eq("ToPeerId", targetUserId),
-                Builders<BsonDocument>.Filter.Eq("Pinned", true)
-            );
-
-            var pinnedMessage = await collection.Find(filter)
-                .SortByDescending(m => m["MessageId"])
-                .Limit(1)
-                .FirstOrDefaultAsync();
-
-            if (pinnedMessage != null)
-            {
-                userFull.PinnedMsgId = pinnedMessage["MessageId"].AsInt32;
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to load pinned message for user {SelfUserId} -> {TargetUserId}", selfUserId, targetUserId);
+            userFull.PinnedMsgId = pinnedMsgId.Value;
         }
     }
 

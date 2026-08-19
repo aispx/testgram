@@ -561,13 +561,21 @@ public record GetPinnedMessageListQuery(
     bool IncludeOtherParticipantMessages,
     int Limit) : IQuery<IReadOnlyCollection<SimpleMessageItem>>;
 
+/// <summary>
+/// <paramref name="TopMsgId" /> and <paramref name="SavedPeerId" /> narrow the result down to a single
+/// forum topic / monoforum topic, as required by the <c>top_msg_id</c> and <c>saved_peer_id</c>
+/// parameters of messages.unpinAllMessages.
+/// See https://corefork.telegram.org/method/messages.unpinAllMessages
+/// </summary>
 public record GetSimpleMessageListQuery(
     long OwnerPeerId,
     Peer ToPeer,
     List<int>? MessageIds,
     bool? Pinned,
     bool IncludeOtherParticipantMessages,
-    int Limit) : IQuery<IReadOnlyCollection<SimpleMessageItem>>;
+    int Limit,
+    int? TopMsgId = null,
+    Peer? SavedPeerId = null) : IQuery<IReadOnlyCollection<SimpleMessageItem>>;
 
 //public record GetBotCallbackAnswerQuery(long PeerId, long QueryId) : IQuery<IBotCallbackAnswerReadModel?>;
 public record GetBotByIdQuery(long BotUserId) : IQuery<IBotReadModel?>;

@@ -19,7 +19,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //ILayeredService<IChatConverter> layeredService,
- IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
+ IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IPinnedMessageResolver pinnedMessageResolver) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
 {
     protected override async Task<MyTelegram.Schema.Messages.IChatFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetFullChannel obj)
     {
@@ -337,28 +337,10 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
 
     private async Task SetPinnedMsgIdAsync(long channelId, ILayeredChannelFull channelFull)
     {
-        try
+        var pinnedMsgId = await pinnedMessageResolver.GetChannelPinnedMsgIdAsync(channelId);
+        if (pinnedMsgId.HasValue && channelFull is TChannelFull tChannelFull)
         {
-            // Query latest pinned message in channel
-            var collection = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-messagereadmodel");
-            var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("OwnerPeerId", channelId),
-                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("Pinned", true)
-            );
-
-            var pinnedMessage = await collection.Find(filter)
-                .SortByDescending(m => m["MessageId"])
-                .Limit(1)
-                .FirstOrDefaultAsync();
-
-            if (pinnedMessage != null && channelFull is TChannelFull tChannelFull)
-            {
-                tChannelFull.PinnedMsgId = pinnedMessage["MessageId"].AsInt32;
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to load pinned message for channel {ChannelId}", channelId);
+            tChannelFull.PinnedMsgId = pinnedMsgId.Value;
         }
     }
 }

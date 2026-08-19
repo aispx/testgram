@@ -27,28 +27,40 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class UpdatePinnedMessageHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IQueryProcessor queryProcessor, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase, IMessageConverterService messageConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUpdatePinnedMessage, MyTelegram.Schema.IUpdates>
+internal sealed class UpdatePinnedMessageHandler(ICommandBus commandBus, IPeerHelper peerHelper, IQueryProcessor queryProcessor, IPinRightsChecker pinRightsChecker, IMongoDatabase mongoDatabase, IMessageConverterService messageConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUpdatePinnedMessage, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestUpdatePinnedMessage obj)
     {
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
-        if (peer.PeerType == PeerType.Channel)
+        if (peer == null || peer.PeerType == PeerType.Empty)
         {
-            var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
-            if (channelReadModel!.DefaultBannedRights?.PinMessages ?? true)
-            {
-                // Pinning is governed by pin_messages in groups and by edit_messages in broadcast
-                // channels, mirroring ChatObject.canUserDoAction in the official client.
-                await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId,
-                    rights => channelReadModel.Broadcast ? rights.EditMessages : rights.PinMessages,
-                    RpcErrors.RpcErrors400.ChatAdminRequired);
-            }
+            RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }
 
-        var messageItems = await queryProcessor.ProcessAsync(new GetSimpleMessageListQuery(input.UserId, peer, [obj.Id], null, !obj.PmOneside, MyTelegramConsts.UnPinAllMessagesDefaultPageSize));
+        // pm_oneside only means anything in a one-to-one chat, and a bot has no local-only pin at all.
+        var pmOneSide = obj.PmOneside && peer!.PeerType is PeerType.User or PeerType.Self;
+        if (obj.PmOneside && peerHelper.IsBotUser(input.UserId))
+        {
+            RpcErrors.RpcErrors400.BotOnesideNotAvail.ThrowRpcError();
+        }
+
+        await pinRightsChecker.CheckPinRightsAsync(input, peer!);
+
+        var messageItems = await queryProcessor.ProcessAsync(new GetSimpleMessageListQuery(input.UserId, peer!, [obj.Id], null, !pmOneSide, MyTelegramConsts.UnPinAllMessagesDefaultPageSize));
         if (messageItems.Count == 0)
         {
             RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+        }
+
+        // Pinning an already pinned message (or unpinning a message that is not pinned) is a no-op for
+        // Telegram, not a second pin: without this guard the pin flow would emit another pts bump and
+        // another "pinned a message" service message. Only the caller's own copy is checked — the copy
+        // of the other participant is what the pin flow is about to bring in line.
+        var ownCopyInTargetState = await queryProcessor.ProcessAsync(new GetSimpleMessageListQuery(input.UserId,
+            peer!, [obj.Id], !obj.Unpin, false, MyTelegramConsts.UnPinAllMessagesDefaultPageSize));
+        if (ownCopyInTargetState.Count > 0)
+        {
+            RpcErrors.RpcErrors400.ChatNotModified.ThrowRpcError();
         }
 
         // Get full message for admin log
@@ -71,7 +83,7 @@ internal sealed class UpdatePinnedMessageHandler(ICommandBus commandBus, IPeerHe
             fullMessage = messages.FirstOrDefault();
         }
 
-        var command = new StartUpdatePinnedMessagesCommand(TempId.New, input.ToRequestInfo(), messageItems, peer, !obj.Unpin, obj.PmOneside);
+        var command = new StartUpdatePinnedMessagesCommand(TempId.New, input.ToRequestInfo(), messageItems, peer, !obj.Unpin, pmOneSide, obj.Silent);
         await commandBus.PublishAsync(command);
 
         // Create admin log for channel message pin/unpin

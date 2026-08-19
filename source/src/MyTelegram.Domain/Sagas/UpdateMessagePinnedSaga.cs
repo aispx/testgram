@@ -26,6 +26,13 @@ public class
 
     public bool PmOneSide { get; private set; }
 
+    /// <summary>
+    /// The <c>silent</c> flag of messages.updatePinnedMessage: the pin service message is still
+    /// created, but it must not trigger a notification.
+    /// See https://corefork.telegram.org/method/messages.updatePinnedMessage
+    /// </summary>
+    public bool Silent { get; private set; }
+
     // key=ownerPeerId
     public Dictionary<long, PinnedItem> UpdatedItems { get; set; } = new();
     public int TotalCount { get; private set; }
@@ -56,6 +63,7 @@ public class
         Pinned = aggregateEvent.Pinned;
         MessageItems = aggregateEvent.MessageItems;
         PmOneSide = aggregateEvent.PmOneSide;
+        Silent = aggregateEvent.Silent;
 
         TotalCount = aggregateEvent.MessageItems.Count;
     }
@@ -77,7 +85,8 @@ public class UpdateMessagePinnedStartedSagaEvent(
     IReadOnlyCollection<SimpleMessageItem> messageItems,
     Peer toPeer,
     bool pinned,
-    bool pmOneSide
+    bool pmOneSide,
+    bool silent
 )
     : AggregateEvent<UpdateMessagePinnedSaga, UpdateMessagePinnedSagaId>
 {
@@ -86,6 +95,7 @@ public class UpdateMessagePinnedStartedSagaEvent(
     public Peer ToPeer { get; } = toPeer;
     public bool Pinned { get; } = pinned;
     public bool PmOneSide { get; } = pmOneSide;
+    public bool Silent { get; } = silent;
 }
 
 public class MessagePinnedUpdatedSagaEvent(long ownerPeerId, int messageId, int pts)
@@ -128,7 +138,8 @@ public class UpdateMessagePinnedSaga : MyInMemoryAggregateSaga<UpdateMessagePinn
     {
         Emit(new UpdateMessagePinnedStartedSagaEvent(domainEvent.AggregateEvent.RequestInfo,
             domainEvent.AggregateEvent.MessageItems, domainEvent.AggregateEvent.ToPeer,
-            domainEvent.AggregateEvent.Pinned, domainEvent.AggregateEvent.PmOneSide));
+            domainEvent.AggregateEvent.Pinned, domainEvent.AggregateEvent.PmOneSide,
+            domainEvent.AggregateEvent.Silent));
 
         foreach (var item in domainEvent.AggregateEvent.MessageItems)
         {
@@ -207,11 +218,14 @@ public class UpdateMessagePinnedSaga : MyInMemoryAggregateSaga<UpdateMessagePinn
 
                 if (_state.UpdatedItems.TryGetValue(userIdOrChannelId, out var item))
                 {
-                    if (_state.ToPeer.PeerId == _state.RequestInfo.UserId && item.UserId == _state.RequestInfo.UserId)
+                    // Pinning in Saved Messages produces no "pinned a message" service message — but the
+                    // saga still has to complete, otherwise its in-memory state is never released.
+                    var isSavedMessages = _state.ToPeer.PeerId == _state.RequestInfo.UserId &&
+                                          item.UserId == _state.RequestInfo.UserId;
+                    if (!isSavedMessages)
                     {
-                        return;
+                        await SendServiceMessageToTargetPeerAsync(item.MessageIds.First(), replyToMsgItem, post);
                     }
-                    await SendServiceMessageToTargetPeerAsync(item.MessageIds.First(), replyToMsgItem, post);
                 }
             }
 
@@ -262,7 +276,8 @@ public class UpdateMessagePinnedSaga : MyInMemoryAggregateSaga<UpdateMessagePinn
             },
             MessageActionType: MessageActionType.PinMessage,
             Post: post,
-            ReplyToMsgItems: replyToMsgItems
+            ReplyToMsgItems: replyToMsgItems,
+            Silent: _state.Silent
         );
         var command = new StartSendMessageCommand(TempId.New,
             _state.RequestInfo with { RequestId = Guid.NewGuid() },

@@ -23,6 +23,14 @@ public class
 
     public Peer ToPeer { get; private set; } = default!;
 
+    /// <summary>
+    /// True when the handler fetched fewer messages than one page, i.e. nothing is left to unpin.
+    /// Drives <c>messages.affectedHistory.offset</c>: clients keep re-calling the method while the
+    /// offset is non-zero.
+    /// See https://corefork.telegram.org/method/messages.unpinAllMessages
+    /// </summary>
+    public bool LastBatch { get; private set; }
+
     // key=ownerPeerId
     public Dictionary<long, UnPinnedItem> UnPinnedItems { get; set; } = new();
     public int TotalCount { get; private set; }
@@ -34,6 +42,7 @@ public class
         ToPeer = aggregateEvent.ToPeer;
         TotalCount = aggregateEvent.MessageItems.Count;
         MessageItems = aggregateEvent.MessageItems;
+        LastBatch = aggregateEvent.LastBatch;
     }
 
     public void Apply(MessageUnpinnedSagaEvent aggregateEvent)
@@ -69,12 +78,14 @@ public class
 public class UnpinAllMessagesStartedSagaEvent(
     RequestInfo requestInfo,
     IReadOnlyCollection<SimpleMessageItem> messageItems,
-    Peer toPeer)
+    Peer toPeer,
+    bool lastBatch)
     : AggregateEvent<UnpinAllMessagesSaga, UnpinAllMessagesSagaId>
 {
     public RequestInfo RequestInfo { get; } = requestInfo;
     public IReadOnlyCollection<SimpleMessageItem> MessageItems { get; } = messageItems;
     public Peer ToPeer { get; } = toPeer;
+    public bool LastBatch { get; } = lastBatch;
 }
 
 public class MessageUnpinnedSagaEvent(long ownerPeerId, int messageId, int pts) : AggregateEvent<UnpinAllMessagesSaga, UnpinAllMessagesSagaId>
@@ -99,7 +110,7 @@ public class UnpinAllMessagesSaga : MyInMemoryAggregateSaga<UnpinAllMessagesSaga
 
     public Task HandleAsync(IDomainEvent<TempAggregate, TempId, UnpinAllMessagesStartedEvent> domainEvent, ISagaContext sagaContext, CancellationToken cancellationToken)
     {
-        Emit(new UnpinAllMessagesStartedSagaEvent(domainEvent.AggregateEvent.RequestInfo, domainEvent.AggregateEvent.MessageItems, domainEvent.AggregateEvent.ToPeer));
+        Emit(new UnpinAllMessagesStartedSagaEvent(domainEvent.AggregateEvent.RequestInfo, domainEvent.AggregateEvent.MessageItems, domainEvent.AggregateEvent.ToPeer, domainEvent.AggregateEvent.LastBatch));
 
         foreach (var item in domainEvent.AggregateEvent.MessageItems)
         {
@@ -133,7 +144,11 @@ public class UnpinAllMessagesSaga : MyInMemoryAggregateSaga<UnpinAllMessagesSaga
                 var item = kv.Value;
                 if (_state.ToPeer.PeerType == PeerType.Channel || item.UserId == _state.RequestInfo.UserId)
                 {
-                    var offset = _state.MessageItems.Max(p => p.MessageId);
+                    // A non-zero offset tells the client to call the method again for the next page;
+                    // once the last page has been processed the offset has to be 0, otherwise every
+                    // unpin-all costs one extra round trip.
+                    var offset = PinPagingHelper.CalculateOffset(_state.LastBatch,
+                        _state.MessageItems.Select(p => p.MessageId));
 
                     Emit(new UnpinAllMessagesCompletedSagaEvent(_state.RequestInfo, _state.ToPeer, item.Pts, item.MessageIds.Count, offset, item.MessageIds));
                 }

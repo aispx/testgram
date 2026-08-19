@@ -150,14 +150,14 @@ public class TempAggregate : AggregateRoot<TempAggregate, TempId>, ISkipAggregat
     }
 
     public void StartUpdatePinnedMessages(RequestInfo requestInfo, IReadOnlyCollection<SimpleMessageItem> messageItems,
-        Peer toPeer, bool pinned, bool pmOneSide)
+        Peer toPeer, bool pinned, bool pmOneSide, bool silent)
     {
-        Emit(new UpdateMessagePinnedStartedEvent(requestInfo, messageItems, toPeer, pinned, pmOneSide));
+        Emit(new UpdateMessagePinnedStartedEvent(requestInfo, messageItems, toPeer, pinned, pmOneSide, silent));
     }
 
-    public void StartUnpinAllMessages(RequestInfo requestInfo, IReadOnlyCollection<SimpleMessageItem> messageItems, Peer toPeer)
+    public void StartUnpinAllMessages(RequestInfo requestInfo, IReadOnlyCollection<SimpleMessageItem> messageItems, Peer toPeer, bool lastBatch)
     {
-        Emit(new UnpinAllMessagesStartedEvent(requestInfo, messageItems, toPeer));
+        Emit(new UnpinAllMessagesStartedEvent(requestInfo, messageItems, toPeer, lastBatch));
     }
 
     public void StartForwardMessages(RequestInfo requestInfo, bool silent, bool background, bool withMyScore, bool dropAuthor,

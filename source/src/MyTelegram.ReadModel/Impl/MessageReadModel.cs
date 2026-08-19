@@ -152,7 +152,7 @@ public class MessageReadModel : IMessageReadModel,
             }
         }
 
-        Silent = false;
+        Silent = messageItem.Silent;
         PollId = messageItem.PollId;
         ReplyMarkup2 = messageItem.ReplyMarkup;
         ReplyTo = messageItem.InputReplyTo;
@@ -219,7 +219,7 @@ public class MessageReadModel : IMessageReadModel,
         NoForwards = messageItem.NoForwards;
         Views = messageItem.Views;
 
-        Silent = false;
+        Silent = messageItem.Silent;
         PollId = messageItem.PollId;
         ReplyMarkup2 = messageItem.ReplyMarkup;
         ReplyTo = messageItem.InputReplyTo;
