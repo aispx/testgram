@@ -28,6 +28,7 @@ public interface IVideoTranscoder
 /// <inheritdoc />
 public class VideoTranscoder(
     IOptionsMonitor<MyTelegramMessengerServerOptions> options,
+    IFfmpegLocator ffmpegLocator,
     ILogger<VideoTranscoder> logger)
     : IVideoTranscoder, ITransientDependency
 {
@@ -35,9 +36,15 @@ public class VideoTranscoder(
 
     public async Task<VideoInfo?> ProbeAsync(string path, CancellationToken cancellationToken = default)
     {
+        var ffprobe = ffmpegLocator.FfprobePath;
+        if (ffprobe == null)
+        {
+            return null;
+        }
+
         var arguments =
             $"-v error -select_streams v:0 -show_entries stream=width,height,codec_name -show_entries format=duration -of json \"{path}\"";
-        var (exitCode, output, error) = await RunAsync(Config.FfprobePath, arguments, cancellationToken);
+        var (exitCode, output, error) = await RunAsync(ffprobe, arguments, cancellationToken);
         if (exitCode != 0)
         {
             logger.LogWarning("ffprobe failed for {Path}: {Error}", path, error);
@@ -80,13 +87,19 @@ public class VideoTranscoder(
     public async Task<bool> TranscodeAsync(string sourcePath, string destinationPath, int targetHeight,
         CancellationToken cancellationToken = default)
     {
+        var ffmpeg = ffmpegLocator.FfmpegPath;
+        if (ffmpeg == null)
+        {
+            return false;
+        }
+
         // -2 keeps the width even, which h264 requires; +faststart moves the index to the front so the
         // rendition can be streamed instead of downloaded whole.
         var arguments = $"-y -v error -i \"{sourcePath}\" -vf scale=-2:{targetHeight} " +
                         $"-c:v libx264 -preset {Config.Preset} -crf {Config.Crf} " +
                         $"-c:a aac -b:a {Config.AudioBitrate} -movflags +faststart \"{destinationPath}\"";
 
-        var (exitCode, _, error) = await RunAsync(Config.FfmpegPath, arguments, cancellationToken);
+        var (exitCode, _, error) = await RunAsync(ffmpeg, arguments, cancellationToken);
         if (exitCode != 0)
         {
             logger.LogWarning("ffmpeg failed to produce the {Height}p rendition: {Error}", targetHeight, error);

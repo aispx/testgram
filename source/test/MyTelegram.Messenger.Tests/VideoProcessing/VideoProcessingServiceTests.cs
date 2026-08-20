@@ -93,6 +93,16 @@ public class VideoProcessingServiceTests
     }
 
     [Fact]
+    public async Task Without_ffmpeg_the_video_is_delivered_immediately()
+    {
+        // A Windows or macOS host that never installed ffmpeg must not park videos in a queue that can
+        // never drain — the same build simply skips processing.
+        var service = CreateService(participants: 100, ffmpegAvailable: false);
+
+        (await service.ShouldProcessAsync(Video(height: 1080), Channel())).ShouldBeFalse();
+    }
+
+    [Fact]
     public void The_estimated_conversion_date_grows_with_the_video_and_never_undercuts_the_minimum()
     {
         var service = CreateService(participants: 100);
@@ -137,7 +147,7 @@ public class VideoProcessingServiceTests
     }
 
     private static VideoProcessingService CreateService(int participants, bool broadcast = true, bool enabled = true,
-        int minChannelParticipants = 1)
+        int minChannelParticipants = 1, bool ffmpegAvailable = true)
     {
         var options = new MyTelegramMessengerServerOptions();
         options.VideoProcessing.Enabled = enabled;
@@ -150,8 +160,13 @@ public class VideoProcessingServiceTests
         var channelAppService = new Mock<IChannelAppService>();
         channelAppService.Setup(p => p.GetAsync(ChannelId)).ReturnsAsync(channelReadModel.Object);
 
+        var ffmpegLocator = new Mock<IFfmpegLocator>();
+        ffmpegLocator.SetupGet(p => p.IsAvailable).Returns(ffmpegAvailable);
+        ffmpegLocator.SetupGet(p => p.FfmpegPath).Returns(ffmpegAvailable ? "ffmpeg" : null);
+        ffmpegLocator.SetupGet(p => p.FfprobePath).Returns(ffmpegAvailable ? "ffprobe" : null);
+
         return new VideoProcessingService(new StubOptionsMonitor(options), channelAppService.Object,
-            Mock.Of<IStoredFileStorage>(), Mock.Of<IVideoTranscoder>(),
+            Mock.Of<IStoredFileStorage>(), Mock.Of<IVideoTranscoder>(), ffmpegLocator.Object,
             NullLogger<VideoProcessingService>.Instance);
     }
 

@@ -10,8 +10,9 @@ namespace MyTelegram.Messenger.Services;
 /// <remarks>
 /// The whole <see cref="MessageItem"/> is persisted so the queued message keeps its media, entities,
 /// reply header, keyboard, album id and so on: rendering the queue and flushing it both go through the
-/// same object the normal send path uses. The message text is stored in clear even when message
-/// encryption is enabled — encryption is applied again when the message finally leaves the queue.
+/// same object the normal send path uses. When message encryption is enabled the text is stored only
+/// as ciphertext in <c>Item.EncryptedData</c> (the plaintext <c>Item.Message</c> is blanked); it is
+/// decrypted again when the message leaves the queue.
 /// </remarks>
 public class ScheduledMessageDocument
 {

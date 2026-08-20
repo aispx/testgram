@@ -37,11 +37,13 @@ internal sealed class DeleteScheduledMessagesHandler(
 
         var updates = scheduledMessageStore.BuildDeleteScheduledUpdates(peer, obj.Id.ToList());
 
-        // The requesting session gets the update as the rpc result, the other ones by push.
-        foreach (var senderUserId in documents.Select(p => p.SenderUserId).Distinct())
+        // The requesting session gets the update as the rpc result, the other ones by push. In a shared
+        // broadcast-channel queue every admin that can see the queue is told the post is gone.
+        var audience = await scheduledMessageStore.GetQueueAudienceAsync(peer, input.UserId);
+        foreach (var userId in audience)
         {
-            await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, senderUserId), updates,
-                excludeAuthKeyId: senderUserId == input.UserId ? input.AuthKeyId : null);
+            await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, userId), updates,
+                excludeAuthKeyId: userId == input.UserId ? input.AuthKeyId : null);
         }
 
         return updates;

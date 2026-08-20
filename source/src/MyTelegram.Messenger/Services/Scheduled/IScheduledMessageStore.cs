@@ -27,6 +27,14 @@ public interface IScheduledMessageStore
     /// </summary>
     Task<bool> CheckQueueAccessAsync(Peer peer, long selfUserId);
 
+    /// <summary>
+    /// User ids that must be told about a change to the schedule queue of <paramref name="peer"/>.
+    /// A broadcast channel shares one queue, so every admin allowed to post is notified (the clients
+    /// key scheduled messages by peer, so the update simply drops into each admin's scheduled view);
+    /// everywhere else only <paramref name="senderUserId"/> is.
+    /// </summary>
+    Task<IReadOnlyList<long>> GetQueueAudienceAsync(Peer peer, long senderUserId);
+
     Task<List<ScheduledMessageDocument>> GetQueueAsync(Peer peer, long selfUserId, bool sharedQueue,
         IReadOnlyList<int>? scheduledMessageIds = null);
 

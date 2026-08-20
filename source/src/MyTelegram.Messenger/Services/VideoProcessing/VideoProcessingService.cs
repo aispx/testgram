@@ -38,6 +38,7 @@ public class VideoProcessingService(
     IChannelAppService channelAppService,
     IStoredFileStorage storedFileStorage,
     IVideoTranscoder videoTranscoder,
+    IFfmpegLocator ffmpegLocator,
     ILogger<VideoProcessingService> logger)
     : IVideoProcessingService, ITransientDependency
 {
@@ -45,7 +46,10 @@ public class VideoProcessingService(
 
     public async Task<bool> ShouldProcessAsync(IMessageMedia? media, Peer toPeer)
     {
-        if (!Config.Enabled || Config.Heights.Count == 0 || toPeer.PeerType != PeerType.Channel)
+        // No ffmpeg on this host (e.g. a Windows or macOS dev box without it installed) means the video
+        // could never be converted, so it must go out immediately instead of parking in the queue.
+        if (!Config.Enabled || Config.Heights.Count == 0 || toPeer.PeerType != PeerType.Channel ||
+            !ffmpegLocator.IsAvailable)
         {
             return false;
         }

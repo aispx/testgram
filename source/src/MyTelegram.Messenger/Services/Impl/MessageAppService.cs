@@ -1032,8 +1032,16 @@ public class MessageAppService(
             await objectMessageSender.SendRpcMessageToClientAsync(requestInfo, updates);
         }
 
-        await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, requestInfo.UserId), updates,
-            excludeAuthKeyId: requestInfo.AuthKeyId);
+        // In a broadcast channel the queue is shared, so every admin allowed to post is notified; the
+        // clients key scheduled messages by peer, so the post drops straight into their scheduled view.
+        // See https://corefork.telegram.org/api/scheduled-messages
+        var toPeer = scheduledItems[0].Item.ToPeer;
+        var audience = await scheduledMessageStore.GetQueueAudienceAsync(toPeer, requestInfo.UserId);
+        foreach (var userId in audience)
+        {
+            await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, userId), updates,
+                excludeAuthKeyId: userId == requestInfo.UserId ? requestInfo.AuthKeyId : null);
+        }
     }
 
     /// <summary>

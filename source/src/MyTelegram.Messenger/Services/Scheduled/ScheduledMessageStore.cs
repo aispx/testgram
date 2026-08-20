@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Domain.Shared;
 
 namespace MyTelegram.Messenger.Services.Scheduled;
 
@@ -10,7 +11,8 @@ public class ScheduledMessageStore(
     IChannelAdminRightsChecker channelAdminRightsChecker,
     IUserAppService userAppService,
     IPeerHelper peerHelper,
-    IPrivacyAppService privacyAppService)
+    IPrivacyAppService privacyAppService,
+    IMessageEncryptionHelper messageEncryptionHelper)
     : IScheduledMessageStore, ITransientDependency
 {
     public const string CollectionName = "scheduled_messages";
@@ -55,6 +57,33 @@ public class ScheduledMessageStore(
             RpcErrors.RpcErrors400.ChatAdminRequired);
 
         return true;
+    }
+
+    public async Task<IReadOnlyList<long>> GetQueueAudienceAsync(Peer peer, long senderUserId)
+    {
+        if (peer.PeerType != PeerType.Channel)
+        {
+            return [senderUserId];
+        }
+
+        var channelReadModel = await channelAppService.GetAsync(peer.PeerId);
+        if (channelReadModel is not { Broadcast: true })
+        {
+            return [senderUserId];
+        }
+
+        // The shared queue of a broadcast channel is visible to the creator and every admin allowed to
+        // post; the author is always included even if their rights changed after they queued the post.
+        var audience = new HashSet<long> { senderUserId, channelReadModel.CreatorId };
+        foreach (var admin in channelReadModel.AdminList)
+        {
+            if (admin.AdminRights.PostMessages)
+            {
+                audience.Add(admin.UserId);
+            }
+        }
+
+        return [.. audience];
     }
 
     public async Task<List<ScheduledMessageDocument>> GetQueueAsync(Peer peer, long selfUserId, bool sharedQueue,
@@ -256,10 +285,18 @@ public class ScheduledMessageStore(
     {
         var item = document.Item;
 
+        // The queue stores the text as ciphertext when encryption is on (see CreateDocument); the send
+        // pipeline re-encrypts from plaintext, so decrypt it back here first.
+        var message = item.Message;
+        if (item.EncryptedData is { Length: > 0 })
+        {
+            message = messageEncryptionHelper.Decrypt(item.OwnerPeer.PeerId, item.MessageId, item.EncryptedData.Value);
+        }
+
         return new SendMessageInput(requestInfo,
             document.SenderUserId,
             item.ToPeer,
-            item.Message,
+            message,
             document.RandomId,
             entities: item.Entities,
             inputReplyTo: item.InputReplyTo,
@@ -334,6 +371,13 @@ public class ScheduledMessageStore(
         var item = queueItem.Item;
         var scheduledMessageId = item.ScheduleMessageId ?? item.MessageId;
 
+        // When message encryption is on, MessageAppService already produced the ciphertext in
+        // EncryptedData. Keep it and blank the plaintext, so the text is never stored in clear while it
+        // waits in the queue; the flush path decrypts it back and the render path (ToMessage) already
+        // decrypts EncryptedData for the client. When encryption is off, EncryptedData is null and the
+        // plaintext stays as-is.
+        var hasCiphertext = item.EncryptedData is { Length: > 0 };
+
         return new ScheduledMessageDocument
         {
             Id = BuildDocumentId(item.OwnerPeer.PeerId, scheduledMessageId),
@@ -346,13 +390,13 @@ public class ScheduledMessageStore(
             RepeatPeriod = queueItem.RepeatPeriod,
             PreallocatedMessageId = queueItem.PreallocatedMessageId,
             VideoProcessingPending = queueItem.VideoProcessingPending,
-            // The queued copy carries neither the schedule fields (they live on the document) nor the
-            // encrypted payload: encryption is applied again when the message is finally sent.
+            // The schedule fields live on the document, not on the queued item. The inbox copy of the
+            // ciphertext is dropped: it is re-derived for the recipient when the message is sent.
             Item = item with
             {
                 ScheduleDate = null,
                 ScheduleMessageId = null,
-                EncryptedData = null,
+                Message = hasCiphertext ? string.Empty : item.Message,
                 InboxMessageEncryptedData = null
             },
             Layer = requestInfo.Layer,

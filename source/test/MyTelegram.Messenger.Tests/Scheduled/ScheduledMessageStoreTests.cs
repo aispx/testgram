@@ -157,7 +157,7 @@ public class ScheduledMessageStoreTests
     {
         // Only the storage half of the store is exercised here; rendering and validation need the
         // converters and app services the handlers inject.
-        return new ScheduledMessageStore(database, null!, null!, null!, null!, null!, null!);
+        return new ScheduledMessageStore(database, null!, null!, null!, null!, null!, null!, null!);
     }
 
     internal static MessageItem Item(long senderUserId = UserId, long peerId = PeerUserId, int messageId = 1)

@@ -44,7 +44,6 @@ public class ScheduledMessageDispatcher(
         {
             var peerDocuments = peerGroup.ToList();
             var peer = peerDocuments[0].Item.ToPeer;
-            var senderPeer = new Peer(PeerType.User, peerGroup.Key.SenderUserId);
 
             var deleteUpdates = store.BuildDeleteScheduledUpdates(peer,
                 peerDocuments.Select(p => p.ScheduledMessageId).ToList(),
@@ -57,17 +56,25 @@ public class ScheduledMessageDispatcher(
 
             await store.DeleteAsync(peerDocuments.Select(p => p.Id));
 
-            // Other sessions of the sender always need the update; the session that asked for the flush
-            // gets it as the rpc result instead.
-            await objectMessageSender.PushMessageToPeerAsync(senderPeer, deleteUpdates,
-                excludeAuthKeyId: requestInfo?.AuthKeyId);
+            // The queue may be shared (broadcast channel), so every admin that can see it is told the
+            // post left the queue; the session that asked for the flush gets it as the rpc result.
+            var audience = await store.GetQueueAudienceAsync(peer, peerGroup.Key.SenderUserId);
+            foreach (var userId in audience)
+            {
+                await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, userId), deleteUpdates,
+                    excludeAuthKeyId: userId == requestInfo?.UserId ? requestInfo.AuthKeyId : null);
+            }
 
             var repeated = await RescheduleRepeatingAsync(peerDocuments);
             if (repeated.Count > 0)
             {
                 var newScheduledUpdates = store.BuildNewScheduledUpdates(repeated, peerGroup.Key.SenderUserId,
                     peerDocuments[0].Layer);
-                await objectMessageSender.PushMessageToPeerAsync(senderPeer, newScheduledUpdates);
+                foreach (var userId in audience)
+                {
+                    await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, userId),
+                        newScheduledUpdates);
+                }
             }
         }
 

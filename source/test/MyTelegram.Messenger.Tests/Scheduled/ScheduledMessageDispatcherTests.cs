@@ -111,7 +111,7 @@ public class ScheduledMessageDispatcherTests
                 new TMessage { Id = item.MessageId, Message = item.Message, PeerId = new TPeerUser { UserId = item.ToPeer.PeerId } });
 
         var store = new ScheduledMessageStore(database, messageConverterService.Object, null!, null!, null!,
-            peerHelper.Object, null!);
+            peerHelper.Object, null!, null!);
 
         var nextId = 5000;
         var idGenerator = new Mock<IIdGenerator>();

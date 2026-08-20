@@ -1,6 +1,7 @@
 using System.Text;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Domain.Shared;
 using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.Scheduled;
 
@@ -66,7 +67,8 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
     IChannelAdminRightsChecker channelAdminRightsChecker,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender, IMessageConverterService messageConverterService,
     IScheduledMessageStore scheduledMessageStore,
-    IScheduledMessageDispatcher scheduledMessageDispatcher) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
+    IScheduledMessageDispatcher scheduledMessageDispatcher,
+    IMessageEncryptionHelper messageEncryptionHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
 {
     private static byte[]? _encryptionKey;
     private static KeyConfig? _keyConfig;
@@ -258,7 +260,20 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         var item = document.Item;
         if (!string.IsNullOrEmpty(obj.Message))
         {
-            item = item with { Message = obj.Message, Entities = obj.Entities };
+            // Keep the text encrypted at rest the same way CreateDocument does: store the ciphertext and
+            // blank the plaintext when encryption is on, otherwise store the plaintext and drop any stale
+            // ciphertext left over from before the edit.
+            var ownerPeerId = document.OwnerPeerId;
+            var encryptedData = messageEncryptionHelper.IsEnabled
+                ? (ReadOnlyMemory<byte>?)messageEncryptionHelper.Encrypt(ownerPeerId, obj.Message)
+                : null;
+
+            item = item with
+            {
+                Message = encryptedData.HasValue ? string.Empty : obj.Message,
+                Entities = obj.Entities,
+                EncryptedData = encryptedData
+            };
         }
 
         if (media != null)
@@ -301,8 +316,15 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         await scheduledMessageStore.ReplaceAsync(document);
 
         var updates = scheduledMessageStore.BuildNewScheduledUpdates([document], input.UserId, input.Layer);
-        await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, document.SenderUserId), updates,
-            excludeAuthKeyId: input.AuthKeyId);
+
+        // A shared broadcast-channel queue is edited in every admin's scheduled view, not only the
+        // author's other sessions. See https://corefork.telegram.org/api/scheduled-messages
+        var audience = await scheduledMessageStore.GetQueueAudienceAsync(peer, document.SenderUserId);
+        foreach (var userId in audience)
+        {
+            await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, userId), updates,
+                excludeAuthKeyId: userId == input.UserId ? input.AuthKeyId : null);
+        }
 
         return updates;
     }
