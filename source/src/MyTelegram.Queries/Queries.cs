@@ -251,7 +251,11 @@ public record GetMessagesQuery(
     int MinId = 0,
     int MaxId = 0,
     // messages.searchGlobal pages by (date, message id) instead of message id alone.
-    int OffsetRate = 0
+    int OffsetRate = 0,
+    // Restricts the page to live locations. MessageType.Geo also covers static locations and venues,
+    // so messages.getRecentLocations would otherwise have its window filled by those.
+    // See https://corefork.telegram.org/api/live-location
+    bool GeoLiveOnly = false
 )
     : IQuery<IReadOnlyCollection<IMessageReadModel>>
 {

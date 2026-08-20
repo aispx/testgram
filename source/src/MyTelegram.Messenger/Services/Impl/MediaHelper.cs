@@ -2,6 +2,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Photo;
+using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.Stories;
 
 namespace MyTelegram.Messenger.Services.Impl;
@@ -206,6 +207,10 @@ public class MediaHelper(
 
     private IMessageMedia CreateMediaGeoLive(TInputMediaGeoLive inputMediaGeoLive)
     {
+        // Reject out-of-range period/heading/proximity before anything is stored, matching the
+        // server-side limits TDLib enforces (Location.cpp process_live_location).
+        GeoLiveHelper.Validate(inputMediaGeoLive, forEdit: false);
+
         IGeoPoint geo = new TGeoPointEmpty();
         if (inputMediaGeoLive.GeoPoint is TInputGeoPoint inputGeoPoint1)
         {
@@ -218,10 +223,18 @@ public class MediaHelper(
             };
         }
 
+        // The receiving messageMediaGeoLive has no "stopped" flag: a client decides the location is
+        // over when date + period is in the past. A location that is somehow already stopped when it
+        // is first sent therefore gets the smallest period that expires immediately.
+        // See https://corefork.telegram.org/api/live-location
+        var period = inputMediaGeoLive.Stopped
+            ? 1
+            : inputMediaGeoLive.Period ?? 0;
+
         return new TMessageMediaGeoLive
         {
-            Heading = inputMediaGeoLive.Heading,
-            Period = inputMediaGeoLive.Period ?? 0,
+            Heading = GeoLiveHelper.NormalizeHeading(inputMediaGeoLive.Heading),
+            Period = period,
             ProximityNotificationRadius = inputMediaGeoLive.ProximityNotificationRadius,
             Geo = geo
         };

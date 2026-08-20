@@ -110,6 +110,46 @@ public class MessageReadModel : IMessageReadModel,
     public bool PaidSuggestedPostStars { get; private set; }
     public bool PaidSuggestedPostTon { get; private set; }
 
+    public int? GeoLivePeriod { get; private set; }
+    public int? GeoLiveHeading { get; private set; }
+    public int? GeoLiveProximityRadius { get; private set; }
+    public double? GeoLat { get; private set; }
+    public double? GeoLong { get; private set; }
+
+    /// <summary>
+    /// Mirrors the queryable fields of a <c>messageMediaGeoLive</c> out of the media blob so a query
+    /// can select live locations directly (<c>MessageType.Geo</c> also matches static locations and
+    /// venues). Clears them for any other media so an edit that replaces a live location leaves no
+    /// stale live-location state behind. See https://corefork.telegram.org/api/live-location
+    /// </summary>
+    private void ApplyGeoLive(IMessageMedia? media)
+    {
+        if (media is TMessageMediaGeoLive geoLive)
+        {
+            GeoLivePeriod = geoLive.Period;
+            GeoLiveHeading = geoLive.Heading;
+            GeoLiveProximityRadius = geoLive.ProximityNotificationRadius;
+            if (geoLive.Geo is TGeoPoint point)
+            {
+                GeoLat = point.Lat;
+                GeoLong = point.Long;
+            }
+            else
+            {
+                GeoLat = null;
+                GeoLong = null;
+            }
+        }
+        else
+        {
+            GeoLivePeriod = null;
+            GeoLiveHeading = null;
+            GeoLiveProximityRadius = null;
+            GeoLat = null;
+            GeoLong = null;
+        }
+    }
+
     public Task ApplyAsync(IReadModelContext context,
         IDomainEvent<MessageAggregate, MessageId, OutboxMessageCreatedEvent> domainEvent,
         CancellationToken cancellationToken)
@@ -134,6 +174,7 @@ public class MessageReadModel : IMessageReadModel,
         FwdHeader = messageItem.FwdHeader;
         SendMessageType = messageItem.SendMessageType;
         Media2 = messageItem.Media;
+        ApplyGeoLive(messageItem.Media);
         GroupedId = messageItem.GroupId;
         Out = messageItem.IsOut;
         NoForwards = messageItem.NoForwards;
@@ -214,6 +255,7 @@ public class MessageReadModel : IMessageReadModel,
         FwdHeader = messageItem.FwdHeader;
         SendMessageType = messageItem.SendMessageType;
         Media2 = messageItem.Media;
+        ApplyGeoLive(messageItem.Media);
         GroupedId = messageItem.GroupId;
         Out = messageItem.IsOut;
         NoForwards = messageItem.NoForwards;
@@ -262,6 +304,7 @@ public class MessageReadModel : IMessageReadModel,
         EditDate = item.EditDate;
         ReplyMarkup2 = item.ReplyMarkup;
         Media2 = item.Media;
+        ApplyGeoLive(item.Media);
         InvertMedia = item.InvertMedia;
         EncryptedData = item.EncryptedData;
 
@@ -298,6 +341,7 @@ public class MessageReadModel : IMessageReadModel,
         EditDate = item.EditDate;
         ReplyMarkup2 = item.ReplyMarkup;
         Media2 = item.Media;
+        ApplyGeoLive(item.Media);
         InvertMedia = item.InvertMedia;
         EncryptedData = item.EncryptedData;
 

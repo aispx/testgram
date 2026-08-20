@@ -3,6 +3,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Shared;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.GeoLive;
 using MyTelegram.Messenger.Services.Scheduled;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -68,6 +69,7 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
     IOptionsMonitor<MyTelegramMessengerServerOptions> options, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IObjectMessageSender objectMessageSender, IMessageConverterService messageConverterService,
     IScheduledMessageStore scheduledMessageStore,
     IScheduledMessageDispatcher scheduledMessageDispatcher,
+    IGeoProximityAlertService geoProximityAlertService,
     IMessageEncryptionHelper messageEncryptionHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
 {
     private static byte[]? _encryptionKey;
@@ -99,6 +101,12 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
             {
                 // Handled after the message is loaded: the previous completions have to be
                 // carried over, so the new media can only be built once the old one is known.
+            }
+            else if (obj.Media is TInputMediaGeoLive)
+            {
+                // Handled after the message is loaded: a live-location edit only carries updated
+                // coordinates, so the original validity period has to be read from the stored media
+                // first. See https://corefork.telegram.org/api/live-location
             }
             else
             {
@@ -178,6 +186,23 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
             media = TodoMediaFactory.Create(editTodo.Todo, keptCompletions);
         }
 
+        // A live-location edit updates the coordinates of an existing messageMediaGeoLive (or stops
+        // sharing when stopped=true, usually with inputGeoPointEmpty). The original validity period
+        // and start date are preserved, so the location is only ever built from the stored media.
+        // See https://corefork.telegram.org/api/live-location
+        if (obj.Media is TInputMediaGeoLive editGeoLive)
+        {
+            if (messageReadModel!.Media2 is not TMessageMediaGeoLive oldGeoLive)
+            {
+                // TDLib: "There is no live location in the message to edit".
+                RpcErrors.RpcErrors400.MediaPrevInvalid.ThrowRpcError();
+                return null!;
+            }
+
+            GeoLiveHelper.Validate(editGeoLive, forEdit: true);
+            media = GeoLiveHelper.BuildEditedMedia(editGeoLive, oldGeoLive, messageReadModel.Date, CurrentDate);
+        }
+
         var message = messageReadModel.Message;
         var messageTextEdited = false;
         if (!string.IsNullOrEmpty(obj.Message))
@@ -232,6 +257,21 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         // Notify connected business bots about edited message
         await NotifyBusinessBotsEditAsync(input.UserId, peer.PeerId, obj.Id, obj.Message ?? message);
 
+        // A live location that just moved may have entered another member's proximity radius. Runs
+        // after the edit is published so the alert reflects the stored position, and only while the
+        // location is still being shared — a stop must not raise an alert. See
+        // https://corefork.telegram.org/api/live-location#proximity-alert
+        if (media is TMessageMediaGeoLive movedGeoLive &&
+            GeoLiveHelper.IsActive(movedGeoLive, messageReadModel.Date, CurrentDate))
+        {
+            // The location belongs to the message author, who is not necessarily the caller: a channel
+            // admin holding EditMessages may edit somebody else's message. Attributing the move to the
+            // editor would both name the wrong peer and stop the author's own message from being
+            // excluded, alerting them about their own movement.
+            await geoProximityAlertService.CheckAsync(input, peer, ownerPeerId, messageReadModel.SenderUserId,
+                movedGeoLive);
+        }
+
         return null !;
     }
 
@@ -283,6 +323,30 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
                 Media = media,
                 SendMessageType = SendMessageType.Media,
                 MessageType = mediaHelper.GeMessageType(media)
+            };
+        }
+        else if (obj.Media is TInputMediaGeoLive scheduledGeoLive)
+        {
+            // The live-location branch of the history path is skipped for a queued message, so the
+            // media has to be rebuilt here from the item still sitting in the queue. Without this the
+            // edit would silently keep the old coordinates.
+            if (item.Media is not TMessageMediaGeoLive oldScheduledGeoLive)
+            {
+                RpcErrors.RpcErrors400.MediaPrevInvalid.ThrowRpcError();
+                return null;
+            }
+
+            GeoLiveHelper.Validate(scheduledGeoLive, forEdit: true);
+            // A queued message has not been sent yet, so its validity window has not started; the
+            // item's own date is what a stop would be measured against.
+            var newScheduledGeoLive = GeoLiveHelper.BuildEditedMedia(scheduledGeoLive, oldScheduledGeoLive,
+                item.Date, CurrentDate);
+
+            item = item with
+            {
+                Media = newScheduledGeoLive,
+                SendMessageType = SendMessageType.Media,
+                MessageType = mediaHelper.GeMessageType(newScheduledGeoLive)
             };
         }
 

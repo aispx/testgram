@@ -20,7 +20,7 @@ public class CustomObjectMapper : ILayeredMapper,
         GetMessagesQuery destination)
     {
         return new GetMessagesQuery(source.OwnerPeerId,
-            MessageType.Unknown,
+            source.MessageType,
             null,
             [],
             source.ChannelHistoryMinId,
@@ -34,7 +34,8 @@ public class CustomObjectMapper : ILayeredMapper,
             // max_id/min_id bound the page from both sides when a client fills a hole in the history;
             // dropping them here returned an unrelated page.
             MinId: source.MinId,
-            MaxId: source.MaxId);
+            MaxId: source.MaxId,
+            GeoLiveOnly: source.GeoLiveOnly);
     }
 
     public GetMessagesQuery Map(GetMessagesInput source)

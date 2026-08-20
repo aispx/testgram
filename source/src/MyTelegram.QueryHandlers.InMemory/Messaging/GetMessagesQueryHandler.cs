@@ -35,6 +35,7 @@ public class
                     p => p.MessageType == query.MessageType)
                 .WhereIf(query.MessageType == MessageType.Pinned, p => p.Pinned)
                 .WhereIf(query.MessageTypes?.Count > 0, p => query.MessageTypes!.Contains(p.MessageType))
+                .WhereIf(query.GeoLiveOnly, p => p.GeoLivePeriod != null)
                 .WhereIf(query.MinDate > 0, p => p.Date >= query.MinDate)
                 .WhereIf(query.MaxDate > 0, p => p.Date <= query.MaxDate)
                 .WhereIf(query.MinId > 0, p => p.MessageId > query.MinId)

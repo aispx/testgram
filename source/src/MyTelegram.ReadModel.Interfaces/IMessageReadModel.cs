@@ -71,4 +71,26 @@ public interface IMessageReadModel : IReadModel, IReactionItem
     ISuggestedPost? SuggestedPost { get; }
     bool PaidSuggestedPostStars { get; }
     bool PaidSuggestedPostTon { get; }
+
+    /// <summary>
+    /// Validity period of a <a href="https://corefork.telegram.org/api/live-location">live location</a>,
+    /// mirrored out of the stored <c>messageMediaGeoLive</c> so a query can select live locations
+    /// without deserializing the media blob — <c>MessageType.Geo</c> alone also matches static
+    /// locations and venues. Null for every other kind of message. <see cref="int.MaxValue"/> means
+    /// the location is shared until switched off; otherwise it is active while
+    /// <see cref="Date"/> + this value is in the future.
+    /// </summary>
+    int? GeoLivePeriod { get; }
+
+    /// <summary>Direction of movement of a live location, in degrees (1-360), or null when unknown.</summary>
+    int? GeoLiveHeading { get; }
+
+    /// <summary>Proximity-alert radius of a live location in meters (0-100000), or null.</summary>
+    int? GeoLiveProximityRadius { get; }
+
+    /// <summary>Latitude of the last reported point of a live location.</summary>
+    double? GeoLat { get; }
+
+    /// <summary>Longitude of the last reported point of a live location.</summary>
+    double? GeoLong { get; }
 }
