@@ -11,14 +11,16 @@ public sealed class MessengerQueryDataProcessor : DefaultDataProcessor<Messenger
         IExceptionProcessor exceptionProcessor,
         IRequestHelper requestHelper,
         IInvokeAfterMsgProcessor invokeAfterMsgProcessor,
-        ILogger<MessengerQueryDataProcessor> queryLogger)
+        ILogger<MessengerQueryDataProcessor> queryLogger,
+        IEnumerable<IFromMessageContextValidator> fromMessageContextValidators)
         : base(
             handlerHelper,
             objectMessageSender,
             logger,
             exceptionProcessor,
             requestHelper,
-            invokeAfterMsgProcessor)
+            invokeAfterMsgProcessor,
+            fromMessageContextValidators)
     {
         _queryLogger = queryLogger;
     }

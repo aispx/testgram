@@ -153,6 +153,40 @@ public class FromMessagePeerResolverTests
         exception.RpcError.Message.ShouldBe("PEER_ID_INVALID");
     }
 
+    [Fact]
+    public async Task A_recent_replier_of_the_cited_message_resolves()
+    {
+        var message = MessageFrom(SenderUserId,
+            reply: new MessageReply(null, 1, 0, null, [new Peer(PeerType.User, StrangerUserId)]));
+        var resolver = CreateResolver(message);
+
+        var resolved = await resolver.ResolveUserIdAsync(Input(CallerUserId), Channel(), MsgId, StrangerUserId);
+
+        resolved.ShouldBe(StrangerUserId);
+    }
+
+    [Fact]
+    public async Task The_correspondent_a_saved_copy_names_resolves()
+    {
+        var resolver = CreateResolver(MessageFrom(SenderUserId,
+            savedPeerId: new Peer(PeerType.User, StrangerUserId)));
+
+        var resolved = await resolver.ResolveUserIdAsync(Input(CallerUserId), Channel(), MsgId, StrangerUserId);
+
+        resolved.ShouldBe(StrangerUserId);
+    }
+
+    [Fact]
+    public async Task The_discussion_group_of_the_cited_post_resolves_as_a_channel()
+    {
+        var message = MessageFrom(SenderUserId, reply: new MessageReply(OtherChannelId, 3, 0, null, null));
+        var resolver = CreateResolver(message);
+
+        var resolved = await resolver.ResolveChannelIdAsync(Input(CallerUserId), Channel(), MsgId, OtherChannelId);
+
+        resolved.ShouldBe(OtherChannelId);
+    }
+
     // ---- Fixtures ------------------------------------------------------------------------------------
 
     private static IInputPeer Channel() => new TInputPeerChannel { ChannelId = ChannelId, AccessHash = 1 };
@@ -167,7 +201,9 @@ public class FromMessagePeerResolverTests
 
     private static IMessageReadModel MessageFrom(long senderUserId,
         List<long>? mentioned = null,
-        MessageFwdHeader? fwdHeader = null)
+        MessageFwdHeader? fwdHeader = null,
+        MessageReply? reply = null,
+        Peer? savedPeerId = null)
     {
         var message = new Mock<IMessageReadModel>(MockBehavior.Loose);
         message.SetupGet(p => p.OwnerPeerId).Returns(ChannelId);
@@ -177,6 +213,8 @@ public class FromMessagePeerResolverTests
         message.SetupGet(p => p.SenderPeerId).Returns(senderUserId);
         message.SetupGet(p => p.MentionedUserIds).Returns(mentioned);
         message.SetupGet(p => p.FwdHeader).Returns(fwdHeader);
+        message.SetupGet(p => p.Reply).Returns(reply);
+        message.SetupGet(p => p.SavedPeerId).Returns(savedPeerId);
 
         return message.Object;
     }

@@ -9,7 +9,10 @@ public class DefaultDataProcessor<TData>(
     ILogger<DefaultDataProcessor<TData>> logger,
     IExceptionProcessor exceptionProcessor,
     IRequestHelper requestHelper,
-    IInvokeAfterMsgProcessor invokeAfterMsgProcessor)
+    IInvokeAfterMsgProcessor invokeAfterMsgProcessor,
+    // Injected as a collection so hosts that serve requests without the messenger services
+    // registered (which is where the validator lives) still resolve this processor.
+    IEnumerable<IFromMessageContextValidator>? fromMessageContextValidators = null)
     : IDataProcessor<TData>
     where TData : DataReceivedEvent
 {
@@ -48,6 +51,14 @@ public class DefaultDataProcessor<TData>(
                         }
                     }
 
+                    // The input*FromMessage constructors replace an access hash with a cited message
+                    // context, so they are the one input the access-hash check cannot cover. Proving
+                    // the context here means no handler can accept one unproven.
+                    // See https://corefork.telegram.org/api/min
+                    foreach (var validator in fromMessageContextValidators ?? [])
+                    {
+                        await validator.ValidateAsync(req, data);
+                    }
 
                     var handlerName = handler.GetType().Name;
                     // Updates.getDifference and langpack.getDifference use the same handler name

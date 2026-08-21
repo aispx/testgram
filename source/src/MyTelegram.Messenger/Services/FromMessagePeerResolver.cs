@@ -16,6 +16,12 @@ namespace MyTelegram.Messenger.Services;
 /// target id themselves, and every other field is decoration. See
 /// https://corefork.telegram.org/api/peers#access-hash
 /// </para>
+/// <para>
+/// The mirror image of this check is <see cref="IMinConstructorReducer"/>, which decides which peers
+/// go out as <c>min</c> in the first place. Both sides consult <see cref="MessagePeerReferences"/>, so
+/// a peer is only ever reduced to <c>min</c> when the citation the client will build for it is one
+/// this resolver accepts back.
+/// </para>
 /// </summary>
 public interface IFromMessagePeerResolver
 {
@@ -50,7 +56,7 @@ public sealed class FromMessagePeerResolver(
     {
         var message = await LoadCitedMessageAsync(input, container, msgId);
 
-        if (userId <= 0 || !MessageReferencesUser(message, userId))
+        if (userId <= 0 || !MessagePeerReferences.ReferencesUser(message, userId))
         {
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }
@@ -62,7 +68,7 @@ public sealed class FromMessagePeerResolver(
     {
         var message = await LoadCitedMessageAsync(input, container, msgId);
 
-        if (channelId <= 0 || !MessageReferencesChannel(message, channelId))
+        if (channelId <= 0 || !MessagePeerReferences.ReferencesChannel(message, channelId))
         {
             RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
         }
@@ -119,87 +125,4 @@ public sealed class FromMessagePeerResolver(
 
         return message!;
     }
-
-    /// <summary>
-    /// The users a min constructor may legitimately have been attached to: the sender, anybody in
-    /// the forward header, the other side of the conversation and anybody mentioned by name.
-    /// See https://corefork.telegram.org/api/min#example
-    /// </summary>
-    private static bool MessageReferencesUser(IMessageReadModel message, long userId)
-    {
-        if (message.SenderUserId == userId || message.SenderPeerId == userId)
-        {
-            return true;
-        }
-
-        if (message.ToPeerType is PeerType.User or PeerType.Self && message.ToPeerId == userId)
-        {
-            return true;
-        }
-
-        if (message.MentionedUserIds?.Contains(userId) == true)
-        {
-            return true;
-        }
-
-        var fwdHeader = message.FwdHeader;
-        if (fwdHeader != null)
-        {
-            if (IsUserPeer(fwdHeader.FromId, userId) ||
-                IsUserPeer(fwdHeader.SavedFromId, userId) ||
-                IsUserPeer(fwdHeader.SavedFromPeer, userId))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// The channels a min constructor may legitimately have been attached to: the chat the message
-    /// is in, the channel it was sent as, the discussion group/linked channel pair and anything in
-    /// the forward header.
-    /// </summary>
-    private static bool MessageReferencesChannel(IMessageReadModel message, long channelId)
-    {
-        if (message.OwnerPeerId == channelId || message.SenderPeerId == channelId)
-        {
-            return true;
-        }
-
-        if (message.ToPeerType == PeerType.Channel && message.ToPeerId == channelId)
-        {
-            return true;
-        }
-
-        if (message.LinkedChannelId == channelId || message.PostChannelId == channelId)
-        {
-            return true;
-        }
-
-        if (message.SendAs is { PeerType: PeerType.Channel } sendAs && sendAs.PeerId == channelId)
-        {
-            return true;
-        }
-
-        var fwdHeader = message.FwdHeader;
-        if (fwdHeader != null)
-        {
-            if (IsChannelPeer(fwdHeader.FromId, channelId) ||
-                IsChannelPeer(fwdHeader.SavedFromId, channelId) ||
-                IsChannelPeer(fwdHeader.SavedFromPeer, channelId))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsUserPeer(Peer? peer, long userId) =>
-        peer is { PeerType: PeerType.User or PeerType.Self } && peer.PeerId == userId;
-
-    private static bool IsChannelPeer(Peer? peer, long channelId) =>
-        peer is { PeerType: PeerType.Channel } && peer.PeerId == channelId;
 }
