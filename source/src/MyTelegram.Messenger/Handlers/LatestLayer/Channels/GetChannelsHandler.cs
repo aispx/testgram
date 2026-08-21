@@ -10,32 +10,59 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <para><c>See <a href="https://corefork.telegram.org/method/channels.getChannels"/> </c></para>
 /// </summary>
 /// <remarks>
+/// One of the three bulk methods clients use to refresh their
+/// <a href="https://corefork.telegram.org/api/peers#peer-info-database">peer info database</a>.
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetChannelsHandler(IChatConverterService chatConverterService, IQueryProcessor queryProcessor) : RpcResultObjectHandler<RequestGetChannels, IChats>
+internal sealed class GetChannelsHandler(
+    IChatConverterService chatConverterService,
+    IQueryProcessor queryProcessor,
+    IAccessHashHelper2 accessHashHelper,
+    IFromMessagePeerResolver fromMessagePeerResolver)
+    : RpcResultObjectHandler<RequestGetChannels, IChats>
 {
     protected override async Task<IChats> HandleCoreAsync(IRequestInput input, RequestGetChannels obj)
     {
         var channelIds = new List<long>();
+
         foreach (var inputChannel in obj.Id)
         {
-            if (inputChannel is TInputChannel tInputChannel)
+            switch (inputChannel)
             {
-                channelIds.Add(tInputChannel.ChannelId);
+                case TInputChannel tInputChannel:
+                    await accessHashHelper.CheckAccessHashAsync(input, tInputChannel.ChannelId,
+                        tInputChannel.AccessHash, AccessHashType.Channel);
+                    channelIds.Add(tInputChannel.ChannelId);
+                    break;
+
+                // A channel only ever seen through a min constructor has no usable access hash, so
+                // the caller cites the message it was seen in instead.
+                // See https://corefork.telegram.org/api/min
+                case TInputChannelFromMessage inputChannelFromMessage:
+                    channelIds.Add(await fromMessagePeerResolver.ResolveChannelIdAsync(input,
+                        inputChannelFromMessage.Peer, inputChannelFromMessage.MsgId,
+                        inputChannelFromMessage.ChannelId));
+                    break;
+
+                // inputChannelEmpty and anything unknown cannot name a channel.
+                default:
+                    RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
+                    break;
             }
         }
 
-        if (channelIds.Count > 0)
+        channelIds = channelIds.Distinct().ToList();
+        if (channelIds.Count == 0)
         {
-            var channelMemberReadModels = await queryProcessor.ProcessAsync(new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIds));
-            var channels = await chatConverterService.GetChannelListAsync(input, channelIds, channelMemberReadModels, layer: input.Layer);
-            return new TChats
-            {
-                Chats = [.. channels]
-            };
+            RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
         }
 
-        RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
-        throw new NotImplementedException();
+        var channelMemberReadModels = await queryProcessor.ProcessAsync(new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIds));
+        var channels = await chatConverterService.GetChannelListAsync(input, channelIds, channelMemberReadModels, layer: input.Layer);
+
+        return new TChats
+        {
+            Chats = [.. channels]
+        };
     }
 }

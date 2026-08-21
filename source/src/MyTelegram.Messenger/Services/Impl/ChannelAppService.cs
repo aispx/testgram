@@ -14,6 +14,12 @@ public class ChannelAppService(IQueryProcessor queryProcessor,
             () => queryProcessor.ProcessAsync(new GetChannelFullByIdQuery(channelId)), p => p.Id);
     }
 
+    public void InvalidateCache(long channelId)
+    {
+        channelReadModelCacheHelper.RemoveById(channelId);
+        channelFullReadModelCacheHelper.RemoveById(channelId);
+    }
+
     protected override Task<IChannelReadModel?> GetReadModelAsync(long id)
     {
         return queryProcessor.ProcessAsync(new GetChannelByIdQuery(id));
@@ -65,19 +71,7 @@ public class ChannelAppService(IQueryProcessor queryProcessor,
 
     public async Task<bool> SendRpcErrorIfNoReadAccessAsync(IRequestInput input, IChannelReadModel channelReadModel)
     {
-        if (!RequiresMembership(channelReadModel))
-        {
-            return false;
-        }
-
-        if (await IsChannelMemberAsync(input.UserId, channelReadModel.ChannelId))
-        {
-            return false;
-        }
-
-        // messages.checkChatInvite may hand a non-member temporary read-only access to the chat,
-        // see https://corefork.telegram.org/constructor/chatInvitePeek
-        if (await chatInvitePeekService.HasActivePeekAsync(input.UserId, channelReadModel.ChannelId))
+        if (await HasReadAccessAsync(input.UserId, channelReadModel))
         {
             return false;
         }
@@ -85,6 +79,23 @@ public class ChannelAppService(IQueryProcessor queryProcessor,
         await rpcErrorHelper.ThrowRpcErrorAsync(input, RpcErrors.RpcErrors400.ChannelPrivate);
 
         return true;
+    }
+
+    public async Task<bool> HasReadAccessAsync(long userId, IChannelReadModel channelReadModel)
+    {
+        if (!RequiresMembership(channelReadModel))
+        {
+            return true;
+        }
+
+        if (await IsChannelMemberAsync(userId, channelReadModel.ChannelId))
+        {
+            return true;
+        }
+
+        // messages.checkChatInvite may hand a non-member temporary read-only access to the chat,
+        // see https://corefork.telegram.org/constructor/chatInvitePeek
+        return await chatInvitePeekService.HasActivePeekAsync(userId, channelReadModel.ChannelId);
     }
 
     /// <summary>

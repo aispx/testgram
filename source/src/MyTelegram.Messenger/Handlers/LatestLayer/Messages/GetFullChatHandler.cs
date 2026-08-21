@@ -57,6 +57,11 @@ internal sealed class GetFullChatHandler(
             }
         }
 
-        throw new NotImplementedException($"Not supported peer type {peerType},chatId={obj.ChatId}");
+        // Testgram keeps no basic groups — messages.createChat emits a CreateChannelCommand — so an
+        // id outside the channel range names no group that exists here. That is a client-side
+        // mistake, not a server fault, so it must come back as an rpc error rather than a 500.
+        // See https://corefork.telegram.org/api/channel#basic-groups
+        RpcErrors.RpcErrors400.ChatIdInvalid.ThrowRpcError();
+        return null!;
     }
 }

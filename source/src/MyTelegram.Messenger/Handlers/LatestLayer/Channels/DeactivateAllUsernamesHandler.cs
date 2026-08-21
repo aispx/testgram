@@ -11,10 +11,19 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class DeactivateAllUsernamesHandler : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestDeactivateAllUsernames, IBool>
 {
     private readonly IMongoDatabase _database;
+    private readonly IAccessHashHelper2 _accessHashHelper;
+    private readonly IChannelAdminRightsChecker _channelAdminRightsChecker;
+    private readonly IChannelUpdateNotifier _channelUpdateNotifier;
 
-    public DeactivateAllUsernamesHandler(IMongoDatabase database)
+    public DeactivateAllUsernamesHandler(IMongoDatabase database,
+        IAccessHashHelper2 accessHashHelper,
+        IChannelAdminRightsChecker channelAdminRightsChecker,
+        IChannelUpdateNotifier channelUpdateNotifier)
     {
         _database = database;
+        _accessHashHelper = accessHashHelper;
+        _channelAdminRightsChecker = channelAdminRightsChecker;
+        _channelUpdateNotifier = channelUpdateNotifier;
     }
 
     protected override async Task<IBool> HandleCoreAsync(
@@ -26,6 +35,9 @@ internal sealed class DeactivateAllUsernamesHandler : RpcResultObjectHandler<MyT
             RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
             return null!;
         }
+
+        await _accessHashHelper.CheckAccessHashAsync(input, inputChannel);
+        await _channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(inputChannel.ChannelId, input.UserId);
 
         var channelId = inputChannel.ChannelId;
 
@@ -69,6 +81,8 @@ internal sealed class DeactivateAllUsernamesHandler : RpcResultObjectHandler<MyT
 
         await AdminLogHelper.LogChangeUsernames(_database, channelId, input.UserId,
             prevActiveUsernames, AdminLogHelper.ActiveUsernames(usernamesV2));
+
+        await _channelUpdateNotifier.NotifyChannelChangedAsync(input, channelId);
 
         return new TBoolTrue();
     }

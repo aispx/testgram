@@ -6,11 +6,20 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class UpdateStatusHandler(IUserStatusCacheAppService userStatusAppService) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdateStatus, IBool>
+internal sealed class UpdateStatusHandler(
+    IUserStatusCacheAppService userStatusAppService,
+    IUserStatusUpdateNotifier userStatusUpdateNotifier) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUpdateStatus, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, RequestUpdateStatus obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestUpdateStatus obj)
     {
-        userStatusAppService.UpdateStatus(input.UserId, !obj.Offline);
-        return Task.FromResult<IBool>(new TBoolTrue());
+        // Clients ping this method roughly every minute while in the foreground, so the update only
+        // goes out when the status other users see actually changed.
+        // See https://corefork.telegram.org/api/peers#handling-updates
+        if (userStatusAppService.UpdateStatus(input.UserId, !obj.Offline))
+        {
+            await userStatusUpdateNotifier.NotifyStatusChangedAsync(input, input.UserId);
+        }
+
+        return new TBoolTrue();
     }
 }

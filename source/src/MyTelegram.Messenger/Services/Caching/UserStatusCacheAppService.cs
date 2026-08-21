@@ -29,9 +29,11 @@ public class UserStatusCacheAppService(
         return GetUserStatus(status.LastUpdateDate, status.Online);
     }
 
-    public void UpdateStatus(long userId, bool online)
+    public bool UpdateStatus(long userId, bool online)
     {
         var item = inMemoryRepository.Find(userId);
+        var previous = item == null ? null : GetUserStatus(item.LastUpdateDate, item.Online);
+
         if (item == null)
         {
             item = new UserStatus(userId, online);
@@ -42,6 +44,12 @@ public class UserStatusCacheAppService(
             item.UpdateStatus(online);
         }
 
+        // Only the constructor matters: an online user re-pinging shifts `expires` by a minute, which
+        // no client renders differently, but going online/offline or ageing out of the online window
+        // does change what everybody else sees.
+        var changed = previous == null ||
+                      previous.GetType() != GetUserStatus(item.LastUpdateDate, item.Online).GetType();
+
         // Persist to MongoDB
         Collection.UpdateOneAsync(
             Builders<UserStatusMongoModel>.Filter.Eq(x => x.UserId, userId),
@@ -49,6 +57,8 @@ public class UserStatusCacheAppService(
                 .Set(x => x.LastOnline, item.LastUpdateDate)
                 .Set(x => x.Online, online),
             new UpdateOptions { IsUpsert = true });
+
+        return changed;
     }
 
     public async Task LoadFromDatabaseAsync()

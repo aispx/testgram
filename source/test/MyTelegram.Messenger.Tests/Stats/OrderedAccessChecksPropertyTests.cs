@@ -162,6 +162,10 @@ public class OrderedAccessChecksPropertyTests
             throw new NotSupportedException();
         public Task<bool> SendRpcErrorIfNoReadAccessAsync(IRequestInput input, IChannelReadModel channelReadModel) =>
             throw new NotSupportedException();
+        public Task<bool> HasReadAccessAsync(long userId, IChannelReadModel channelReadModel) =>
+            throw new NotSupportedException();
+
+        public void InvalidateCache(long channelId) => throw new NotSupportedException();
     }
 
     /// <summary>Fake admin-rights checker returning the case's admin toggle.</summary>

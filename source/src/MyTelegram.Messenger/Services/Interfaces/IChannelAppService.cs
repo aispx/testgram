@@ -13,4 +13,18 @@ public interface IChannelAppService : IReadModelWithCacheAppService<IChannelRead
     /// without having joined it. Only for read-only methods.
     /// </summary>
     Task<bool> SendRpcErrorIfNoReadAccessAsync(IRequestInput input, IChannelReadModel channelReadModel);
+
+    /// <summary>
+    /// The same test as <see cref="SendRpcErrorIfNoReadAccessAsync"/> without the error: true when
+    /// the channel is readable by <paramref name="userId"/>. For bulk methods that must skip an
+    /// inaccessible peer rather than fail the whole request.
+    /// </summary>
+    Task<bool> HasReadAccessAsync(long userId, IChannelReadModel channelReadModel);
+
+    /// <summary>
+    /// Drops the cached channel and channelFull read models. Needed by handlers that write to the
+    /// read model collection directly instead of going through an aggregate, since nothing else
+    /// evicts the cached copy for them.
+    /// </summary>
+    void InvalidateCache(long channelId);
 }

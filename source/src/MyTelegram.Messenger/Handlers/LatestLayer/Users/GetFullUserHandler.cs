@@ -13,11 +13,25 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// Returns extended user info by ID.
 /// <para><c>See <a href="https://corefork.telegram.org/method/users.getFullUser"/> </c></para>
 /// </summary>
-internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IPinnedMessageResolver pinnedMessageResolver, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
+internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IPinnedMessageResolver pinnedMessageResolver, IAccessHashHelper2 accessHashHelper, IFromMessagePeerResolver fromMessagePeerResolver, IChatWallPaperService chatWallPaperService, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
 {
     protected override async Task<MyTelegram.Schema.Users.IUserFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetFullUser obj)
     {
         var selfUserId = input.UserId;
+
+        // inputUserFromMessage carries no access hash — only the context the user was seen in — so
+        // it has to be validated against that context before the profile is handed out, otherwise
+        // the caller picks any user id they like. See https://corefork.telegram.org/api/min
+        if (obj.Id is TInputUserFromMessage inputUserFromMessage)
+        {
+            await fromMessagePeerResolver.ResolveUserIdAsync(input, inputUserFromMessage.Peer,
+                inputUserFromMessage.MsgId, inputUserFromMessage.UserId);
+        }
+        else
+        {
+            await accessHashHelper.CheckAccessHashAsync(input, obj.Id);
+        }
+
         var targetPeer = peerHelper.GetPeer(obj.Id, input.UserId);
         var targetUserId = targetPeer.PeerId;
         var userReadModel = await userAppService.GetAsync(targetPeer.PeerId);
@@ -60,6 +74,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetStarRefProgramAsync(targetUserId, userFull);
         await SetPinnedMsgIdAsync(input.UserId, targetUserId, userFull);
         await SetBotCanManageEmojiStatusAsync(input.UserId, targetUserId, userReadModel, userFull);
+        await SetWallPaperAsync(input.UserId, targetUserId, userFull);
 
         // CRITICAL: Cast to concrete TUser for proper serialization
         // ILayeredUser interface doesn't serialize correctly in TVector
@@ -651,6 +666,25 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         {
             userFull.PinnedMsgId = pinnedMsgId.Value;
         }
+    }
+
+    /// <summary>
+    /// The wallpaper the caller set for this chat with <c>messages.setChatWallPaper</c>, or the one
+    /// the other side set for both. Without it the wallpaper is stored but never reported, and the
+    /// client falls back to the default one on every fresh start.
+    /// See https://corefork.telegram.org/api/wallpapers
+    /// </summary>
+    private async Task SetWallPaperAsync(long selfUserId, long targetUserId, IUserFull userFull)
+    {
+        var (wallPaper, overridden) = await chatWallPaperService.GetChatWallPaperAsync(selfUserId,
+            new Peer(PeerType.User, targetUserId));
+        if (wallPaper == null)
+        {
+            return;
+        }
+
+        userFull.Wallpaper = wallPaper;
+        userFull.WallpaperOverridden = overridden;
     }
 
     private async Task SetNoForwardsAsync(long selfUserId, long targetUserId, IUserFull userFull)

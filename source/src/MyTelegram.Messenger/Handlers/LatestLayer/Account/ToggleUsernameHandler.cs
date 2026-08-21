@@ -10,10 +10,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestToggleUsername, IBool>
 {
     private readonly IMongoDatabase _database;
+    private readonly IUsernameUpdateNotifier _usernameUpdateNotifier;
 
-    public ToggleUsernameHandler(IMongoDatabase database)
+    public ToggleUsernameHandler(IMongoDatabase database, IUsernameUpdateNotifier usernameUpdateNotifier)
     {
         _database = database;
+        _usernameUpdateNotifier = usernameUpdateNotifier;
     }
 
     protected override async Task<IBool> HandleCoreAsync(
@@ -112,39 +114,7 @@ internal sealed class ToggleUsernameHandler : RpcResultObjectHandler<MyTelegram.
         var update = Builders<BsonDocument>.Update.Set("Usernames", usernames);
         await userCollection.UpdateOneAsync(userFilter, update);
 
-        // Send updateUserName to client
-        var updatedUser = await userCollection.Find(userFilter).FirstOrDefaultAsync();
-        if (updatedUser != null)
-        {
-            var firstName = updatedUser.Contains("FirstName") ? updatedUser["FirstName"].AsString : "";
-            var lastName = updatedUser.Contains("LastName") ? updatedUser["LastName"].AsString : "";
-
-            var usernamesVector = new TVector<IUsername>();
-            foreach (var item in usernames)
-            {
-                if (item.IsBsonDocument)
-                {
-                    var doc = item.AsBsonDocument;
-                    usernamesVector.Add(new TUsername
-                    {
-                        Username = doc["Username"].AsString,
-                        Editable = doc.Contains("Editable") && doc["Editable"].AsBoolean,
-                        Active = doc.Contains("Active") && doc["Active"].AsBoolean
-                    });
-                }
-            }
-
-            var updateUserName = new TUpdateUserName
-            {
-                UserId = userId,
-                FirstName = firstName,
-                LastName = lastName,
-                Usernames = usernamesVector
-            };
-
-            // TODO: Send update to client via push updates
-            // This requires access to ICommandBus or update sender service
-        }
+        await _usernameUpdateNotifier.NotifyUserNameChangedAsync(input, userId);
 
         return new TBoolTrue();
     }

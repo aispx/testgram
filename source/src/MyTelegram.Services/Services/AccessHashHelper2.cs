@@ -71,15 +71,24 @@ public sealed class AccessHashHelper2(
             case TInputPeerChannel inputPeerChannel:
                 return CheckAccessHashAsync(currentUserId, accessHashKeyId, inputPeerChannel.ChannelId, inputPeerChannel.AccessHash, AccessHashType.Channel);
 
-            case TInputPeerChannelFromMessage inputPeerChannelFromMessage:
-
+            // The fromMessage variants carry no access hash at all — they are validated by proving
+            // the cited message is readable and really references the peer, which needs the message
+            // read model and therefore lives in IFromMessagePeerResolver. Passing one here is not a
+            // successful check: callers that accept fromMessage input must run the resolver.
+            // See https://corefork.telegram.org/api/min
+            case TInputPeerChannelFromMessage:
                 break;
             case TInputPeerSelf:
                 break;
             case TInputPeerUser inputPeerUser:
                 return CheckAccessHashAsync(currentUserId, accessHashKeyId, inputPeerUser.UserId, inputPeerUser.AccessHash, AccessHashType.User);
 
-            case TInputPeerUserFromMessage inputPeerUserFromMessage:
+            case TInputPeerUserFromMessage:
+                break;
+            // Basic groups have no access hash, and inputPeerEmpty carries no peer at all — neither
+            // is an error here. See https://corefork.telegram.org/api/peers#access-hash
+            case TInputPeerChat:
+            case TInputPeerEmpty:
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(inputPeer));

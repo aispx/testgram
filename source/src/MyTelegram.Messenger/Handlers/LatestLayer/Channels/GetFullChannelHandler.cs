@@ -19,7 +19,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //ILayeredService<IChatConverter> layeredService,
- IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IPinnedMessageResolver pinnedMessageResolver) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
+ IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IPinnedMessageResolver pinnedMessageResolver, IChatWallPaperService chatWallPaperService) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
 {
     protected override async Task<MyTelegram.Schema.Messages.IChatFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetFullChannel obj)
     {
@@ -91,6 +91,7 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
                 await SetBotVerificationAsync(channelId, layeredChannelFull, chatFull);
                 await SetPinnedMsgIdAsync(channelId, layeredChannelFull);
                 await SetStoriesAsync(input, channelId, layeredChannelFull);
+                await SetWallPaperAsync(channelId, layeredChannelFull);
             }
 
             IChat? linkedChannel = null;
@@ -223,6 +224,27 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
                 Builders<SavedStarGiftDocument>.Filter.Eq(d => d.Saved, true)
             ));
         if (count > 0) channelFull.StargiftsCount = count;
+    }
+
+    /// <summary>
+    /// The channel wallpaper set with <c>messages.setChatWallPaper</c>. It belongs to the channel, so
+    /// every member sees the same one.
+    /// See https://corefork.telegram.org/api/wallpapers
+    /// </summary>
+    private async Task SetWallPaperAsync(long channelId, ILayeredChannelFull channelFull)
+    {
+        if (channelFull is not TChannelFull tChannelFull)
+        {
+            return;
+        }
+
+        var (wallPaper, _) = await chatWallPaperService.GetChatWallPaperAsync(channelId,
+            new Peer(PeerType.Channel, channelId));
+
+        if (wallPaper != null)
+        {
+            tChannelFull.Wallpaper = wallPaper;
+        }
     }
 
     private async Task SetRecentRequestersAsync(IRequestInput input, ILayeredChannelFull layeredChannelFull, MyTelegram.Schema.Messages.IChatFull chatFull)

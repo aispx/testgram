@@ -240,10 +240,16 @@ public class ChannelDomainEventHandler(
                 domainEvent.AggregateEvent.ChannelId);
     }
 
-    public Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, ChannelUserNameChangedEvent> domainEvent,
+    public async Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, ChannelUserNameChangedEvent> domainEvent,
         CancellationToken cancellationToken)
     {
-        return SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, new TBoolTrue());
+        await SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, new TBoolTrue());
+
+        // channels.updateUsername answers with a Bool, so the members only learn that the public link
+        // changed from updateChannel. See https://corefork.telegram.org/api/peers#handling-updates
+        channelAppService.InvalidateCache(domainEvent.AggregateEvent.ChannelId);
+        await NotifyUpdateChannelAsync(domainEvent.AggregateEvent.RequestInfo with { ReqMsgId = 0 },
+            domainEvent.AggregateEvent.ChannelId);
     }
 
     //public async Task HandleAsync(

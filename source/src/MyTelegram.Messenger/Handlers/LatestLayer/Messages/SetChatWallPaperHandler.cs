@@ -32,97 +32,54 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class SetChatWallPaperHandler(
     IMessageAppService messageAppService,
     IPeerHelper peerHelper,
-    IMongoDatabase database,
+    IChatWallPaperService chatWallPaperService,
+    IObjectMessageSender objectMessageSender,
+    IAccessHashHelper2 accessHashHelper,
+    IChannelAdminRightsChecker channelAdminRightsChecker,
     IPtsHelper ptsHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSetChatWallPaper, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSetChatWallPaper obj)
     {
+        await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
+
         // Get target peer
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
 
-        MyTelegram.Schema.IWallPaper? wallpaper = null;
-        long? wallpaperId = null;
-
-        // Get wallpaper if provided
-        if (obj.Wallpaper != null)
+        // A channel wallpaper is the channel's own, seen by every member, so only an admin allowed to
+        // change the channel info may set it.
+        if (peer.PeerType == PeerType.Channel)
         {
-            if (obj.Wallpaper is MyTelegram.Schema.TInputWallPaper inputWallpaper)
-            {
-                wallpaperId = inputWallpaper.Id;
-            }
-            else if (obj.Wallpaper is MyTelegram.Schema.TInputWallPaperSlug inputSlug)
-            {
-                var slugWallpaperCol = database.GetCollection<BsonDocument>("wallpapers");
-                var slugFilter = Builders<BsonDocument>.Filter.Eq("Slug", inputSlug.Slug);
-                var doc = await slugWallpaperCol.Find(slugFilter).FirstOrDefaultAsync();
-
-                if (doc == null)
-                {
-                    RpcErrors.RpcErrors400.WallpaperNotFound.ThrowRpcError();
-                }
-
-                wallpaperId = doc["WallpaperId"].AsInt64;
-            }
-            else if (obj.Wallpaper is MyTelegram.Schema.TInputWallPaperNoFile inputNoFile)
-            {
-                wallpaperId = inputNoFile.Id;
-            }
-
-            if (wallpaperId == 0)
-            {
-                RpcErrors.RpcErrors400.WallpaperInvalid.ThrowRpcError();
-            }
-
-            // Load wallpaper from database
-            var wallpaperCol = database.GetCollection<BsonDocument>("wallpapers");
-            var filter = Builders<BsonDocument>.Filter.Eq("WallpaperId", wallpaperId);
-            var wallpaperDoc = await wallpaperCol.Find(filter).FirstOrDefaultAsync();
-
-            if (wallpaperDoc == null)
-            {
-                RpcErrors.RpcErrors400.WallpaperNotFound.ThrowRpcError();
-            }
-
-            // Convert to IWallPaper
-            if (wallpaperDoc.Contains("DocumentId") && wallpaperDoc["DocumentId"].AsInt64 > 0)
-            {
-                wallpaper = new MyTelegram.Schema.TWallPaper
-                {
-                    Id = wallpaperDoc["WallpaperId"].AsInt64,
-                    AccessHash = wallpaperDoc.Contains("AccessHash") ? wallpaperDoc["AccessHash"].AsInt64 : 0,
-                    Slug = wallpaperDoc.Contains("Slug") ? wallpaperDoc["Slug"].AsString : "",
-                    Document = new MyTelegram.Schema.TDocumentEmpty { Id = wallpaperDoc["DocumentId"].AsInt64 },
-                    Settings = obj.Settings
-                };
-            }
-            else
-            {
-                wallpaper = new MyTelegram.Schema.TWallPaperNoFile
-                {
-                    Id = wallpaperDoc["WallpaperId"].AsInt64,
-                    Settings = obj.Settings
-                };
-            }
+            await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId, p => p.ChangeInfo);
         }
 
-        // CRITICAL: Save wallpaper to dialog in database
-        // This ensures the wallpaper persists and is returned in userFull.wallpaper
-        var dialogId = DialogId.Create(input.UserId, peer.PeerType, peer.PeerId);
-        var dialogCollection = database.GetCollection<BsonDocument>("eventflow-dialogreadmodel");
-        var dialogFilter = Builders<BsonDocument>.Filter.Eq("_id", dialogId.Value);
+        var wallpaperId = await chatWallPaperService.ResolveWallPaperIdAsync(obj.Wallpaper);
+        MyTelegram.Schema.IWallPaper? wallpaper = null;
 
         if (wallpaperId.HasValue)
         {
-            // Set wallpaper
-            var update = Builders<BsonDocument>.Update.Set("WallpaperId", wallpaperId.Value);
-            await dialogCollection.UpdateOneAsync(dialogFilter, update, new UpdateOptions { IsUpsert = true });
+            wallpaper = await chatWallPaperService.GetWallPaperAsync(wallpaperId.Value, obj.Settings);
+            if (wallpaper == null)
+            {
+                RpcErrors.RpcErrors400.WallpaperNotFound.ThrowRpcError();
+            }
         }
-        else
+
+        // The owner of the record is the channel itself for a channel, and the caller for a private
+        // chat, where each side keeps its own wallpaper.
+        var ownerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
+        await chatWallPaperService.SetChatWallPaperAsync(ownerId, peer, wallpaperId, obj.Settings, overridden: false);
+
+        // for_both installs the same wallpaper on the other side of the chat, where it counts as
+        // overridden: the peer did not pick it themselves and may revert it.
+        // See https://corefork.telegram.org/api/wallpapers#installing-wallpapers-in-a-specific-chat-or-channel
+        var appliesToPeer = obj.ForBoth && peer.PeerType == PeerType.User && peer.PeerId != input.UserId;
+        if (appliesToPeer)
         {
-            // Remove wallpaper
-            var update = Builders<BsonDocument>.Update.Unset("WallpaperId");
-            await dialogCollection.UpdateOneAsync(dialogFilter, update);
+            await chatWallPaperService.SetChatWallPaperAsync(peer.PeerId, new Peer(PeerType.User, input.UserId),
+                wallpaperId, obj.Settings, overridden: true);
         }
+
+        await NotifyWallPaperChangedAsync(input, peer, wallpaper, appliesToPeer);
 
         // Determine if we should send a service message
         // Send message ONLY when:
@@ -209,5 +166,55 @@ internal sealed class SetChatWallPaperHandler(
                 Seq = 0
             };
         }
+    }
+
+    /// <summary>
+    /// Pushes <c>updatePeerWallpaper</c>, without which the caller's other sessions and the peer keep
+    /// serving the previous <c>userFull.wallpaper</c>.
+    /// See https://corefork.telegram.org/api/peers#handling-updates
+    /// </summary>
+    private async Task NotifyWallPaperChangedAsync(IRequestInput input, Peer peer,
+        MyTelegram.Schema.IWallPaper? wallpaper, bool appliesToPeer)
+    {
+        if (peer.PeerType == PeerType.Channel)
+        {
+            // One wallpaper for the whole channel, so every member hears about it.
+            var channelUpdates = WallPaperUpdates(new MyTelegram.Schema.TPeerChannel { ChannelId = peer.PeerId },
+                wallpaper, overridden: false);
+            await objectMessageSender.PushMessageToPeerAsync(peer, channelUpdates,
+                excludeAuthKeyId: input.AuthKeyId);
+
+            return;
+        }
+
+        var selfUpdates = WallPaperUpdates(new MyTelegram.Schema.TPeerUser { UserId = peer.PeerId }, wallpaper,
+            overridden: false);
+        await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, input.UserId), selfUpdates,
+            excludeAuthKeyId: input.AuthKeyId);
+
+        if (appliesToPeer)
+        {
+            var peerUpdates = WallPaperUpdates(new MyTelegram.Schema.TPeerUser { UserId = input.UserId }, wallpaper,
+                overridden: true);
+            await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, peer.PeerId), peerUpdates);
+        }
+    }
+
+    private TUpdates WallPaperUpdates(MyTelegram.Schema.IPeer peer, MyTelegram.Schema.IWallPaper? wallpaper,
+        bool overridden)
+    {
+        return new TUpdates
+        {
+            Updates = new TVector<IUpdate>(new MyTelegram.Schema.TUpdatePeerWallpaper
+            {
+                Peer = peer,
+                Wallpaper = wallpaper,
+                WallpaperOverridden = overridden && wallpaper != null
+            }),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = CurrentDate,
+            Seq = 0
+        };
     }
 }

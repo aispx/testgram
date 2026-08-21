@@ -11,10 +11,19 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestReorderUsernames, IBool>
 {
     private readonly IMongoDatabase _database;
+    private readonly IAccessHashHelper2 _accessHashHelper;
+    private readonly IChannelAdminRightsChecker _channelAdminRightsChecker;
+    private readonly IChannelUpdateNotifier _channelUpdateNotifier;
 
-    public ReorderUsernamesHandler(IMongoDatabase database)
+    public ReorderUsernamesHandler(IMongoDatabase database,
+        IAccessHashHelper2 accessHashHelper,
+        IChannelAdminRightsChecker channelAdminRightsChecker,
+        IChannelUpdateNotifier channelUpdateNotifier)
     {
         _database = database;
+        _accessHashHelper = accessHashHelper;
+        _channelAdminRightsChecker = channelAdminRightsChecker;
+        _channelUpdateNotifier = channelUpdateNotifier;
     }
 
     protected override async Task<IBool> HandleCoreAsync(
@@ -25,8 +34,10 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         {
             RpcErrors.RpcErrors400.ChannelInvalid.ThrowRpcError();
             return null!;
-            return null!;
         }
+
+        await _accessHashHelper.CheckAccessHashAsync(input, inputChannel);
+        await _channelAdminRightsChecker.ThrowIfNotChannelOwnerAsync(inputChannel.ChannelId, input.UserId);
 
         var channelId = inputChannel.ChannelId;
 
@@ -114,6 +125,8 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
 
         await AdminLogHelper.LogChangeUsernames(_database, channelId, input.UserId,
             AdminLogHelper.ActiveUsernames(usernamesV2), AdminLogHelper.ActiveUsernames(reorderedUsernames));
+
+        await _channelUpdateNotifier.NotifyChannelChangedAsync(input, channelId);
 
         return new TBoolTrue();
     }

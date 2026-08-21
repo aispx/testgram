@@ -115,11 +115,20 @@ public static class Extension
         };
     }
 
+    /// <summary>
+    /// Maps an <see cref="IInputChannel"/> to a peer. <c>inputChannelFromMessage</c> only carries a
+    /// message context instead of an access hash, so it resolves to the bare id here — the context
+    /// itself must be validated through <c>IFromMessagePeerResolver</c> by the caller.
+    /// See https://corefork.telegram.org/api/min
+    /// </summary>
     public static Peer ToChannelPeer(this IInputChannel channel)
     {
-        if (channel is TInputChannel inputChannel)
+        switch (channel)
         {
-            return new Peer(PeerType.Channel, inputChannel.ChannelId/*, inputChannel.AccessHash*/);
+            case TInputChannel inputChannel:
+                return new Peer(PeerType.Channel, inputChannel.ChannelId/*, inputChannel.AccessHash*/);
+            case TInputChannelFromMessage inputChannelFromMessage:
+                return new Peer(PeerType.Channel, inputChannelFromMessage.ChannelId);
         }
 
         RpcErrors.RpcErrors400.ChannelIdInvalid.ThrowRpcError();
@@ -157,6 +166,13 @@ public static class Extension
         };
     }
 
+    /// <summary>
+    /// Maps an <see cref="IInputPeer"/> to a peer. The <c>fromMessage</c> variants carry a message
+    /// context instead of an access hash, so they resolve to the bare id here — the context itself
+    /// must be validated through <c>IFromMessagePeerResolver</c> by the caller. Previously they fell
+    /// through to <see cref="NotSupportedException"/>, which turned a legitimate client request into
+    /// a 500. See https://corefork.telegram.org/api/min
+    /// </summary>
     public static Peer ToPeer(this IInputPeer peer,
         long selfUserId = 0)
     {
@@ -170,10 +186,10 @@ public static class Extension
                 peerType = PeerType.Channel;
                 peerId = inputPeerChannel.ChannelId;
                 //accessHash = inputPeerChannel.AccessHash;
-                //case TInputPeerChannelFromMessage inputPeerChannelFromMessage:
-                //    peerType = PeerType.Channel;
-                //    peerId = inputPeerChannelFromMessage.ChannelId;
-
+                break;
+            case TInputPeerChannelFromMessage inputPeerChannelFromMessage:
+                peerType = PeerType.Channel;
+                peerId = inputPeerChannelFromMessage.ChannelId;
                 break;
             case TInputPeerChat inputPeerChat:
                 peerType = PeerType.Chat;
@@ -192,8 +208,10 @@ public static class Extension
                 peerId = inputPeerUser.UserId;
                 //accessHash = inputPeerUser.AccessHash;
                 break;
-            //case TInputPeerUserFromMessage inputPeerUserFromMessage:
-            //break;
+            case TInputPeerUserFromMessage inputPeerUserFromMessage:
+                peerType = PeerType.User;
+                peerId = inputPeerUserFromMessage.UserId;
+                break;
             default:
                 throw new NotSupportedException(peer.GetType().Name);
         }

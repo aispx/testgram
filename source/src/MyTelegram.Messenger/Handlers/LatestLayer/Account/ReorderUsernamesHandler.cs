@@ -10,10 +10,12 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestReorderUsernames, IBool>
 {
     private readonly IMongoDatabase _database;
+    private readonly IUsernameUpdateNotifier _usernameUpdateNotifier;
 
-    public ReorderUsernamesHandler(IMongoDatabase database)
+    public ReorderUsernamesHandler(IMongoDatabase database, IUsernameUpdateNotifier usernameUpdateNotifier)
     {
         _database = database;
+        _usernameUpdateNotifier = usernameUpdateNotifier;
     }
 
     protected override async Task<IBool> HandleCoreAsync(
@@ -110,6 +112,8 @@ internal sealed class ReorderUsernamesHandler : RpcResultObjectHandler<MyTelegra
         // Save back to MongoDB
         var update = Builders<BsonDocument>.Update.Set("Usernames", reorderedUsernames);
         await userCollection.UpdateOneAsync(userFilter, update);
+
+        await _usernameUpdateNotifier.NotifyUserNameChangedAsync(input, userId);
 
         return new TBoolTrue();
     }

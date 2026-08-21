@@ -1,4 +1,5 @@
-﻿using MyTelegram.Messenger.Services.Interfaces;
+﻿using MyTelegram.Messenger.Services;
+using MyTelegram.Messenger.Services.Interfaces;
 
 namespace MyTelegram.Messenger.QueryServer.DomainEventHandlers;
 
@@ -14,7 +15,8 @@ public class UserDomainEventHandler(
     ILayeredService<IAuthorizationConverter> layeredAuthorizationService,
     IQueryProcessor queryProcessor,
     IEmojiStatusResolver emojiStatusResolver,
-    IUserConverterService userConverterService)
+    IUserConverterService userConverterService,
+    IUsernameUpdateNotifier usernameUpdateNotifier)
     : DomainEventHandlerBase(objectMessageSender,
             commandBus,
             idGenerator,
@@ -65,6 +67,14 @@ public class UserDomainEventHandler(
         var user = await userConverterService.GetUserAsync(domainEvent.AggregateEvent.RequestInfo, userId, layer: domainEvent.AggregateEvent.RequestInfo.Layer);
 
         await SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, user);
+
+        // account.updateUsername answers with the new user object to the calling session only, so
+        // without this the other sessions and every contact keep the previous username.
+        // See https://corefork.telegram.org/api/peers#handling-updates
+        var userItem = domainEvent.AggregateEvent.UserItem;
+        await usernameUpdateNotifier.NotifyUserNameChangedAsync(userId,
+            domainEvent.AggregateEvent.RequestInfo.AuthKeyId,
+            new UserNameSnapshot(userItem.FirstName, userItem.LastName, userItem.UserName));
     }
 
     public async Task HandleAsync(IDomainEvent<UserAggregate, UserId, UserProfilePhotoChangedEvent> domainEvent,
