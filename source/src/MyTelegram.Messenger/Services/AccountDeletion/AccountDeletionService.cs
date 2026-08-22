@@ -16,6 +16,7 @@ public class AccountDeletionService(
     IEventBus eventBus,
     ITwoFactorService twoFactorService,
     IUserAppService userAppService,
+    IOptionsMonitor<MyTelegramMessengerServerOptions> options,
     ILogger<AccountDeletionService> logger)
     : IAccountDeletionService, ISingletonDependency
 {
@@ -32,6 +33,15 @@ public class AccountDeletionService(
         var user = await userAppService.GetAsync((long?)userId);
         if (user == null || user.IsDeleted == true)
         {
+            await CancelPendingAsync(userId, cancellationToken);
+            return;
+        }
+
+        // Checked here rather than only at the rpc entry point, so neither the delayed-deletion
+        // sweeper nor the self-destruction pass can take a service account down either.
+        if (IsProtectedFromDeletion(user))
+        {
+            logger.LogWarning("Refused to delete protected account {UserId}", userId);
             await CancelPendingAsync(userId, cancellationToken);
             return;
         }
@@ -53,6 +63,21 @@ public class AccountDeletionService(
         userAppService.InvalidateCache(userId);
 
         logger.LogInformation("Deleted account {UserId}, reason: {Reason}", userId, reason);
+    }
+
+    public bool IsProtectedFromDeletion(IUserReadModel user)
+    {
+        if (PeerKindHelper.IsSystemUserId(user.UserId) || user.Bot || user.Support)
+        {
+            return true;
+        }
+
+        // help.getSupport hands this account to every user, so losing it would break support chats.
+        var configuredSupportUserId = options.CurrentValue.SupportUserId;
+
+        return !string.IsNullOrEmpty(configuredSupportUserId) &&
+               long.TryParse(configuredSupportUserId, out var supportUserId) &&
+               supportUserId == user.UserId;
     }
 
     public async Task<AccountDeletionDocument> SchedulePendingAsync(long userId,

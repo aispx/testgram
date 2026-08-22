@@ -13,6 +13,13 @@ public interface IAccountDeletionService
     Task DeleteAccountAsync(long userId, string reason, RequestInfo? requestInfo = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// True for accounts that must never be deleted: the built-in system users (notification,
+    /// support, anonymous, replies), anything flagged as support, and bots - a bot is removed
+    /// through BotFather, not through account.deleteAccount.
+    /// </summary>
+    bool IsProtectedFromDeletion(IUserReadModel user);
+
     /// <summary>Parks a deletion for <paramref name="deleteAt"/> and returns the stored record.</summary>
     Task<AccountDeletionDocument> SchedulePendingAsync(long userId,
         string phoneNumber,

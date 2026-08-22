@@ -40,6 +40,13 @@ internal sealed class DeleteAccountHandler(
             RpcErrors.RpcErrors401.AuthKeyUnregistered.ThrowRpcError();
         }
 
+        // Service accounts (notification, support, replies, anonymous) and bots stay: they are shared
+        // infrastructure, and a bot is removed through BotFather instead.
+        if (accountDeletionService.IsProtectedFromDeletion(user!))
+        {
+            RpcErrors.RpcErrors403.UserRestricted.ThrowRpcError();
+        }
+
         var reason = obj.Reason ?? string.Empty;
         var passwordDocument = await twoFactorService.GetPasswordAsync(userId);
 

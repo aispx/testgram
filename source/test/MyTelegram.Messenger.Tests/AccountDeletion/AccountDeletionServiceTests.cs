@@ -1,6 +1,7 @@
 using EventFlow;
 using EventFlow.Queries;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Moq;
 using MyTelegram.Domain.Aggregates.User;
@@ -84,6 +85,47 @@ public class AccountDeletionServiceTests
             Times.Never);
     }
 
+    [RequiresMongoDbTheory]
+    // The built-in service users, by id.
+    [InlineData(MyTelegramConsts.NotificationServiceUserId, false, false)]
+    [InlineData(MyTelegramConsts.DefaultSupportUserId, false, false)]
+    [InlineData(MyTelegramConsts.RepliesServiceUserId, false, false)]
+    [InlineData(MyTelegramConsts.AnonymousUserId, false, false)]
+    // A regular id, but flagged support or a bot.
+    [InlineData(UserId, true, false)]
+    [InlineData(UserId, false, true)]
+    public async Task A_support_or_system_account_is_never_deleted(long userId, bool support, bool bot)
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var commandBus = new Mock<ICommandBus>(MockBehavior.Loose);
+        var service = CreateService(mongo.Database, commandBus, userId: userId, support: support, bot: bot);
+
+        // Even with a deletion already parked for it - the sweeper would otherwise execute that one.
+        await service.SchedulePendingAsync(userId, "12222222222", string.Empty, DateTime.UtcNow.AddDays(-1),
+            RequestInfo.Empty);
+
+        await service.DeleteAccountAsync(userId, "sweeper");
+
+        commandBus.Verify(p => p.PublishAsync(It.IsAny<DeleteAccountCommand>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        commandBus.Verify(p => p.PublishAsync(It.IsAny<UnRegisterDeviceForAuthKeyCommand>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        (await service.GetPendingByUserIdAsync(userId)).ShouldBeNull();
+    }
+
+    [RequiresMongoDbFact]
+    public async Task The_account_help_getSupport_hands_out_is_protected_too()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var commandBus = new Mock<ICommandBus>(MockBehavior.Loose);
+        var service = CreateService(mongo.Database, commandBus, configuredSupportUserId: UserId.ToString());
+
+        await service.DeleteAccountAsync(UserId, "sweeper");
+
+        commandBus.Verify(p => p.PublishAsync(It.IsAny<DeleteAccountCommand>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     [RequiresMongoDbFact]
     public async Task A_pending_deletion_is_found_by_the_hash_of_its_confirmphone_link()
     {
@@ -147,12 +189,18 @@ public class AccountDeletionServiceTests
         Mock<ICommandBus>? commandBus = null,
         Mock<IEventBus>? eventBus = null,
         Mock<ITwoFactorService>? twoFactorService = null,
-        bool isDeleted = false)
+        bool isDeleted = false,
+        long userId = UserId,
+        bool support = false,
+        bool bot = false,
+        string? configuredSupportUserId = null)
     {
         var user = new Mock<IUserReadModel>(MockBehavior.Loose);
-        user.SetupGet(p => p.UserId).Returns(UserId);
+        user.SetupGet(p => p.UserId).Returns(userId);
         user.SetupGet(p => p.UserName).Returns("glebxdlol");
         user.SetupGet(p => p.PhoneNumber).Returns("12222222222");
+        user.SetupGet(p => p.Support).Returns(support);
+        user.SetupGet(p => p.Bot).Returns(bot);
         user.SetupGet(p => p.IsDeleted).Returns(isDeleted ? true : null);
         user.SetupGet(p => p.Usernames).Returns([
             new UsernameInfo { Username = "glebxdlol", Editable = true, Active = true },
@@ -170,12 +218,17 @@ public class AccountDeletionServiceTests
         queryProcessor.Setup(p => p.ProcessAsync(It.IsAny<GetDeviceByUserIdQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([device.Object]);
 
+        var serverOptions = new MyTelegramMessengerServerOptions { SupportUserId = configuredSupportUserId! };
+        var options = new Mock<IOptionsMonitor<MyTelegramMessengerServerOptions>>(MockBehavior.Loose);
+        options.SetupGet(p => p.CurrentValue).Returns(serverOptions);
+
         return new AccountDeletionService(database,
             (commandBus ?? new Mock<ICommandBus>(MockBehavior.Loose)).Object,
             queryProcessor.Object,
             (eventBus ?? new Mock<IEventBus>(MockBehavior.Loose)).Object,
             (twoFactorService ?? new Mock<ITwoFactorService>(MockBehavior.Loose)).Object,
             userAppService.Object,
+            options.Object,
             new Mock<ILogger<AccountDeletionService>>(MockBehavior.Loose).Object);
     }
 }

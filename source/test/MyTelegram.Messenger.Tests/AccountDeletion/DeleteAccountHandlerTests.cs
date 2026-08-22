@@ -47,6 +47,23 @@ public class DeleteAccountHandlerTests
     }
 
     [RequiresMongoDbFact]
+    public async Task A_support_account_cannot_delete_itself()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var deletionService = new Mock<IAccountDeletionService>(MockBehavior.Loose);
+        deletionService.Setup(p => p.IsProtectedFromDeletion(It.IsAny<IUserReadModel>())).Returns(true);
+        var handler = CreateHandler(mongo.Database, deletionService, password: null);
+
+        var exception = await Should.ThrowAsync<RpcException>(() =>
+            InvokeAsync(handler, new RequestDeleteAccount { Reason = string.Empty }));
+
+        exception.RpcError.ErrorCode.ShouldBe(403);
+        exception.RpcError.Message.ShouldBe("USER_RESTRICTED");
+        deletionService.Verify(p => p.DeleteAccountAsync(It.IsAny<long>(), It.IsAny<string>(),
+            It.IsAny<RequestInfo>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [RequiresMongoDbFact]
     public async Task A_wrong_2fa_password_is_PASSWORD_HASH_INVALID_and_deletes_nothing()
     {
         using var mongo = EmbeddedMongoServer.Start();

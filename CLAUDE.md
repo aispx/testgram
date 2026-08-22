@@ -343,6 +343,11 @@ record and logs out the session that requested the deletion).
 
 `AccountDeletionBackgroundService` (command server) executes due records and self-destructs accounts
 idle longer than their `account.setAccountTTL` period.
+
+**Never deleted:** system users (`PeerKindHelper.IsSystemUserId` — notification 777000, support 569999,
+anonymous, group-anonymous, replies), anything with `Support = true`, bots, and the account configured
+in `App__SupportUserId`. The check lives in `IAccountDeletionService.IsProtectedFromDeletion`, so it
+covers the RPC (`403 USER_RESTRICTED`), the delayed-deletion sweeper and the TTL self-destruct alike.
 See https://corefork.telegram.org/api/account-deletion
 
 ---

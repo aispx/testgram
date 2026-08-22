@@ -145,7 +145,10 @@ public class AccountDeletionBackgroundService(
             }
 
             var userId = candidate["UserId"].ToInt64();
-            if (userId == MyTelegramConsts.NotificationServiceUserId)
+
+            // Bots and accounts flagged as support are already filtered out above; the built-in
+            // service users carry no such flag, so they are skipped by id.
+            if (PeerKindHelper.IsSystemUserId(userId))
             {
                 continue;
             }
