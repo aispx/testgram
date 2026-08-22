@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.HistoryImport;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Check whether chat history exported from another chat app can be <a href="https://corefork.telegram.org/api/import">imported into a specific Telegram chat, click here for more info »</a>.If the check succeeds, and no RPC errors are returned, a <a href="https://corefork.telegram.org/type/messages.CheckedHistoryImportPeer">messages.CheckedHistoryImportPeer</a> constructor will be returned, with a confirmation text to be shown to the user, before actually initializing the import.
@@ -11,10 +13,24 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckHistoryImportPeerHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestCheckHistoryImportPeer, MyTelegram.Schema.Messages.ICheckedHistoryImportPeer>
+internal sealed class CheckHistoryImportPeerHandler(
+    IPeerHelper peerHelper,
+    IHistoryImportPeerValidator peerValidator)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestCheckHistoryImportPeer,
+        MyTelegram.Schema.Messages.ICheckedHistoryImportPeer>
 {
-    protected override Task<MyTelegram.Schema.Messages.ICheckedHistoryImportPeer> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestCheckHistoryImportPeer obj)
+    protected override async Task<MyTelegram.Schema.Messages.ICheckedHistoryImportPeer> HandleCoreAsync(
+        IRequestInput input, MyTelegram.Schema.Messages.RequestCheckHistoryImportPeer obj)
     {
-        throw new NotImplementedException();
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+
+        // The clients run this check on a basic group too and only convert it to a supergroup once the
+        // user has confirmed, so a legacy chat is accepted here and refused at initHistoryImport.
+        var title = await peerValidator.ValidateAsync(input.UserId, peer, allowLegacyChat: true);
+
+        return new MyTelegram.Schema.Messages.TCheckedHistoryImportPeer
+        {
+            ConfirmText = peerValidator.BuildConfirmText(peer, title)
+        };
     }
 }

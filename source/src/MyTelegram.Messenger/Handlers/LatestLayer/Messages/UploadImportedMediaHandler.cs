@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.HistoryImport;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Upload a media file associated with an <a href="https://corefork.telegram.org/api/import">imported chat, click here for more info »</a>.
@@ -11,10 +13,40 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class UploadImportedMediaHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUploadImportedMedia, MyTelegram.Schema.IMessageMedia>
+internal sealed class UploadImportedMediaHandler(
+    IPeerHelper peerHelper,
+    IHistoryImportPeerValidator peerValidator,
+    IHistoryImportStore historyImportStore,
+    IMediaHelper mediaHelper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUploadImportedMedia, MyTelegram.Schema.IMessageMedia>
 {
-    protected override Task<MyTelegram.Schema.IMessageMedia> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestUploadImportedMedia obj)
+    protected override async Task<IMessageMedia> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestUploadImportedMedia obj)
     {
-        throw new NotImplementedException();
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+
+        // The rights are checked again on every step: an admin demoted midway through an import must
+        // not be able to keep feeding files into the chat.
+        await peerValidator.ValidateAsync(input.UserId, peer);
+
+        var import = await HistoryImportAccess.LoadPendingAsync(historyImportStore, obj.ImportId, input.UserId,
+            peer);
+
+        // The name is what ties the file to the line of the export that mentions it.
+        var fileName = obj.FileName?.Trim();
+        if (string.IsNullOrEmpty(fileName))
+        {
+            RpcErrors.RpcErrors400.ImportFileInvalid.ThrowRpcError();
+        }
+
+        var media = await mediaHelper.SaveMediaAsync(obj.Media);
+        if (media == null)
+        {
+            RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
+        }
+
+        await historyImportStore.SaveMediaAsync(import.Id, fileName!, media!);
+
+        return media!;
     }
 }

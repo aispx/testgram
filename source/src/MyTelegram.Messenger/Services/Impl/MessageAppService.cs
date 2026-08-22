@@ -405,7 +405,13 @@ public class MessageAppService(
                 input.SenderUserId));
 
 
-        if (channelMemberReadModel == null && input.SendMessageType != SendMessageType.MessageService)
+        // The chat importer account authors an imported history without ever joining the group, the
+        // same way service messages are written by a peer that is not a member.
+        // See https://corefork.telegram.org/api/import
+        var isChatImporter = input.SenderUserId == MyTelegramConsts.ChatImporterBotUserId;
+
+        if (channelMemberReadModel == null && input.SendMessageType != SendMessageType.MessageService &&
+            !isChatImporter)
         {
             if (channelReadModel is { Broadcast: false, LinkedChatId: not null, JoinToSend: false } || channelReadModel.IsMonoforum)
             {
@@ -872,7 +878,10 @@ public class MessageAppService(
                 : messageId;
         }
 
-        var date = CurrentDate;
+        // An imported message keeps the timestamp it had in the chat it came from, so the history
+        // lands under its own day separators instead of all arriving "today".
+        // See https://corefork.telegram.org/api/import
+        var date = input.Date ?? CurrentDate;
         var hashtags = GetHashtags(input.Message);
         byte[]? encryptedData = null;
         byte[]? inboxMessageEncryptedData = null;

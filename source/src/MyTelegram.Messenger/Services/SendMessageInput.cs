@@ -47,9 +47,11 @@ public record SendMessageInput
         int? views = null,
         bool noForwards = false,
         bool fromScheduled = false,
-        int? scheduleRepeatPeriod = null
+        int? scheduleRepeatPeriod = null,
+        int? date = null
         )
     {
+        Date = date;
         RequestInfo = requestInfo;
         SendMessageType = sendMessageType;
         MessageType = messageType;
@@ -93,6 +95,13 @@ public record SendMessageInput
         FromScheduled = fromScheduled;
         ScheduleRepeatPeriod = scheduleRepeatPeriod;
     }
+
+    /// <summary>
+    /// Timestamp the message must carry instead of the current time. Only an imported history sets it:
+    /// its messages keep the date they had in the chat they came from.
+    /// See https://corefork.telegram.org/api/import
+    /// </summary>
+    public int? Date { get; }
 
     public bool ClearDraft { get; }
     public TVector<IMessageEntity>? Entities { get; }

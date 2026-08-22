@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.HistoryImport;
 using System.Security.Cryptography;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
@@ -152,43 +153,8 @@ public static class PaidMediaHelper
         if (file is not TInputFile and not TInputFileBig)
             return null;
 
-        var uploadBytes = await TryReadUploadedFileBytesAsync(db, userId, file);
+        var uploadBytes = await UploadedFileReader.ReadAsync(db, userId, file);
         return uploadBytes == null ? null : TryCreateStrippedThumb(uploadBytes);
-    }
-
-    private static async Task<byte[]?> TryReadUploadedFileBytesAsync(IMongoDatabase db, long userId, IInputFile file)
-    {
-        var (fileId, expectedParts) = file switch
-        {
-            TInputFile inputFile => (inputFile.Id, inputFile.Parts),
-            TInputFileBig inputFileBig => (inputFileBig.Id, inputFileBig.Parts),
-            _ => (0L, 0)
-        };
-
-        if (fileId == 0 || expectedParts <= 0)
-            return null;
-
-        var parts = await db.GetCollection<BsonDocument>("file_parts")
-            .Find(Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("UserId", userId),
-                Builders<BsonDocument>.Filter.Eq("FileId", fileId)))
-            .Sort(Builders<BsonDocument>.Sort.Ascending("FilePart"))
-            .ToListAsync();
-
-        if (parts.Count == 0)
-            return null;
-
-        using var ms = new MemoryStream();
-        foreach (var part in parts)
-        {
-            if (!part.TryGetValue("Bytes", out var bytesValue) || !bytesValue.IsBsonBinaryData)
-                return null;
-
-            var bytes = bytesValue.AsBsonBinaryData.Bytes;
-            ms.Write(bytes, 0, bytes.Length);
-        }
-
-        return ms.ToArray();
     }
 
 

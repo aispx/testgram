@@ -64,6 +64,51 @@ public class MyTelegramMessengerServerOptions
     public WebAppsConfig WebApps { get; set; } = new();
     public VideoProcessingConfig VideoProcessing { get; set; } = new();
     public AccountDeletionConfig AccountDeletion { get; set; } = new();
+    public HistoryImportConfig HistoryImport { get; set; } = new();
+}
+
+/// <summary>
+/// Import of a chat history exported from another chat app.
+/// See https://corefork.telegram.org/api/import
+/// </summary>
+public class HistoryImportConfig
+{
+    /// <summary>Runs the queued imports. Turning this off leaves them parked.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Largest export file accepted. The official clients refuse to upload anything above 32 MB, so
+    /// a bigger file can only come from a client that is not playing by the rules.
+    /// </summary>
+    [Range(1024, 256 * 1024 * 1024)]
+    public long MaxFileSizeBytes { get; set; } = 32 * 1024 * 1024;
+
+    /// <summary>Messages accepted from a single export file.</summary>
+    [Range(1, 1_000_000)]
+    public int MaxMessages { get; set; } = 100_000;
+
+    /// <summary>Media files accepted alongside a single export file.</summary>
+    [Range(0, 100_000)]
+    public int MaxMediaCount { get; set; } = 1000;
+
+    /// <summary>Messages sent per batch by the background worker.</summary>
+    [Range(1, 500)]
+    public int BatchSize { get; set; } = 50;
+
+    /// <summary>Pause between two batches, so a large import cannot flood the command bus.</summary>
+    [Range(0, 60_000)]
+    public int BatchDelayMilliseconds { get; set; } = 200;
+
+    /// <summary>
+    /// How long a chat is considered busy with an import, which is also the number of minutes reported
+    /// by <c>PREVIOUS_CHAT_IMPORT_ACTIVE_WAIT_%dMIN</c>.
+    /// </summary>
+    [Range(1, 1440)]
+    public int ActiveImportTimeoutMinutes { get; set; } = 30;
+
+    /// <summary>Runs before the worker gives up on an import that keeps failing.</summary>
+    [Range(1, 10)]
+    public int MaxAttempts { get; set; } = 3;
 }
 
 /// <summary>

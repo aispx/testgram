@@ -22,6 +22,15 @@ public class MyTelegramConsts
     public const long DefaultSupportUserId = 569999;
 
     /// <summary>
+    /// The <c>@ChatsImportBot</c> peer ("Imported Message"). Messages imported from a foreign chat app
+    /// into a group are sent by this account, not by the user who started the import: the original
+    /// author only lives in <c>fwd_from.from_name</c>, so the messages must not look like the
+    /// importer's own. The id matches the one the production servers use.
+    /// See https://corefork.telegram.org/api/import
+    /// </summary>
+    public const long ChatImporterBotUserId = 1474613229;
+
+    /// <summary>
     /// The <c>@replies</c> peer. A user who commented on a channel post without joining the discussion
     /// group receives replies to their comments as messages from this peer; official clients render it
     /// as a read-only supergroup. The id matches the one official clients special-case.

@@ -21,10 +21,15 @@ public class UserDataSeeder(
         {
             await UpdateServiceNotificationAccountBioAsync();
 
+            // Added after the first seeding run of the installs that already exist, so it cannot live
+            // behind the "users were created" flag.
+            await CreateChatImporterBotUserAsync();
+
             return;
         }
 
         await CreateOfficialUserAsync();
+        await CreateChatImporterBotUserAsync();
         await CreateDefaultSupportUserAsync();
         await CreateAnonymousUserAsync();
         await CreateGroupAnonymousBotUserAsync();
@@ -127,6 +132,49 @@ public class UserDataSeeder(
             var setVerifiedCommand = new SetVerifiedCommand(UserId.Create(userId), true);
             await commandBus.PublishAsync(setVerifiedCommand);
             logger.LogInformation("Testgram support user created successfully");
+        }
+    }
+
+    /// <summary>
+    /// The peer that authors the messages of a chat history imported from a foreign chat app. The
+    /// original author is only a name in <c>fwd_from.from_name</c>, so the messages need a sender of
+    /// their own — attributing them to the importing user would make a whole imported history look
+    /// like their own messages.
+    /// See https://corefork.telegram.org/api/import
+    /// </summary>
+    private async Task CreateChatImporterBotUserAsync()
+    {
+        var userId = MyTelegramConsts.ChatImporterBotUserId;
+
+        try
+        {
+            // Not verified and not support: the production account carries neither flag.
+            var created = await CreateUserIfNeededAsync(userId,
+                string.Empty,
+                "Imported Message",
+                null,
+                "ChatsImportBot",
+                true);
+
+            if (created)
+            {
+                logger.LogInformation("Chat importer bot user created successfully");
+            }
+        }
+        catch (Exception ex)
+        {
+            // The username saga of this chain occasionally republishes its command and trips the
+            // duplicate-operation guard after the account is already written. That must not take the
+            // remaining seeders down with it, so the outcome is checked instead of trusted.
+            var user = await queryProcessor.ProcessAsync(new GetUserByIdQuery(userId));
+            if (user == null)
+            {
+                logger.LogError(ex, "Chat importer bot user could not be created");
+
+                return;
+            }
+
+            logger.LogWarning(ex, "Chat importer bot user was created, but its seeding chain reported an error");
         }
     }
 

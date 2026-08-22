@@ -10,7 +10,7 @@ public static class PeerKindHelper
     /// <summary>
     /// True when <paramref name="userId"/> is one of the built-in system user ids
     /// (notification 777000, group-anonymous 568888, anonymous 2666000, default-support 569999,
-    /// replies 1271266957).
+    /// replies 1271266957, chat importer 1474613229).
     /// </summary>
     public static bool IsSystemUserId(long userId)
     {
@@ -18,7 +18,8 @@ public static class PeerKindHelper
             || userId == MyTelegramConsts.GroupAnonymousBotUserId
             || userId == MyTelegramConsts.AnonymousUserId
             || userId == MyTelegramConsts.DefaultSupportUserId
-            || userId == MyTelegramConsts.RepliesServiceUserId;
+            || userId == MyTelegramConsts.RepliesServiceUserId
+            || userId == MyTelegramConsts.ChatImporterBotUserId;
     }
 
     /// <summary>
