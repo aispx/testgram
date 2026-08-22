@@ -195,7 +195,11 @@ public class ForwardMessageSaga : MyInMemoryAggregateSaga<ForwardMessageSaga, Fo
                 fwd.SavedFromPeer = null;
                 fwd.SavedFromMsgId = null;
             }
-            if (!string.IsNullOrEmpty(fwd.FromName))
+            // Unlike a forward anonymised by privacy settings, a forward of an imported message stays
+            // attached to the chat it was imported into, so it keeps the saved peer it was given above.
+            var isImported = MessageFwdHeaderRules.TryApplyImportedOrigin(fwd, item.FwdHeader, item.SenderPeer);
+
+            if (!isImported && !string.IsNullOrEmpty(fwd.FromName))
             {
                 fwd.FromId = null;
                 savedPeerId = MyTelegramConsts.AnonymousUserId.ToUserPeer();

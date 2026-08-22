@@ -476,6 +476,11 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
 
     private static MessageFwdHeader BuildForwardHeader(Peer fromPeer, IMessageReadModel message, int messageId)
     {
+        if (message.FwdHeader is { Imported: true } importedHeader)
+        {
+            return BuildImportedForwardHeader(fromPeer, message, messageId, importedHeader);
+        }
+
         if (message.FwdHeader != null)
         {
             return CloneForwardHeader(message.FwdHeader);
@@ -508,6 +513,38 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
             PsaType = null,
             ForwardFromLinkedChannel = false
         };
+    }
+
+    /// <summary>
+    /// Forward of a message that was imported from a foreign chat app. The copy keeps the original
+    /// author name and the original date, but it is a plain forward from a hidden sender: only the
+    /// imported message itself carries the <c>imported</c> flag, and a client that sees it there stops
+    /// drawing the forward header entirely. The sender of the source message — the chat importer
+    /// account — is reported in <c>saved_from_id</c>, as the official server does.
+    /// See https://corefork.telegram.org/api/import
+    /// </summary>
+    private static MessageFwdHeader BuildImportedForwardHeader(Peer fromPeer, IMessageReadModel message,
+        int messageId, MessageFwdHeader importedHeader)
+    {
+        var sourcePeer = fromPeer.PeerType == PeerType.Self ? new Peer(PeerType.User, fromPeer.PeerId) : fromPeer;
+
+        var header = new MessageFwdHeader
+        {
+            SavedOut = false,
+            ChannelPost = null,
+            PostAuthor = null,
+            SavedFromPeer = sourcePeer,
+            SavedFromMsgId = messageId,
+            SavedFromName = null,
+            SavedDate = message.Date,
+            PsaType = null,
+            ForwardFromLinkedChannel = false
+        };
+
+        MessageFwdHeaderRules.TryApplyImportedOrigin(header, importedHeader,
+            new Peer(PeerType.User, message.SenderPeerId));
+
+        return header;
     }
 
     private static MessageFwdHeader CloneForwardHeader(MessageFwdHeader source)
