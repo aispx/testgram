@@ -29,7 +29,8 @@ public class UserReadModel : IUserReadModel,
     IAmReadModelFor<UserAggregate, UserId, PersonalChannelUpdatedEvent>,
     IAmReadModelFor<UserAggregate, UserId, BirthdayUpdatedEvent>,
     IAmReadModelFor<UserAggregate, UserId, UserAboutUpdatedEvent>,
-    IAmReadModelFor<UserAggregate, UserId, UserFirstNameUpdatedEvent>
+    IAmReadModelFor<UserAggregate, UserId, UserFirstNameUpdatedEvent>,
+    IAmReadModelFor<UserAggregate, UserId, UserDeletedEvent>
 {
     public virtual string? About { get; private set; }
     public virtual long AccessHash { get; private set; }
@@ -317,6 +318,49 @@ public class UserReadModel : IUserReadModel,
     public Task ApplyAsync(IReadModelContext context, IDomainEvent<UserAggregate, UserId, UserFirstNameUpdatedEvent> domainEvent, CancellationToken cancellationToken)
     {
         FirstName = domainEvent.AggregateEvent.FirstName;
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Wipes the profile of a deleted account, see
+    /// <a href="https://corefork.telegram.org/api/account-deletion">account deletion</a>.
+    /// <c>UserConverterService</c> turns <see cref="IsDeleted"/> into <c>user.deleted</c>, which is
+    /// what makes clients render the peer as <c>Deleted Account</c>.
+    /// </summary>
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<UserAggregate, UserId, UserDeletedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        IsDeleted = true;
+        FirstName = string.Empty;
+        LastName = null;
+        UserName = null;
+        Usernames = null;
+        UserNameUpdateDate = null;
+        PhoneNumber = string.Empty;
+        About = null;
+        Birthday = null;
+        ProfilePhoto = null;
+        ProfilePhotoId = null;
+        PersonalPhotoId = null;
+        FallbackPhotoId = null;
+        ProfilePhotoUpdateDate = null;
+        VideoEmojiMarkup = null;
+        EmojiStatusDocumentId = null;
+        EmojiStatusValidUntil = null;
+        EmojiStatusCollectibleId = null;
+        RecentEmojiStatuses.Clear();
+        Color = null;
+        ProfileColor = null;
+        PersonalChannelId = null;
+        HasPassword = false;
+        Premium = false;
+        IsOnline = false;
+        BusinessWorkHours = null;
+        BusinessLocation = null;
+        BusinessGreetingMessage = null;
+        BusinessAwayMessage = null;
+        BusinessIntro = null;
+        LastUpdateDate = DateTime.UtcNow;
 
         return Task.CompletedTask;
     }

@@ -189,6 +189,33 @@ public class UserAggregate : MyInMemorySnapshotAggregateRoot<UserAggregate, User
             );
     }
 
+    /// <summary>
+    /// Deletes the account, via <c>account.deleteAccount</c> or the account self-destruction timer,
+    /// see <a href="https://corefork.telegram.org/api/account-deletion">account deletion</a>.
+    /// The profile is wiped and the user is flagged as deleted; messages the user sent to other
+    /// chats stay where they are, exactly like on the official server, and render as
+    /// <c>Deleted Account</c>.
+    /// </summary>
+    public void DeleteAccount(RequestInfo requestInfo, string reason, long date)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+
+        // The deletion sweeper can pick the same account up twice (a claim expiring while the
+        // first pass is still running), and the client may retry account.deleteAccount. Emitting
+        // a second event would wipe an already-wiped profile and re-notify every reader.
+        if (_state.IsDeleted)
+        {
+            return;
+        }
+
+        Emit(new UserDeletedEvent(requestInfo,
+            _state.UserId,
+            _state.UserName,
+            _state.PhoneNumber,
+            reason,
+            date));
+    }
+
     public void UpdateUserPremiumStatus(bool premium)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);

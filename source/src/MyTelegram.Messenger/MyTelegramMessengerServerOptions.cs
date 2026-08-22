@@ -63,6 +63,38 @@ public class MyTelegramMessengerServerOptions
     public CallsConfig Calls { get; set; } = new();
     public WebAppsConfig WebApps { get; set; } = new();
     public VideoProcessingConfig VideoProcessing { get; set; } = new();
+    public AccountDeletionConfig AccountDeletion { get; set; } = new();
+}
+
+/// <summary>
+/// Account deletion, see https://corefork.telegram.org/api/account-deletion: the delay granted to
+/// an account protected by a 2FA password the caller could not provide, and the self-destruction
+/// timer of inactive accounts set through <c>account.setAccountTTL</c>.
+/// </summary>
+public class AccountDeletionConfig
+{
+    /// <summary>Executes delayed deletions. Turning this off leaves pending deletions parked forever.</summary>
+    public bool Enabled { get; set; } = true;
+
+    [Range(10, int.MaxValue)]
+    public int SweepIntervalSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// How long a deletion is delayed when the account has a 2FA password that was not provided.
+    /// The official server grants one week, which is also how long the confirmphone link stays valid.
+    /// </summary>
+    [Range(1, 30)]
+    public int TwoFaDelayDays { get; set; } = 7;
+
+    /// <summary>
+    /// Deletes accounts that have not come online for longer than their <c>account.setAccountTTL</c>
+    /// period. Telegram's own default is 18 months of inactivity.
+    /// </summary>
+    public bool SelfDestructEnabled { get; set; } = true;
+
+    /// <summary>Accounts deleted per self-destruct pass, so one sweep cannot stall the worker.</summary>
+    [Range(1, 10000)]
+    public int SelfDestructBatchSize { get; set; } = 100;
 }
 
 /// <summary>

@@ -65,6 +65,7 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
             // would persist a verifier that can never verify against it.
             G = SrpConstants.G,
             P = SrpConstants.P2048,
+            PasswordUpdatedAt = DateTime.UtcNow,
             RecoveryEmail = existing?.RecoveryEmail,
             RecoveryEmailCode = existing?.RecoveryEmailCode,
             RecoveryEmailCodeExpire = existing?.RecoveryEmailCodeExpire,

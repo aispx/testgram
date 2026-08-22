@@ -283,6 +283,8 @@ NullReferenceException.
 | `fragment_collectibles` | Fragment NFT | type, username/phone |
 | `channel_admin_log` | Admin log (recent actions) | channel_id, event_id (per-channel counter), filters[], search_text, date (TTL 48 h) |
 | `scheduled_messages` | Schedule queue | ScheduledMessageId, PeerId/PeerType, SenderUserId, ScheduleDate (`0x7FFFFFFE` = when online), RepeatPeriod, Item (full `MessageItem`), ClaimedUntil |
+| `account_deletions` | Delayed account deletion (2FA) | `_id`/UserId, PhoneNumber, Hash (confirmphone link), DeleteAt, RequestedByPermAuthKeyId, PhoneCodeHash, ClaimedUntil |
+| `user_status` | Last seen presence | UserId, LastOnline, Online |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -320,6 +322,28 @@ image) into `App__VideoProcessing__Heights` renditions, attaches them as
 https://corefork.telegram.org/api/scheduled-messages#automatic-video-processing .
 Conversion runs in `VideoProcessingBackgroundService`; after 3 failed attempts the video is delivered
 unconverted rather than lost.
+
+---
+
+## Account deletion
+
+`account.deleteAccount` → `IAccountDeletionService.DeleteAccountAsync`: emits `UserDeletedEvent`
+(profile wiped, `IsDeleted = true` — `UserConverterService` turns that into `user.deleted`), releases
+every username through `DeleteUserNameCommand`, revokes every device plus `SessionRevokedEvent`,
+and drops the 2FA password. **Messages are not deleted** — the official server keeps the other
+party's copy too, see the Telegram FAQ.
+
+With a 2FA password that was *not* passed to the method, deletion is delayed by
+`App__AccountDeletion__TwoFaDelayDays` (7) when the password is older than a week **and** the account
+was online in the last week (`user_status.LastOnline`); otherwise the account goes immediately. The
+delayed case parks a record in `account_deletions`, pushes an `updateServiceNotification` with a
+`t.me/confirmphone?phone=…&hash=…` link and answers `420 2FA_CONFIRM_WAIT_%d`.
+Cancelling: `account.sendConfirmPhoneCode(hash)` → SMS code → `account.confirmPhone` (drops the
+record and logs out the session that requested the deletion).
+
+`AccountDeletionBackgroundService` (command server) executes due records and self-destructs accounts
+idle longer than their `account.setAccountTTL` period.
+See https://corefork.telegram.org/api/account-deletion
 
 ---
 

@@ -18,6 +18,14 @@ public class UserPasswordDocument
     /// 2FA password reset — can be brute-forced within its validity window.
     /// </summary>
     public int RecoveryEmailCodeFailedCount { get; set; }
+    /// <summary>
+    /// When the password was last set or changed. account.deleteAccount without a password only
+    /// delays deletion when the password is older than a week, see
+    /// https://corefork.telegram.org/api/account-deletion. A null value means the document predates
+    /// this field and is treated as "changed long ago".
+    /// </summary>
+    public DateTime? PasswordUpdatedAt { get; set; }
+
     public bool IsPasswordResetRequested { get; set; }
     public DateTime? PasswordResetRequestedAt { get; set; }
     public DateTime? PasswordResetRetryAt { get; set; }

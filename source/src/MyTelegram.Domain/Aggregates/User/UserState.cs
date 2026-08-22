@@ -19,7 +19,8 @@ public class UserState : AggregateState<UserAggregate, UserId, UserState>,
     IApply<PersonalChannelUpdatedEvent>,
     IApply<BirthdayUpdatedEvent>,
     IApply<UserAboutUpdatedEvent>,
-    IApply<UserFirstNameUpdatedEvent>
+    IApply<UserFirstNameUpdatedEvent>,
+    IApply<UserDeletedEvent>
 {
     public long AccessHash { get; private set; }
     public string FirstName { get; private set; } = null!;
@@ -236,5 +237,34 @@ public class UserState : AggregateState<UserAggregate, UserId, UserState>,
     public void Apply(UserFirstNameUpdatedEvent aggregateEvent)
     {
         FirstName= aggregateEvent.FirstName;
+    }
+
+    /// <summary>
+    /// Wipes the profile of a deleted account. Everything a client could render for the user is
+    /// cleared here, so nothing survives in the aggregate snapshot after
+    /// <a href="https://corefork.telegram.org/api/account-deletion">account deletion</a>.
+    /// </summary>
+    public void Apply(UserDeletedEvent aggregateEvent)
+    {
+        IsDeleted = true;
+        FirstName = string.Empty;
+        LastName = null;
+        UserName = null;
+        UserNameUpdateDate = null;
+        PhoneNumber = string.Empty;
+        Photo = null;
+        PhotoId = null;
+        FallbackPhotoId = null;
+        Birthday = null;
+        EmojiStatusDocumentId = null;
+        EmojiStatusValidUntil = null;
+        EmojiStatusCollectibleId = null;
+        RecentEmojiStatus.Clear();
+        Color = null;
+        ProfileColor = null;
+        PersonalChannelId = null;
+        HasPassword = false;
+        Premium = false;
+        IsOnline = false;
     }
 }
