@@ -8,6 +8,7 @@ public class DifferenceConverterService(
     IUserConverterService userConverterService,
     IMessageConverterService messageConverterService,
     IUpdatesResponseService updatesResponseService,
+    IMinConstructorReducer minConstructorReducer,
     ILayeredService<IMessageConverter> messageLayeredService,
     ILayeredService<IEncryptedMessageConverter> encryptedMessageLayeredService) : IDifferenceConverterService, ITransientDependency
 {
@@ -42,6 +43,10 @@ public class DifferenceConverterService(
         var userList = userConverterService.ToUserList(request, output.UserList, output.PhotoList,
             output.ContactList, output.PrivacyList, layer);
 
+        // Senders and forwarded-from channels the caller has no relationship with go out as min, to be
+        // addressed through an input*FromMessage citation. See https://corefork.telegram.org/api/min
+        minConstructorReducer.Reduce(request, output.MessageList, userList, channelList);
+
         var layeredUpdates = updatesList.Select(p => updatesResponseService.ToLayeredData(output.SelfUserId, request.AccessHashKeyId, p, layer));
 
         return new TChannelDifference
@@ -72,6 +77,10 @@ public class DifferenceConverterService(
             output.ContactList, output.PrivacyList, layer);
         var channelList = chatConverterService.ToChannelList(request, output.ChannelList, output.PhotoList,
             output.ChannelMemberList, output.JoinedChannelIdList, layer);
+
+        // As in ToChannelDifference: a peer the caller only sees through somebody else's message is
+        // reduced to min. See https://corefork.telegram.org/api/min
+        minConstructorReducer.Reduce(request, output.MessageList, userList, channelList);
 
         var qts = pts?.Qts ?? 0;
         var unreadCount = pts?.UnreadCount ?? 0;

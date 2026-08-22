@@ -13,7 +13,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokenizer tokenizer, IChatConverterService chatConverterService, IUserConverterService userConverterService, IMessageConverterService messageConverterService, IPeerHelper peerHelper, IMessageAppService messageAppService, IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSearchPosts, MyTelegram.Schema.Messages.IMessages>
+internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokenizer tokenizer, IChatConverterService chatConverterService, IUserConverterService userConverterService, IMessageConverterService messageConverterService, IPeerHelper peerHelper, IMessageAppService messageAppService, IMongoDatabase mongoDatabase, IMinConstructorReducer minConstructorReducer) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestSearchPosts, MyTelegram.Schema.Messages.IMessages>
 {
     private const int MinTextSearchLength = 2;
     private const int MaxSearchLimit = 100;
@@ -56,6 +56,12 @@ internal sealed class SearchPostsHandler(IQueryProcessor queryProcessor, ITokeni
         var channelMemberReadModels = await queryProcessor.ProcessAsync(new GetChannelMemberListByChannelIdListQuery(input.UserId, channelIdList));
         var channels = await chatConverterService.GetChannelListAsync(input, channelIdList, channelMemberReadModels, input.Layer);
         var users = await userConverterService.GetUserListAsync(input, userIds.ToList(), false, false, input.Layer);
+
+        // A global post search is the clearest case of seeing peers the caller has nothing to do
+        // with: they are reading public channels they are not a member of, so senders and referenced
+        // channels go out as min. See https://corefork.telegram.org/api/min
+        minConstructorReducer.Reduce(input, messageReadModels, users, channels);
+
         if (messageReadModels.Count == limit && messageReadModels.Count > 0)
         {
             var nextRate = messageReadModels.Max(p => p.Date);

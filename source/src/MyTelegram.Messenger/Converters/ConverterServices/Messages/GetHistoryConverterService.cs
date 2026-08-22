@@ -1,7 +1,8 @@
 ﻿namespace MyTelegram.Messenger.Converters.ConverterServices.Messages;
 
 internal sealed class GetHistoryConverterService(IUserConverterService userConverterService, IChatConverterService chatConverterService,
-    IMessageConverterService messageConverterService
+    IMessageConverterService messageConverterService,
+    IMinConstructorReducer minConstructorReducer
     ) : IGetHistoryConverterService, ITransientDependency
 {
     public IMessages ToMessages(IRequestWithAccessHashKeyId request, GetMessageOutput output, int layer)
@@ -26,6 +27,11 @@ internal sealed class GetHistoryConverterService(IUserConverterService userConve
             output.ChannelMemberList,
             output.JoinedChannelIdList,
             layer);
+
+        // Peers the caller only sees because somebody else's message named them go out as min, so they
+        // carry no relationship the caller does not have and get addressed through an
+        // input*FromMessage citation later. See https://corefork.telegram.org/api/min
+        minConstructorReducer.Reduce(request, output.MessageList, users, channels);
 
         var hasMessages = messages.Count > 0;
 

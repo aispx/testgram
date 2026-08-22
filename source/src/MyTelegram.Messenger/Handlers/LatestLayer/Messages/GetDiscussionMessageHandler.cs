@@ -16,7 +16,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IChannelAppService channelAppService, //ILayeredService<IChannelConverter> layeredChatService,
- IChatConverterService chatConverterService, IMessageConverterService messageConverterService, IUserConverterService userConverterService, IThreadReadStateService threadReadStateService, IPhotoAppService photoAppService) : RpcResultObjectHandler<RequestGetDiscussionMessage, IDiscussionMessage>
+ IChatConverterService chatConverterService, IMessageConverterService messageConverterService, IUserConverterService userConverterService, IThreadReadStateService threadReadStateService, IPhotoAppService photoAppService, IMinConstructorReducer minConstructorReducer) : RpcResultObjectHandler<RequestGetDiscussionMessage, IDiscussionMessage>
 {
     protected override async Task<IDiscussionMessage> HandleCoreAsync(IRequestInput input, RequestGetDiscussionMessage obj)
     {
@@ -85,6 +85,11 @@ internal sealed class GetDiscussionMessageHandler(IPeerHelper peerHelper, IQuery
         var users = userIds.Count == 0
             ? []
             : await userConverterService.GetUserListAsync(input, userIds, layer: input.Layer);
+
+        // The thread starter's sender is somebody the caller may have no relationship with — they are
+        // reading a comment section without joining the group — so it goes out as min and gets
+        // addressed through an input*FromMessage citation. See https://corefork.telegram.org/api/min
+        minConstructorReducer.Reduce(input, threadMessages, users, chats);
 
         return new TDiscussionMessage
         {
