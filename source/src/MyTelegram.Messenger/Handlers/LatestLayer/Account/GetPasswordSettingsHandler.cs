@@ -14,10 +14,24 @@ internal sealed class GetPasswordSettingsHandler(ITwoFactorService twoFactorServ
         }
 
         var recoveryEmail = await twoFactorService.GetRecoveryEmailAsync(input.UserId);
+        var secureSettings = await twoFactorService.GetSecureSettingsAsync(input.UserId);
 
         return new MyTelegram.Schema.Account.TPasswordSettings
         {
-            Email = recoveryEmail
+            Email = recoveryEmail,
+            // The encrypted passport secret. Without it the client cannot decrypt a single stored
+            // document. https://corefork.telegram.org/passport/encryption#passport-secret-decryption
+            SecureSettings = secureSettings == null
+                ? null
+                : new TSecureSecretSettings
+                {
+                    SecureAlgo = new TSecurePasswordKdfAlgoPBKDF2HMACSHA512iter100000
+                    {
+                        Salt = secureSettings.Salt
+                    },
+                    SecureSecret = secureSettings.SecureSecret,
+                    SecureSecretId = secureSettings.SecureSecretId
+                }
         };
     }
 }

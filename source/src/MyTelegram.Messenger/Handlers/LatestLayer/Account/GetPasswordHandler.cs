@@ -3,9 +3,18 @@ using MyTelegram.Messenger.Services.TwoFactor;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 
-internal sealed class GetPasswordHandler(ITwoFactorService twoFactorService)
+internal sealed class GetPasswordHandler(
+    ITwoFactorService twoFactorService,
+    MyTelegram.Messenger.Services.Passport.IPassportValueStore passportValueStore)
     : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetPassword, MyTelegram.Schema.Account.IPassword>
 {
+    /// <summary>
+    /// Server salt of the passport-secret KDF. The client appends 32 bytes of its own and stores the
+    /// concatenation as <c>secureSecretSettings.secure_algo.salt</c>.
+    /// See https://corefork.telegram.org/passport/encryption#passport-secret-encryption
+    /// </summary>
+    private const int SecureSaltLength = 8;
+
     protected override async Task<IPassword> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetPassword obj)
     {
         // Clients use secure_random as salt entropy for the Passport secure secret, so it has to come from a
@@ -25,8 +34,16 @@ internal sealed class GetPasswordHandler(ITwoFactorService twoFactorService)
         var password = new TPassword
         {
             NewAlgo = newAlgo,
-            NewSecureAlgo = new TSecurePasswordKdfAlgoUnknown(),
-            SecureRandom = secureRandom
+            // "The server should always return a securePasswordKdfAlgoPBKDF2HMACSHA512iter100000
+            // constructor in the new_algo field. If securePasswordKdfAlgoUnknown is returned, [...] the
+            // user should update their app" - i.e. the clients refuse to set up Passport at all.
+            // https://corefork.telegram.org/passport/encryption
+            NewSecureAlgo = new TSecurePasswordKdfAlgoPBKDF2HMACSHA512iter100000
+            {
+                Salt = RandomNumberGenerator.GetBytes(SecureSaltLength)
+            },
+            SecureRandom = secureRandom,
+            HasSecureValues = await passportValueStore.HasAnyAsync(input.UserId)
         };
 
         if (doc != null)

@@ -13,6 +13,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Served as help.passportConfig.countries_langs. Embedded rather than copied so the image needs
+         no extra content step; App__Passport__CountriesLangsFile overrides it at runtime. -->
+    <EmbeddedResource Include="Resources\passport-countries-langs.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="SixLabors.ImageSharp" />
     <PackageReference Include="System.IO.Hashing" />
     <PackageReference Include="System.Formats.Cbor" />

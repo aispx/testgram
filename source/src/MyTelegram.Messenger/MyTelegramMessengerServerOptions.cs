@@ -65,6 +65,28 @@ public class MyTelegramMessengerServerOptions
     public VideoProcessingConfig VideoProcessing { get; set; } = new();
     public AccountDeletionConfig AccountDeletion { get; set; } = new();
     public HistoryImportConfig HistoryImport { get; set; } = new();
+    public PassportConfig Passport { get; set; } = new();
+}
+
+/// <summary>
+/// Telegram Passport, see https://corefork.telegram.org/api/passport. The server stores the documents
+/// end-to-end encrypted and never holds a key, so the only knobs here are size limits and the
+/// country/language table served by <c>help.getPassportConfig</c>.
+/// </summary>
+public class PassportConfig
+{
+    /// <summary>
+    /// Largest single passport file accepted. The clients cap scans at 10 MB before encrypting, so
+    /// anything above that comes from a client that is not playing by the rules.
+    /// </summary>
+    [Range(1024, 64 * 1024 * 1024)]
+    public long MaxFileSizeBytes { get; set; } = 10 * 1024 * 1024;
+
+    /// <summary>
+    /// Path to the JSON country code -> form language table returned as
+    /// <c>help.passportConfig.countries_langs</c>. Empty means the table shipped with the server.
+    /// </summary>
+    public string CountriesLangsFile { get; set; } = string.Empty;
 }
 
 /// <summary>

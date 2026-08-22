@@ -8,6 +8,7 @@ using MyTelegram.Domain.Aggregates.User;
 using MyTelegram.Domain.Aggregates.Device;
 using MyTelegram.Domain.Aggregates.UserName;
 using MyTelegram.Core;
+using MyTelegram.Messenger.Services.Passport;
 using MyTelegram.EventBus;
 using MyTelegram.Messenger.Services.AccountDeletion;
 using MyTelegram.Messenger.Services.Interfaces;
@@ -227,6 +228,9 @@ public class AccountDeletionServiceTests
             queryProcessor.Object,
             (eventBus ?? new Mock<IEventBus>(MockBehavior.Loose)).Object,
             (twoFactorService ?? new Mock<ITwoFactorService>(MockBehavior.Loose)).Object,
+            new Mock<IPassportValueStore>(MockBehavior.Loose).Object,
+            new Mock<IPassportErrorStore>(MockBehavior.Loose).Object,
+            new Mock<IPassportVerificationStore>(MockBehavior.Loose).Object,
             userAppService.Object,
             options.Object,
             new Mock<ILogger<AccountDeletionService>>(MockBehavior.Loose).Object);

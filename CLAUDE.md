@@ -285,6 +285,11 @@ NullReferenceException.
 | `scheduled_messages` | Schedule queue | ScheduledMessageId, PeerId/PeerType, SenderUserId, ScheduleDate (`0x7FFFFFFE` = when online), RepeatPeriod, Item (full `MessageItem`), ClaimedUntil |
 | `account_deletions` | Delayed account deletion (2FA) | `_id`/UserId, PhoneNumber, Hash (confirmphone link), DeleteAt, RequestedByPermAuthKeyId, PhoneCodeHash, ClaimedUntil |
 | `user_status` | Last seen presence | UserId, LastOnline, Online |
+| `passport_values` | Telegram Passport documents | `_id` = `{UserId}:{Type}`, Data/DataHash/DataSecret, *FileId(s), Hash |
+| `passport_files` | Passport scans (descriptors) | Id, AccessHash, OwnerUserId, FileHash, Secret, Size, Parts |
+| `passport_file_parts` | Passport scans (bodies) | `_id` = `{FileId}_{PartIndex}`, FileId, Offset, Bytes |
+| `passport_errors` | Errors reported by a bot | UserId, BotId, Kind, Type, Hash/Hashes, Field, Text |
+| `passport_phones` / `passport_emails` | Verified plain values | UserId, Phone / Email |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -349,6 +354,43 @@ anonymous, group-anonymous, replies), anything with `Support = true`, bots, and 
 in `App__SupportUserId`. The check lives in `IAccountDeletionService.IsProtectedFromDeletion`, so it
 covers the RPC (`403 USER_RESTRICTED`), the delayed-deletion sweeper and the TTL self-destruct alike.
 See https://corefork.telegram.org/api/account-deletion
+
+---
+
+## Telegram Passport
+
+The server is a **blind relay**: every document is encrypted client-side with a `passport_secret` that
+is itself encrypted with the 2FA password, so nothing here can be decrypted. Services live in
+`Services/Passport/`.
+
+* **Passport secret** — `account.getPassword` must return
+  `securePasswordKdfAlgoPBKDF2HMACSHA512iter100000` in `new_secure_algo` (an `Unknown` algo makes every
+  official client abort with "update your app"). The encrypted secret arrives through
+  `account.updatePasswordSettings.new_secure_settings`, is kept on `user-password`
+  (`SecureAlgoSalt`/`SecureSecret`/`SecureSecretId`) and is handed back by
+  `account.getPasswordSettings`. Removing the password destroys all Passport data.
+* **`secureValue.hash`** is defined by the *server*: clients read it from the response and quote it
+  verbatim in `account.acceptAuthorization.value_hashes` and in `secureValueError.hash`. Plain
+  phone/email hash the plaintext (matching tdlib's `calc_value_hash`); everything else hashes the
+  `(data_hash, secret)` pairs. `PassportValueStore.ComputeValueHash`.
+* **Files** — uploaded with `upload.saveFilePart`, snapshotted out of `file_parts` into
+  `passport_file_parts` by `PassportFileStore` (a client reusing its file id must not rewrite a stored
+  document), downloaded through `upload.getFile` + `inputSecureFileLocation`. The gate on download is
+  the session-derived access hash, **not** ownership — the bot reads the same blob.
+* **Bot public key** — BotFather `/setpublickey` (`PassportPublicKey` on `botfather-bot-state`).
+  `account.getAuthorizationForm` / `acceptAuthorization` answer `PUBLIC_KEY_REQUIRED` when the bot has
+  no key or the quoted one does not match.
+* **Scope** — `PassportScopeParser` turns the `UriPassportScope` JSON (`pd`/`pp`/`dl`/… plus the `idd`
+  and `add` group aliases and the `s`/`t`/`n` flags) into `SecureRequiredType`.
+* **Submission** — `acceptAuthorization` sends one service message to the bot. `MessageServiceMapper`
+  renders it as `messageActionSecureValuesSentMe` for the bot and as `messageActionSecureValuesSent`
+  (types only) for the sender's own copy.
+* **`help.getPassportConfig`** — `Resources/passport-countries-langs.json`, overridable through
+  `App__Passport__CountriesLangsFile`. It is served as **compact** JSON: tdlib looks a country up by
+  searching the raw string for `"CC":"`, so a space after the colon makes every lookup miss.
+
+See https://corefork.telegram.org/api/passport and
+https://corefork.telegram.org/passport/encryption
 
 ---
 

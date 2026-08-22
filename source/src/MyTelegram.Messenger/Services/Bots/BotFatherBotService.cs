@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Passport;
 using StackExchange.Redis;
 
 namespace MyTelegram.Messenger.Services.Bots;
@@ -21,7 +22,8 @@ public class BotFatherBotService(
     IMongoDatabase mongoDatabase,
     IConnectionMultiplexer redis,
     ICommandBus commandBus,
-    IQueryProcessor queryProcessor) : IBotFatherBotService, ISingletonDependency
+    IQueryProcessor queryProcessor,
+    IPassportBotResolver passportBotResolver) : IBotFatherBotService, ISingletonDependency
 {
     public const long BotUserId = MyTelegramConsts.BotFatherUserId;
     private const string BotCollection = "botfather-bot-state";
@@ -47,7 +49,34 @@ public class BotFatherBotService(
         "/deletebot - delete a bot\n\n" +
         "Bot Settings\n" +
         "/token - get authorization token\n" +
-        "/revoke - revoke bot access token";
+        "/revoke - revoke bot access token\n" +
+        "/setpublickey - set the public key for Telegram Passport";
+
+    private const string GenerateKeyInstructions =
+        "openssl genrsa 2048 > private.key\n\n" +
+        "Keep your PRIVATE key secret!\n\n" +
+        "Then print your public key:\n\n" +
+        "openssl rsa -in private.key -pubout\n\n" +
+        "Send me this public key.";
+
+    private const string PublicKeyPromptText =
+        "This will enable your bot requesting information from Telegram Passport. Use /empty to disable.\n\n" +
+        "To enable, please generate RSA private key (at least 2048 bits long) using openssl:\n\n" +
+        "openssl genrsa 2048 > private.key\n\n" +
+        "Keep your private key secret!\n\n" +
+        "Then print your public key:\n\n" +
+        "openssl rsa -in private.key -pubout\n\n" +
+        "Send me this public key.";
+
+    private const string PublicKeyInvalidText =
+        "Sorry the public key you provided is invalid. We need RSA public key at least 2048 bits long.\n\n" +
+        "Please generate RSA private key using:\n\n" +
+        GenerateKeyInstructions;
+
+    private const string PublicKeyIsPrivateText =
+        "It seems that you sent me your private key. You should keep your PRIVATE key secret!\n\n" +
+        "Your private key was compromised so please generate the new one using:\n\n" +
+        GenerateKeyInstructions;
 
     // --- State keys ---
     private string StateKey(long userId) => $"botfather:state:{userId}";
@@ -68,9 +97,10 @@ public class BotFatherBotService(
         var text = message.Trim();
         var cmd = text.Split(' ')[0].ToLower();
 
-        // Check FSM state first
+        // Check FSM state first. /empty is the one command that belongs to the flow rather than to the
+        // top level menu - several prompts offer it as the way to clear the value being asked for.
         var state = await GetStateAsync(fromUserId);
-        if (state != null && !cmd.StartsWith("/"))
+        if (state != null && (!cmd.StartsWith("/") || cmd == "/empty"))
         {
             await HandleStateInputAsync(input, fromUserId, state, text);
             return;
@@ -140,6 +170,10 @@ public class BotFatherBotService(
             case "/setinline":
                 await ClearStateAsync(fromUserId);
                 await SendBotPickerAsync(input, fromUserId, "Choose a bot to change inline settings.", "setinline");
+                break;
+            case "/setpublickey":
+                await ClearStateAsync(fromUserId);
+                await SendBotPickerAsync(input, fromUserId, "Choose a bot to change public key.", "setpublickey");
                 break;
             case "/newapp":
                 await ClearStateAsync(fromUserId);
@@ -350,6 +384,13 @@ public class BotFatherBotService(
             case "setinline":
                 if (step == "pick")
                     await HandleBotPickAsync(input, fromUserId, text, SendBotMenuTextAsync);
+                break;
+
+            case "setpublickey":
+                if (step == "pick")
+                    await HandleBotPickAsync(input, fromUserId, text, SendPublicKeyPromptTextAsync);
+                else if (step == "input")
+                    await HandlePublicKeyInputAsync(input, fromUserId, extra, text);
                 break;
 
             case "newapp":
@@ -721,6 +762,60 @@ public class BotFatherBotService(
                 new BsonDocument("$set", new BsonDocument("Name", name)));
         await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
             .UpdateOneAsync(new BsonDocument("UserName", username), new BsonDocument("$set", new BsonDocument("FirstName", name)));
+    }
+
+    /// <summary>Bot picked for /setpublickey; asks for the PEM.</summary>
+    private async Task SendPublicKeyPromptTextAsync(IRequestInput input,
+        long fromUserId,
+        string username,
+        BsonDocument bot)
+    {
+        await SetStateAsync(fromUserId, $"setpublickey:input:{username}");
+        await SendAsync(input, fromUserId, PublicKeyPromptText, new TReplyKeyboardHide());
+    }
+
+    /// <summary>
+    /// Stores the bot's Telegram Passport public key. The key is what
+    /// <c>account.getAuthorizationForm</c> / <c>account.acceptAuthorization</c> check the caller's
+    /// <c>public_key</c> against, and it is also the key the user's client encrypts the credentials to.
+    /// See https://corefork.telegram.org/api/passport
+    /// </summary>
+    private async Task HandlePublicKeyInputAsync(IRequestInput input, long fromUserId, string username, string text)
+    {
+        var bot = await GetBotAsync(fromUserId, username);
+        if (bot == null)
+        {
+            await ClearStateAsync(fromUserId);
+            await SendAsync(input, fromUserId, $"I couldn't find a bot @{username} owned by you.");
+            return;
+        }
+
+        var botUserId = bot["BotUserId"].AsInt64;
+
+        if (text.Trim().Equals("/empty", StringComparison.OrdinalIgnoreCase))
+        {
+            await passportBotResolver.SetPublicKeyAsync(botUserId, null);
+            await ClearStateAsync(fromUserId);
+            await SendAsync(input, fromUserId, "Success! Public key updated. /help");
+            return;
+        }
+
+        switch (PassportPublicKey.TryNormalize(text, out var normalized))
+        {
+            case PassportPublicKeyStatus.PrivateKey:
+                // The state is kept: the owner still has to send a public key, and they now have to
+                // rotate the compromised pair first.
+                await SendAsync(input, fromUserId, PublicKeyIsPrivateText);
+                return;
+
+            case PassportPublicKeyStatus.Invalid:
+                await SendAsync(input, fromUserId, PublicKeyInvalidText);
+                return;
+        }
+
+        await passportBotResolver.SetPublicKeyAsync(botUserId, normalized);
+        await ClearStateAsync(fromUserId);
+        await SendAsync(input, fromUserId, "Success! Public key updated. /help");
     }
 
     private async Task DoSetFieldAsync(long fromUserId, string username, string field, string value)

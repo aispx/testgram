@@ -26,6 +26,20 @@ public class UserPasswordDocument
     /// </summary>
     public DateTime? PasswordUpdatedAt { get; set; }
 
+    /// <summary>
+    /// <c>passport_secret_salt</c> of the <c>securePasswordKdfAlgoPBKDF2HMACSHA512iter100000</c> the
+    /// client used to encrypt the passport secret (server salt + client salt, concatenated by the
+    /// client). Opaque to the server, echoed back through account.getPasswordSettings.
+    /// See https://corefork.telegram.org/passport/encryption
+    /// </summary>
+    public byte[]? SecureAlgoSalt { get; set; }
+
+    /// <summary>The passport secret, encrypted with the user's 2FA password. Never decryptable here.</summary>
+    public byte[]? SecureSecret { get; set; }
+
+    /// <summary>Fingerprint of the passport secret; account.saveSecureValue must quote it.</summary>
+    public long SecureSecretId { get; set; }
+
     public bool IsPasswordResetRequested { get; set; }
     public DateTime? PasswordResetRequestedAt { get; set; }
     public DateTime? PasswordResetRetryAt { get; set; }

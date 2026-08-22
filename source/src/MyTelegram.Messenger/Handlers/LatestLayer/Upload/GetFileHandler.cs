@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Passport;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services.SecretChat;
 
@@ -15,17 +16,23 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
     private readonly ILogger<GetFileHandler> _logger;
     private readonly IHlsGroupCallStreamService _hlsGroupCallStreamService;
     private readonly IEncryptedFileStore _encryptedFileStore;
+    private readonly IPassportFileStore _passportFileStore;
+    private readonly IAccessHashHelper2 _accessHashHelper;
 
     public GetFileHandler(
         IMongoDatabase database,
         ILogger<GetFileHandler> logger,
         IHlsGroupCallStreamService hlsGroupCallStreamService,
-        IEncryptedFileStore encryptedFileStore)
+        IEncryptedFileStore encryptedFileStore,
+        IPassportFileStore passportFileStore,
+        IAccessHashHelper2 accessHashHelper)
     {
         _database = database;
         _logger = logger;
         _hlsGroupCallStreamService = hlsGroupCallStreamService;
         _encryptedFileStore = encryptedFileStore;
+        _passportFileStore = passportFileStore;
+        _accessHashHelper = accessHashHelper;
     }
 
     protected override async Task<MyTelegram.Schema.Upload.IFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Upload.RequestGetFile obj)
@@ -66,6 +73,28 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
                 Type = new MyTelegram.Schema.Storage.TFilePartial(),
                 Mtime = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 Bytes = loaded!.Value.Bytes
+            };
+        }
+
+        // Telegram Passport download. The bot the form was submitted to reads the very same blob, so
+        // ownership is not the gate here — the session-derived access hash is, exactly as for
+        // secret-chat files. https://corefork.telegram.org/api/passport#securefile
+        if (obj.Location is TInputSecureFileLocation secureFileLocation)
+        {
+            await _accessHashHelper.CheckAccessHashAsync(input, secureFileLocation.Id,
+                secureFileLocation.AccessHash, AccessHashType.Document);
+
+            var loaded = await _passportFileStore.LoadRangeAsync(secureFileLocation.Id, obj.Offset, obj.Limit);
+            if (loaded == null)
+            {
+                RpcErrors.RpcErrors400.FileIdInvalid.ThrowRpcError();
+            }
+
+            return new MyTelegram.Schema.Upload.TFile
+            {
+                Type = new MyTelegram.Schema.Storage.TFilePartial(),
+                Mtime = loaded!.Value.Document.Date,
+                Bytes = loaded.Value.Bytes
             };
         }
 

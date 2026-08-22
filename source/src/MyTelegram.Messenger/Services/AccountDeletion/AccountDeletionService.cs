@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Device;
+using MyTelegram.Messenger.Services.Passport;
 using MyTelegram.Messenger.Services.TwoFactor;
 
 namespace MyTelegram.Messenger.Services.AccountDeletion;
@@ -15,6 +16,9 @@ public class AccountDeletionService(
     IQueryProcessor queryProcessor,
     IEventBus eventBus,
     ITwoFactorService twoFactorService,
+    IPassportValueStore passportValueStore,
+    IPassportErrorStore passportErrorStore,
+    IPassportVerificationStore passportVerificationStore,
     IUserAppService userAppService,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options,
     ILogger<AccountDeletionService> logger)
@@ -58,6 +62,12 @@ public class AccountDeletionService(
 
         await twoFactorService.RemovePasswordAsync(userId);
         await twoFactorService.ClearPasswordResetStateAsync(userId);
+
+        // The passport secret went with the password, so the documents are unreadable from here on -
+        // and they are identity papers, which is the last thing to leave behind on a deleted account.
+        await passportValueStore.DeleteAllAsync(userId);
+        await passportErrorStore.ClearAllAsync(userId);
+        await passportVerificationStore.ClearAsync(userId);
 
         await CancelPendingAsync(userId, cancellationToken);
         userAppService.InvalidateCache(userId);
