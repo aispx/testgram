@@ -22,7 +22,11 @@ internal sealed class UserMapper
         destination.Photo = new TUserProfilePhotoEmpty();
         destination.AccessHash = source.AccessHash;
         destination.Bot = source.Bot;
-        destination.BotInfoVersion = source.BotInfoVersion;
+
+        // user.bot makes the constructor set the bot_info_version flag, and serializing it then
+        // dereferences the value: a bot without one takes down every response it appears in. Only the
+        // bots created through BotFather ever got the field, so it is defaulted here instead.
+        destination.BotInfoVersion = source.BotInfoVersion ?? (source.Bot ? 1 : null);
         destination.Phone = source.PhoneNumber;
         destination.FirstName = source.FirstName;
         destination.LastName = source.LastName;
