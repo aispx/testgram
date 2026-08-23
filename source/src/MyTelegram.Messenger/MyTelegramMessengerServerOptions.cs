@@ -71,7 +71,8 @@ public class MyTelegramMessengerServerOptions
 
 /// <summary>
 /// Bot payments, see https://corefork.telegram.org/api/payments. Invoices are settled in Telegram
-/// Stars only — there is no per bot payment provider — so the only knob here is the card issuer table.
+/// Stars only — there is no per bot payment provider — so the knobs here are the card issuer table
+/// and the store top-up escape hatch.
 /// </summary>
 public class PaymentsConfig
 {
@@ -80,6 +81,25 @@ public class PaymentsConfig
     /// Empty means the table shipped with the server.
     /// </summary>
     public string BankBinsFile { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Lets a Stars purchase settle when the server could not confirm that any money changed hands:
+    /// an App Store or Play receipt it cannot check with Apple or Google, or a
+    /// <c>payments.sendPaymentForm</c> whose charge was never confirmed with Stripe.
+    /// </summary>
+    /// <remarks>
+    /// In all of those cases the amount is, in the end, whatever the caller asked for, so this is a
+    /// test-stand convenience and must stay off in production — there the only honest answer is
+    /// <c>PAYMENT_PROVIDER_INVALID</c>. Even when on, each receipt settles exactly once and
+    /// <see cref="UnverifiedTopupLimit"/> caps what an account can ever be granted this way.
+    /// </remarks>
+    public bool AllowUnverifiedTopup { get; set; }
+
+    /// <summary>
+    /// Ceiling, in Stars, on everything one account may be credited over its lifetime through the
+    /// unverified path. Ignored while <see cref="AllowUnverifiedTopup"/> is off.
+    /// </summary>
+    public long UnverifiedTopupLimit { get; set; } = 10_000;
 }
 
 /// <summary>

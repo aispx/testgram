@@ -54,7 +54,10 @@ internal sealed class SendPaymentFormHandler(
             RpcErrors.RpcErrors400.BotInvoiceInvalid.ThrowRpcError();
 
         var col = mongoDatabase.GetCollection<StripePaymentIntentDocument>("stripe-payment-intents");
-        var intent = await col.Find(x => x.FormId == obj.FormId).FirstOrDefaultAsync();
+        var payerUserId = input.UserId;
+        // Matched on the account as well as on the form id: a form id belonging to someone else is
+        // their purchase, and settling it here would credit their Stars to the caller.
+        var intent = await col.Find(x => x.FormId == obj.FormId && x.UserId == payerUserId).FirstOrDefaultAsync();
 
         logger.LogInformation("SendPaymentForm: userId={UserId} formId={FormId} intentFound={Found} recipientUserId={RecipientUserId}",
             input.UserId, obj.FormId, intent != null, intent?.RecipientUserId ?? -1);
@@ -64,6 +67,11 @@ internal sealed class SendPaymentFormHandler(
 
         var stripe = options.Value.Stripe;
         var credentialsJson = (obj.Credentials as TInputPaymentCredentials)?.Data?.Data ?? "{}";
+
+        // Nothing below may settle until the money is known to have moved. Both of the conditions
+        // guarding the Stripe call — an unconfigured server, credentials carrying no token — leave
+        // that unknown, and each used to fall straight through to the credit.
+        var chargeVerified = false;
 
         if (!string.IsNullOrEmpty(stripe.SecretKey))
         {
@@ -102,7 +110,17 @@ internal sealed class SendPaymentFormHandler(
                         }
                     }
                 }
+
+                chargeVerified = true;
             }
+        }
+
+        if (!chargeVerified)
+        {
+            // The intent id would repeat across stands that never talked to Stripe, so the record's
+            // own id is what identifies this one purchase.
+            await StoreTransactionHelper.AuthorizeUnverifiedTopupAsync(
+                mongoDatabase, options.Value.Payments, "stripe", intent!.Id.ToString(), payerUserId, intent.Stars);
         }
 
         // Check if this is a giveaway payment

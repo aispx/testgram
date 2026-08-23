@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Services.Services;
@@ -8,79 +7,117 @@ using System.Text.Json;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
 /// <summary>
-/// Handles Stripe payment confirmation for Stars and Premium purchases.
-/// The client sends the Stripe PaymentIntent ID in the receipt JSON: {"paymentIntentId":"pi_xxx"} or {"formId":123}
-/// For Premium: {"purpose":"premium"}
+/// Informs server about a purchase made through the Play Store: for official applications only.
+/// Possible errors
+/// Code Type Description
+/// 400 INPUT_PURPOSE_INVALID The specified payment purpose is invalid.
+/// 400 RECEIPT_EMPTY The specified receipt is empty.
+/// 400 PAYMENT_PROVIDER_INVALID The receipt could not be settled against a payment.
+/// <para><c>See <a href="https://corefork.telegram.org/method/payments.assignPlayMarketTransaction"/> </c></para>
 /// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✖] [Anonymous ✔]
+///
+/// <para>
+/// Play receipts are not checked against Google here. What the receipt carries instead is a pointer
+/// at a Stripe PaymentIntent this server created earlier — <c>{"paymentIntentId":"pi_xxx"}</c> or
+/// <c>{"formId":123}</c> — and it is that intent, held server side, that says how many Stars are owed
+/// and confirms the charge went through. A receipt naming no intent buys nothing unless the stand is
+/// explicitly configured to accept unverified top-ups.
+/// </para>
+/// </remarks>
 internal sealed class AssignPlayMarketTransactionHandler(
     IMongoDatabase mongoDatabase,
     IOptions<MyTelegramMessengerServerOptions> options,
     IObjectMessageSender objectMessageSender)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestAssignPlayMarketTransaction, MyTelegram.Schema.IUpdates>
 {
-    protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestAssignPlayMarketTransaction obj)
+    protected override async Task<IUpdates> HandleCoreAsync(
+        IRequestInput input, MyTelegram.Schema.Payments.RequestAssignPlayMarketTransaction obj)
     {
-        var receiptJson = obj.Receipt?.Data ?? "{}";
-        string? paymentIntentId = null;
-        long formId = 0;
-        string? purpose = null;
-
-        try
+        var receiptJson = obj.Receipt?.Data;
+        if (string.IsNullOrEmpty(receiptJson))
         {
-            var doc = JsonDocument.Parse(receiptJson).RootElement;
-            if (doc.TryGetProperty("paymentIntentId", out var piProp))
-                paymentIntentId = piProp.GetString();
-            if (doc.TryGetProperty("formId", out var fProp))
-                formId = fProp.GetInt64();
-            if (doc.TryGetProperty("purpose", out var purposeProp))
-                purpose = purposeProp.GetString();
+            RpcErrors.RpcErrors400.ReceiptEmpty.ThrowRpcError();
         }
-        catch { }
 
-        // Handle Premium purchase (no payment intent needed for Testgram)
-        if (purpose == "premium")
+        var (paymentIntentId, formId, legacyPurpose) = ParseReceipt(receiptJson!);
+
+        // Premium is stated either in the typed purpose an official client sends or, for the clients
+        // built against this server before the purpose was read, inside the receipt itself.
+        if (legacyPurpose == "premium" ||
+            obj.Purpose is TInputStorePaymentPremiumSubscription or TInputStorePaymentGiftPremium)
         {
             await StoreTransactionHelper.ActivatePremiumAsync(mongoDatabase, input.UserId);
             return StoreTransactionHelper.EmptyUpdates();
         }
 
-        // Handle Stars purchase (existing logic)
-        var col = mongoDatabase.GetCollection<StripePaymentIntentDocument>("stripe-payment-intents");
+        var collection = mongoDatabase.GetCollection<StripePaymentIntentDocument>("stripe-payment-intents");
+        var userId = input.UserId;
 
         StripePaymentIntentDocument? intent = null;
         if (!string.IsNullOrEmpty(paymentIntentId))
-            intent = await col.Find(x => x.PaymentIntentId == paymentIntentId).FirstOrDefaultAsync();
-        else if (formId != 0)
-            intent = await col.Find(x => x.FormId == formId && x.UserId == input.UserId).FirstOrDefaultAsync();
-
-        // For Testgram: if no intent found and no purpose specified, allow Stars purchase anyway
-        if (intent == null && string.IsNullOrEmpty(purpose))
         {
-            // Free Stars for testing
-            await StoreTransactionHelper.CreditStarsAsync(
-                mongoDatabase, objectMessageSender, input.UserId, 1000, "Test top-up: 1000 stars");
-            return StoreTransactionHelper.EmptyUpdates();
+            // Matched on the account as well as on the id: an intent id learned from someone else is
+            // still their purchase, and must not settle into the caller's balance.
+            intent = await collection.Find(x => x.PaymentIntentId == paymentIntentId && x.UserId == userId)
+                .FirstOrDefaultAsync();
+        }
+        else if (formId != 0)
+        {
+            intent = await collection.Find(x => x.FormId == formId && x.UserId == userId)
+                .FirstOrDefaultAsync();
         }
 
         if (intent == null)
-            RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
+        {
+            var requestedStars = obj.Purpose is TInputStorePaymentStarsTopup topup ? topup.Stars : 0;
 
-        // Verify with Stripe
+            await StoreTransactionHelper.CreditUnverifiedTopupAsync(
+                mongoDatabase, objectMessageSender, options.Value.Payments, "playmarket", receiptJson!, userId,
+                requestedStars, $"Play Market top-up: {requestedStars} stars");
+
+            return StoreTransactionHelper.EmptyUpdates();
+        }
+
         var stripe = options.Value.Stripe;
         if (!string.IsNullOrEmpty(stripe.SecretKey))
         {
-            var (status, _, _) = await StripeHelper.GetPaymentIntentAsync(stripe.SecretKey, intent!.PaymentIntentId);
+            var (status, _, _) = await StripeHelper.GetPaymentIntentAsync(stripe.SecretKey, intent.PaymentIntentId);
             if (status != "succeeded")
+            {
                 RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
+            }
         }
 
-        // Credit stars
         await StoreTransactionHelper.CreditStarsAsync(
-            mongoDatabase, objectMessageSender, input.UserId, intent!.Stars, $"Stripe top-up: {intent.Stars} stars");
+            mongoDatabase, objectMessageSender, userId, intent.Stars, $"Stripe top-up: {intent.Stars} stars");
 
-        // Cleanup
-        await col.DeleteOneAsync(x => x.Id == intent.Id);
+        // Settling the intent is what stops the same receipt paying out twice.
+        await collection.DeleteOneAsync(x => x.Id == intent.Id);
 
         return StoreTransactionHelper.EmptyUpdates();
+    }
+
+    private static (string? PaymentIntentId, long FormId, string? Purpose) ParseReceipt(string receiptJson)
+    {
+        try
+        {
+            var root = JsonDocument.Parse(receiptJson).RootElement;
+            var paymentIntentId = root.TryGetProperty("paymentIntentId", out var intentProperty)
+                ? intentProperty.GetString()
+                : null;
+            var formId = root.TryGetProperty("formId", out var formProperty) ? formProperty.GetInt64() : 0;
+            var purpose = root.TryGetProperty("purpose", out var purposeProperty)
+                ? purposeProperty.GetString()
+                : null;
+            return (paymentIntentId, formId, purpose);
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException)
+        {
+            // A real Play receipt is Google's own JSON, which names no intent: there is nothing to
+            // settle against, and the caller falls through to the unverified path.
+            return (null, 0, null);
+        }
     }
 }

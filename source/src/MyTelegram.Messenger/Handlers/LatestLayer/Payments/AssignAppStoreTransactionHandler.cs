@@ -72,14 +72,12 @@ internal sealed class AssignAppStoreTransactionHandler(
 
         if (intent == null)
         {
-            // No intent to settle: the store handled the charge and the purpose states the amount.
-            if (requestedStars <= 0)
-            {
-                RpcErrors.RpcErrors400.InputPurposeInvalid.ThrowRpcError();
-            }
-
-            await StoreTransactionHelper.CreditStarsAsync(
-                mongoDatabase, objectMessageSender, userId, requestedStars, $"App Store top-up: {requestedStars} stars");
+            // Nothing on file to settle against, and this server cannot ask Apple whether the receipt
+            // is real, so the amount would be whatever the caller put in `purpose`. That is only ever
+            // acceptable on a test stand, and only once per receipt and under a per account ceiling.
+            await StoreTransactionHelper.CreditUnverifiedTopupAsync(
+                mongoDatabase, objectMessageSender, options.Value.Payments, "appstore", receipt, userId,
+                requestedStars, $"App Store top-up: {requestedStars} stars");
             return;
         }
 
