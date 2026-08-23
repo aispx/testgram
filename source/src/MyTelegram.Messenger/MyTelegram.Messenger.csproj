@@ -16,6 +16,7 @@
     <!-- Served as help.passportConfig.countries_langs. Embedded rather than copied so the image needs
          no extra content step; App__Passport__CountriesLangsFile overrides it at runtime. -->
     <EmbeddedResource Include="Resources\passport-countries-langs.json" />
+    <EmbeddedResource Include="Resources\bank-bins.json" />
   </ItemGroup>
 
   <ItemGroup>

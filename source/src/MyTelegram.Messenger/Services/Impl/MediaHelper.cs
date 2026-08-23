@@ -3,6 +3,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Photo;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Payments;
 using MyTelegram.Messenger.Services.Stories;
 
 namespace MyTelegram.Messenger.Services.Impl;
@@ -563,28 +564,31 @@ public class MediaHelper(
         return TodoMediaFactory.Create(inputMediaTodo.Todo, []);
     }
 
+    /// <summary>
+    /// Builds the client facing half of an invoice.
+    /// </summary>
+    /// <remarks>
+    /// Everything the payment flow runs on — payload, provider token, and the <c>invoice</c> flags
+    /// beyond <c>shipping_address_requested</c> — has no place in <c>messageMediaInvoice</c> and is
+    /// kept server side by <see cref="BotInvoiceHelper"/> instead, which <c>SendMediaHandler</c> writes
+    /// alongside the message.
+    /// </remarks>
     private IMessageMedia CreateMediaInvoice(TInputMediaInvoice inputMediaInvoice)
     {
-        // Calculate total amount from prices
-        long totalAmount = 0;
-        if (inputMediaInvoice.Invoice?.Prices != null)
-        {
-            foreach (var price in inputMediaInvoice.Invoice.Prices)
-            {
-                totalAmount += price.Amount;
-            }
-        }
+        var invoice = inputMediaInvoice.Invoice;
 
         return new TMessageMediaInvoice
         {
             Title = inputMediaInvoice.Title,
             Description = inputMediaInvoice.Description,
-            Photo = inputMediaInvoice.Photo as IWebDocument,
-            Currency = inputMediaInvoice.Invoice?.Currency ?? "XTR",
-            TotalAmount = totalAmount,
+            // inputWebDocument does not implement IWebDocument, so the old `as IWebDocument` cast
+            // silently dropped every bot supplied invoice photo.
+            Photo = BotInvoiceHelper.ToWebDocument(inputMediaInvoice.Photo),
+            Currency = invoice?.Currency ?? BotInvoiceHelper.StarsCurrency,
+            TotalAmount = BotInvoiceHelper.GetTotalAmount(invoice),
             StartParam = inputMediaInvoice.StartParam ?? string.Empty,
-            ShippingAddressRequested = inputMediaInvoice.Invoice?.ShippingAddressRequested ?? false,
-            Test = inputMediaInvoice.Invoice?.Test ?? false
+            ShippingAddressRequested = invoice?.ShippingAddressRequested ?? false,
+            Test = invoice?.Test ?? false
         };
     }
 }

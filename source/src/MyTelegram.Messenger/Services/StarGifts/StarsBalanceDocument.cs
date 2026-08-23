@@ -21,7 +21,15 @@ public class StarsTransactionDocument
     public long Amount { get; set; }   // positive = incoming, negative = outgoing
     public int Date { get; set; }
     public bool Gift { get; set; }
+
+    /// <summary>This row *is* a refund, as opposed to having *been* refunded.</summary>
     public bool Refund { get; set; }
+
+    /// <summary>
+    /// When this charge was refunded, so payments.refundStarsCharge can answer
+    /// CHARGE_ALREADY_REFUNDED instead of paying the same charge back twice.
+    /// </summary>
+    public int? RefundedAt { get; set; }
     // peer info
     public long? PeerUserId { get; set; }
     public long? PeerChannelId { get; set; }

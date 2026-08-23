@@ -28,7 +28,8 @@ public class MessageReadModel : IMessageReadModel,
     IAmReadModelFor<MessageAggregate, MessageId, MessageViewsIncrementedEvent>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageViewsIncrementedEvent2>,
     IAmReadModelFor<MessageAggregate, MessageId, MessageReactionsUpdatedEvent>,
-    IAmReadModelFor<MessageAggregate, MessageId, MessageTodoUpdatedEvent>
+    IAmReadModelFor<MessageAggregate, MessageId, MessageTodoUpdatedEvent>,
+    IAmReadModelFor<MessageAggregate, MessageId, MessageInvoiceReceiptUpdatedEvent>
 {
     public int Date { get; private set; }
     public int? EditDate { get; private set; }
@@ -541,6 +542,33 @@ public class MessageReadModel : IMessageReadModel,
     {
         var e = domainEvent.AggregateEvent;
         Media2 = TodoMediaFactory.Create(e.Todo, e.Completions);
+        // Media2 takes precedence over the legacy serialized Media column when mapping to TL
+        // (see MessageMapper: source.Media2 ?? source.Media), so the stale blob must be dropped.
+        Media = null;
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Records the receipt message on a paid invoice, so the bubble offers "Receipt" instead of "Pay".
+    /// See https://corefork.telegram.org/api/payments#5-checkout
+    /// </summary>
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<MessageAggregate, MessageId, MessageInvoiceReceiptUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        var current = Media2;
+        if (current == null && Media is { Length: > 0 })
+        {
+            var buffer = new ReadOnlyMemory<byte>(Media);
+            current = buffer.Read<IMessageMedia>();
+        }
+
+        var updated = InvoiceMediaFactory.WithReceipt(current, domainEvent.AggregateEvent.ReceiptMsgId);
+        if (ReferenceEquals(updated, current))
+        {
+            return Task.CompletedTask;
+        }
+
+        Media2 = updated;
         // Media2 takes precedence over the legacy serialized Media column when mapping to TL
         // (see MessageMapper: source.Media2 ?? source.Media), so the stale blob must be dropped.
         Media = null;

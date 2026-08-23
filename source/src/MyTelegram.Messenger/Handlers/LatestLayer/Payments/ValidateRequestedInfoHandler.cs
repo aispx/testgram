@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Payments;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Schema.Payments;
 
@@ -88,94 +89,45 @@ internal sealed class ValidateRequestedInfoHandler(
         };
     }
 
+    /// <summary>
+    /// Reads the invoice the client is validating against out of the server side store.
+    /// </summary>
+    /// <remarks>
+    /// <c>flexible</c> and the bot API <c>payload</c> live only here — <c>messageMediaInvoice</c> never
+    /// carried them — and without both the shipping query below can neither fire nor be matched to an
+    /// order by the bot.
+    /// </remarks>
     private async Task<(long BotId, byte[] Payload, bool ShippingAddressRequested, bool Flexible)> ResolveInvoiceAsync(
         IRequestInput input,
         IInputInvoice invoice)
     {
-        switch (invoice)
+        if (invoice is not (TInputInvoiceMessage or TInputInvoiceSlug))
         {
-            case TInputInvoiceMessage invoiceMessage:
-                return await ResolveMessageInvoiceAsync(input, invoiceMessage);
-
-            case TInputInvoiceSlug invoiceSlug:
-                return await ResolveSlugInvoiceAsync(invoiceSlug);
-
-            default:
-                return (MyTelegramConsts.NotificationServiceUserId, [], false, false);
+            // Stars top-ups, gifts and giveaways carry no bot invoice: nothing to ask a bot about.
+            return (MyTelegramConsts.NotificationServiceUserId, [], false, false);
         }
-    }
 
-    private async Task<(long BotId, byte[] Payload, bool ShippingAddressRequested, bool Flexible)> ResolveMessageInvoiceAsync(
-        IRequestInput input,
-        TInputInvoiceMessage invoiceMessage)
-    {
-        var peer = peerHelper.GetPeer(invoiceMessage.Peer, input.UserId);
-        if (peer == null)
+        if (invoice is TInputInvoiceMessage { Peer: null })
         {
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }
 
-        var messagesCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("MessageId", invoiceMessage.MsgId),
-            peer.PeerType == PeerType.User
-                ? Builders<BsonDocument>.Filter.Eq("OwnerPeerId", peer.PeerId)
-                : Builders<BsonDocument>.Filter.Eq("ToPeerId", peer.PeerId));
-
-        var messageDoc = await messagesCol.Find(filter).FirstOrDefaultAsync();
-        if (messageDoc == null)
+        var storedInvoice = await BotInvoiceHelper.ResolveAsync(mongoDatabase, peerHelper, input, invoice);
+        if (storedInvoice == null)
         {
-            RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
+            // Paid media invoices also arrive as inputInvoiceMessage but have no bot invoice behind
+            // them, so there is nobody to send a shipping query to; the info is simply stored.
+            return (MyTelegramConsts.NotificationServiceUserId, [], false, false);
         }
 
-        if (!messageDoc.Contains("Media") || messageDoc["Media"].IsBsonNull)
-        {
-            RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
-        }
-
-        var mediaBuffer = new ReadOnlyMemory<byte>(messageDoc["Media"].AsByteArray);
-        var media = mediaBuffer.Read<IMessageMedia>();
-        if (media is not TMessageMediaInvoice invoiceMedia)
-        {
-            RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
-            return (0, Array.Empty<byte>(), false, false);
-        }
-
-        var botId = GetInt64(messageDoc, "SenderPeerId");
-        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
+        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(storedInvoice.BotId));
         if (botUser == null || !botUser.Bot)
         {
             RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
         }
 
-        // messageMediaInvoice only preserves "shipping address requested"; the
-        // original bot API payload/flexible fields are not stored in this
-        // readmodel, so legacy message invoices validate locally unless the
-        // invoice was persisted in bot-invoices by slug.
-        return (botId, [], invoiceMedia.ShippingAddressRequested, false);
-    }
-
-    private async Task<(long BotId, byte[] Payload, bool ShippingAddressRequested, bool Flexible)> ResolveSlugInvoiceAsync(TInputInvoiceSlug invoiceSlug)
-    {
-        var invoicesCol = mongoDatabase.GetCollection<BsonDocument>("bot-invoices");
-        var invoice = await invoicesCol.Find(Builders<BsonDocument>.Filter.Eq("Slug", invoiceSlug.Slug)).FirstOrDefaultAsync();
-        if (invoice == null)
-        {
-            RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
-        }
-
-        var botId = GetInt64(invoice!, "BotId");
-        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
-        if (botUser == null || !botUser.Bot)
-        {
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
-        }
-
-        return (
-            botId,
-            GetBytes(invoice!, "Payload"),
-            GetBool(invoice!, "ShippingAddressRequested") || GetBool(invoice!, "NeedShippingAddress"),
-            GetBool(invoice!, "Flexible"));
+        var details = BotInvoiceHelper.ReadInvoice(storedInvoice);
+        return (storedInvoice.BotId, storedInvoice.Payload, details.ShippingAddressRequested, details.Flexible);
     }
 
     private async Task<(bool Success, string? Error, TVector<IShippingOption>? ShippingOptions)> SendShippingQueryAndWaitAsync(

@@ -814,6 +814,9 @@ public class MessageAppService(
             TMessageActionPaidMessage => MessageActionType.PaidMessage,
             TMessageActionGiftCode => MessageActionType.GiftCode,
             TMessageActionPrizeStars => MessageActionType.PrizeStars,
+            TMessageActionPaymentSentMe => MessageActionType.PaymentSentMe,
+            TMessageActionPaymentSent => MessageActionType.PaymentSent,
+            TMessageActionPaymentRefunded => MessageActionType.PaymentRefunded,
             _ => MessageActionType.None
         };
         var post = channelReadModel?.Broadcast ?? false;

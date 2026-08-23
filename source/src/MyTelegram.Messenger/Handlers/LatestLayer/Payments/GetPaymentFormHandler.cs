@@ -4,6 +4,7 @@ using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Schema.Payments;
 using MyTelegram.Schema;
 using MyTelegram.Messenger.Services.PaidMedia;
+using MyTelegram.Messenger.Services.Payments;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 
@@ -12,6 +13,7 @@ internal sealed class GetPaymentFormHandler(
     IOptions<MyTelegramMessengerServerOptions> options,
     IPeerHelper peerHelper,
     IQueryProcessor queryProcessor,
+    IUserConverterService userConverterService,
     ILogger<GetPaymentFormHandler> logger)
     : RpcResultObjectHandler<RequestGetPaymentForm, IPaymentForm>
 {
@@ -559,6 +561,13 @@ internal sealed class GetPaymentFormHandler(
             };
         }
 
+        // A bot invoice is resolved through the server side store, which carries the real price
+        // breakdown and the invoice flags. It also knows how to cross the two message id spaces: the
+        // buyer quotes the id of *their* copy, while the record is keyed by the bot's.
+        var storedInvoice = await BotInvoiceHelper.ResolveMessageAsync(mongoDatabase, peerHelper, input, invoiceMessage);
+        if (storedInvoice != null)
+            return await BuildBotInvoiceFormAsync(input, storedInvoice);
+
         var messagesCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-messagereadmodel");
         var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.And(
             MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("MessageId", invoiceMessage.MsgId),
@@ -599,61 +608,36 @@ internal sealed class GetPaymentFormHandler(
             };
         }
 
-        if (media is not TMessageMediaInvoice)
-            RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
-
-        var invoiceMedia = (TMessageMediaInvoice)media;
-
-        // Get bot user
-        long botId = messageDoc["SenderPeerId"].AsInt64;
-        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
-        if (botUser == null || !botUser.Bot)
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
-
-        // Calculate total amount
-        long totalAmount = invoiceMedia.TotalAmount;
-
-        // Return payment form for Stars
-        return new TPaymentFormStars
-        {
-            FormId = Random.Shared.NextInt64(),
-            BotId = botId,
-            Title = invoiceMedia.Title,
-            Description = invoiceMedia.Description,
-            Invoice = new TInvoice
-            {
-                Currency = invoiceMedia.Currency,
-                Prices = [new TLabeledPrice { Label = invoiceMedia.Title, Amount = totalAmount }],
-            },
-            Users = new TVector<IUser>(),
-        };
+        // The message carries invoice media but no record backs it: it predates the server side store,
+        // so its payload and provider are gone and there is nothing left to charge against.
+        RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
+        return null!;
     }
 
     private async Task<IPaymentForm> HandleBotInvoiceSlugAsync(IRequestInput input, TInputInvoiceSlug invoiceSlug)
     {
-        // Get invoice by slug from MongoDB
-        var invoicesCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("bot-invoices");
-        var invoice = await invoicesCol.Find(MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("Slug", invoiceSlug.Slug)).FirstOrDefaultAsync();
-        if (invoice == null)
+        var storedInvoice = await BotInvoiceHelper.FindBySlugAsync(mongoDatabase, invoiceSlug.Slug);
+        if (storedInvoice == null)
             RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
 
-        long botId = invoice!["BotId"].AsInt64;
-        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
+        return await BuildBotInvoiceFormAsync(input, storedInvoice!);
+    }
+
+    private async Task<IPaymentForm> BuildBotInvoiceFormAsync(IRequestInput input, BotInvoiceDocument storedInvoice)
+    {
+        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(storedInvoice.BotId));
         if (botUser == null || !botUser.Bot)
             RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
 
         return new TPaymentFormStars
         {
             FormId = Random.Shared.NextInt64(),
-            BotId = botId,
-            Title = invoice["Title"].AsString,
-            Description = invoice["Description"].AsString,
-            Invoice = new TInvoice
-            {
-                Currency = invoice["Currency"].AsString,
-                Prices = [new TLabeledPrice { Label = invoice["Title"].AsString, Amount = invoice["TotalAmount"].AsInt64 }],
-            },
-            Users = new TVector<IUser>(),
+            BotId = storedInvoice.BotId,
+            Title = storedInvoice.Title,
+            Description = storedInvoice.Description,
+            Photo = BotInvoiceHelper.ReadPhoto(storedInvoice),
+            Invoice = BotInvoiceHelper.ReadInvoice(storedInvoice),
+            Users = new TVector<IUser>(userConverterService.ToUser(input, botUser!, layer: input.Layer)),
         };
     }
 }

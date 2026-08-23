@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Services.PaidMedia;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Messenger.Services.Boosts;
+using MyTelegram.Messenger.Services.Payments;
 using MyTelegram.Messenger.Services.StarsSubscriptions;
 using MyTelegram.Schema.Payments;
 using MyTelegram.Services.Services;
@@ -19,12 +20,22 @@ internal sealed class SendStarsFormHandler(
     IObjectMessageSender objectMessageSender,
     ICommandBus commandBus,
     IQueryProcessor queryProcessor,
+    IBotInvoicePaymentService botInvoicePaymentService,
     IStarsSubscriptionService starsSubscriptionService) : RpcResultObjectHandler<RequestSendStarsForm, IPaymentResult>
 {
     protected override async Task<IPaymentResult> HandleCoreAsync(IRequestInput input, RequestSendStarsForm obj)
     {
         if (obj.Invoice is TInputInvoiceMessage paidMediaInvoice && await IsPaidMediaInvoiceAsync(input, paidMediaInvoice))
             return await HandlePaidMediaPaymentAsync(input, paidMediaInvoice);
+
+        // A Telegram Stars invoice never carries card credentials, so tdlib's send_payment_form routes
+        // it here rather than to payments.sendPaymentForm — this is the path a bot invoice actually
+        // takes from an official client. See https://corefork.telegram.org/api/payments#5-checkout
+        if (obj.Invoice is TInputInvoiceMessage or TInputInvoiceSlug &&
+            await botInvoicePaymentService.CanHandleAsync(input, obj.Invoice))
+        {
+            return await botInvoicePaymentService.PayAsync(input, obj.Invoice, requestedInfoId: null, shippingOptionId: null);
+        }
 
         if (obj.Invoice is TInputInvoiceChatInviteSubscription subscriptionInvoice)
             return await HandleChatInviteSubscriptionAsync(input, subscriptionInvoice);
@@ -580,8 +591,13 @@ internal sealed class SendStarsFormHandler(
             return new TPaymentResult { Updates = new TUpdates { Updates = new TVector<IUpdate>(), Users = new TVector<IUser>(), Chats = new TVector<IChat>(), Date = DateTime.UtcNow.ToTimestamp(), Seq = 0 } };
         }
 
+        // Nothing above matched, so this is an invoice type this server cannot settle. Report it as an
+        // RPC error rather than letting an internal exception reach the client.
         if (obj.Invoice is not TInputInvoiceStarGift starGiftInvoice)
-            throw new NotImplementedException();
+        {
+            RpcErrors.RpcErrors400.BotInvoiceInvalid.ThrowRpcError();
+            return null!;
+        }
 
         var collection = mongoDatabase.GetCollection<StarGiftDocument>("star-gifts");
         var gift = await collection.Find(d => d.GiftId == starGiftInvoice.GiftId).FirstOrDefaultAsync();

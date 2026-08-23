@@ -116,6 +116,7 @@ namespace MyTelegram.Messenger.NativeAot;
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Messaging.InboxMessageIdAddedToOutboxMessageEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Messaging.InboxMessagePinnedUpdatedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Messaging.MessageDeleted4Event))]
+[JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Messaging.MessageInvoiceReceiptUpdatedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Messaging.MessageForwardedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Messaging.MessagePinnedUpdatedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Messaging.MessageReactionsUpdatedEvent))]
