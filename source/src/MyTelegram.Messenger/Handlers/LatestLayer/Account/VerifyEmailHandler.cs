@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Passport;
 using MyTelegram.Schema.Account;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
@@ -14,7 +15,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✔]
 /// </remarks>
-internal sealed class VerifyEmailHandler(IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestVerifyEmail, MyTelegram.Schema.Account.IEmailVerified>
+internal sealed class VerifyEmailHandler(
+    IMongoDatabase database,
+    IPassportVerificationStore passportVerificationStore) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestVerifyEmail, MyTelegram.Schema.Account.IEmailVerified>
 {
     protected override async Task<MyTelegram.Schema.Account.IEmailVerified> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestVerifyEmail obj)
     {
@@ -151,21 +154,9 @@ internal sealed class VerifyEmailHandler(IMongoDatabase database) : RpcResultObj
         }
         else if (obj.Purpose is MyTelegram.Schema.TEmailVerifyPurposePassport)
         {
-            // For passport, store in separate collection
-            var passportCollection = database.GetCollection<BsonDocument>("passport_emails");
-            var passportDoc = new BsonDocument
-            {
-                ["_id"] = $"passport-email-{input.UserId}",
-                ["UserId"] = input.UserId,
-                ["Email"] = email,
-                ["VerifiedAt"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-            };
-
-            await passportCollection.ReplaceOneAsync(
-                Builders<BsonDocument>.Filter.Eq("_id", passportDoc["_id"]),
-                passportDoc,
-                new ReplaceOptions { IsUpsert = true }
-            );
+            // The address may now be saved as a securePlainEmail.
+            // https://corefork.telegram.org/passport/encryption#secureplaindata
+            await passportVerificationStore.SetEmailVerifiedAsync(input.UserId, email);
 
             return new MyTelegram.Schema.Account.TEmailVerified
             {

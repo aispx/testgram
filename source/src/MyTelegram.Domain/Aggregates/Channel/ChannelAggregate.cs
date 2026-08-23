@@ -112,7 +112,11 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
 
         if (_state.SlowModeSeconds > 0)
         {
-            if (senderPeerId == _state.LatestNonBotSenderPeerId && senderPeerId != _state.CreatorId)
+            // Admins are not subject to slow mode, only the creator was exempt here. It also made a
+            // history import impossible in a slow mode supergroup: every imported message comes from
+            // the same admin, one after the other. See https://corefork.telegram.org/api/import
+            if (senderPeerId == _state.LatestNonBotSenderPeerId && senderPeerId != _state.CreatorId &&
+                _state.GetAdmin(senderPeerId) == null)
             {
                 var nextSendDate = _state.SlowModeSeconds + _state.LastSendDate;
                 var now = DateTime.UtcNow.ToTimestamp();

@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.HistoryImport;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Complete the <a href="https://corefork.telegram.org/api/import">history import process</a>, importing all messages into the chat.<br/>
@@ -12,10 +14,29 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class StartHistoryImportHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestStartHistoryImport, IBool>
+internal sealed class StartHistoryImportHandler(
+    IPeerHelper peerHelper,
+    IHistoryImportPeerValidator peerValidator,
+    IHistoryImportStore historyImportStore,
+    ILogger<StartHistoryImportHandler> logger)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestStartHistoryImport, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestStartHistoryImport obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestStartHistoryImport obj)
     {
-        throw new NotImplementedException();
+        var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        await peerValidator.ValidateAsync(input.UserId, peer);
+
+        var import = await HistoryImportAccess.LoadPendingAsync(historyImportStore, obj.ImportId, input.UserId,
+            peer);
+
+        // The messages are injected by the background worker, which also reports the progress through
+        // sendMessageHistoryImportAction; a big export would otherwise hold the rpc open for minutes.
+        await historyImportStore.SetStatusAsync(import.Id, HistoryImportStatus.Queued);
+
+        logger.LogInformation("History import {ImportId} queued for {PeerType} {PeerId} ({Count} messages)",
+            import.Id, peer.PeerType, peer.PeerId, import.TotalMessages);
+
+        return new TBoolTrue();
     }
 }

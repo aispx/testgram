@@ -27,6 +27,16 @@ public interface ITwoFactorService
     Task<bool> HasPendingRecoveryEmailCodeAsync(long userId);
     Task<RecoveryCodeCheckResult> CheckRecoveryCodeAsync(long userId, string code);
     string? GetRecoveryEmailPattern(string? email);
+
+    /// <summary>
+    /// The stored <c>secureSecretSettings</c>, or null when the user has never set up Telegram Passport.
+    /// See https://corefork.telegram.org/passport/encryption
+    /// </summary>
+    Task<SecureSecretSetting?> GetSecureSettingsAsync(long userId);
+
+    Task SetSecureSettingsAsync(long userId, byte[] salt, byte[] secureSecret, long secureSecretId);
+
+    Task ClearSecureSettingsAsync(long userId);
 }
 
 public enum RecoveryCodeCheckResult
@@ -65,12 +75,20 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
             // would persist a verifier that can never verify against it.
             G = SrpConstants.G,
             P = SrpConstants.P2048,
+            PasswordUpdatedAt = DateTime.UtcNow,
             RecoveryEmail = existing?.RecoveryEmail,
             RecoveryEmailCode = existing?.RecoveryEmailCode,
             RecoveryEmailCodeExpire = existing?.RecoveryEmailCodeExpire,
             IsPasswordResetRequested = existing?.IsPasswordResetRequested ?? false,
             PasswordResetRequestedAt = existing?.PasswordResetRequestedAt,
-            PasswordResetRetryAt = existing?.PasswordResetRetryAt
+            PasswordResetRetryAt = existing?.PasswordResetRetryAt,
+            // A client changing the password re-encrypts the passport secret and sends the new
+            // secureSecretSettings in the same account.updatePasswordSettings call, which lands after
+            // this write. Carrying the old triple over keeps a client that only changed the hint (or
+            // that has no passport data at all) from silently losing its Passport.
+            SecureAlgoSalt = existing?.SecureAlgoSalt,
+            SecureSecret = existing?.SecureSecret,
+            SecureSecretId = existing?.SecureSecretId ?? 0
         };
         await Collection.ReplaceOneAsync(p => p.Id == userId, doc, new ReplaceOptions { IsUpsert = true });
     }
@@ -364,6 +382,35 @@ public class TwoFactorService(IMongoDatabase mongoDatabase, ICacheManager<SrpSes
         }
 
         return $"{email[0]}{new string('*', Math.Max(1, atIndex - 1))}@{email[(atIndex + 1)..]}";
+    }
+
+    public async Task<SecureSecretSetting?> GetSecureSettingsAsync(long userId)
+    {
+        var doc = await Collection.Find(p => p.Id == userId).FirstOrDefaultAsync();
+        if (doc?.SecureSecret is not { Length: > 0 } || doc.SecureAlgoSalt is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        return new SecureSecretSetting(doc.SecureAlgoSalt, doc.SecureSecret, doc.SecureSecretId);
+    }
+
+    public async Task SetSecureSettingsAsync(long userId, byte[] salt, byte[] secureSecret, long secureSecretId)
+    {
+        await Collection.UpdateOneAsync(p => p.Id == userId,
+            Builders<UserPasswordDocument>.Update
+                .Set(p => p.SecureAlgoSalt, salt)
+                .Set(p => p.SecureSecret, secureSecret)
+                .Set(p => p.SecureSecretId, secureSecretId));
+    }
+
+    public async Task ClearSecureSettingsAsync(long userId)
+    {
+        await Collection.UpdateOneAsync(p => p.Id == userId,
+            Builders<UserPasswordDocument>.Update
+                .Set(p => p.SecureAlgoSalt, null)
+                .Set(p => p.SecureSecret, null)
+                .Set(p => p.SecureSecretId, 0L));
     }
 
     private static byte[] ToPaddedBytes(BigInteger n, int size)

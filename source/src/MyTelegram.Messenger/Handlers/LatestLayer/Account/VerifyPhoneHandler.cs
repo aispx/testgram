@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Passport;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
@@ -14,7 +15,9 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class VerifyPhoneHandler(IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestVerifyPhone, IBool>
+internal sealed class VerifyPhoneHandler(
+    IMongoDatabase database,
+    IPassportVerificationStore passportVerificationStore) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestVerifyPhone, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestVerifyPhone obj)
     {
@@ -63,6 +66,10 @@ internal sealed class VerifyPhoneHandler(IMongoDatabase database) : RpcResultObj
 
         // Delete used code
         await collection.DeleteOneAsync(filter);
+
+        // account.verifyPhone exists for Telegram Passport: the number is now allowed to be saved as a
+        // securePlainPhone. https://corefork.telegram.org/passport/encryption#secureplaindata
+        await passportVerificationStore.SetPhoneVerifiedAsync(input.UserId, obj.PhoneNumber);
 
         return new TBoolTrue();
     }

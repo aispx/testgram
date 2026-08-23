@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Passport;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Help;
 /// <summary>
 /// Get <a href="https://corefork.telegram.org/passport">passport</a> configuration
@@ -6,10 +8,24 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Help;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetPassportConfigHandler : RpcResultObjectHandler<MyTelegram.Schema.Help.RequestGetPassportConfig, MyTelegram.Schema.Help.IPassportConfig>
+internal sealed class GetPassportConfigHandler(IPassportConfigProvider passportConfigProvider)
+    : RpcResultObjectHandler<MyTelegram.Schema.Help.RequestGetPassportConfig, MyTelegram.Schema.Help.IPassportConfig>
 {
-    protected override Task<MyTelegram.Schema.Help.IPassportConfig> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Help.RequestGetPassportConfig obj)
+    protected override Task<MyTelegram.Schema.Help.IPassportConfig> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Help.RequestGetPassportConfig obj)
     {
-        throw new NotImplementedException();
+        var hash = passportConfigProvider.GetHash();
+
+        if (obj.Hash == hash)
+        {
+            return Task.FromResult<MyTelegram.Schema.Help.IPassportConfig>(
+                new MyTelegram.Schema.Help.TPassportConfigNotModified());
+        }
+
+        return Task.FromResult<MyTelegram.Schema.Help.IPassportConfig>(new MyTelegram.Schema.Help.TPassportConfig
+        {
+            Hash = hash,
+            CountriesLangs = new TDataJSON { Data = passportConfigProvider.GetCountriesLangs() }
+        });
     }
 }

@@ -2,6 +2,12 @@ using MongoDB.Driver;
 
 namespace MyTelegram.Messenger.Services.Caching;
 
+/// <summary>
+/// Documents are created by field level upserts, so MongoDB gives them a generated <c>_id</c> this
+/// class does not map. Readers that deserialize into it - account deletion checking whether an
+/// account is still in use - would otherwise fail on that element.
+/// </summary>
+[MongoDB.Bson.Serialization.Attributes.BsonIgnoreExtraElements]
 public class UserStatusMongoModel
 {
     public long UserId { get; set; }

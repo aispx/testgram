@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Passport;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <summary>
 /// Delete stored <a href="https://corefork.telegram.org/passport">Telegram Passport</a> documents, <a href="https://corefork.telegram.org/passport/encryption#encryption">for more info see the passport docs »</a>
@@ -6,10 +8,18 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class DeleteSecureValueHandler : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestDeleteSecureValue, IBool>
+internal sealed class DeleteSecureValueHandler(IPassportValueStore passportValueStore)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestDeleteSecureValue, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestDeleteSecureValue obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Account.RequestDeleteSecureValue obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        var types = PassportRequestHelper.ToConstructorIds(obj.Types);
+
+        // Deletes the referenced files as well - a scan that no value points at is unreachable, and
+        // leaving it behind would keep the user's document on the server after they removed it.
+        await passportValueStore.DeleteAsync(input.UserId, types);
+
+        return new TBoolTrue();
     }
 }
