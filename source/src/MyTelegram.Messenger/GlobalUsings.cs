@@ -46,6 +46,7 @@ global using MyTelegram.Messenger.Extensions;
 global using MyTelegram.Messenger.Services;
 global using MyTelegram.Messenger.Services.AdminLog;
 global using MyTelegram.Messenger.Services.Caching;
+global using MyTelegram.Messenger.Services.Entities;
 global using MyTelegram.Messenger.Services.Interfaces;
 global using MyTelegram.Queries;
 global using MyTelegram.ReadModel.Impl;

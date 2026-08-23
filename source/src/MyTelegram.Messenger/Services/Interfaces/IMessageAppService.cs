@@ -26,7 +26,14 @@ public interface IMessageAppService
         IReadOnlyCollection<IMessageReadModel> messageReadModels);
 
     Task<bool> CanSendAsPeerAsync(long channelId, long userId);
-    Task<List<long>> ProcessMessageEntitiesAsync(string? message, IList<IMessageEntity>? entities, Peer toPeer);
+    /// <summary>
+    /// Validates, normalises and autolinks the entities of a text.
+    /// See https://corefork.telegram.org/api/entities
+    /// </summary>
+    Task<MessageEntityProcessingResult> ProcessMessageEntitiesAsync(
+        string? message,
+        IEnumerable<IMessageEntity>? entities,
+        Peer toPeer);
     List<string> GetHashtags(string? message);
     Task<bool> IsValidSendAsPeerAsync(long requestUserId, Peer toPeer, Peer? sendAsPeer);
 }

@@ -70,12 +70,17 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
     IScheduledMessageStore scheduledMessageStore,
     IScheduledMessageDispatcher scheduledMessageDispatcher,
     IGeoProximityAlertService geoProximityAlertService,
+    IUserAppService userAppService,
     IMessageEncryptionHelper messageEncryptionHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestEditMessage, MyTelegram.Schema.IUpdates>
 {
     private static byte[]? _encryptionKey;
     private static KeyConfig? _keyConfig;
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestEditMessage obj)
     {
+        // The hard ceiling applies to every text; the tighter caption limit is applied further down,
+        // once the stored message is known to carry media.
+        MessageLengthHelper.ValidateMessage(obj.Message);
+
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
         var ownerPeerId = input.UserId;
         if (peer.PeerType == PeerType.Channel)
@@ -141,6 +146,14 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
                     RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
                     break;
             }
+        }
+
+        // Now that the stored message is known, a text attached to media is a caption and is bound by
+        // the (tighter) caption limit instead of the 4096 already checked above.
+        if (media is not null and not TMessageMediaEmpty ||
+            messageReadModel.Media2 is not null and not TMessageMediaEmpty)
+        {
+            await ValidateEditedCaptionLengthAsync(input.UserId, obj.Message);
         }
 
         // Clients stop a poll by editing the message with poll.closed = true; there is no
@@ -237,14 +250,17 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         //        inboxItem = new InboxItem(inboxMessageReadModel.OwnerPeerId, inboxMessageReadModel.MessageId);
         //    }
         //}
-        var entities = obj.Entities ?? [];
-        await messageAppService.ProcessMessageEntitiesAsync(obj.Message, entities, peer);
-        if (entities.Count == 0)
-        {
-            entities = null;
-        }
+        // An edit that does not carry a text keeps the stored one, so it has to keep the stored
+        // entities too — dropping them would strip the formatting off a keyboard-only edit.
+        var entities = messageTextEdited || obj.Entities != null
+            ? (await messageAppService.ProcessMessageEntitiesAsync(obj.Message, obj.Entities, peer)).Entities
+            : messageReadModel.Entities2;
 
-        var hashtags = messageAppService.GetHashtags(obj.Message);
+        // Hashtags are indexed from the text, so an edit that leaves the text alone must leave the
+        // index alone as well.
+        var hashtags = messageTextEdited
+            ? messageAppService.GetHashtags(obj.Message)
+            : messageReadModel.Hashtags;
         var command = new EditOutboxMessageCommand(MessageId.Create(ownerPeerId, obj.Id, obj.QuickReplyShortcutId.HasValue), input.ToRequestInfo(), obj.Id, message, CurrentDate, entities, media, obj.ReplyMarkup, obj.InvertMedia, hashtags, encryptedData, inboxMessageEncryptedData);
         await commandBus.PublishAsync(command);
 
@@ -273,6 +289,22 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         }
 
         return null !;
+    }
+
+    /// <summary>
+    /// A caption is bound by <c>caption_length_limit_default</c> / <c>caption_length_limit_premium</c>
+    /// rather than by the 4096 of a plain text message. The sender is only looked up when the text is
+    /// long enough for the distinction to matter.
+    /// </summary>
+    private async Task ValidateEditedCaptionLengthAsync(long userId, string? message)
+    {
+        if (message == null || message.Length <= MessageLengthHelper.CaptionLengthLimitDefault)
+        {
+            return;
+        }
+
+        var sender = await userAppService.GetAsync(userId);
+        MessageLengthHelper.ValidateCaption(message, sender?.Premium ?? false);
     }
 
     /// <summary>
@@ -308,10 +340,13 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
                 ? (ReadOnlyMemory<byte>?)messageEncryptionHelper.Encrypt(ownerPeerId, obj.Message)
                 : null;
 
+            var scheduledEntities =
+                (await messageAppService.ProcessMessageEntitiesAsync(obj.Message, obj.Entities, peer)).Entities;
+
             item = item with
             {
                 Message = encryptedData.HasValue ? string.Empty : obj.Message,
-                Entities = obj.Entities,
+                Entities = scheduledEntities,
                 EncryptedData = encryptedData
             };
         }

@@ -40,6 +40,8 @@ internal static class TodoListHelper
             RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
         }
 
+        NormalizeEntities(todoList.Title);
+
         if (todoList.List.Count == 0)
         {
             RpcErrors.RpcErrors400.TodoItemsEmpty.ThrowRpcError();
@@ -103,6 +105,19 @@ internal static class TodoListHelper
         {
             RpcErrors.RpcErrors400.MessageTooLong.ThrowRpcError();
         }
+
+        NormalizeEntities(item.Title);
+    }
+
+    /// <summary>
+    /// Checklist titles carry styled text too, so their entities have to be validated and legally
+    /// nested like any other text. The server does not autolink them.
+    /// See https://corefork.telegram.org/api/entities
+    /// </summary>
+    private static void NormalizeEntities(ITextWithEntities text)
+    {
+        MessageEntityValidator.Validate(text.Text, text.Entities);
+        text.Entities = new TVector<IMessageEntity>(MessageEntityNormalizer.Normalize(text.Text, text.Entities));
     }
 
     /// <summary>

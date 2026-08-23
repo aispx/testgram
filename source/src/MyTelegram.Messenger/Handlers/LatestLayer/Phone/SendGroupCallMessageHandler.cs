@@ -35,6 +35,12 @@ internal sealed class SendGroupCallMessageHandler(
             return null!;
         }
 
+        // The message is styled text, so its entities are checked and legally nested before being
+        // stored and echoed to every participant. See https://corefork.telegram.org/api/entities
+        MessageEntityValidator.Validate(obj.Message.Text, obj.Message.Entities);
+        obj.Message.Entities = new TVector<IMessageEntity>(
+            MessageEntityNormalizer.Normalize(obj.Message.Text, obj.Message.Entities));
+
         var existing = groupCall.Messages.FirstOrDefault(message =>
             message.RandomId == obj.RandomId &&
             message.FromPeerId == fromPeer.PeerId &&

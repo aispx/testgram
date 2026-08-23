@@ -124,7 +124,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
+internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService, IMessageEntityService messageEntityService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
     /// <summary>Official poll text limits: 255 chars for the question, 100 per option.</summary>
     private const int PollQuestionMaxLength = 255;
@@ -132,6 +132,8 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMedia obj)
     {
+        await ValidateCaptionLengthAsync(input.UserId, obj.Message);
+
         // Only voice notes are covered by privacyKeyVoiceMessages. This used to match any
         // TDocumentAttributeAudio, which also blocked ordinary music uploads.
         var needCheckAudioMessagePrivacy = VoiceMessageHelper.IsVoiceMedia(obj.Media);
@@ -432,6 +434,22 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         return savedPeer;
     }
 
+    /// <summary>
+    /// A caption is limited by <c>caption_length_limit_default</c> / <c>caption_length_limit_premium</c>.
+    /// The sender is only looked up when the caption is past the non-premium limit, so the common
+    /// case costs nothing.
+    /// </summary>
+    private async Task ValidateCaptionLengthAsync(long userId, string? caption)
+    {
+        if (caption == null || caption.Length <= MessageLengthHelper.CaptionLengthLimitDefault)
+        {
+            return;
+        }
+
+        var sender = await userAppService.GetAsync(userId);
+        MessageLengthHelper.ValidateCaption(caption, sender?.Premium ?? false);
+    }
+
     private async Task CreatePollAsync(long creatorUserId, Peer toPeer, TInputMediaPoll inputMediaPoll)
     {
         var poll = inputMediaPoll.Poll;
@@ -449,10 +467,22 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             RpcErrors.RpcErrors400.PollAnswersInvalid.ThrowRpcError();
         }
 
-        var solutionEntities = inputMediaPoll.SolutionEntities;
+        // Poll texts are never autolinked by the server, but they do carry styled entities, so they
+        // have to be validated and legally nested like any other text.
+        // See https://corefork.telegram.org/api/entities
+        var solutionEntities = messageEntityService.ValidateAndNormalize(
+            inputMediaPoll.Solution, inputMediaPoll.SolutionEntities);
         if (solutionEntities == null && !string.IsNullOrEmpty(inputMediaPoll.Solution))
         {
             solutionEntities = [];
+        }
+
+        var questionEntities = messageEntityService.ValidateAndNormalize(
+            poll.Question.Text, poll.Question.Entities);
+        foreach (var answer in poll.Answers)
+        {
+            answer.Text.Entities = messageEntityService.ValidateAndNormalize(answer.Text.Text, answer.Text.Entities)
+                                   ?? [];
         }
 
         // close_period is relative ("close 30s from now"), close_date is absolute. Store an
@@ -463,7 +493,7 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             closeDate = CurrentDate + poll.ClosePeriod.Value;
         }
 
-        var command = new CreatePollCommand(PollId.Create(poll.Id), toPeer, poll.Id, poll.MultipleChoice, poll.Quiz, inputMediaPoll.Poll.PublicVoters, poll.Question.Text, poll.Answers.Select((p, index) => new PollAnswer(p.Text.Text, index.ToString(), p.Text.Entities.ToBytes())).ToList(), inputMediaPoll.CorrectAnswers?.Select(p => p.ToString()).ToList(), inputMediaPoll.Solution, solutionEntities, poll.Question.Entities, creatorUserId,
+        var command = new CreatePollCommand(PollId.Create(poll.Id), toPeer, poll.Id, poll.MultipleChoice, poll.Quiz, inputMediaPoll.Poll.PublicVoters, poll.Question.Text, poll.Answers.Select((p, index) => new PollAnswer(p.Text.Text, index.ToString(), p.Text.Entities.ToBytes())).ToList(), inputMediaPoll.CorrectAnswers?.Select(p => p.ToString()).ToList(), inputMediaPoll.Solution, solutionEntities, questionEntities, creatorUserId,
             poll.ClosePeriod,
             closeDate,
             poll.OpenAnswers,

@@ -2,6 +2,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Entities;
 using MyTelegram.Messenger.Services.Scheduled;
 using MyTelegram.Messenger.Services.VideoProcessing;
 
@@ -24,12 +25,10 @@ public class MessageAppService(
     IMongoDatabase mongoDatabase,
     IObjectMessageSender objectMessageSender,
     IScheduledMessageStore scheduledMessageStore,
-    IVideoProcessingService videoProcessingService)
+    IVideoProcessingService videoProcessingService,
+    IMessageEntityService messageEntityService)
     : BaseAppService, IMessageAppService, ITransientDependency
 {
-    private const string HashtagPattern = "#(\\w+)";
-    private const string UrlPattern = @"(?:^|\s)((https?:\/\/)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/[^\s,.:;!?]*)?)";
-
     private static byte[]? _encryptionKey;
     private static KeyConfig? _keyConfig;
 
@@ -781,12 +780,9 @@ public class MessageAppService(
             targetNoForwards = await IsPrivateChatNoForwardsEnabledAsync(input.SenderUserId, input.ToPeer.PeerId);
         }
 
-        var entities = input.Entities ?? [];
-        var mentionedUserIds = await ProcessMessageEntitiesAsync(input.Message, entities, input.ToPeer);
-        if (entities.Count == 0)
-        {
-            entities = null;
-        }
+        var entityResult = await ProcessMessageEntitiesAsync(input.Message, input.Entities, input.ToPeer);
+        var entities = entityResult.Entities;
+        var mentionedUserIds = entityResult.MentionedUserIds;
         var ownerPeerId = input.ToPeer.PeerType == PeerType.Channel ? input.ToPeer.PeerId : input.SenderUserId;
         var replyToMsgId = input.InputReplyTo.ToReplyToMsgId();
         await ClearTodoItemIdIfNotChecklistAsync(input, ownerPeerId, replyToMsgId);
@@ -1002,29 +998,7 @@ public class MessageAppService(
 
     public List<string> GetHashtags(string? message)
     {
-        if (string.IsNullOrEmpty(message))
-        {
-            return [];
-        }
-
-        var matches = Regex.Matches(message, HashtagPattern);
-        var hashtags = new List<string>();
-        const int maxHashtags = 10;
-        foreach (Match match in matches)
-        {
-            if (hashtags.Count > maxHashtags)
-            {
-                break;
-            }
-
-            var hashtag = match.Groups[1].Value;
-            if (!hashtags.Contains(hashtag))
-            {
-                hashtags.Add(hashtag);
-            }
-        }
-
-        return hashtags;
+        return messageEntityService.GetHashtags(message);
     }
 
     /// <summary>
@@ -1100,303 +1074,12 @@ public class MessageAppService(
         }
     }
 
-    public async Task<List<long>> ProcessMessageEntitiesAsync(string? message, IList<IMessageEntity>? entities, Peer toPeer)
+    public Task<MessageEntityProcessingResult> ProcessMessageEntitiesAsync(
+        string? message,
+        IEnumerable<IMessageEntity>? entities,
+        Peer toPeer)
     {
-        if (string.IsNullOrEmpty(message))
-        {
-            return [];
-        }
-
-        await ProcessMessageEntityCustomEmojiAsync(message, entities);
-        ProcessMessageEntityHashtag(message, entities);
-        ProcessMessageEntityUrlList(message, entities);
-        return await ProcessMessageEntityMentionAsync(message, entities, toPeer);
-    }
-
-    private async Task ProcessMessageEntityCustomEmojiAsync(string message, IList<IMessageEntity>? entities)
-    {
-        if (entities == null || entities.Count == 0)
-        {
-            return;
-        }
-
-        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var customEmojiEntities = entities.OfType<TMessageEntityCustomEmoji>().ToList();
-        if (customEmojiEntities.Count == 0)
-        {
-            return;
-        }
-
-        var documentIds = customEmojiEntities.Select(x => x.DocumentId).Distinct().ToList();
-        var filter = Builders<BsonDocument>.Filter.In("DocumentId", documentIds.Select(x => (BsonValue)new BsonInt64(x)));
-        var documents = await docCol.Find(filter).ToListAsync();
-        var documentMap = documents.ToDictionary(x => x["DocumentId"].ToInt64());
-
-        foreach (var entity in customEmojiEntities)
-        {
-            if (entity.Offset < 0 || entity.Length <= 0 || entity.Offset + entity.Length > message.Length)
-            {
-                RpcErrors.RpcErrors400.EntityBoundsInvalid.ThrowRpcError();
-            }
-
-            if (!documentMap.TryGetValue(entity.DocumentId, out var document))
-            {
-                RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
-            }
-
-            if (!TryGetCustomEmojiAttributeForEntity(document!, out var attribute))
-            {
-                if (await TryDowngradeLegacyAnimatedEmojiEntityAsync(message, entities, entity))
-                {
-                    continue;
-                }
-
-                RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
-            }
-
-            var text = message.Substring(entity.Offset, entity.Length);
-            if (IsSameEmoji(text, attribute.Alt))
-            {
-                continue;
-            }
-
-            var replacement = await TryResolveReplacementCustomEmojiDocumentAsync(text, attribute);
-            if (replacement != null)
-            {
-                entity.DocumentId = replacement.Value;
-                continue;
-            }
-
-            RpcErrors.RpcErrors400.EmoticonInvalid.ThrowRpcError();
-        }
-    }
-
-    private async Task<bool> TryDowngradeLegacyAnimatedEmojiEntityAsync(
-        string message,
-        IList<IMessageEntity> entities,
-        TMessageEntityCustomEmoji entity)
-    {
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
-        var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("ShortName", "AnimatedEmojies")).FirstOrDefaultAsync();
-        if (setDoc == null || !setDoc.Contains("Packs") || !setDoc["Packs"].IsBsonArray)
-        {
-            return false;
-        }
-
-        var text = message.Substring(entity.Offset, entity.Length);
-        var belongsToLegacyAnimatedEmojiSet = setDoc["Packs"].AsBsonArray
-            .Where(x => x.IsBsonDocument)
-            .Select(x => x.AsBsonDocument)
-            .Any(x =>
-                x.Contains("Emoticon") &&
-                x["Emoticon"].IsString &&
-                IsSameEmoji(text, x["Emoticon"].AsString) &&
-                x.Contains("Documents") &&
-                x["Documents"].IsBsonArray &&
-                x["Documents"].AsBsonArray.Any(documentId => documentId.ToInt64() == entity.DocumentId));
-
-        if (!belongsToLegacyAnimatedEmojiSet)
-        {
-            return false;
-        }
-
-        entities.Remove(entity);
-        return true;
-    }
-
-    private async Task<long?> TryResolveReplacementCustomEmojiDocumentAsync(string text, TDocumentAttributeCustomEmoji attribute)
-    {
-        if (attribute.Stickerset is not TInputStickerSetID stickerSetId || stickerSetId.Id == 0)
-        {
-            return null;
-        }
-
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
-        var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", stickerSetId.Id)).FirstOrDefaultAsync();
-        if (setDoc == null || !setDoc.Contains("Packs") || !setDoc["Packs"].IsBsonArray)
-        {
-            return null;
-        }
-
-        var candidateDocumentIds = setDoc["Packs"].AsBsonArray
-            .Where(x => x.IsBsonDocument)
-            .Select(x => x.AsBsonDocument)
-            .Where(x => x.Contains("Emoticon") && x["Emoticon"].IsString && IsSameEmoji(text, x["Emoticon"].AsString))
-            .Where(x => x.Contains("Documents") && x["Documents"].IsBsonArray)
-            .SelectMany(x => x["Documents"].AsBsonArray)
-            .Select(x => x.ToInt64())
-            .Distinct()
-            .ToList();
-
-        if (candidateDocumentIds.Count == 0)
-        {
-            return null;
-        }
-
-        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var filter = Builders<BsonDocument>.Filter.In("DocumentId", candidateDocumentIds.Select(x => (BsonValue)new BsonInt64(x)));
-        var docs = await docCol.Find(filter).ToListAsync();
-        foreach (var candidateDocumentId in candidateDocumentIds)
-        {
-            var candidate = docs.FirstOrDefault(x => x["DocumentId"].ToInt64() == candidateDocumentId);
-            if (candidate != null &&
-                TryGetCustomEmojiAttributeForEntity(candidate, out var candidateAttribute) &&
-                IsSameEmoji(text, candidateAttribute.Alt))
-            {
-                return candidateDocumentId;
-            }
-        }
-
-        return null;
-    }
-
-    private static bool TryGetCustomEmojiAttributeForEntity(BsonDocument document, out TDocumentAttributeCustomEmoji attribute)
-    {
-        return CustomEmojiAttributeHelper.TryGetCustomEmojiAttribute(document, out attribute) ||
-               CustomEmojiAttributeHelper.TryGetStickerAttributeAsCustomEmoji(document, out attribute);
-    }
-
-    private static bool IsSameEmoji(string? left, string? right)
-    {
-        if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right))
-        {
-            return false;
-        }
-
-        return string.Equals(NormalizeEmoji(left), NormalizeEmoji(right), StringComparison.Ordinal);
-    }
-
-    private static string NormalizeEmoji(string value)
-    {
-        return value.Replace("\uFE0F", string.Empty, StringComparison.Ordinal);
-    }
-
-    private async Task<List<long>> ProcessMessageEntityMentionAsync(string message, IList<IMessageEntity>? entities, Peer toPeer)
-    {
-        var mentionsAndUserNames = GetMentions(message);
-        var mentions = mentionsAndUserNames.mentions;
-        var mentionedUserNames = mentionsAndUserNames.userNameList;
-        var mentionedUserIds = new List<long>();
-
-        if (entities?.Count > 0)
-        {
-            foreach (var messageEntity in entities)
-            {
-                switch (messageEntity)
-                {
-                    case TInputMessageEntityMentionName inputMessageEntityMentionName:
-                        var userPeer = peerHelper.GetPeer(inputMessageEntityMentionName.UserId);
-                        mentionedUserIds.Add(userPeer.PeerId);
-                        break;
-                    case TMessageEntityMention messageEntityMention:
-                        mentionedUserNames.Add(message.Substring(messageEntityMention.Offset + 1,
-                            messageEntityMention.Length - 1));
-                        break;
-                    case TMessageEntityMentionName messageEntityMentionName:
-                        mentionedUserIds.Add(messageEntityMentionName.UserId);
-                        break;
-                }
-            }
-        }
-
-        if (mentionedUserNames.Count > 0)
-        {
-            entities ??= [];
-            foreach (var messageEntityMention in mentions)
-            {
-                entities.Add(messageEntityMention);
-            }
-        }
-
-        if (mentionedUserNames.Count > 0 || mentionedUserIds.Count > 0)
-        {
-            var mentionedUsers =
-                await queryProcessor.ProcessAsync(new GetUserNameListByNamesQuery(mentionedUserNames, PeerType.User));
-            mentionedUserIds.AddRange(mentionedUsers.Select(p => p.PeerId).Distinct().ToList());
-        }
-
-        switch (toPeer.PeerType)
-        {
-            case PeerType.Channel:
-                // Only members can be mentioned: a badge in a chat the user cannot open is a dead end.
-                var memberUserIds =
-                    await queryProcessor.ProcessAsync(new GetChannelMemberIdListQuery(toPeer.PeerId, mentionedUserIds));
-                mentionedUserIds = memberUserIds.ToList();
-                break;
-
-            // In a private chat the only person who can be mentioned is the other party; naming a third
-            // user is just text. Clients do count mentions here — tdlib bumps unread_mention_count for
-            // every dialog type, and Android calls messages.readMentions for private chats too.
-            case PeerType.User:
-                mentionedUserIds = mentionedUserIds.Contains(toPeer.PeerId) ? [toPeer.PeerId] : [];
-                break;
-
-            // Legacy basic chats have no member read model in this fork, so membership cannot be
-            // verified and no mention is recorded.
-            default:
-                mentionedUserIds = [];
-                break;
-        }
-
-        return mentionedUserIds;
-    }
-
-    private (List<TMessageEntityMention> mentions, List<string> userNameList) GetMentions(string message)
-    {
-        var pattern = "@(\\w{4,40})";
-        var mentions = new List<TMessageEntityMention>();
-        var matches = Regex.Matches(message, pattern);
-        var userNameList = new List<string>();
-        foreach (Match match in matches)
-        {
-            if (match.Success)
-            {
-                mentions.Add(new TMessageEntityMention
-                {
-                    Offset = match.Index,
-                    Length = match.Length
-                });
-                userNameList.Add(match.Value[1..]);
-            }
-        }
-
-        return (mentions, userNameList);
-    }
-
-    private void ProcessMessageEntityUrlList(string message, IList<IMessageEntity>? entities)
-    {
-        var matches = Regex.Matches(message, UrlPattern);
-        foreach (Match match in matches)
-        {
-            if (match.Success)
-            {
-                var entity = new TMessageEntityUrl
-                {
-                    Offset = match.Index,
-                    Length = match.Length
-                };
-                entities ??= [];
-                entities.Add(entity);
-            }
-        }
-    }
-
-    private void ProcessMessageEntityHashtag(string message, IList<IMessageEntity>? entities)
-    {
-        var hashtagMatches = Regex.Matches(message, HashtagPattern);
-        foreach (Match match in hashtagMatches)
-        {
-            if (match.Success)
-            {
-                var entity = new TMessageEntityHashtag
-                {
-                    Offset = match.Index,
-                    Length = match.Length
-                };
-                entities ??= [];
-                entities.Add(entity);
-            }
-        }
+        return messageEntityService.ProcessAsync(message, entities, toPeer);
     }
 
     private Task<GetMessageOutput> GetMessagesCoreAsync<TRequest>(TRequest input)

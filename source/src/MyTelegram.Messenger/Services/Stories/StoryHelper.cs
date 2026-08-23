@@ -747,16 +747,48 @@ public static partial class StoryHelper
             case 0x9c4e7e8b: return new TMessageEntityUnderline { Offset = offset, Length = length };
             case 0xbf0693d4: return new TMessageEntityStrike { Offset = offset, Length = length };
             case 0x28a20571: return new TMessageEntityCode { Offset = offset, Length = length };
-            case 0xf1ccaaac: return new TMessageEntityBlockquote { Offset = offset, Length = length };
+
+            case 0xf1ccaaac: // messageEntityBlockquote
+                return new TMessageEntityBlockquote
+                {
+                    Offset = offset,
+                    Length = length,
+                    Collapsed = data.TryGetValue("collapsed", out var collapsedElem) &&
+                                collapsedElem.ValueKind == JsonValueKind.True
+                };
+
             case 0x32ca960f: return new TMessageEntitySpoiler { Offset = offset, Length = length };
             case 0x6f635b0d: return new TMessageEntityHashtag { Offset = offset, Length = length };
             case 0xfa04579d: return new TMessageEntityMention { Offset = offset, Length = length };
             case 0x6ed02538: return new TMessageEntityUrl { Offset = offset, Length = length };
             case 0x64e475c2: return new TMessageEntityEmail { Offset = offset, Length = length };
+            case 0x4c4e743f: return new TMessageEntityCashtag { Offset = offset, Length = length };
+            case 0x6cef8ac7: return new TMessageEntityBotCommand { Offset = offset, Length = length };
+            case 0x9b69e34b: return new TMessageEntityPhone { Offset = offset, Length = length };
+            case 0x761e6af4: return new TMessageEntityBankCard { Offset = offset, Length = length };
+
+            case 0x904ac7c7: // messageEntityFormattedDate
+                return new TMessageEntityFormattedDate
+                {
+                    Offset = offset,
+                    Length = length,
+                    Date = data.TryGetValue("date", out var dateElem) ? dateElem.GetInt32() : 0,
+                    Relative = GetFlag(data, "relative"),
+                    ShortTime = GetFlag(data, "shortTime"),
+                    LongTime = GetFlag(data, "longTime"),
+                    ShortDate = GetFlag(data, "shortDate"),
+                    LongDate = GetFlag(data, "longDate"),
+                    DayOfWeek = GetFlag(data, "dayOfWeek")
+                };
 
             default:
                 return new TMessageEntityUnknown { Offset = offset, Length = length };
         }
+    }
+
+    private static bool GetFlag(Dictionary<string, JsonElement> data, string key)
+    {
+        return data.TryGetValue(key, out var element) && element.ValueKind == JsonValueKind.True;
     }
 
     /// <summary>
@@ -793,6 +825,18 @@ public static partial class StoryHelper
                     break;
                 case TMessageEntityCustomEmoji customEmoji:
                     data["documentId"] = customEmoji.DocumentId;
+                    break;
+                case TMessageEntityBlockquote blockquote:
+                    data["collapsed"] = blockquote.Collapsed;
+                    break;
+                case TMessageEntityFormattedDate formattedDate:
+                    data["date"] = formattedDate.Date;
+                    data["relative"] = formattedDate.Relative;
+                    data["shortTime"] = formattedDate.ShortTime;
+                    data["longTime"] = formattedDate.LongTime;
+                    data["shortDate"] = formattedDate.ShortDate;
+                    data["longDate"] = formattedDate.LongDate;
+                    data["dayOfWeek"] = formattedDate.DayOfWeek;
                     break;
             }
 

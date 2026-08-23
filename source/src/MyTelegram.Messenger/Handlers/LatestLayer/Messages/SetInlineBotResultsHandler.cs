@@ -65,6 +65,8 @@ internal sealed class SetInlineBotResultsHandler(
             RpcErrors.RpcErrors400.SwitchWebviewUrlInvalid.ThrowRpcError();
         }
 
+        ValidateResultEntities(obj.Results);
+
         var pendingCollection = mongoDatabase.GetCollection<BsonDocument>(PendingCollection);
         var pendingFilter = Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("query_id", obj.QueryId),
@@ -108,6 +110,36 @@ internal sealed class SetInlineBotResultsHandler(
             .Set("responded_at", DateTime.UtcNow.ToTimestamp()));
 
         return new TBoolTrue();
+    }
+
+    /// <summary>
+    /// A result's <c>send_message</c> carries styled text, and the bot only learns that its offsets
+    /// are wrong when a user picks the result. Rejecting the answer here reports the mistake to the
+    /// bot instead. See https://corefork.telegram.org/api/entities
+    /// </summary>
+    private static void ValidateResultEntities(TVector<IInputBotInlineResult> results)
+    {
+        foreach (var result in results)
+        {
+            var sendMessage = result switch
+            {
+                TInputBotInlineResult r => r.SendMessage,
+                TInputBotInlineResultPhoto r => r.SendMessage,
+                TInputBotInlineResultDocument r => r.SendMessage,
+                TInputBotInlineResultGame r => r.SendMessage,
+                _ => null
+            };
+
+            switch (sendMessage)
+            {
+                case TInputBotInlineMessageText text:
+                    MessageEntityValidator.Validate(text.Message, text.Entities);
+                    break;
+                case TInputBotInlineMessageMediaAuto auto:
+                    MessageEntityValidator.Validate(auto.Message, auto.Entities);
+                    break;
+            }
+        }
     }
 
     /// <summary>
