@@ -47,7 +47,13 @@ public static class StarsBalanceHelper
         return result != null;
     }
 
-    public static async Task AddTransactionAsync(IMongoDatabase db, long userId, long amount, bool gift = false,
+    /// <summary>Appends a row to the Stars ledger and returns its transaction id.</summary>
+    /// <remarks>
+    /// The id doubles as the <c>paymentCharge.provider_charge_id</c> a bot quotes back to
+    /// <c>payments.refundStarsCharge</c>, so the charge and the ledger row always refer to the
+    /// same record. See https://corefork.telegram.org/api/payments#6-refunds
+    /// </remarks>
+    public static async Task<string> AddTransactionAsync(IMongoDatabase db, long userId, long amount, bool gift = false,
         long? peerUserId = null, long? peerChannelId = null, string? title = null, bool stargiftUpgrade = false,
         bool stargiftAuctionBid = false, bool offer = false, string? stargiftSlug = null, int? premiumGiftMonths = null,
         int? starrefCommissionPermille = null, long? starrefPeerUserId = null, long? starrefPeerChannelId = null, long? starrefAmount = null,
@@ -99,6 +105,8 @@ public static class StarsBalanceHelper
             TransactionUrl = transactionUrl,
             ExtendedMedia = extendedMedia?.Select(x => x.ToBytes()).ToList(),
         });
+
+        return transactionId;
     }
 
     public static TStarsTransaction BsonToTl(BsonDocument doc)

@@ -20,21 +20,46 @@ internal sealed class MessageServiceMapper
     /// </summary>
     private static IMessageAction ForViewer(IMessageAction action, bool isOut)
     {
-        if (!isOut || action is not TMessageActionSecureValuesSentMe sentMe)
+        if (!isOut)
         {
             return action;
         }
 
-        var types = new TVector<ISecureValueType>();
-        foreach (var value in sentMe.Values ?? [])
+        switch (action)
         {
-            if (value is TSecureValue secureValue)
+            case TMessageActionSecureValuesSentMe sentMe:
             {
-                types.Add(secureValue.Type);
-            }
-        }
+                var types = new TVector<ISecureValueType>();
+                foreach (var value in sentMe.Values ?? [])
+                {
+                    if (value is TSecureValue secureValue)
+                    {
+                        types.Add(secureValue.Type);
+                    }
+                }
 
-        return new TMessageActionSecureValuesSent { Types = types };
+                return new TMessageActionSecureValuesSent { Types = types };
+            }
+
+            // A settled payment is stored once, as the bot's "...SentMe" view. The buyer, who is the
+            // sender, gets the trimmed messageActionPaymentSent instead: the order payload and the
+            // charge ids are the bot's side of the transaction and have no rendering in the buyer's
+            // client. See https://corefork.telegram.org/api/payments#5-checkout
+            case TMessageActionPaymentSentMe paymentSentMe:
+                // invoice_slug stays unset: messageActionPaymentSentMe has no such field to carry it
+                // over, and it is optional for the client.
+                return new TMessageActionPaymentSent
+                {
+                    Currency = paymentSentMe.Currency,
+                    TotalAmount = paymentSentMe.TotalAmount,
+                    SubscriptionUntilDate = paymentSentMe.SubscriptionUntilDate,
+                    RecurringInit = paymentSentMe.RecurringInit,
+                    RecurringUsed = paymentSentMe.RecurringUsed
+                };
+
+            default:
+                return action;
+        }
     }
 
     public TMessageService Map(IMessageReadModel source)

@@ -4,6 +4,7 @@ using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.Bots;
 using MyTelegram.Messenger.Services.PaidMedia;
+using MyTelegram.Messenger.Services.Payments;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Send a media
@@ -211,6 +212,11 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             TodoListHelper.ValidateTodoList(inputMediaTodo.Todo);
         }
 
+        if (obj.Media is TInputMediaInvoice inputMediaInvoice)
+        {
+            await ValidateInvoiceAsync(input.UserId, inputMediaInvoice);
+        }
+
         var ownerPeerId = toPeer.PeerType == PeerType.Channel ? toPeer.PeerId : input.UserId;
         int? preallocatedMessageId = null;
         List<IMessageMedia>? paidMediaItems = null;
@@ -225,6 +231,12 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         else
         {
             media = await mediaHelper.SaveMediaAsync(obj.Media);
+            if (obj.Media is TInputMediaInvoice)
+            {
+                // The server side half of the invoice is keyed by the sender's own copy of the
+                // message, so its id has to exist before the message is dispatched.
+                preallocatedMessageId = (int)await idGenerator.NextIdAsync(IdType.MessageId, ownerPeerId);
+            }
         }
         int? topMsgId = null;
         Peer? savedPeerId = null;
@@ -251,9 +263,28 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
 
         var effect = await messageEffectAppService.ValidateEffectAsync(obj.Effect, input.UserId, toPeer.PeerType);
 
+        // "For invoice messages, the message will also have a replyInlineMarkup keyboard attached to
+        // it. The first button of the keyboard will always be a keyboardButtonBuy button."
+        // https://corefork.telegram.org/api/payments#2-order-information
+        var replyMarkup = obj.Media is TInputMediaInvoice
+            ? WithBuyButton(obj.ReplyMarkup)
+            : obj.ReplyMarkup;
+
         var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), obj.Message, obj.RandomId, clearDraft: obj.ClearDraft, entities: obj.Entities, media: media, //replyToMsgId: replyToMsgId,
- inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: obj.ReplyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, scheduleRepeatPeriod: obj.ScheduleRepeatPeriod, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, messageId: preallocatedMessageId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
+ inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: replyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, scheduleRepeatPeriod: obj.ScheduleRepeatPeriod, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, messageId: preallocatedMessageId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
         await messageAppService.SendMessageAsync([sendMessageInput]);
+
+        if (obj.Media is TInputMediaInvoice invoiceInput && preallocatedMessageId.HasValue)
+        {
+            await BotInvoiceHelper.SaveAsync(
+                mongoDatabase,
+                BotInvoiceHelper.Create(
+                    invoiceInput,
+                    botId: input.UserId,
+                    ownerPeerId: ownerPeerId,
+                    toPeerId: toPeer.PeerId,
+                    msgId: preallocatedMessageId.Value));
+        }
 
         // BotFather needs uploads too (web app photos and demo GIFs), not just text.
         if (toPeer.PeerType == PeerType.User && toPeer.PeerId == BotFatherBotService.BotUserId)
@@ -282,6 +313,66 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         }
 
         return null!;
+    }
+
+    /// <summary>
+    /// Guards the invoice fields the payment flow later depends on.
+    /// </summary>
+    /// <remarks>
+    /// Only Telegram Stars invoices are accepted: this server has no per bot payment provider, so a
+    /// fiat invoice would produce a payment form nothing can settle.
+    /// </remarks>
+    private async Task ValidateInvoiceAsync(long senderUserId, TInputMediaInvoice invoice)
+    {
+        var sender = await queryProcessor.ProcessAsync(new GetUserByIdQuery(senderUserId));
+        if (sender == null || !sender.Bot)
+        {
+            RpcErrors.RpcErrors400.BotPaymentsDisabled.ThrowRpcError();
+        }
+
+        if (invoice.Invoice is not { } details || details.Prices is not { Count: > 0 })
+        {
+            RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
+            return;
+        }
+
+        if (details.Currency != BotInvoiceHelper.StarsCurrency ||
+            BotInvoiceHelper.GetTotalAmount(details) <= 0)
+        {
+            RpcErrors.RpcErrors400.CurrencyTotalAmountInvalid.ThrowRpcError();
+        }
+
+        if (invoice.Payload.Length == 0)
+        {
+            RpcErrors.RpcErrors400.InvoicePayloadInvalid.ThrowRpcError();
+        }
+    }
+
+    /// <summary>Prepends a keyboardButtonBuy row to whatever keyboard the bot supplied.</summary>
+    private static IReplyMarkup WithBuyButton(IReplyMarkup? replyMarkup)
+    {
+        var existingRows = replyMarkup is TReplyInlineMarkup { Rows.Count: > 0 } inlineMarkup
+            ? inlineMarkup.Rows.ToList()
+            : [];
+
+        // A bot may have placed the Pay button itself; the rule is that it comes first, not that
+        // there are two of them.
+        var existingBuyRow = existingRows.FindIndex(row => row.Buttons?.Any(b => b is TKeyboardButtonBuy) == true);
+        if (existingBuyRow >= 0)
+        {
+            var buyRow = existingRows[existingBuyRow];
+            existingRows.RemoveAt(existingBuyRow);
+            existingRows.Insert(0, buyRow);
+        }
+        else
+        {
+            existingRows.Insert(0, new TKeyboardButtonRow
+            {
+                Buttons = new TVector<IKeyboardButton>(new TKeyboardButtonBuy { Text = "Pay" })
+            });
+        }
+
+        return new TReplyInlineMarkup { Rows = new TVector<IKeyboardButtonRow>(existingRows) };
     }
 
     private async Task<(IMessageMedia MessageMedia, List<IMessageMedia> RevealedMedia)> CreatePaidMediaAsync(

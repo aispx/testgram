@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Payments;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// <summary>
 /// Get info about a credit card
@@ -9,10 +11,29 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetBankCardDataHandler : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetBankCardData, MyTelegram.Schema.Payments.IBankCardData>
+internal sealed class GetBankCardDataHandler(IBankCardBinProvider bankCardBinProvider)
+    : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestGetBankCardData, MyTelegram.Schema.Payments.IBankCardData>
 {
-    protected override Task<MyTelegram.Schema.Payments.IBankCardData> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestGetBankCardData obj)
+    protected override Task<MyTelegram.Schema.Payments.IBankCardData> HandleCoreAsync(
+        IRequestInput input, MyTelegram.Schema.Payments.RequestGetBankCardData obj)
     {
-        throw new NotImplementedException();
+        var entry = bankCardBinProvider.Resolve(obj.Number);
+        if (entry == null)
+        {
+            RpcErrors.RpcErrors400.BankCardNumberInvalid.ThrowRpcError();
+        }
+
+        var openUrls = new TVector<IBankCardOpenUrl>();
+        if (!string.IsNullOrEmpty(entry!.Url))
+        {
+            openUrls.Add(new TBankCardOpenUrl { Name = entry.Title, Url = entry.Url });
+        }
+
+        return Task.FromResult<MyTelegram.Schema.Payments.IBankCardData>(
+            new MyTelegram.Schema.Payments.TBankCardData
+            {
+                Title = entry.Title,
+                OpenUrls = openUrls
+            });
     }
 }

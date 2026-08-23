@@ -33,7 +33,8 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
     IApply<OutboxMessageEditedEventV2>,
     IApply<InboxMessageEditedEventV2>,
     IApply<MessageReactionsUpdatedEvent>,
-    IApply<MessageTodoUpdatedEvent>
+    IApply<MessageTodoUpdatedEvent>,
+    IApply<MessageInvoiceReceiptUpdatedEvent>
 {
     public int EditDate { get; private set; }
     //public bool EditHide { get; private set; }
@@ -245,6 +246,14 @@ public class MessageState : AggregateState<MessageAggregate, MessageId, MessageS
         MessageItem = MessageItem with
         {
             Media = TodoMediaFactory.Create(aggregateEvent.Todo, aggregateEvent.Completions)
+        };
+    }
+
+    public void Apply(MessageInvoiceReceiptUpdatedEvent aggregateEvent)
+    {
+        MessageItem = MessageItem with
+        {
+            Media = InvoiceMediaFactory.WithReceipt(MessageItem.Media, aggregateEvent.ReceiptMsgId)
         };
     }
 }

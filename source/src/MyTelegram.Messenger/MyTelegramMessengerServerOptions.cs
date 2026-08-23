@@ -66,6 +66,20 @@ public class MyTelegramMessengerServerOptions
     public AccountDeletionConfig AccountDeletion { get; set; } = new();
     public HistoryImportConfig HistoryImport { get; set; } = new();
     public PassportConfig Passport { get; set; } = new();
+    public PaymentsConfig Payments { get; set; } = new();
+}
+
+/// <summary>
+/// Bot payments, see https://corefork.telegram.org/api/payments. Invoices are settled in Telegram
+/// Stars only — there is no per bot payment provider — so the only knob here is the card issuer table.
+/// </summary>
+public class PaymentsConfig
+{
+    /// <summary>
+    /// Path to the JSON BIN prefix -> issuer table behind <c>payments.getBankCardData</c>.
+    /// Empty means the table shipped with the server.
+    /// </summary>
+    public string BankBinsFile { get; set; } = string.Empty;
 }
 
 /// <summary>

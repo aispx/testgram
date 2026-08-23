@@ -5,6 +5,8 @@ using MongoDB.Driver;
 using MongoDB.Bson;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Messenger.Services.PaidMedia;
+using MyTelegram.Messenger.Services.Payments;
+using MyTelegram.Messenger.Services.StarsSubscriptions;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
@@ -18,6 +20,7 @@ internal sealed class SendPaymentFormHandler(
     IQueryProcessor queryProcessor,
     IObjectMessageSender objectMessageSender,
     IPrivacyAppService privacyAppService,
+    IBotInvoicePaymentService botInvoicePaymentService,
     ILogger<SendPaymentFormHandler> logger)
     : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestSendPaymentForm, MyTelegram.Schema.Payments.IPaymentResult>
 {
@@ -45,8 +48,10 @@ internal sealed class SendPaymentFormHandler(
         if (obj.Invoice is TInputInvoicePremiumGiftCode premiumGiftCode)
             return await HandlePremiumGiftCodeAsync(input, premiumGiftCode, obj);
 
+        // Nothing above matched, so this is an invoice type this server cannot settle. Report it as an
+        // RPC error rather than letting an internal exception reach the client.
         if (obj.Invoice is not TInputInvoiceStars)
-            throw new NotImplementedException();
+            RpcErrors.RpcErrors400.BotInvoiceInvalid.ThrowRpcError();
 
         var col = mongoDatabase.GetCollection<StripePaymentIntentDocument>("stripe-payment-intents");
         var intent = await col.Find(x => x.FormId == obj.FormId).FirstOrDefaultAsync();
@@ -895,101 +900,6 @@ internal sealed class SendPaymentFormHandler(
         };
     }
 
-    private async Task<(bool success, string? error)> SendPrecheckoutQueryAndWaitAsync(
-        long botId,
-        long userId,
-        byte[] payload,
-        string currency,
-        long totalAmount)
-    {
-        // Generate unique query ID
-        long queryId = Random.Shared.NextInt64();
-
-        // Create pending query in MongoDB
-        var collection = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("pending_precheckout_queries");
-        await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument
-        {
-            ["_id"] = $"precheckout-{queryId}",
-            ["query_id"] = queryId,
-            ["bot_id"] = botId,
-            ["user_id"] = userId,
-            ["payload"] = payload,
-            ["currency"] = currency,
-            ["total_amount"] = totalAmount,
-            ["created_at"] = DateTime.UtcNow.ToTimestamp(),
-            ["success"] = false,
-            ["error"] = "",
-            ["responded_at"] = 0
-        });
-
-        // Send updateBotPrecheckoutQuery to bot
-        var update = new TUpdateBotPrecheckoutQuery
-        {
-            QueryId = queryId,
-            UserId = userId,
-            Payload = payload,
-            Currency = currency,
-            TotalAmount = totalAmount
-        };
-
-        try
-        {
-            await objectMessageSender.PushMessageToPeerAsync(
-                new Peer(PeerType.User, botId),
-                new TUpdates
-                {
-                    Updates = new TVector<IUpdate> { update },
-                    Users = new TVector<IUser>(),
-                    Chats = new TVector<IChat>(),
-                    Date = DateTime.UtcNow.ToTimestamp(),
-                    Seq = 0
-                });
-
-            logger.LogInformation("Sent precheckout query to bot: queryId={QueryId} botId={BotId} userId={UserId}",
-                queryId, botId, userId);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to send precheckout query to bot: queryId={QueryId} botId={BotId}",
-                queryId, botId);
-            await collection.DeleteOneAsync(MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("query_id", queryId));
-            return (false, "Failed to contact bot");
-        }
-
-        // Wait for bot response (10 seconds timeout)
-        var timeout = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < timeout)
-        {
-            await Task.Delay(500); // Poll every 500ms
-
-            var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("query_id", queryId);
-            var query = await collection.Find(filter).FirstOrDefaultAsync();
-
-            if (query != null && query["responded_at"].AsInt32 > 0)
-            {
-                bool success = query["success"].AsBoolean;
-                string? error = query.Contains("error") && !query["error"].IsBsonNull
-                    ? query["error"].AsString
-                    : null;
-
-                // Cleanup
-                await collection.DeleteOneAsync(filter);
-
-                logger.LogInformation("Bot precheckout response received: queryId={QueryId} success={Success}",
-                    queryId, success);
-
-                return (success, error);
-            }
-        }
-
-        // Timeout - bot didn't respond
-        await collection.DeleteOneAsync(MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("query_id", queryId));
-
-        logger.LogWarning("Bot precheckout timeout: queryId={QueryId} botId={BotId}", queryId, botId);
-
-        return (false, "BOT_PRECHECKOUT_TIMEOUT");
-    }
-
     private async Task<bool> IsPaidMediaInvoiceAsync(IRequestInput input, TInputInvoiceMessage invoiceMessage)
     {
         return await PaidMediaHelper.ResolveInvoiceAsync(mongoDatabase, peerHelper, input, invoiceMessage) != null;
@@ -1095,213 +1005,8 @@ internal sealed class SendPaymentFormHandler(
         };
     }
 
-    private async Task<IPaymentResult> HandleBotInvoicePaymentAsync(IRequestInput input, RequestSendPaymentForm obj)
+    private Task<IPaymentResult> HandleBotInvoicePaymentAsync(IRequestInput input, RequestSendPaymentForm obj)
     {
-        // Extract invoice data
-        long botId = 0;
-        long totalAmount = 0;
-        string currency = "XTR";
-        string title = "";
-        byte[] payload = [];
-
-        if (obj.Invoice is TInputInvoiceMessage invoiceMessage)
-        {
-            // Get invoice from message
-            var peer = peerHelper.GetPeer(invoiceMessage.Peer, input.UserId);
-            var messagesCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("eventflow-messagereadmodel");
-            var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("MessageId", invoiceMessage.MsgId),
-                peer.PeerType == PeerType.User
-                    ? MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("OwnerPeerId", peer.PeerId)
-                    : MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("ToPeerId", peer.PeerId)
-            );
-            var messageDoc = await messagesCol.Find(filter).FirstOrDefaultAsync();
-            if (messageDoc == null)
-                RpcErrors.RpcErrors400.MessageIdInvalid.ThrowRpcError();
-
-            if (!messageDoc.Contains("Media") || messageDoc["Media"].IsBsonNull)
-                RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
-
-            var mediaBytes = messageDoc["Media"].AsByteArray;
-            var mediaBuffer = new ReadOnlyMemory<byte>(mediaBytes);
-            var media = mediaBuffer.Read<IMessageMedia>();
-
-            if (media is not TMessageMediaInvoice)
-                RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
-
-            var invoiceMedia = (TMessageMediaInvoice)media;
-
-            botId = messageDoc["SenderPeerId"].AsInt64;
-            totalAmount = invoiceMedia.TotalAmount;
-            currency = invoiceMedia.Currency;
-            title = invoiceMedia.Title;
-            payload = []; // Payload not stored in message
-        }
-        else if (obj.Invoice is TInputInvoiceSlug invoiceSlug)
-        {
-            // Get invoice by slug
-            var invoicesCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("bot-invoices");
-            var invoice = await invoicesCol.Find(MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("Slug", invoiceSlug.Slug)).FirstOrDefaultAsync();
-            if (invoice == null)
-                RpcErrors.RpcErrors400.PaymentProviderInvalid.ThrowRpcError();
-
-            botId = invoice["BotId"].AsInt64;
-            totalAmount = invoice["TotalAmount"].AsInt64;
-            currency = invoice["Currency"].AsString;
-            title = invoice["Title"].AsString;
-            payload = invoice.Contains("Payload") ? invoice["Payload"].AsByteArray : [];
-        }
-
-        // Validate bot
-        var botUser = await queryProcessor.ProcessAsync(new GetUserByIdQuery(botId));
-        if (botUser == null || !botUser.Bot)
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
-
-        // Check if currency is Stars (XTR)
-        if (currency != "XTR")
-            RpcErrors.RpcErrors400.CurrencyTotalAmountInvalid.ThrowRpcError();
-
-        // Check user's Stars balance
-        var balance = await StarsBalanceHelper.GetBalanceAsync(mongoDatabase, input.UserId);
-        if (balance < totalAmount)
-            RpcErrors.RpcErrors400.BalanceTooLow.ThrowRpcError();
-
-        // Send pre-checkout query to bot and wait for response
-        var (precheckoutSuccess, precheckoutError) = await SendPrecheckoutQueryAndWaitAsync(
-            botId, input.UserId, payload, currency, totalAmount);
-
-        if (!precheckoutSuccess)
-        {
-            // Bot rejected the payment or didn't respond
-            if (precheckoutError == "BOT_PRECHECKOUT_TIMEOUT")
-            {
-                throw new RpcException(new RpcError(400, "BOT_PRECHECKOUT_TIMEOUT"));
-            }
-            else
-            {
-                // Bot returned custom error message
-                throw new RpcException(new RpcError(400, precheckoutError ?? "PRECHECKOUT_FAILED"));
-            }
-        }
-
-        // Check for affiliate referral
-        var referralsCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("star_referrals");
-        var referralFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-            MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("user_id", input.UserId),
-            MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("bot_id", botId),
-            MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("revoked", false)
-        );
-        var referral = await referralsCol.Find(referralFilter).FirstOrDefaultAsync();
-
-        long commissionAmount = 0;
-        long affiliatePeerId = 0;
-        PeerType affiliatePeerType = PeerType.User;
-        int commissionPermille = 0;
-
-        if (referral != null)
-        {
-            commissionPermille = referral["commission_permille"].AsInt32;
-            commissionAmount = (totalAmount * commissionPermille) / 1000;
-
-            // Get affiliate peer (user or channel)
-            if (referral.Contains("peer_user_id") && !referral["peer_user_id"].IsBsonNull && referral["peer_user_id"].AsInt64 > 0)
-            {
-                affiliatePeerId = referral["peer_user_id"].AsInt64;
-                affiliatePeerType = PeerType.User;
-            }
-            else if (referral.Contains("peer_channel_id") && !referral["peer_channel_id"].IsBsonNull && referral["peer_channel_id"].AsInt64 > 0)
-            {
-                affiliatePeerId = referral["peer_channel_id"].AsInt64;
-                affiliatePeerType = PeerType.Channel;
-            }
-
-            logger.LogInformation("Affiliate commission: userId={UserId} botId={BotId} amount={Amount} commission={Commission} affiliatePeer={AffiliatePeer}",
-                input.UserId, botId, totalAmount, commissionAmount, affiliatePeerId);
-        }
-
-        // Deduct Stars from buyer
-        await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, input.UserId, -totalAmount);
-
-        // Transfer Stars to bot (minus commission if applicable)
-        long botAmount = totalAmount - commissionAmount;
-        await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, botId, botAmount);
-
-        // Record buyer's transaction
-        await StarsBalanceHelper.AddTransactionAsync(
-            mongoDatabase,
-            input.UserId,
-            -totalAmount,
-            title: title,
-            peerUserId: botId
-        );
-
-        // Record bot's transaction with affiliate info
-        if (commissionAmount > 0 && affiliatePeerId > 0)
-        {
-            await StarsBalanceHelper.AddTransactionAsync(
-                mongoDatabase,
-                botId,
-                botAmount,
-                title: title,
-                peerUserId: input.UserId,
-                starrefCommissionPermille: commissionPermille,
-                starrefPeerUserId: affiliatePeerType == PeerType.User ? affiliatePeerId : null,
-                starrefPeerChannelId: affiliatePeerType == PeerType.Channel ? affiliatePeerId : null,
-                starrefAmount: commissionAmount
-            );
-
-            // Transfer commission to affiliate
-            await StarsBalanceHelper.AddBalanceAsync(mongoDatabase, affiliatePeerId, commissionAmount);
-
-            // Record affiliate's commission transaction
-            await StarsBalanceHelper.AddTransactionAsync(
-                mongoDatabase,
-                affiliatePeerId,
-                commissionAmount,
-                title: $"Commission from {title}",
-                peerUserId: botId
-            );
-
-            // Update connected_star_ref_bots statistics
-            var connectionsCol = mongoDatabase.GetCollection<MongoDB.Bson.BsonDocument>("connected_star_ref_bots");
-            var connectionFilter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("bot_id", botId),
-                affiliatePeerType == PeerType.User
-                    ? MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("peer_user_id", affiliatePeerId)
-                    : MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("peer_channel_id", affiliatePeerId)
-            );
-            var update = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Update
-                .Inc("participants", 1)
-                .Inc("revenue", commissionAmount);
-            await connectionsCol.UpdateOneAsync(connectionFilter, update);
-
-            logger.LogInformation("Affiliate commission transferred: affiliate={Affiliate} amount={Amount}", affiliatePeerId, commissionAmount);
-        }
-        else
-        {
-            // No commission - regular transaction
-            await StarsBalanceHelper.AddTransactionAsync(
-                mongoDatabase,
-                botId,
-                botAmount,
-                title: title,
-                peerUserId: input.UserId
-            );
-        }
-
-        logger.LogInformation("Bot invoice paid: userId={UserId} botId={BotId} amount={Amount} commission={Commission}",
-            input.UserId, botId, totalAmount, commissionAmount);
-
-        return new TPaymentResult
-        {
-            Updates = new TUpdates
-            {
-                Updates = new TVector<IUpdate>(),
-                Users = new TVector<IUser>(),
-                Chats = new TVector<IChat>(),
-                Date = DateTime.UtcNow.ToTimestamp(),
-                Seq = 0
-            }
-        };
+        return botInvoicePaymentService.PayAsync(input, obj.Invoice, obj.RequestedInfoId, obj.ShippingOptionId);
     }
 }

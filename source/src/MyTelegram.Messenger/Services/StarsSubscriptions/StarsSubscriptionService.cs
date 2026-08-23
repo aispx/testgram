@@ -22,6 +22,19 @@ public class StarsSubscriptionDocument
     public long PeerId { get; set; }
     public string InviteHash { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Set for a bot subscription, where <see cref="PeerId"/> is the bot rather than a channel.
+    /// The channel renewal worker skips these: renewing one would credit channel revenue for a bot.
+    /// See https://corefork.telegram.org/api/subscriptions#bot-subscriptions
+    /// </summary>
+    public bool Bot { get; set; }
+
+    /// <summary>
+    /// For a bot subscription, the charge that started it — what the bot quotes to
+    /// <c>payments.botCancelStarsSubscription</c>.
+    /// </summary>
+    public string? ChargeId { get; set; }
+
     /// <summary>Billing period in seconds.</summary>
     public int Period { get; set; }
 
@@ -86,6 +99,22 @@ public interface IStarsSubscriptionService
         string? channelTitle);
 
     Task SetCanceledAsync(long userId, string subscriptionId, bool canceled);
+
+    /// <summary>
+    /// Records the bot subscription an already settled subscription invoice started, or extends the
+    /// existing one by another period. The stars have already moved in the checkout, so nothing is
+    /// charged here.
+    /// </summary>
+    Task RecordBotSubscriptionAsync(long userId, long botId, string chargeId, int period, long amount, string? title);
+
+    /// <summary>The bot subscription behind <paramref name="chargeId"/>, scoped to that bot and buyer.</summary>
+    Task<StarsSubscriptionDocument?> GetBotSubscriptionByChargeAsync(long botId, long userId, string chargeId);
+
+    /// <summary>
+    /// Ends (or restores) a bot subscription on the bot's initiative. Distinct from
+    /// <see cref="SetCanceledAsync"/>, which records the user turning auto renewal off.
+    /// </summary>
+    Task SetBotCanceledAsync(string subscriptionId, bool botCanceled);
 
     /// <summary>
     /// Subscriptions with auto-renewal still on whose paid period ends no later than
@@ -207,10 +236,54 @@ public class StarsSubscriptionService(IMongoDatabase database) : IStarsSubscript
             Builders<StarsSubscriptionDocument>.Update.Set(x => x.Canceled, canceled));
     }
 
+    public async Task RecordBotSubscriptionAsync(long userId, long botId, string chargeId, int period, long amount, string? title)
+    {
+        var now = DateTime.UtcNow.ToTimestamp();
+        var existing = await GetSubscriptionAsync(userId, botId);
+
+        // Paying again before the current period runs out extends it; paying afterwards (or for the
+        // first time) starts a fresh period from now — same rule as channel subscriptions.
+        var untilDate = existing is { UntilDate: var end } && end > now ? end + period : now + period;
+
+        var document = new StarsSubscriptionDocument
+        {
+            Id = BuildId(userId, botId),
+            UserId = userId,
+            PeerId = botId,
+            Bot = true,
+            ChargeId = chargeId,
+            InviteHash = string.Empty,
+            Period = period,
+            Amount = amount,
+            UntilDate = untilDate,
+            Canceled = false,
+            BotCanceled = false,
+            Date = existing?.Date ?? now
+        };
+
+        await Collection.ReplaceOneAsync(x => x.Id == document.Id, document, new ReplaceOptions { IsUpsert = true });
+    }
+
+    public Task<StarsSubscriptionDocument?> GetBotSubscriptionByChargeAsync(long botId, long userId, string chargeId)
+    {
+        return Collection
+            .Find(x => x.Bot && x.PeerId == botId && x.UserId == userId && x.ChargeId == chargeId)
+            .FirstOrDefaultAsync()!;
+    }
+
+    public Task SetBotCanceledAsync(string subscriptionId, bool botCanceled)
+    {
+        return Collection.UpdateOneAsync(
+            x => x.Id == subscriptionId,
+            Builders<StarsSubscriptionDocument>.Update.Set(x => x.BotCanceled, botCanceled));
+    }
+
     public async Task<IReadOnlyList<StarsSubscriptionDocument>> GetRenewableAsync(int untilDateBefore, int limit)
     {
+        // Bot subscriptions are excluded on purpose: this worker charges for a channel and credits
+        // channel revenue, which is the wrong ledger entirely for a bot.
         return await Collection
-            .Find(x => !x.Canceled && !x.BotCanceled && x.UntilDate <= untilDateBefore)
+            .Find(x => !x.Bot && !x.Canceled && !x.BotCanceled && x.UntilDate <= untilDateBefore)
             .SortBy(x => x.UntilDate)
             .Limit(limit)
             .ToListAsync();

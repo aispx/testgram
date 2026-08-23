@@ -64,6 +64,24 @@ public class MessageAggregate : SnapshotAggregateRoot<MessageAggregate, MessageI
         Emit(new MessageTodoUpdatedEvent(requestInfo, _state.MessageItem, todo, completions));
     }
 
+    /// <summary>
+    /// Records the receipt message on an invoice once it has been paid.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not routed through <see cref="EditOutboxMessage"/>: this is not the author editing
+    /// their message but the server recording that the invoice was settled. Going through the edit
+    /// path would bump <c>edit_date</c> — every client would then label the bot's invoice "edited" —
+    /// and would refuse outright once <see cref="MyTelegramConsts.EditTimeLimit"/> has passed, which
+    /// an invoice paid a day later routinely does. Same reasoning as <see cref="UpdateTodoList"/>.
+    /// See https://corefork.telegram.org/api/payments#5-checkout
+    /// </remarks>
+    [DoNotInheritRequestCommand]
+    public void UpdateInvoiceReceipt(RequestInfo requestInfo, int receiptMsgId)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        Emit(new MessageInvoiceReceiptUpdatedEvent(requestInfo, _state.MessageItem, receiptMsgId));
+    }
+
     public void AddInboxItemsToOutboxMessage(List<InboxItem> inboxItems)
     {
         Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);

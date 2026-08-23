@@ -1,3 +1,6 @@
+using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Payments;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// <summary>
 /// Generate an <a href="https://corefork.telegram.org/api/links#invoice-links">invoice deep link</a>
@@ -17,10 +20,71 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 /// <remarks>
 /// Access: [User ✖] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class ExportInvoiceHandler : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestExportInvoice, MyTelegram.Schema.Payments.IExportedInvoice>
+internal sealed class ExportInvoiceHandler(
+    IMongoDatabase mongoDatabase,
+    IQueryProcessor queryProcessor)
+    : RpcResultObjectHandler<MyTelegram.Schema.Payments.RequestExportInvoice, MyTelegram.Schema.Payments.IExportedInvoice>
 {
-    protected override Task<MyTelegram.Schema.Payments.IExportedInvoice> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Payments.RequestExportInvoice obj)
+    protected override async Task<MyTelegram.Schema.Payments.IExportedInvoice> HandleCoreAsync(
+        IRequestInput input, MyTelegram.Schema.Payments.RequestExportInvoice obj)
     {
-        throw new NotImplementedException();
+        var bot = await queryProcessor.ProcessAsync(new GetUserByIdQuery(input.UserId));
+        if (bot == null || !bot.Bot)
+        {
+            RpcErrors.RpcErrors400.UserBotRequired.ThrowRpcError();
+        }
+
+        if (obj.InvoiceMedia is not TInputMediaInvoice invoiceMedia)
+        {
+            RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        if (invoiceMedia.Invoice is not { } details || details.Prices is not { Count: > 0 })
+        {
+            RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
+            return null!;
+        }
+
+        // Only Telegram Stars invoices can be settled here: there is no per bot payment provider, so a
+        // fiat link would lead to a form nothing can charge.
+        if (details.Currency != BotInvoiceHelper.StarsCurrency ||
+            BotInvoiceHelper.GetTotalAmount(details) <= 0)
+        {
+            RpcErrors.RpcErrors400.StarsInvoiceInvalid.ThrowRpcError();
+        }
+
+        if (invoiceMedia.Payload.Length == 0)
+        {
+            RpcErrors.RpcErrors400.InvoicePayloadInvalid.ThrowRpcError();
+        }
+
+        if (invoiceMedia.Photo is TInputWebDocument photo)
+        {
+            if (string.IsNullOrWhiteSpace(photo.Url))
+            {
+                RpcErrors.RpcErrors400.WebDocumentUrlEmpty.ThrowRpcError();
+            }
+
+            if (string.IsNullOrWhiteSpace(photo.MimeType))
+            {
+                RpcErrors.RpcErrors400.WebDocumentMimeInvalid.ThrowRpcError();
+            }
+        }
+
+        // A link only invoice has no message to hang off, so it is addressed purely by its slug.
+        var storedInvoice = BotInvoiceHelper.Create(
+            invoiceMedia,
+            botId: input.UserId,
+            ownerPeerId: 0,
+            toPeerId: 0,
+            msgId: 0);
+
+        await BotInvoiceHelper.SaveAsync(mongoDatabase, storedInvoice);
+
+        return new MyTelegram.Schema.Payments.TExportedInvoice
+        {
+            Url = $"https://t.me/${storedInvoice.Slug}"
+        };
     }
 }
