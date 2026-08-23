@@ -290,6 +290,8 @@ NullReferenceException.
 | `passport_file_parts` | Passport scans (bodies) | `_id` = `{FileId}_{PartIndex}`, FileId, Offset, Bytes |
 | `passport_errors` | Errors reported by a bot | UserId, BotId, Kind, Type, Hash/Hashes, Field, Text |
 | `passport_phones` / `passport_emails` | Verified plain values | UserId, Phone / Email |
+| `bot-verifier-settings` | Bots allowed to verify (seeded by hand) | BotId (unique), Icon, Company, CustomDescription, CanModifyCustomDescription |
+| `bot-verifications` | Issued verification badges | BotId, Icon, Company, Description, UserId **or** ChannelId |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -354,6 +356,44 @@ anonymous, group-anonymous, replies), anything with `Support = true`, bots, and 
 in `App__SupportUserId`. The check lives in `IAccountDeletionService.IsProtectedFromDeletion`, so it
 covers the RPC (`403 USER_RESTRICTED`), the delayed-deletion sweeper and the TTL self-destruct alike.
 See https://corefork.telegram.org/api/account-deletion
+
+---
+
+## Third-party bot verification
+
+Official third-party services hand out an extra verification badge to users and chats. Telegram grants
+that right out of band, and so does this server: **there is no API that turns a bot into a verifier** —
+seed `bot-verifier-settings` yourself. `Icon` must be the `DocumentId` of a custom emoji that exists in
+`eventflow-documentreadmodel`, otherwise clients draw nothing.
+
+```bash
+docker compose -p mytelegram exec -T mongodb mongosh tg --quiet --eval '
+db["bot-verifier-settings"].updateOne(
+  { BotId: NumberLong("2020001") },
+  { $set: { Icon: NumberLong("5350513349223189212"), Company: "Acme Inc.",
+            CustomDescription: "", CanModifyCustomDescription: true } },
+  { upsert: true })'
+```
+
+Everything else is `Services/Bots/BotVerificationStore.cs` + `BotVerificationCache.cs`:
+
+* The badge shows up in the official client only through `userFull.bot_info.verifier_settings` — that
+  flag is what `ChatEditActivity` gates the whole "Verify Accounts" screen on, so the owner has to open
+  the **bot's** profile, not their own.
+* `bots.setCustomVerification` may be called by the bot itself (`bot` unset) or by its owner (`bot` set).
+  A bot with no verifier settings, or with `Icon = 0`, gets `403 BOT_VERIFIER_FORBIDDEN`.
+* Only users and channels can be verified — `chat`/`chatFull` have no `bot_verification` field, so a
+  legacy group is `400 PEER_ID_INVALID`. Only the bot that issued a badge can revoke it.
+* Description precedence: the bot's `custom_description` (only when `CanModifyCustomDescription`, max
+  `bot_verification_description_length_limit` = 70 UTF-8 bytes, else `400 DESCRIPTION_TOO_LONG`), then
+  the organisation's `CustomDescription`, then `Was verified by organization "X"`.
+* The method answers `Bool`, so it also pushes `updateUser` / `updateChannel` — clients decide between
+  "verify" and "remove verification" from the cached `bot_verification_icon`.
+* `user.bot_verification_icon` in lists comes from the in-process `IBotVerificationCache`
+  (30 s refresh); `users.getFullUser`, `channels.getFullChannel` and `messages.checkChatInvite` read the
+  collection directly and are never stale.
+
+See https://corefork.telegram.org/api/bots/verification
 
 ---
 

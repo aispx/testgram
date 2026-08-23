@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Bots;
 using MyTelegram.Messenger.Services.StarsSubscriptions;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -15,12 +16,15 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPhotoAppService photoAppService, IChannelAppService channelAppService, IChatConverterService chatConverterService, IUserConverterService userConverterService, ILayeredService<IPhotoConverter> layeredPhotoService, IStarsSubscriptionService starsSubscriptionService, IChatInvitePeekService chatInvitePeekService, MongoDB.Driver.IMongoDatabase mongoDatabase) : RpcResultObjectHandler<RequestCheckChatInvite, IChatInvite>
+internal sealed class CheckChatInviteHandler(IQueryProcessor queryProcessor, IPhotoAppService photoAppService, IChannelAppService channelAppService, IChatConverterService chatConverterService, IUserConverterService userConverterService, ILayeredService<IPhotoConverter> layeredPhotoService, IStarsSubscriptionService starsSubscriptionService, IChatInvitePeekService chatInvitePeekService, IBotVerificationStore botVerificationStore) : RpcResultObjectHandler<RequestCheckChatInvite, IChatInvite>
 {
+    /// <summary>
+    /// The third-party verification badge of the chat behind the link, so the join sheet can show it
+    /// before the user commits. See https://corefork.telegram.org/api/bots/verification
+    /// </summary>
     private async Task<MyTelegram.Schema.IBotVerification?> GetBotVerificationAsync(long channelId)
     {
-        var col = mongoDatabase.GetCollection<MyTelegram.Messenger.Services.BotVerificationDocument>("bot-verifications");
-        var doc = await col.Find(MongoDB.Driver.Builders<MyTelegram.Messenger.Services.BotVerificationDocument>.Filter.Eq(x => x.ChannelId, channelId)).FirstOrDefaultAsync();
+        var doc = await botVerificationStore.GetForChannelAsync(channelId);
         if (doc == null) return null;
         return new TBotVerification { BotId = doc.BotId, Icon = doc.Icon, Description = doc.Description };
     }

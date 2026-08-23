@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Bots;
 using MyTelegram.Messenger.Services.Phone;
 using MyTelegram.Messenger.Services.StarGifts;
 using MyTelegram.Messenger.Services.Stories;
@@ -19,7 +20,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //ILayeredService<IChatConverter> layeredService,
- IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IPinnedMessageResolver pinnedMessageResolver, IChatWallPaperService chatWallPaperService) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
+ IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IChatWallPaperService chatWallPaperService) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
 {
     protected override async Task<MyTelegram.Schema.Messages.IChatFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetFullChannel obj)
     {
@@ -264,11 +265,15 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
         }
     }
 
+    /// <summary>
+    /// The <a href="https://corefork.telegram.org/api/bots/verification">third-party verification</a>
+    /// badge: the full description on <c>channelFull</c>, the bare icon on the <c>channel</c> that
+    /// travels with it.
+    /// </summary>
     private async Task SetBotVerificationAsync(long channelId, ILayeredChannelFull channelFull, MyTelegram.Schema.Messages.IChatFull chatFull)
     {
-        var col = mongoDatabase.GetCollection<MyTelegram.Messenger.Services.BotVerificationDocument>("bot-verifications");
-        var doc = await (await col.FindAsync(Builders<MyTelegram.Messenger.Services.BotVerificationDocument>.Filter.Eq(x => x.ChannelId, channelId))).FirstOrDefaultAsync();
-        if (doc == null)
+        var doc = await botVerificationStore.GetForChannelAsync(channelId);
+        if (doc == null || doc.Icon == 0)
         {
             return;
         }
@@ -280,7 +285,6 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
         if (ch != null)
         {
             ch.BotVerificationIcon = doc.Icon;
-            ch.ComputeFlag(); // CRITICAL: Recompute flags after setting BotVerificationIcon
         }
     }
 
