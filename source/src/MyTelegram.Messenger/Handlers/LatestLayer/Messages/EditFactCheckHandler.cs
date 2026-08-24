@@ -35,6 +35,12 @@ internal sealed class EditFactCheckHandler(
             RpcErrors.RpcErrors400.InputTextTooLong.ThrowRpcError();
         }
 
+        // A fact check is styled text like any other, so its entities have to be checked and legally
+        // nested before they are stored. See https://corefork.telegram.org/api/entities
+        MessageEntityValidator.Validate(obj.Text.Text, obj.Text.Entities);
+        obj.Text.Entities =
+            new TVector<IMessageEntity>(MessageEntityNormalizer.Normalize(obj.Text.Text, obj.Text.Entities));
+
         var (ownerPeerId, messageReadModel) = await GetMessageAsync(input, obj.Peer, obj.MsgId);
         var doc = await FactCheckHelper.UpsertAsync(mongoDatabase, ownerPeerId, obj.MsgId, obj.Text, input.UserId, CurrentDate);
         return ToUpdates(input, messageReadModel, FactCheckHelper.ToFactCheck(doc, needCheck: false));

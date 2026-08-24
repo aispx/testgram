@@ -47,7 +47,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService, IMediaHelper mediaHelper, //IRequestCacheAppService requestCacheAppService,
- IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
+ IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService, IUserAppService userAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
 {
     //private readonly IRequestCacheAppService _requestCacheAppService;
     //_requestCacheAppService = requestCacheAppService;
@@ -143,6 +143,16 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
 
         var sendAs = peerHelper.GetPeer(obj.SendAs, input.UserId);
         var effect = await messageEffectAppService.ValidateEffectAsync(obj.Effect, input.UserId, toPeerForPaid.PeerType);
+
+        if (obj.MultiMedia.Any(p => p.Message?.Length > MessageLengthHelper.CaptionLengthLimitDefault))
+        {
+            var sender = await userAppService.GetAsync(input.UserId);
+            foreach (var item in obj.MultiMedia)
+            {
+                MessageLengthHelper.ValidateCaption(item.Message, sender?.Premium ?? false);
+            }
+        }
+
         var inputs = new List<SendMessageInput>();
         foreach (var inputSingleMedia in obj.MultiMedia)
         {

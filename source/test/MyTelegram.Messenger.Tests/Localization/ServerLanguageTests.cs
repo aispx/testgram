@@ -56,21 +56,6 @@ public class ServerLanguageTests
     }
 
     [Fact]
-    public void Verification_message_keeps_the_emoji_placeholder_so_the_entity_offset_resolves()
-    {
-        // SetCustomVerificationHandler locates iconText in the rendered message to place the
-        // custom-emoji entity; a translation that dropped it would silently lose the icon.
-        foreach (var language in new[] { ServerLanguage.English, ServerLanguage.Russian, ServerLanguage.Ukrainian })
-        {
-            var message = ServerTexts.CustomVerificationGranted(language, "@mybot", "⭐", "Acme");
-
-            message.ShouldContain("⭐");
-            message.ShouldContain("@mybot");
-            message.ShouldContain("Acme");
-        }
-    }
-
-    [Fact]
     public void Unknown_language_renders_the_default_language_text()
     {
         ServerTexts.PremiumLastDayPsa("de")

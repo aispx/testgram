@@ -11,6 +11,9 @@ internal sealed class StartLiveHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IStoryAccessService storyAccessService,
+    IStoryConfigProvider storyConfigProvider,
+    IUserAppService userAppService,
+    IMessageEntityService messageEntityService,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<RequestStartLive, IUpdates>
 {
@@ -97,6 +100,19 @@ internal sealed class StartLiveHandler(
         var isCloseFriends = privacyRules.Any(r => r.Type == StoryPrivacyRuleType.AllowCloseFriends);
         var messagesEnabled = obj.MessagesEnabled ?? true;
 
+        // A live story carries a styled caption just like a regular one, and the same
+        // stories_entities gate applies. See https://corefork.telegram.org/api/entities
+        var isPremium = (await userAppService.GetAsync((long?)input.UserId))?.Premium ?? false;
+        var captionEntities = (await messageEntityService.ProcessAsync(
+                obj.Caption,
+                obj.Entities,
+                options: new MessageEntityProcessingOptions
+                {
+                    AllowManualEntities = storyConfigProvider.AreEntitiesAllowed(isPremium),
+                    ResolveMentionedUsers = false
+                }))
+            .Entities;
+
         var storyDocument = new StoryDocument
         {
             Id = ObjectId.GenerateNewId(),
@@ -106,6 +122,7 @@ internal sealed class StartLiveHandler(
             Date = currentDate,
             ExpireDate = expireDate,
             Caption = obj.Caption,
+            Entities = StoryHelper.SerializeEntities(captionEntities),
             Pinned = obj.Pinned,
             // Like any other story, a live story is archived on creation.
             Archived = true,

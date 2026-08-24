@@ -2,6 +2,7 @@
 using MongoDB.Driver;
 using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services;
+using MyTelegram.Messenger.Services.Bots;
 using MyTelegram.Messenger.Services.Stories;
 using IChannelParticipant = MyTelegram.Schema.IChannelParticipant;
 using IChatFull = MyTelegram.Schema.IChatFull;
@@ -26,11 +27,10 @@ public class ChatConverterService(
     ILayeredService<IEmojiStatusConverter> emojiStatusLayeredService,
     IEmojiStatusResolver emojiStatusResolver,
     ILayeredService<IChatBannedRightsConverter> chatBannedRightsLayeredService,
+    IBotVerificationCache botVerificationCache,
     IMongoDatabase mongoDatabase)
     : IChatConverterService, ITransientDependency
 {
-    private readonly IMongoCollection<BotVerificationDocument> _botVerificationCollection =
-        mongoDatabase.GetCollection<BotVerificationDocument>("bot-verifications");
     private readonly IMongoCollection<StoryDocument> _storyCollection =
         mongoDatabase.GetCollection<StoryDocument>("stories");
     private readonly IMongoCollection<BsonDocument> _storyHiddenCollection =
@@ -60,6 +60,7 @@ public class ChatConverterService(
         }
 
         var photoReadModel = await photoAppService.GetAsync(channelReadModel.PhotoId);
+        await botVerificationCache.EnsureFreshAsync();
 
         return ToChannelCore(request, channelReadModel, photoReadModel, channelMemberReadModel, channelMemberIsLeft,
             layer);
@@ -75,6 +76,7 @@ public class ChatConverterService(
         var photoReadModels = await photoAppService.GetPhotosAsync(channelReadModels);
         var channelMembers = channelMemberReadModels?.ToDictionary(k => k.ChannelId) ?? [];
         var photos = photoReadModels.ToDictionary(k => k.PhotoId);
+        await botVerificationCache.EnsureFreshAsync();
 
         foreach (var channelReadModel in channelReadModels)
         {
@@ -338,17 +340,24 @@ public class ChatConverterService(
         return channel;
     }
 
+    /// <summary>
+    /// The <a href="https://corefork.telegram.org/api/bots/verification">third-party verification</a>
+    /// icon, read from the in-process snapshot rather than from MongoDB: this runs for every channel
+    /// in every dialog list.
+    /// <para>
+    /// A zero icon is left unset on purpose - <c>TChannel.ComputeFlag</c> raises the flag on
+    /// <c>HasValue</c> alone, so writing 0 would serialize a badge that does not exist.
+    /// </para>
+    /// </summary>
     private void ApplyBotVerificationIcon(TChannel channel)
     {
-        var verification = _botVerificationCollection
-            .Find(Builders<BotVerificationDocument>.Filter.Eq(x => x.ChannelId, channel.Id))
-            .FirstOrDefault();
-        if (verification == null)
+        var icon = botVerificationCache.GetChannelIcon(channel.Id);
+        if (icon == 0)
         {
             return;
         }
 
-        channel.BotVerificationIcon = verification.Icon;
+        channel.BotVerificationIcon = icon;
     }
 
     /// <summary>

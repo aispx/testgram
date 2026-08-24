@@ -1,238 +1,241 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
 using MyTelegram.Messenger.Services;
+using MyTelegram.Messenger.Services.Bots;
 using MyTelegram.Messenger.Services.Interfaces;
-using MyTelegram.Messenger.Services.Localization;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 
-internal sealed class SetCustomVerificationHandler(IMongoDatabase mongoDatabase, IUserAppService userAppService, IChannelAppService channelAppService, IMessageAppService messageAppService, IUserLanguageResolver userLanguageResolver) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetCustomVerification, IBool>
+/// <summary>
+/// Verify a user or chat on behalf of an organization.
+/// Possible errors
+/// Code Type Description
+/// 400 BOT_INVALID This is not a valid bot.
+/// 403 BOT_VERIFIER_FORBIDDEN This bot cannot assign verification icons.
+/// 400 PEER_ID_INVALID The provided peer id is invalid.
+/// <para><c>See <a href="https://corefork.telegram.org/method/bots.setCustomVerification"/> </c></para>
+/// <para><c>See <a href="https://corefork.telegram.org/api/bots/verification"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
+/// </remarks>
+internal sealed class SetCustomVerificationHandler(
+    IUserAppService userAppService,
+    IChannelAppService channelAppService,
+    IBotVerificationStore botVerificationStore,
+    IBotOwnershipChecker botOwnershipChecker,
+    IAccessHashHelper2 accessHashHelper,
+    IFromMessagePeerResolver fromMessagePeerResolver,
+    IChannelUpdateNotifier channelUpdateNotifier,
+    IObjectMessageSender objectMessageSender)
+    : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestSetCustomVerification, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestSetCustomVerification obj)
+    /// <summary>
+    /// Mirrors <c>bot_verification_description_length_limit</c> in <c>AppConfigHelper</c>, which is
+    /// what clients read to pre-validate the field.
+    /// See https://corefork.telegram.org/api/config#bot-verification-description-length-limit
+    /// </summary>
+    private const int DescriptionLengthLimit = 70;
+
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Bots.RequestSetCustomVerification obj)
     {
-        var col = mongoDatabase.GetCollection<BotVerificationDocument>("bot-verifications");
+        var botId = await ResolveVerifierBotIdAsync(input, obj.Bot);
 
-        // Resolve bot user to get verifier settings
-        long botId = input.UserId;
-        if (obj.Bot != null && obj.Bot is TInputUser inputUser)
-            botId = inputUser.UserId;
-
-        var botReadModel = await userAppService.GetAsync(botId);
-        if (botReadModel == null || !botReadModel.Bot)
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
-
-        // The badge is stored as issued by botId and rendered with that verifier's icon/company,
-        // so the caller must be the bot itself or its owner. Otherwise any user could mint a
-        // badge under an arbitrary organisation's identity.
-        if (botId != input.UserId && !await IsBotOwnerAsync(botId, input.UserId))
-            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
-
-        // Resolve target peer
-        long targetUserId = 0;
-        long targetChannelId = 0;
-        switch (obj.Peer)
+        // The badge is rendered with this organisation's icon and name, so a bot that Telegram (here:
+        // the server operator) never authorised must not be able to mint one - not even an empty one.
+        var settings = await botVerificationStore.GetVerifierSettingsAsync(botId);
+        if (settings == null || settings.Icon == 0)
         {
-            case TInputPeerUser u: targetUserId = u.UserId; break;
-            case TInputPeerSelf: targetUserId = input.UserId; break;
-            case TInputPeerChannel c: targetChannelId = c.ChannelId; break;
-            case TInputPeerChat ch: targetChannelId = ch.ChatId; break;
-            default: RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError(); break;
+            RpcErrors.RpcErrors403.BotVerifierForbidden.ThrowRpcError();
         }
 
-        var filter = targetUserId != 0
-            ? Builders<BotVerificationDocument>.Filter.Eq(x => x.UserId, targetUserId)
-            : Builders<BotVerificationDocument>.Filter.Eq(x => x.ChannelId, targetChannelId);
+        var (targetUserId, targetChannelId) = await ResolveTargetPeerAsync(input, obj.Peer);
 
         if (!obj.Enabled)
         {
-            await col.DeleteOneAsync(filter);
+            var removed = await botVerificationStore.RemoveAsync(botId, targetUserId, targetChannelId);
+            if (removed)
+            {
+                await NotifyPeerChangedAsync(input, targetUserId, targetChannelId);
+            }
+
             return new TBoolTrue();
         }
 
-        // Get icon/company from bot's verifier settings (stored in bot-verifier-settings collection)
-        var settingsCol = mongoDatabase.GetCollection<BsonDocument>("bot-verifier-settings");
-        var settingsDoc = await (await settingsCol.FindAsync(new BsonDocument("BotId", botId))).FirstOrDefaultAsync();
-        long icon = settingsDoc != null ? settingsDoc["Icon"].ToInt64() : 0;
-        string company = settingsDoc != null ? settingsDoc["Company"].AsString : "";
-        string description = obj.CustomDescription ?? (settingsDoc != null && settingsDoc.Contains("CustomDescription") ? settingsDoc["CustomDescription"].AsString : company);
-
-        var doc = new BotVerificationDocument
+        var document = new BotVerificationDocument
         {
             Id = targetUserId != 0 ? $"verification-user-{targetUserId}" : $"verification-channel-{targetChannelId}",
             BotId = botId,
-            Icon = icon,
-            Company = company,
-            Description = description,
+            Icon = settings!.Icon,
+            Company = settings.Company,
+            Description = ResolveDescription(settings, obj.CustomDescription),
             UserId = targetUserId,
-            ChannelId = targetChannelId,
+            ChannelId = targetChannelId
         };
 
-        await col.ReplaceOneAsync(filter, doc, new ReplaceOptions { IsUpsert = true });
-        await NotifyVerificationGrantedAsync(botReadModel, targetUserId, targetChannelId, icon, description);
+        await botVerificationStore.SetAsync(document);
+        await NotifyPeerChangedAsync(input, targetUserId, targetChannelId);
+
         return new TBoolTrue();
     }
 
-    private async Task<bool> IsBotOwnerAsync(long botUserId, long ownerUserId)
+    /// <summary>
+    /// <c>bot</c> must not be set when a bot calls this itself, and must be one of the caller's own
+    /// bots otherwise. See https://corefork.telegram.org/method/bots.setCustomVerification
+    /// </summary>
+    private async Task<long> ResolveVerifierBotIdAsync(IRequestInput input, IInputUser? bot)
     {
-        var ownedViaBotOwners = await mongoDatabase.GetCollection<BsonDocument>("bot-owners")
-            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
-                  Builders<BsonDocument>.Filter.Eq("OwnerId", ownerUserId))
-            .Limit(1)
-            .AnyAsync();
-        if (ownedViaBotOwners)
-            return true;
+        if (bot == null || bot is TInputUserSelf)
+        {
+            var self = await userAppService.GetAsync((long?)input.UserId);
+            if (self == null || !self.Bot)
+            {
+                RpcErrors.RpcErrors400.UserBotInvalid.ThrowRpcError();
+            }
 
-        return await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
-            .Find(Builders<BsonDocument>.Filter.Eq("UserId", botUserId) &
-                  Builders<BsonDocument>.Filter.Eq("CreatorUserId", ownerUserId))
-            .Limit(1)
-            .AnyAsync();
+            return input.UserId;
+        }
+
+        long botId;
+        switch (bot)
+        {
+            case TInputUser inputUser:
+                await accessHashHelper.CheckAccessHashAsync(input, inputUser);
+                botId = inputUser.UserId;
+                break;
+            case TInputUserFromMessage fromMessage:
+                botId = await fromMessagePeerResolver.ResolveUserIdAsync(input, fromMessage.Peer, fromMessage.MsgId,
+                    fromMessage.UserId);
+                break;
+            default:
+                RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+                return 0;
+        }
+
+        var botReadModel = await userAppService.GetAsync((long?)botId);
+        if (botReadModel == null || !botReadModel.Bot)
+        {
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+        }
+
+        if (botId != input.UserId && !await botOwnershipChecker.IsOwnerAsync(botId, input.UserId))
+        {
+            RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+        }
+
+        return botId;
     }
 
-    private async Task NotifyVerificationGrantedAsync(
-        IUserReadModel botReadModel,
-        long targetUserId,
-        long targetChannelId,
-        long iconDocumentId,
-        string description)
+    /// <summary>
+    /// Only users and channels can carry a badge: <c>chat</c> and <c>chatFull</c> have no
+    /// <c>bot_verification</c> field at all, so a legacy group is refused rather than silently
+    /// stored under an id that belongs to the channel namespace.
+    /// </summary>
+    private async Task<(long UserId, long ChannelId)> ResolveTargetPeerAsync(IRequestInput input, IInputPeer? peer)
     {
-        var recipients = await GetNotificationRecipientsAsync(targetUserId, targetChannelId);
-        if (recipients.Count == 0)
+        long userId = 0;
+        long channelId = 0;
+
+        switch (peer)
         {
+            case TInputPeerSelf:
+                userId = input.UserId;
+                break;
+            case TInputPeerUser inputPeerUser:
+                await accessHashHelper.CheckAccessHashAsync(input, inputPeerUser);
+                userId = inputPeerUser.UserId;
+                break;
+            case TInputPeerUserFromMessage fromMessage:
+                userId = await fromMessagePeerResolver.ResolveUserIdAsync(input, fromMessage.Peer, fromMessage.MsgId,
+                    fromMessage.UserId);
+                break;
+            case TInputPeerChannel inputPeerChannel:
+                await accessHashHelper.CheckAccessHashAsync(input, inputPeerChannel);
+                channelId = inputPeerChannel.ChannelId;
+                break;
+            case TInputPeerChannelFromMessage fromMessage:
+                channelId = await fromMessagePeerResolver.ResolveChannelIdAsync(input, fromMessage.Peer,
+                    fromMessage.MsgId, fromMessage.ChannelId);
+                break;
+            default:
+                RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+                break;
+        }
+
+        if (userId != 0)
+        {
+            var user = await userAppService.GetAsync((long?)userId);
+            if (user == null || user.IsDeleted == true)
+            {
+                RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            }
+        }
+        else
+        {
+            var channel = await channelAppService.GetAsync((long?)channelId);
+            if (channel == null)
+            {
+                RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+            }
+        }
+
+        return (userId, channelId);
+    }
+
+    /// <summary>
+    /// The bot's own description wins when it is allowed to set one, then the organisation's default,
+    /// and finally the wording the official server falls back to.
+    /// </summary>
+    private static string ResolveDescription(BotVerifierSettingsDocument settings, string? customDescription)
+    {
+        if (settings.CanModifyCustomDescription && !string.IsNullOrWhiteSpace(customDescription))
+        {
+            if (System.Text.Encoding.UTF8.GetByteCount(customDescription) > DescriptionLengthLimit)
+            {
+                throw new RpcException(new RpcError(400, "DESCRIPTION_TOO_LONG"));
+            }
+
+            return customDescription;
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.CustomDescription))
+        {
+            return settings.CustomDescription;
+        }
+
+        return $"Was verified by organization \"{settings.Company}\"";
+    }
+
+    /// <summary>
+    /// The method answers with a plain <c>Bool</c>, so without an update the badge only shows up
+    /// after something else forces the peer to be refetched. Clients also decide between "verify"
+    /// and "remove verification" from the cached <c>bot_verification_icon</c>, so a stale copy
+    /// offers the wrong action.
+    /// </summary>
+    private async Task NotifyPeerChangedAsync(IRequestInput input, long targetUserId, long targetChannelId)
+    {
+        if (targetChannelId != 0)
+        {
+            await channelUpdateNotifier.NotifyChannelChangedAsync(input, targetChannelId);
             return;
         }
 
-        var botName = string.IsNullOrWhiteSpace(botReadModel.UserName)
-            ? $"bot {botReadModel.UserId}"
-            : $"@{botReadModel.UserName}";
-        var company = string.IsNullOrWhiteSpace(description) ? botName : description;
-        var iconText = await GetCustomEmojiAltAsync(iconDocumentId) ?? "⭐";
-        var now = DateTime.UtcNow.ToTimestamp();
-
-        // Recipients are the badge owner and, for channels, its admins - each of them may run a
-        // client in a different language, so the text is built per recipient.
-        var languages = await userLanguageResolver.GetLanguagesAsync(recipients);
-
-        var sendInputs = recipients.Select(recipientId =>
+        var updates = new TUpdates
         {
-            var language = languages.TryGetValue(recipientId, out var value) ? value : ServerLanguage.Default;
-            var message = ServerTexts.CustomVerificationGranted(language, botName, iconText, company);
-
-            return new SendMessageInput(
-                RequestInfo.Empty with
-                {
-                    UserId = MyTelegramConsts.NotificationServiceUserId,
-                    Layer = MyTelegramConsts.Layer,
-                    Date = now,
-                    RequestId = Guid.NewGuid(),
-                    DeviceType = DeviceType.Android
-                },
-                MyTelegramConsts.NotificationServiceUserId,
-                new Peer(PeerType.User, recipientId),
-                message,
-                Random.Shared.NextInt64(),
-                entities: BuildCustomEmojiEntities(message, iconText, iconDocumentId),
-                sendMessageType: SendMessageType.Text,
-                messageType: MessageType.Text
-            );
-        }).ToList();
-
-        await messageAppService.SendMessageAsync(sendInputs);
-    }
-
-    private async Task<List<long>> GetNotificationRecipientsAsync(long targetUserId, long targetChannelId)
-    {
-        var recipients = new HashSet<long>();
-        if (targetUserId != 0)
-        {
-            var botOwnerDoc = await mongoDatabase.GetCollection<BsonDocument>("bot-owners")
-                .Find(Builders<BsonDocument>.Filter.Eq("BotId", targetUserId))
-                .FirstOrDefaultAsync();
-            recipients.Add(botOwnerDoc != null ? botOwnerDoc["OwnerId"].ToInt64() : targetUserId);
-        }
-        else if (targetChannelId != 0)
-        {
-            var channelDoc = await mongoDatabase.GetCollection<BsonDocument>("eventflow-channelreadmodel")
-                .Find(Builders<BsonDocument>.Filter.Eq("ChannelId", targetChannelId))
-                .FirstOrDefaultAsync();
-            if (channelDoc != null)
-            {
-                if (channelDoc.Contains("CreatorId") && !channelDoc["CreatorId"].IsBsonNull)
-                {
-                    recipients.Add(channelDoc["CreatorId"].ToInt64());
-                }
-
-                if (channelDoc.Contains("AdminList") && channelDoc["AdminList"].IsBsonArray)
-                {
-                    foreach (var admin in channelDoc["AdminList"].AsBsonArray.Where(x => x.IsBsonDocument))
-                    {
-                        var adminDoc = admin.AsBsonDocument;
-                        if (adminDoc.Contains("UserId") && !adminDoc["UserId"].IsBsonNull)
-                        {
-                            recipients.Add(adminDoc["UserId"].ToInt64());
-                        }
-                    }
-                }
-            }
-        }
-
-        recipients.RemoveWhere(x => x <= 0 || x == MyTelegramConsts.NotificationServiceUserId);
-        return recipients.ToList();
-    }
-
-    private async Task<string?> GetCustomEmojiAltAsync(long iconDocumentId)
-    {
-        if (iconDocumentId == 0)
-        {
-            return null;
-        }
-
-        var doc = await mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel")
-            .Find(Builders<BsonDocument>.Filter.Eq("DocumentId", iconDocumentId))
-            .FirstOrDefaultAsync();
-        if (doc == null || !doc.Contains("Attributes2") || !doc["Attributes2"].IsBsonArray)
-        {
-            return null;
-        }
-
-        foreach (var attribute in doc["Attributes2"].AsBsonArray.Where(x => x.IsBsonDocument))
-        {
-            var attributeDoc = attribute.AsBsonDocument;
-            if (attributeDoc.TryGetValue("_t", out var typeValue) &&
-                typeValue.IsString &&
-                typeValue.AsString == "TDocumentAttributeCustomEmoji" &&
-                attributeDoc.TryGetValue("Alt", out var altValue) &&
-                altValue.IsString &&
-                !string.IsNullOrWhiteSpace(altValue.AsString))
-            {
-                return altValue.AsString;
-            }
-        }
-
-        return null;
-    }
-
-    private static TVector<IMessageEntity>? BuildCustomEmojiEntities(string message, string iconText, long iconDocumentId)
-    {
-        if (iconDocumentId == 0)
-        {
-            return null;
-        }
-
-        var offset = message.IndexOf(iconText, StringComparison.Ordinal);
-        if (offset < 0)
-        {
-            return null;
-        }
-
-        return new TVector<IMessageEntity>
-        {
-            new TMessageEntityCustomEmoji
-            {
-                Offset = offset,
-                Length = iconText.Length,
-                DocumentId = iconDocumentId
-            }
+            Updates = new TVector<IUpdate>(new TUpdateUser { UserId = targetUserId }),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds()
         };
+
+        // The verified user learns about their own badge, and the verifier's other sessions refresh
+        // the peer they just changed. The calling session already has the rpc result.
+        await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, targetUserId), updates,
+            excludeAuthKeyId: targetUserId == input.UserId ? input.AuthKeyId : null);
+
+        if (targetUserId != input.UserId)
+        {
+            await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, input.UserId), updates,
+                excludeAuthKeyId: input.AuthKeyId);
+        }
     }
 }

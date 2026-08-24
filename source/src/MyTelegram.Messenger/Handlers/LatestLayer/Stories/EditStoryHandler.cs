@@ -24,7 +24,8 @@ internal sealed class EditStoryHandler(
     IStoryAccessService storyAccessService,
     IStoryConfigProvider storyConfigProvider,
     IStoryMediaService storyMediaService,
-    IStoryUpdatesSender storyUpdatesSender)
+    IStoryUpdatesSender storyUpdatesSender,
+    IMessageEntityService messageEntityService)
     : RpcResultObjectHandler<RequestEditStory, IUpdates>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
@@ -95,8 +96,23 @@ internal sealed class EditStoryHandler(
 
         if (obj.Entities != null)
         {
+            // The offsets belong to whichever caption ends up stored: the new one when the edit
+            // carries one, the existing one otherwise. stories_entities gates the manual formatting.
+            // See https://corefork.telegram.org/api/entities
+            var caption = obj.Caption ?? story.Caption;
+            var isPremiumForEntities = (await userAppService.GetAsync((long?)input.UserId))?.Premium ?? false;
+            var entities = (await messageEntityService.ProcessAsync(
+                    caption,
+                    obj.Entities,
+                    options: new MessageEntityProcessingOptions
+                    {
+                        AllowManualEntities = storyConfigProvider.AreEntitiesAllowed(isPremiumForEntities),
+                        ResolveMentionedUsers = false
+                    }))
+                .Entities;
+
             updates.Add(Builders<StoryDocument>.Update.Set(
-                s => s.Entities, StoryHelper.SerializeEntities(obj.Entities)));
+                s => s.Entities, StoryHelper.SerializeEntities(entities)));
         }
 
         if (obj.MediaAreas != null)

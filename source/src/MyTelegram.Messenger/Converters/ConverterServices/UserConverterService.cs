@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services;
+using MyTelegram.Messenger.Services.Bots;
 using MyTelegram.Messenger.Services.Impl;
 using MyTelegram.Messenger.Services.Privacy;
 using MyTelegram.Messenger.Services.StarGifts;
@@ -24,12 +25,11 @@ public class UserConverterService(
     ILayeredService<IEmojiStatusConverter> emojiStatusLayeredService,
     IEmojiStatusResolver emojiStatusResolver,
     ILayeredService<IPhotoConverter> photoLayeredService,
+    IBotVerificationCache botVerificationCache,
     IMongoDatabase mongoDatabase) : IUserConverterService, ITransientDependency
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
         mongoDatabase.GetCollection<StoryDocument>("stories");
-    private readonly IMongoCollection<BotVerificationDocument> _botVerificationCollection =
-        mongoDatabase.GetCollection<BotVerificationDocument>("bot-verifications");
 
     public async Task<ILayeredUser> GetUserAsync(IRequestWithAccessHashKeyId request, long userId, bool skipSetContactProperties = true,
         bool skipCheckPrivacy = false, int layer = 0)
@@ -39,6 +39,8 @@ public class UserConverterService(
         {
             throw new RpcException(RpcErrors.RpcErrors400.UserIdInvalid);
         }
+
+        await botVerificationCache.EnsureFreshAsync();
 
         IReadOnlyCollection<IPrivacyReadModel>? privacyReadModels = null;
         IContactReadModel? myContactReadModel = null;
@@ -212,6 +214,7 @@ public class UserConverterService(
     {
         var userIds = userReadModels.Select(u => u.UserId).ToList();
         var storyMaxIdsWithLive = await GetStoriesMaxIdsAsync(userIds);
+        await botVerificationCache.EnsureFreshAsync();
 
         var users = new List<ILayeredUser>();
 
@@ -406,17 +409,24 @@ public class UserConverterService(
         return user;
     }
 
+    /// <summary>
+    /// The <a href="https://corefork.telegram.org/api/bots/verification">third-party verification</a>
+    /// icon, read from the in-process snapshot: this runs for every user in every dialog list, search
+    /// result and message batch, and several of those paths are synchronous.
+    /// <para>
+    /// A zero icon is left unset on purpose - <c>TUser.ComputeFlag</c> raises the flag on
+    /// <c>HasValue</c> alone, so writing 0 would serialize a badge that does not exist.
+    /// </para>
+    /// </summary>
     private void ApplyBotVerificationIcon(TUser user)
     {
-        var verification = _botVerificationCollection
-            .Find(Builders<BotVerificationDocument>.Filter.Eq(x => x.UserId, user.Id))
-            .FirstOrDefault();
-        if (verification == null)
+        var icon = botVerificationCache.GetUserIcon(user.Id);
+        if (icon == 0)
         {
             return;
         }
 
-        user.BotVerificationIcon = verification.Icon;
+        user.BotVerificationIcon = icon;
     }
 
     private void ApplyPrivacyToUserFull(long selfUserId,

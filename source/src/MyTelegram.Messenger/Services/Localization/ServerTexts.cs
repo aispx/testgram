@@ -17,23 +17,6 @@ public static class ServerTexts
     };
 
     /// <summary>
-    /// Service message sent by the notification service when a bot grants a custom verification
-    /// badge. <paramref name="botName"/> is the bot's @username (or "bot &lt;id&gt;"),
-    /// <paramref name="iconText"/> is the custom emoji placeholder, and <paramref name="company"/>
-    /// is the verifying organisation.
-    /// </summary>
-    public static string CustomVerificationGranted(string language, string botName, string iconText, string company)
-        => language switch
-        {
-            ServerLanguage.Russian =>
-                $"Бот {botName} выдал вам верификацию.\nПредложенный статус:\n{iconText} Аккаунт верифицирован организацией «{company}».",
-            ServerLanguage.Ukrainian =>
-                $"Бот {botName} видав вам верифікацію.\nЗапропонований статус:\n{iconText} Акаунт верифіковано організацією «{company}».",
-            _ =>
-                $"The bot {botName} has verified you.\nSuggested status:\n{iconText} Account verified by {company}."
-        };
-
-    /// <summary>
     /// Sent by the notification service after a channel Star subscription was renewed and the
     /// stars were charged. <paramref name="nextDate"/> is when the next renewal is due.
     /// </summary>

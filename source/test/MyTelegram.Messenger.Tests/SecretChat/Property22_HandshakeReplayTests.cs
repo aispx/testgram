@@ -4,6 +4,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Updates;
 using MyTelegram.EventFlow.MongoDB;
+using MyTelegram.Messenger.Services.Entities;
 using MyTelegram.EventFlow.MongoDB.ReadStores;
 using MyTelegram.EventFlow.ReadStores;
 using MyTelegram.Core;
@@ -656,7 +657,8 @@ internal sealed class StubMessageAppService : IMessageAppService
 
     public Task<bool> CanSendAsPeerAsync(long channelId, long userId) => throw new NotSupportedException();
 
-    public Task<List<long>> ProcessMessageEntitiesAsync(string? message, IList<IMessageEntity>? entities,
+    public Task<MessageEntityProcessingResult> ProcessMessageEntitiesAsync(string? message,
+        IEnumerable<IMessageEntity>? entities,
         Peer toPeer) => throw new NotSupportedException();
 
     public List<string> GetHashtags(string? message) => throw new NotSupportedException();

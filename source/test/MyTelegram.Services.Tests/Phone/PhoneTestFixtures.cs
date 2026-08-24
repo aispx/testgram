@@ -4,6 +4,7 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using MyTelegram.Messenger.Services.Entities;
 using Moq;
 using MyTelegram.Abstractions;
 using MyTelegram.Core;
@@ -654,8 +655,9 @@ public sealed class FakeMessageAppService : IMessageAppService
 
     public List<string> GetHashtags(string? message) => new();
 
-    public Task<List<long>> ProcessMessageEntitiesAsync(string? message, IList<IMessageEntity>? entities, Peer toPeer)
-        => Task.FromResult(new List<long>());
+    public Task<MessageEntityProcessingResult> ProcessMessageEntitiesAsync(string? message,
+        IEnumerable<IMessageEntity>? entities, Peer toPeer)
+        => Task.FromResult(MessageEntityProcessingResult.Empty);
 
     public (HashSet<long> userIds, HashSet<long> channelIds) GetExtraPeerIds(
         IReadOnlyCollection<IMessageReadModel> messageReadModels)

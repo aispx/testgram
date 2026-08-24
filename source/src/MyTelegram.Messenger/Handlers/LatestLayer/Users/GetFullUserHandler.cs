@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Bots;
 using MyTelegram.Messenger.Services.Impl;
 using MyTelegram.Messenger.Services.Stories;
 using MyTelegram.Messenger.Services.StarGifts;
@@ -13,7 +14,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// Returns extended user info by ID.
 /// <para><c>See <a href="https://corefork.telegram.org/method/users.getFullUser"/> </c></para>
 /// </summary>
-internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IPinnedMessageResolver pinnedMessageResolver, IAccessHashHelper2 accessHashHelper, IFromMessagePeerResolver fromMessagePeerResolver, IChatWallPaperService chatWallPaperService, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
+internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IAccessHashHelper2 accessHashHelper, IFromMessagePeerResolver fromMessagePeerResolver, IChatWallPaperService chatWallPaperService, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
 {
     protected override async Task<MyTelegram.Schema.Users.IUserFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetFullUser obj)
     {
@@ -65,7 +66,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetStarGiftsCountAsync(targetUserId, userFull, input.UserId);
         await SetStarsRatingAsync(targetUserId, userFull, isSelf: input.UserId == targetUserId);
         await SetDisallowedGiftsAsync(targetUserId, userFull);
-        await SetBotVerificationAsync(targetUserId, 0, userFull, user);
+        await SetBotVerificationAsync(targetUserId, userFull, user);
         await SetBotInfoAsync(targetUserId, userFull);
         await SetUserStoriesAsync(targetUserId, userFull, input.UserId);
         await SetSavedMusicAsync(targetUserId, userFull, input.UserId);
@@ -274,47 +275,120 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         }
     }
 
-    private async Task SetBotVerificationAsync(long userId, long channelId, IUserFull? userFull, ILayeredUser? user)
+    /// <summary>
+    /// The <a href="https://corefork.telegram.org/api/bots/verification">third-party verification</a>
+    /// badge of the profile being opened: the full constructor on <c>userFull</c>, the bare icon on
+    /// the <c>user</c> that travels with it.
+    /// </summary>
+    private async Task SetBotVerificationAsync(long userId, IUserFull? userFull, ILayeredUser? user)
     {
-        var col = mongoDatabase.GetCollection<MyTelegram.Messenger.Services.BotVerificationDocument>("bot-verifications");
-        var filter = userId != 0
-            ? Builders<MyTelegram.Messenger.Services.BotVerificationDocument>.Filter.Eq(x => x.UserId, userId)
-            : Builders<MyTelegram.Messenger.Services.BotVerificationDocument>.Filter.Eq(x => x.ChannelId, channelId);
-        var doc = await (await col.FindAsync(filter)).FirstOrDefaultAsync();
-        if (doc == null) return;
+        var doc = await botVerificationStore.GetForUserAsync(userId);
+        if (doc == null || doc.Icon == 0) return;
 
         var bv = new TBotVerification { BotId = doc.BotId, Icon = doc.Icon, Description = doc.Description };
         if (userFull != null) userFull.BotVerification = bv;
         if (user is TUser tUser) tUser.BotVerificationIcon = doc.Icon;
     }
 
+    /// <summary>
+    /// <c>botInfo</c> of a bot profile. <c>verifier_settings</c> lives in here, and it is the flag
+    /// official clients gate the whole verification UI on, so it must not replace the rest of the
+    /// bot info the owner set through <c>bots.setBotInfo</c>.
+    /// </summary>
     private async Task SetBotInfoAsync(long botUserId, IUserFull userFull)
     {
-        // Only set BotInfo for bots
         var botUser = await userAppService.GetAsync(botUserId);
         if (botUser == null || !botUser.Bot)
             return;
 
-        // Check if bot has verifier settings
-        var settingsCol = mongoDatabase.GetCollection<BsonDocument>("bot-verifier-settings");
-        var settingsDoc = await settingsCol.Find(new BsonDocument("BotId", botUserId)).FirstOrDefaultAsync();
-
-        if (settingsDoc != null)
+        var botInfo = new TBotInfo
         {
-            var verifierSettings = new TBotVerifierSettings
-            {
-                Icon = settingsDoc["Icon"].AsInt64,
-                Company = settingsDoc["Company"].AsString,
-                CanModifyCustomDescription = settingsDoc.Contains("CanModifyCustomDescription") && settingsDoc["CanModifyCustomDescription"].AsBoolean,
-                CustomDescription = settingsDoc.Contains("CustomDescription") ? settingsDoc["CustomDescription"].AsString : null
-            };
+            UserId = botUserId,
+            Commands = await GetBotCommandsAsync(botUserId),
+            MenuButton = await GetBotMenuButtonAsync(botUserId)
+        };
 
-            userFull.BotInfo = new TBotInfo
+        var infoDoc = await mongoDatabase.GetCollection<BsonDocument>("bot_info")
+            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("LangCode", ""))
+            .FirstOrDefaultAsync();
+        if (infoDoc != null && infoDoc.TryGetValue("Description", out var description) && description.IsString)
+        {
+            botInfo.Description = description.AsString;
+        }
+
+        var settings = await botVerificationStore.GetVerifierSettingsAsync(botUserId);
+        if (settings != null)
+        {
+            botInfo.VerifierSettings = new TBotVerifierSettings
             {
-                UserId = botUserId,
-                VerifierSettings = verifierSettings
+                Icon = settings.Icon,
+                Company = settings.Company,
+                CanModifyCustomDescription = settings.CanModifyCustomDescription,
+                CustomDescription = settings.CustomDescription
             };
         }
+
+        userFull.BotInfo = botInfo;
+    }
+
+    /// <summary>
+    /// The default-scope commands written by <c>bots.setBotCommands</c>. They travel inside
+    /// <c>botInfo</c>, so leaving them out would empty the "/" menu of every bot that has some.
+    /// </summary>
+    private async Task<TVector<IBotCommand>> GetBotCommandsAsync(long botUserId)
+    {
+        var commands = new TVector<IBotCommand>();
+
+        var doc = await mongoDatabase.GetCollection<BsonDocument>("bot_commands")
+            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("ScopeType", nameof(TBotCommandScopeDefault)) &
+                  Builders<BsonDocument>.Filter.Eq("PeerId", BsonNull.Value) &
+                  Builders<BsonDocument>.Filter.Eq("LangCode", ""))
+            .FirstOrDefaultAsync();
+
+        if (doc == null || !doc.TryGetValue("Commands", out var value) || !value.IsBsonArray)
+        {
+            return commands;
+        }
+
+        foreach (var command in value.AsBsonArray.Where(p => p.IsBsonDocument).Select(p => p.AsBsonDocument))
+        {
+            commands.Add(new TBotCommand
+            {
+                Command = command.GetValue("Command", string.Empty).AsString,
+                Description = command.GetValue("Description", string.Empty).AsString
+            });
+        }
+
+        return commands;
+    }
+
+    /// <summary>The menu button set by <c>bots.setBotMenuButton</c> for all users of the bot.</summary>
+    private async Task<IBotMenuButton> GetBotMenuButtonAsync(long botUserId)
+    {
+        var doc = await mongoDatabase.GetCollection<BsonDocument>("bot_menu_buttons")
+            .Find(Builders<BsonDocument>.Filter.Eq("BotId", botUserId) &
+                  Builders<BsonDocument>.Filter.Eq("UserId", BsonNull.Value))
+            .FirstOrDefaultAsync();
+
+        if (doc == null || !doc.TryGetValue("Button", out var value) || !value.IsBsonDocument)
+        {
+            return new TBotMenuButtonDefault();
+        }
+
+        var button = value.AsBsonDocument;
+
+        return button.GetValue("Type", string.Empty).AsString switch
+        {
+            nameof(TBotMenuButton) => new TBotMenuButton
+            {
+                Text = button.GetValue("Text", string.Empty).AsString,
+                Url = button.GetValue("Url", string.Empty).AsString
+            },
+            nameof(TBotMenuButtonCommands) => new TBotMenuButtonCommands(),
+            _ => new TBotMenuButtonDefault()
+        };
     }
 
     private async Task SetBusinessBotFieldsAsync(Schema.IPeerSettings settings, long selfUserId, long targetUserId)
