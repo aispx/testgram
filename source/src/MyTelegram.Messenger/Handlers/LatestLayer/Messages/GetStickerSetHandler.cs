@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stickers;
 using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -58,22 +59,23 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase, IAccess
     protected override async Task<MyTelegram.Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetStickerSet obj)
     {
         if (obj.Stickerset is TInputStickerSetDice dice)
-            return await GetStickerSetBySlugAsync(input, DiceSlugMap.GetValueOrDefault(dice.Emoticon) ?? "", dice.Emoticon);
+            return await GetStickerSetBySlugAsync(input, DiceSlugMap.GetValueOrDefault(dice.Emoticon) ?? "", dice.Emoticon, obj.Hash);
 
         if (SpecialSetSlugMap.TryGetValue(obj.Stickerset.GetType(), out var slug))
-            return await GetStickerSetBySlugAsync(input, slug, null);
+            return await GetStickerSetBySlugAsync(input, slug, null, obj.Hash);
 
         if (obj.Stickerset is TInputStickerSetID setById)
-            return await GetStickerSetByIdAsync(input, setById.Id);
+            return await GetStickerSetByIdAsync(input, setById.Id, obj.Hash);
 
         if (obj.Stickerset is TInputStickerSetShortName shortNameSet)
-            return await GetStickerSetBySlugAsync(input, shortNameSet.ShortName, null);
+            return await GetStickerSetBySlugAsync(input, shortNameSet.ShortName, null, obj.Hash);
 
         RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
         return null!;
     }
 
-    private async Task<MyTelegram.Schema.Messages.IStickerSet> GetStickerSetByIdAsync(IRequestInput input, long setId)
+    private async Task<MyTelegram.Schema.Messages.IStickerSet> GetStickerSetByIdAsync(IRequestInput input, long setId,
+        int requestHash)
     {
         var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
         var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", setId)).FirstOrDefaultAsync();
@@ -88,10 +90,11 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase, IAccess
             };
         }
 
-        return await BuildResponseAsync(input, setDoc, null);
+        return await BuildResponseAsync(input, setDoc, null, requestHash);
     }
 
-    private async Task<MyTelegram.Schema.Messages.IStickerSet> GetStickerSetBySlugAsync(IRequestInput input, string slug, string? emoticon)
+    private async Task<MyTelegram.Schema.Messages.IStickerSet> GetStickerSetBySlugAsync(IRequestInput input,
+        string slug, string? emoticon, int requestHash)
     {
         if (string.IsNullOrEmpty(slug))
         {
@@ -125,10 +128,11 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase, IAccess
             };
         }
 
-        return await BuildResponseAsync(input, setDoc, emoticon);
+        return await BuildResponseAsync(input, setDoc, emoticon, requestHash);
     }
 
-    private async Task<MyTelegram.Schema.Messages.IStickerSet> BuildResponseAsync(IRequestInput input, BsonDocument setDoc, string? emoticon)
+    private async Task<MyTelegram.Schema.Messages.IStickerSet> BuildResponseAsync(IRequestInput input,
+        BsonDocument setDoc, string? emoticon, int requestHash)
     {
         var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
 
@@ -236,6 +240,21 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase, IAccess
             }
         }
 
+        // Computed over what is actually being returned, so a document row that appears or disappears
+        // invalidates the client's copy. The alt is read back off the emitted attributes rather than
+        // from the pack, so a corrected per-document alt also invalidates it. Deliberately excludes the
+        // per-session access hashes and file references: those differ between sessions of the same
+        // user, and a hash that moved with them could never match on the next poll.
+        var hash = StickerSetHashHelper.ComputeHash(setId, shortName, count,
+            documents.Cast<TDocument>().Select(document => (document.Id, ReadAlt(document))));
+
+        // A zero request hash means the client has nothing cached, so it can never be satisfied by
+        // notModified even if our hash happened to be zero — which it never is.
+        if (requestHash != 0 && requestHash == hash)
+        {
+            return new TStickerSetNotModified();
+        }
+
         return new TStickerSet
         {
             Packs = new TVector<IStickerPack>(packs),
@@ -248,7 +267,7 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase, IAccess
                 Title = title,
                 ShortName = shortName,
                 Count = count,
-                Hash = 0,
+                Hash = hash,
                 Emojis = isEmojiSet,
                 TextColor = textColor,
             }
@@ -308,12 +327,12 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase, IAccess
                 switch (attribute)
                 {
                     case TDocumentAttributeCustomEmoji customEmoji:
-                        customEmoji.Alt = alt;
+                        customEmoji.Alt = PreferStoredAlt(customEmoji.Alt, alt);
                         customEmoji.Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash };
                         customEmoji.TextColor = textColor;
                         break;
                     case TDocumentAttributeSticker sticker:
-                        sticker.Alt = alt;
+                        sticker.Alt = PreferStoredAlt(sticker.Alt, alt);
                         sticker.Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash };
                         break;
                 }
@@ -321,6 +340,40 @@ internal sealed class GetStickerSetHandler(IMongoDatabase mongoDatabase, IAccess
         }
 
         return new TVector<IDocumentAttribute>(compatibleAttributes);
+    }
+
+    /// <summary>
+    /// The alt recorded on the document wins over the one derived from the pack it belongs to.
+    ///
+    /// <para>Telegram's own <c>stickerPack.emoticon</c> carries no U+FE0F variation selector while the
+    /// documents' <c>alt</c> does, for 207 of the seeded documents. Deriving alt from the pack therefore
+    /// silently stripped it — harmless on Android, which strips FE0F on both sides of the comparison in
+    /// <c>MediaDataController.getEmojiAnimatedSticker</c>, but tdlib-based clients (iOS, Desktop, tdweb)
+    /// compare the raw string and then fail to find the emoji they asked for.</para>
+    ///
+    /// <para>The pack emoticon remains the fallback: plain sticker sets seeded without a per-document
+    /// alt have nothing else to offer, and an empty alt is what makes a sticker unsearchable.</para>
+    /// </summary>
+    private static string PreferStoredAlt(string? storedAlt, string altFromPack)
+    {
+        return string.IsNullOrEmpty(storedAlt) ? altFromPack : storedAlt;
+    }
+
+    /// <summary>The alt actually being sent, whichever attribute kind carries it.</summary>
+    private static string? ReadAlt(TDocument document)
+    {
+        foreach (var attribute in document.Attributes ?? [])
+        {
+            switch (attribute)
+            {
+                case TDocumentAttributeCustomEmoji customEmoji:
+                    return customEmoji.Alt;
+                case TDocumentAttributeSticker sticker:
+                    return sticker.Alt;
+            }
+        }
+
+        return null;
     }
 
     private static TVector<IPhotoSize> ReadThumbs(BsonDocument document)
