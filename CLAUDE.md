@@ -71,6 +71,15 @@ Services via the constructor: `IMongoDatabase`, `IUserAppService`, `IMessageAppS
 `dotnet test` → rebuild the image → test with the **official** client (not a custom one) →
 check the logs and the data in MongoDB.
 
+**Anything the client renders is verified against the official Telegram service, not against the
+logs.** "Prod" here always means **real Telegram** (`api.telegram.org`, DC `149.154.167.51`) — never
+this deployment. Call every method the surface uses on this server *and* on real Telegram with
+`hash = 0`, diff the counts, then the contents; follow each returned id through
+`getCustomEmojiDocuments`/`getStickerSet` to a real `upload.getFile`; re-quote every hash and check it
+comes back `*NotModified` and is never 0. A method answering successfully is not evidence the client
+can draw it — an empty list and a zero hash look identical to healthy in every log. Probing recipes,
+including the authorized Telethon session for each side: "Emoji categories and animated emoji" below.
+
 ---
 
 ## Handler Pattern
@@ -292,6 +301,13 @@ NullReferenceException.
 | `passport_phones` / `passport_emails` | Verified plain values | UserId, Phone / Email |
 | `bot-verifier-settings` | Bots allowed to verify (seeded by hand) | BotId (unique), Icon, Company, CustomDescription, CanModifyCustomDescription |
 | `bot-verifications` | Issued verification badges | BotId, Icon, Company, Description, UserId **or** ChannelId |
+| `saved_gifs` | Saved GIFs (`messages.getSavedGifs`) | `_id` = `{UserId}:{DocumentId}`, UserId, DocumentId, Order (desc = newest first), Date |
+| `gif_mp4_conversions` | `image/gif` → MPEG4 twins | `_id` = source DocumentId, Mp4DocumentId, Date |
+| `tenor_gifs` | Tenor GIFs imported on send | `_id` = Tenor id, DocumentId, Date |
+| `web_file_cache` | Bodies proxied for `upload.getWebFile` | `_id` = SHA-256 of the URL, Url, MimeType, Bytes, CachedAt (TTL `App__WebFiles__CacheSeconds`) |
+| `web_file_registrations` | URLs already registered with the file-server | `_id` = SHA-256 of the URL, Url, MimeType, FileId, Date |
+| `emoji_groups` | Emoji/sticker/GIF search categories | For (`default`/`stickers`/`status`/`profile_photo`), Kind (`default`/`greeting`/`premium`), Title, IconEmojiId, Emoticons, Order |
+| `default_emoji_lists` | Curated custom-emoji pickers (`account.getDefault*Emojis`) | `_id`/For (`profile_photo`/`group_photo`/`background`), DocumentIds (ordered) |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -329,6 +345,153 @@ image) into `App__VideoProcessing__Heights` renditions, attaches them as
 https://corefork.telegram.org/api/scheduled-messages#automatic-video-processing .
 Conversion runs in `VideoProcessingBackgroundService`; after 3 failed attempts the video is delivered
 unconverted rather than lost.
+
+---
+
+## GIFs
+
+A GIF on Telegram is an **MPEG4 without sound** — `video/mp4` plus `documentAttributeAnimated`. Both
+halves matter: tdlib refuses to save anything else ("Only MPEG4 animations can be saved") and tdesktop
+drops non-`isGifv()` documents out of the list it receives. Everything lives in `Services/Gifs/`.
+
+* **Order is the contract.** Clients adopt the server's vector verbatim and hash it *in order*, so the
+  list must be newest-saved-first and a re-save must move the entry to the front. `SavedGifStore` does
+  that with a per-user counter (`counters/saved_gifs_order_{userId}`) and sorts `Order` descending.
+* **The hash is unsigned.** `SavedGifHashHelper` implements
+  [hash generation](https://corefork.telegram.org/api/offsets#hash-generation) over `document.id` with a
+  `ulong` accumulator. `MessageSearchMongoHelper.CalcHash` shifts a signed `long` and therefore
+  disagrees with every client once the accumulator goes negative — do not reuse it here.
+  Android hashes only the first 200 ids, so `getSavedGifs` accepts that prefix variant too.
+* **The server evicts**, not the client: past `saved_gifs_limit_default` (200) /
+  `saved_gifs_limit_premium` (400) the oldest entry is deleted. Returning more than the limit breaks the
+  hash, because clients truncate before hashing.
+* **Sending a GIF saves it.** `SentGifProcessor`, hooked into `sendMedia` and `sendMultiMedia`, converts
+  and then adds it — clients add to their *local* list on send without calling `saveGif`, so without this
+  the entry vanishes on the next refetch.
+* **`image/gif` is converted on send** by `GifTranscodeService` (ffmpeg `-an`, h264, yuv420p) and
+  published by `GifDocumentPublisher`. The mapping is kept in `gif_mp4_conversions` so `saveGif` on the
+  original id still works.
+* **A server-made GIF document is written by hand**, because neither upload route produces one. gRPC
+  `SaveMedia` with `inputMediaUploadedDocument` merges the parts of an upload the *file-server itself*
+  received through `upload.saveFilePart` (it keeps them in its own upload directory), so parts staged in
+  Mongo are invisible to it and it answers `messageMediaEmpty`. The gRPC `CreateDocument` shortcut
+  hardcodes sticker attributes — a document created through it comes back with
+  `documentAttributeImageSize(512, 512)` and `documentAttributeSticker`, never
+  `documentAttributeAnimated`, which every client's saved-GIF list requires. Both were measured against
+  the running file-server. So `GifDocumentPublisher` stores the body with `IStoredFileStorage` (plain
+  SigV4 PUT under the file id, as the video renditions do) and writes the `eventflow-documentreadmodel`
+  row itself, with `documentAttributeAnimated` + `documentAttributeVideo(nosound)` + the filename. Same
+  sanctioned exception as the web file row below: `DocumentAggregate` in this repo is a stub and the real
+  one lives in the closed file-server.
+* **`@gif` is a real system bot** (`MyTelegramConsts.GifSearchBotUserId`), seeded by `UserDataSeeder`
+  with `InlineEnabled` in `botfather-bot-state`, and answered **in-process** by `GifSearchBotService`
+  (`getInlineBotResults` short-circuits on its id, like `SendMessageHandler` does for BotFather — the bot
+  has no MTProto session). Results are this server's own GIFs plus Tenor
+  (`App__Gifs__Tenor__*`); Tenor hits are `webDocumentNoProxy` URLs and are only imported as documents
+  when the user picks one (`TenorGifImporter`, cached in `tenor_gifs`).
+* **The grid tile plays `thumb`, not `content`.** Android swaps to the thumb for a `gif` result exactly
+  when its mime type is `video/mp4` (`ContextLinkCell`), and tdlib treats such a thumbnail as an
+  animation, so the preview is Tenor's `nanomp4` (~25 KB) with the full `mp4` only referenced. Tenor's
+  animated `tinygif` is *not* requested at all: at 0.3–1.4 MB per result it is larger than the MPEG4 it
+  previews, and thirty of them is what made GIF search look broken. Tenor answers are cached in Redis for
+  `App__Gifs__CacheTimeSeconds`, because clients re-query on every keystroke.
+* **Inline web media must be a *proxied* `webDocument`.** Android tests `instanceof TL_webDocument` and
+  `TL_webDocumentNoProxy` is a sibling class, not a subclass, so a no-proxy result draws an empty tile
+  forever — a GIF search answered with `webDocumentNoProxy` renders nothing at all. `InlineResultConverter`
+  therefore emits `webDocument` with an access hash that is an HMAC of the URL (`WebDocumentUrlSigner`).
+* **`upload.getWebFile` is answered by the file-server, not by this repo.** Its handler derives a file id
+  from the URL, looks it up with `GetWebFileByFileIdQuery` and answers `WEBDOCUMENT_INVALID` when there is
+  no row. Its own gRPC `SaveWebFile` (added to `mediaservice.proto`; field numbers were read out of the
+  binary) does download and store the body, but creating the row fails inside that image — *"Reflection-based
+  serialization has been disabled for this application"* in `WebFileDownloader.DownloadAsync`, because it is
+  a native-AOT build whose `WebFile` aggregate lost the reflection EventFlow needs. So `WebFileRegistrar`
+  does the half the binary cannot: gRPC `SaveWebFile` for the body, then it writes the
+  `eventflow-webfilereadmodel` row itself. That is the one sanctioned exception to "never write
+  `eventflow-*` directly" — the owning aggregate is closed source and its write path is broken, so a
+  proxied `webDocument` is otherwise unreadable. A URL that fails to register goes out as
+  `webDocumentNoProxy` instead, and only registered URLs are proxied (`IWebDocumentProxy.CanProxy`).
+  The messenger keeps its own `GetWebFileHandler` for a deployment without that file-server.
+
+See https://corefork.telegram.org/api/gifs
+
+---
+
+## Emoji categories and animated emoji
+
+The tabs above the GIF/sticker/emoji grid are **animated custom-emoji documents**, not system emoji.
+Android's `EmojiView.updateGifTabs()` looks each entry of `appConfig.gif_search_emojies` up with
+`MediaDataController.getEmojiAnimatedSticker`, which searches only the `AnimatedEmojies` pack loaded via
+`messages.getStickerSet(inputStickerSetAnimatedEmoji)`; a miss falls back to the static system glyph,
+which is what "эмодзи как дефолт" looks like. The category bar inside the search field is the same idea
+through `messages.getEmojiGroups` → `emojiGroup.icon_emoji_id` → `messages.getCustomEmojiDocuments`.
+
+* **Icons all come from one dedicated set, `EmojiCategories`** (`emojis = true`, `text_color = true`, 36
+  documents, all `free = false`), matching official Telegram — measured against the live service. Borrowing
+  icons from whatever custom-emoji set happens to be seeded gives semantically wrong tiles (a clown for
+  "Smileys & People"). `text_color` is what makes clients recolour them to the theme.
+* **The search taxonomy is not the keyboard taxonomy.** `getEmojiGroups` serves Love, Approval,
+  Disapproval, Cheers, Laughter, Astonishment, Sadness, Anger, Neutral, Doubt, Silly — not
+  "Smileys & People / Animals & Nature / …". Each of the four methods serves a different list, and
+  `emojiGroupPremium` appears only in the sticker taxonomy. `scripts/seed_emoji_categories.py` copies all
+  four verbatim; `EmojiGroupsAppService` sorts on `Order`, which preserves the served order.
+* **A category whose icon document is missing must be dropped, not shipped**: TDLib discards it
+  (`EmojiGroupList::get_emoji_categories_object`), so iOS/Desktop lose the category while Android draws a
+  blank tile.
+* **`alt` belongs to the document, not to the pack.** Telegram's `stickerPack.emoticon` carries no U+FE0F
+  while the documents' `alt` does (207 of 852 seeded documents). Deriving `alt` from the pack strips it;
+  Android copes because it strips FE0F on both sides, tdlib-based clients compare raw and miss.
+  `GetStickerSetHandler.PreferStoredAlt` keeps a stored alt and only falls back to the pack emoticon.
+* **`stickerSet.hash` must be non-zero and content-derived** (`StickerSetHashHelper`). Zero is the
+  client's "nothing cached" sentinel, so a set answered with `hash = 0` is re-fetched on every poll.
+  It must exclude the per-session `access_hash`/`file_reference`, or no two sessions ever agree.
+
+```bash
+# 1. download from Telegram (reuses an authorized Telethon session)
+TG_API_ID=... TG_API_HASH=... TG_SESSION=/root/sticker_seeder \
+  python3 scripts/seed_emoji_categories.py --download
+# 2. import the icon set + taxonomy, 3. repair alt values (--dry-run to preview)
+MONGO_URL=mongodb://172.23.0.8:27017 MINIO_ENDPOINT=172.23.0.10:9000 \
+MINIO_ACCESS_KEY=... MINIO_SECRET_KEY=... \
+  python3 scripts/seed_emoji_categories.py --import
+  python3 scripts/seed_emoji_categories.py --fix-alts
+```
+
+Clients cache `TYPE_EMOJI` in `stickers_v2` and refresh it at most hourly
+(`MediaDataController.checkStickers`), so after a re-seed either wait an hour or clear the client cache.
+
+### The curated pickers (`account.getDefault*Emojis`)
+
+Three methods hand out lists of custom-emoji ids rather than sets: `getDefaultProfilePhotoEmojis`
+(what you can wear as an avatar), `getDefaultGroupPhotoEmojis` and `getDefaultBackgroundEmojis`
+(the pattern behind an accent colour). They are **curated by the server** — nothing derives them from
+the installed sets — so they are copied from Telegram verbatim: 206 / 208 / 30 ids drawn from 41
+packs, measured against the live service. Stored in `default_emoji_lists`, served by
+`IDefaultEmojiListAppService`, seeded by `scripts/seed_default_emoji_lists.py`
+(`--download` then `--import`, both idempotent, `--dry-run` supported).
+
+* All three used to answer an empty `emojiList` with `hash = 0`, which is why those pickers came up
+  blank while the rest of the emoji UI worked.
+* **`emojiList.hash` is the server's to define and must not be zero** for a non-empty list:
+  `MediaDataController.loadAvatarConstructor` quotes it straight back (`req.hash = emojiList.hash`),
+  so zero — the "nothing cached" value — could never match. `EmojiListHashHelper` runs the
+  [documented algorithm](https://corefork.telegram.org/api/offsets#hash-generation) over the ids with
+  an **unsigned** accumulator; `MessageSearchMongoHelper.CalcHash` shifts a signed one and disagrees
+  with every client. An empty list hashes to 0 on purpose, so a client with an empty cache is never
+  told its nothing is current.
+* **Android re-checks at most once every 24 hours** and caches the response — including an empty one —
+  in the `avatar_constructor<account>` preferences. After seeding, a client that already asked keeps
+  the blank picker for up to a day unless its data is cleared.
+* An id whose document is missing is **dropped** rather than served: `getCustomEmojiDocuments` would
+  not resolve it and the client would draw a blank tile.
+* The referenced packs are mirrored **whole**, so long-pressing a tile opens the same pack Telegram
+  shows. One of Telegram's own sets (`7173162320003085`) is unresolvable on Telegram itself, so its
+  documents are imported alone and keep that dangling reference, exactly as Telegram serves them.
+* Documents are imported with `free = true` although Telegram marks most of them `free = false`
+  (Premium-only): a client honours that by locking the tile, which on a server with no Premium would
+  leave the picker as useless as an empty list.
+
+See https://corefork.telegram.org/api/emoji-categories and
+https://corefork.telegram.org/api/custom-emoji
 
 ---
 
@@ -465,6 +628,49 @@ Scripts: `1.` command-server, `2.` query-server, `4.` sms-sender, `5.` gateway-s
 
 ---
 
+## Temporary auth keys (PFS)
+
+Perfect Forward Secrecy means the client talks over a **temporary** auth key bound to its permanent
+one with `auth.bindTempAuthKey`. Only permanent keys are persisted (`eventflow-authkeyreadmodel`,
+which carries `Data`/`ServerSalt`/`AccessHashKeyId`); temp keys live in a `ConcurrentDictionary`
+inside session-server and are swept by a `PeriodicTimer` once
+`App__TempAuthKeyExpirationMinutes` have passed since the bind. They are in **no** durable store —
+not the read model, not Redis — so a session-server restart also invalidates every one of them.
+
+The server picks that lifetime itself and ignores the `expires_at` the client sent, so the setting
+must not be shorter than the client's own temp-key lifetime. Android binds with
+`expires_at = now + TEMP_AUTH_KEY_EXPIRE_TIME` = **24 h** (`tgnet/Defines.h`) and gives the key up
+only when a request is answered with `-404`, so with the image default of 720 min a phone that
+stays offline overnight returns with a key the server has forgotten. Hence
+`App__TempAuthKeyExpirationMinutes=1500` (25 h) in `.env`.
+
+The symptom is *partial* breakage rather than a dead client, which is what makes it confusing:
+`ConnectionsManager::processServerResponse` re-handshakes on `-404` only when that datacenter is not
+already handshaking, and only for the connection's own key kind
+(`HandshakeTypeTemp` vs `HandshakeTypeMediaTemp`), so the connections that lose the race keep
+re-sending on the dead key. Media downloads sit at "0 KB / 49.8 KB" forever while the rest of the UI
+works, and session-server logs
+
+```
+[WRN] ConnectionId="…" authKeyId=6a68d3153cd692a (479225653360421162) authKey not found,
+      sending auth key not found message to client
+```
+
+with **zero** `RequestGetFile` lines — the request dies at the auth-key check before dispatch, so
+there is no `DOCUMENT_INVALID` and nothing at all in the file-server log to look at.
+
+```bash
+# is a failing key temp (absent) or perm (present)?
+docker compose -p mytelegram exec -T mongodb mongosh tg --quiet --eval \
+  'printjson(db["eventflow-authkeyreadmodel"].findOne({AuthKeyId: NumberLong("479225653360421162")}))'
+# when was it last accepted, when did it start failing?
+docker compose -p mytelegram logs -t --since 24h session-server | grep 6a68d3153cd692a
+```
+
+See https://corefork.telegram.org/api/pfs
+
+---
+
 ## Debugging
 
 | Symptom | What to check |
@@ -472,6 +678,9 @@ Scripts: `1.` command-server, `2.` query-server, `4.` sms-sender, `5.` gateway-s
 | Handler is not invoked | `internal sealed class`, namespace `...LatestLayer.<Category>`, was the image rebuilt |
 | Empty/wrong response | uninitialized `TVector`, the data in Mongo, `logs \| grep -i error` |
 | Client crashes on the response | constructor ID match (`/schema-jppgr-am`), unset required fields |
+| Half the media never loads | `authKey not found` in session-server — an expired temp key, see PFS above |
+| Part of a screen is empty, logs are clean | diff the surface's methods against **real Telegram** (see Verify above); an empty list with `hash = 0` logs nothing but gets re-requested forever, so a handler called far more often than its refresh interval is the tell |
+| Which connection is actually the user's | gateway `New client connected` by remote IP × `LocalPort`: `172.23.0.1` is the docker host (local scripts), an IP that only sends `req_pq_multi` and drops is a scanner — do not diagnose from their warnings |
 | Calls do not work | `env \| grep WebRtc`, `systemctl status coturn`, `db.call_sessions.find().sort({Date:-1}).limit(5)` |
 
 ---
