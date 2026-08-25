@@ -124,7 +124,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService, IMessageEntityService messageEntityService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
+internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService, IMessageEntityService messageEntityService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
     /// <summary>Official poll text limits: 255 chars for the question, 100 per option.</summary>
     private const int PollQuestionMaxLength = 255;
@@ -233,6 +233,12 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
         else
         {
             media = await mediaHelper.SaveMediaAsync(obj.Media);
+
+            // An animation is converted to MPEG4 here if it is not one already, and the result is
+            // added to the sender's saved GIFs — "Uploading a GIF will automatically add it to the
+            // saved gifs list". See https://corefork.telegram.org/api/gifs#uploading-gifs
+            media = await sentGifProcessor.ProcessAsync(input, media);
+
             if (obj.Media is TInputMediaInvoice)
             {
                 // The server side half of the invoice is keyed by the sender's own copy of the

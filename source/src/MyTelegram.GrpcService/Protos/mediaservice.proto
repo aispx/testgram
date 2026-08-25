@@ -13,6 +13,26 @@ service MediaService {
 	rpc CreateDocument(.MyTelegram.GrpcService.CreateDocumentRequest) returns(.MyTelegram.GrpcService.CreateDocumentResponse);
 	rpc SaveFile(.MyTelegram.GrpcService.SaveFileDataRequest) returns (.MyTelegram.GrpcService.SaveFileDataResponse);
 	rpc Exists(.MyTelegram.GrpcService.CheckFileExistsRequest) returns (.MyTelegram.GrpcService.CheckFileExistsResponse);
+	// Registers a file that lives on another server so upload.getWebFile can serve it: the file server
+	// downloads the URL itself and creates the web file its own getWebFile handler looks up by file id.
+	// Without this a proxied webDocument is answered with WEBDOCUMENT_INVALID.
+	rpc SaveWebFile(.MyTelegram.GrpcService.SaveWebFileRequest) returns (.MyTelegram.GrpcService.SaveWebFileResponse);
+}
+
+// Field numbers match the file server, which is an external image built from its own copy of this
+// contract — they were read back out of that binary and must not be renumbered.
+message SaveWebFileRequest{
+	string url=1;
+	int64 userId=2;
+	bool isPhoto=3;
+	string mimeType=4;
+	bytes attributes=5;
+}
+
+message SaveWebFileResponse{
+	int64 fileId=1;
+	bytes photoBytes=2;
+	bytes documentBytes=3;
 }
 
 message GetFileMetadataRequest{

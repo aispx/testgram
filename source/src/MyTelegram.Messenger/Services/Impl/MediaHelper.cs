@@ -272,71 +272,57 @@ public class MediaHelper(
             logger.LogInformation("CreateMediaOnFileServerAsync: media type = {Type}", media.GetType().Name);
             if (media is TInputMediaDocument inputMediaDocument && inputMediaDocument.Id is TInputDocument inputDoc && inputDoc.Id > 0)
             {
-                var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-                var existingDoc = await docCol.Find(Builders<BsonDocument>.Filter.Eq("DocumentId", inputDoc.Id)).FirstOrDefaultAsync();
+                var existingDoc = await mongoDatabase
+                    .GetCollection<DocumentReadModel>("eventflow-documentreadmodel")
+                    .Find(Builders<DocumentReadModel>.Filter.Eq(p => p.DocumentId, inputDoc.Id))
+                    .FirstOrDefaultAsync();
                 if (existingDoc != null)
                 {
-                    long GetInt64(BsonValue v) => v.BsonType switch { BsonType.Int64 => v.AsInt64, BsonType.Int32 => v.AsInt32, _ => v.AsInt64 };
-                    int GetInt32(BsonValue v) => v.BsonType switch { BsonType.Int32 => v.AsInt32, BsonType.Int64 => (int)v.AsInt64, _ => v.AsInt32 };
-                    
-                    var docId = GetInt64(existingDoc["DocumentId"]);
-                    var accessHash = GetInt64(existingDoc["AccessHash"]);
-                    
-                    byte[] fileRefBytes;
-                    var fileRef = existingDoc["FileReference"];
-                    if (fileRef.BsonType == BsonType.Binary)
-                    {
-                        fileRefBytes = fileRef.AsBsonBinaryData.Bytes;
-                    }
-                    else if (fileRef.BsonType == BsonType.Array)
-                    {
-                        fileRefBytes = fileRef.AsBsonArray.Select(b => (byte)GetInt32(b)).ToArray();
-                    }
-                    else
-                    {
-                        fileRefBytes = [];
-                    }
-                    
-                    var mimeType = existingDoc["MimeType"].AsString;
-                    var name = existingDoc.Contains("Name") ? existingDoc["Name"].AsString : "";
-                    var size = GetInt64(existingDoc["Size"]);
-                    var dcId = GetInt32(existingDoc["DcId"]);
-                    
-                    var attributes = new TVector<IDocumentAttribute>();
-                    var thumbs = new TVector<IPhotoSize>();
-                    
-                    var isTgs = name.EndsWith(".tgs", StringComparison.OrdinalIgnoreCase) || mimeType == "application/x-tgsticker";
-                    var isWebp = name.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) || mimeType == "image/webp";
-                    
+                    // Map through DocumentMapper. Building the TDocument by hand here used to drop
+                    // every attribute except a synthesised sticker one, so re-sending an existing
+                    // document lost its real attributes: a GIF arrived without
+                    // documentAttributeAnimated and rendered as a plain video, a video lost its
+                    // dimensions and duration, and every file lost its name. The mapper also carries
+                    // the thumbnails and the date across.
+                    var document = objectMapper.Map<IDocumentReadModel, TDocument>(existingDoc);
+                    document.Thumbs ??= [];
+                    document.VideoThumbs ??= [];
+                    document.Attributes ??= [];
+
+                    var name = existingDoc.Name ?? string.Empty;
+                    var isTgs = name.EndsWith(".tgs", StringComparison.OrdinalIgnoreCase) ||
+                                document.MimeType == "application/x-tgsticker";
+                    var isWebp = name.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ||
+                                 document.MimeType == "image/webp";
+
                     if (isTgs)
                     {
-                        mimeType = "application/x-tgsticker";
-                        thumbs.Add(new TPhotoSize { Type = "m", W = 100, H = 100, Size = 0 });
-                        attributes.Add(new TDocumentAttributeSticker { Alt = "", Stickerset = new TInputStickerSetEmpty() });
+                        document.MimeType = "application/x-tgsticker";
+                        if (document.Thumbs.Count == 0)
+                        {
+                            document.Thumbs.Add(new TPhotoSize { Type = "m", W = 100, H = 100, Size = 0 });
+                        }
                     }
                     else if (isWebp)
                     {
-                        mimeType = "image/webp";
-                        attributes.Add(new TDocumentAttributeSticker { Alt = "", Stickerset = new TInputStickerSetEmpty() });
+                        document.MimeType = "image/webp";
                     }
-                    
-                    logger.LogInformation("CreateMediaOnFileServerAsync: found doc from MongoDB, name={Name}, mime={Mime}, isTgs={IsTgs}, isWebp={IsWebp}", 
-                        name, mimeType, isTgs, isWebp);
-                    
+
+                    if ((isTgs || isWebp) && !document.Attributes.OfType<TDocumentAttributeSticker>().Any())
+                    {
+                        document.Attributes.Add(new TDocumentAttributeSticker
+                        {
+                            Alt = "",
+                            Stickerset = new TInputStickerSetEmpty()
+                        });
+                    }
+
+                    logger.LogInformation("CreateMediaOnFileServerAsync: found doc from MongoDB, name={Name}, mime={Mime}, isTgs={IsTgs}, isWebp={IsWebp}, attributes={Attributes}",
+                        name, document.MimeType, isTgs, isWebp, document.Attributes.Count);
+
                     return new TMessageMediaDocument
                     {
-                        Document = new TDocument
-                        {
-                            Id = docId,
-                            AccessHash = accessHash,
-                            FileReference = fileRefBytes,
-                            MimeType = mimeType,
-                            Size = size,
-                            DcId = dcId,
-                            Attributes = attributes,
-                            Thumbs = thumbs,
-                            VideoThumbs = []
-                        }
+                        Document = document
                     };
                 }
             }

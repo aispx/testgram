@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Services.Bots;
+using MyTelegram.Messenger.Services.Gifs;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -27,6 +28,7 @@ internal sealed class GetInlineBotResultsHandler(
     IAccessHashHelper2 accessHashHelper,
     IUserAppService userAppService,
     IBotUpdatesSender botUpdatesSender,
+    IGifSearchBotService gifSearchBotService,
     IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetInlineBotResults, MyTelegram.Schema.Messages.IBotResults>
 {
     private const string PendingCollection = "pending_inline_queries";
@@ -46,6 +48,17 @@ internal sealed class GetInlineBotResultsHandler(
         if (botReadModel == null || !botReadModel.Bot)
         {
             RpcErrors.RpcErrors400.BotInvalid.ThrowRpcError();
+        }
+
+        // The GIF search bot runs inside this server and has no MTProto session, so it cannot be
+        // reached through the update push below - it answers here instead.
+        // See https://corefork.telegram.org/api/gifs#searching-gifs
+        if (inputBot.UserId == GifSearchBotService.BotUserId)
+        {
+            var gifQueryId = Random.Shared.NextInt64();
+            await gifSearchBotService.AnswerAsync(input, obj, gifQueryId);
+
+            return await BuildResultsAsync(input, gifQueryId, inputBot.UserId);
         }
 
         var botState = await mongoDatabase.GetCollection<BsonDocument>("botfather-bot-state")

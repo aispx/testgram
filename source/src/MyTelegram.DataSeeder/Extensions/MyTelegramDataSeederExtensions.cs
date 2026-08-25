@@ -20,6 +20,9 @@ public static class MyTelegramDataSeederExtensions
             options.AddMyTelegramMongoDbReadModel();
             options.AddQueryHandlers(typeof(GetUserByIdQueryHandler),
                 typeof(GetAllUserNameQueryHandler),
+                // Needed to tell "the username is free" from "another peer holds it" before the
+                // seeder registers a username for a system bot.
+                typeof(GetUserNameByNameQueryHandler),
                 typeof(GetChatAdminListQueryHandler)
                 );
             options.AddSystemTextJson(jsonSerializerOptions =>

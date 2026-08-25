@@ -34,7 +34,14 @@ public class UserNameAggregate : SnapshotAggregateRoot<UserNameAggregate, UserNa
             return;
         }
 
-        if (userName.Length > MyTelegramConsts.UsernameMaxLength || userName.Length < MyTelegramConsts.UsernameMinLength)
+        // Reserved service bots are allowed shorter names than users are: Telegram's own are @gif,
+        // @vid, @pic, and only the data seeder can create a peer inside the reserved block, so the
+        // ordinary five-character floor still applies to everything a user can register.
+        var minLength = MyTelegramConsts.IsReservedSystemBotUserId(peer.PeerId)
+            ? 1
+            : MyTelegramConsts.UsernameMinLength;
+
+        if (userName.Length > MyTelegramConsts.UsernameMaxLength || userName.Length < minLength)
         {
             RpcErrors.RpcErrors400.UsernameInvalid.ThrowRpcError();
         }

@@ -22,6 +22,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class SetInlineBotResultsHandler(
     IMongoDatabase mongoDatabase,
     IQueryProcessor queryProcessor,
+    MyTelegram.Messenger.Services.Gifs.IInlineResultMediaResolver mediaResolver,
+    MyTelegram.Messenger.Services.WebFiles.IWebDocumentProxy webDocumentProxy,
     ILogger<SetInlineBotResultsHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSetInlineBotResults, IBool>
 {
     private const string PendingCollection = "pending_inline_queries";
@@ -80,7 +82,7 @@ internal sealed class SetInlineBotResultsHandler(
             RpcErrors.RpcErrors400.QueryIdInvalid.ThrowRpcError();
         }
 
-        var converted = ConvertResults(obj.Results);
+        var converted = await ConvertResultsAsync(obj.Results);
 
         await mongoDatabase.GetCollection<BsonDocument>(ResultsCollection).ReplaceOneAsync(
             Builders<BsonDocument>.Filter.Eq("_id", $"inline-results-{obj.QueryId}"),
@@ -145,15 +147,21 @@ internal sealed class SetInlineBotResultsHandler(
     /// <summary>
     /// Maps the bot's input results to their client-facing shape. Results whose type is not
     /// recognised are dropped rather than aborting the whole answer.
+    ///
+    /// <para>The media a result references is resolved here. Without it a
+    /// <c>botInlineMediaResult</c> reaches the client with neither photo nor document — the flag is
+    /// only set when the field is non-null — so a media result had nothing to render.</para>
     /// </summary>
-    private static TVector<IBotInlineResult> ConvertResults(TVector<IInputBotInlineResult> results)
+    private async Task<TVector<IBotInlineResult>> ConvertResultsAsync(TVector<IInputBotInlineResult> results)
     {
         var converted = new TVector<IBotInlineResult>();
         var seenIds = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var result in results)
         {
-            var botInlineResult = InlineResultConverter.ToBotInlineResult(result);
+            var document = await mediaResolver.ResolveDocumentAsync(result);
+            var botInlineResult = InlineResultConverter.ToBotInlineResult(result, document: document,
+                urlSigner: webDocumentProxy);
             if (botInlineResult == null)
             {
                 continue;

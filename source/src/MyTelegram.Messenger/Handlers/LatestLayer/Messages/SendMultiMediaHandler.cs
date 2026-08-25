@@ -47,7 +47,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService, IMediaHelper mediaHelper, //IRequestCacheAppService requestCacheAppService,
- IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService, IUserAppService userAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
+ IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService, IUserAppService userAppService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
 {
     //private readonly IRequestCacheAppService _requestCacheAppService;
     //_requestCacheAppService = requestCacheAppService;
@@ -157,6 +157,10 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
         foreach (var inputSingleMedia in obj.MultiMedia)
         {
             var media = await mediaHelper.SaveMediaAsync(inputSingleMedia.Media);
+
+            // Same GIF handling as the single-media path: convert to MPEG4 when needed and add the
+            // result to the sender's saved GIFs.
+            media = await sentGifProcessor.ProcessAsync(input, media);
             var sendMessageInput = new SendMessageInput(requestInfo, input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), inputSingleMedia.Message, inputSingleMedia.RandomId, clearDraft: obj.ClearDraft, entities: inputSingleMedia.Entities, media: media, //replyToMsgId: replyToMsgId,
  inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), groupId: groupId, groupItemCount: groupItemCount, topMsgId: topMsgId, sendAs: sendAs, effect: effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, isSendGroupedMessage: true, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, noForwards: obj.Noforwards);
             inputs.Add(sendMessageInput);

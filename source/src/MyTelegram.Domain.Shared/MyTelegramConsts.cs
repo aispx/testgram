@@ -12,6 +12,35 @@ public class MyTelegramConsts
     public const long ChatIdInitId = 700000000000;
     public const long ChannelInitId = 800000000000;
     public const long BotFatherUserId = BotUserInitId;
+
+    /// <summary>
+    /// Start of the block reserved for bots the server itself owns. Bots created through BotFather are
+    /// numbered upwards from <see cref="BotUserInitId"/> + 1, so a system bot placed there collides with
+    /// the first bot a user creates — this block sits far above that and is skipped by the allocator.
+    /// </summary>
+    public const long SystemBotUserIdBase = BotUserInitId + 900_000_000;
+
+    /// <summary>How many ids <see cref="SystemBotUserIdBase"/> reserves.</summary>
+    public const long SystemBotUserIdReservedCount = 1000;
+
+    /// <summary>
+    /// The <c>@gif</c> peer. Clients reach GIF search through the inline bot named by
+    /// <c>config.gif_search_username</c>, so that username has to resolve to a real bot account.
+    /// This one is served in-process by <c>GifSearchBotService</c> rather than by an external
+    /// webhook, the same way BotFather is.
+    /// See https://corefork.telegram.org/api/gifs#searching-gifs
+    /// </summary>
+    public const long GifSearchBotUserId = SystemBotUserIdBase + 1;
+
+    /// <summary>
+    /// True for ids in the system-bot block, which <c>BotFatherBotService</c> must never hand out to a
+    /// user-created bot.
+    /// </summary>
+    public static bool IsReservedSystemBotUserId(long userId)
+    {
+        return userId >= SystemBotUserIdBase && userId < SystemBotUserIdBase + SystemBotUserIdReservedCount;
+    }
+
     public const int FolderInitId = 1;
 
     public const int PtsInitId = 1;

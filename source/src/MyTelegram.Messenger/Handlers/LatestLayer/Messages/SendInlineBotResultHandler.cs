@@ -21,6 +21,9 @@ internal sealed class SendInlineBotResultHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IMessageAppService messageAppService,
+    IMediaHelper mediaHelper,
+    MyTelegram.Messenger.Services.Gifs.IInlineResultMediaResolver mediaResolver,
+    MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor,
     IBotUpdatesSender botUpdatesSender,
     IChannelAppService channelAppService,
     IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendInlineBotResult, MyTelegram.Schema.IUpdates>
@@ -67,6 +70,10 @@ internal sealed class SendInlineBotResultHandler(
         await CheckSendInlineRightAsync(input.UserId, peer);
         var sendMessage = InlineResultConverter.ToBotInlineMessage(GetSendMessage(selected!));
 
+        // The media the result stands for. Picking a GIF or a document used to post the caption text
+        // alone and silently drop the file, because no media was ever attached here.
+        var media = await mediaResolver.ResolveSendMediaAsync(input.UserId, selected!);
+
         var sendInput = new SendMessageInput(
             input.ToRequestInfo(),
             input.UserId,
@@ -79,10 +86,15 @@ internal sealed class SendInlineBotResultHandler(
             replyMarkup: InlineResultConverter.GetReplyMarkup(sendMessage),
             silent: obj.Silent,
             scheduleDate: obj.ScheduleDate,
-            sendMessageType: SendMessageType.Text,
-            messageType: MessageType.Text);
+            media: media,
+            sendMessageType: media == null ? SendMessageType.Text : SendMessageType.Media,
+            messageType: media == null ? MessageType.Text : mediaHelper.GeMessageType(media));
 
         await messageAppService.SendMessageAsync([sendInput]);
+
+        // A GIF the user picked from search is added to their saved GIFs, the same as sending one from
+        // the panel. See https://corefork.telegram.org/api/gifs#saved-gifs
+        await sentGifProcessor.ProcessAsync(input, media);
 
         var botId = GetInt64(stored!, "bot_id");
         var query = stored!.TryGetValue("query", out var queryValue) && queryValue.IsString

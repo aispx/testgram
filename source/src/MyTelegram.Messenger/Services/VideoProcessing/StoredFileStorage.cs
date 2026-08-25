@@ -25,9 +25,12 @@ public interface IStoredFileStorage
     Task<bool> DownloadToFileAsync(long fileId, string destinationPath, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Stores a file body under <paramref name="fileId"/>, without encryption.
+    /// Stores a file body under <paramref name="fileId"/>, without encryption. A
+    /// <paramref name="thumbSizeType"/> stores it as that thumbnail of the file instead, which is the
+    /// <c>{fileId}_{type}</c> object the file server serves for <c>document.thumbs</c>.
     /// </summary>
-    Task UploadFileAsync(long fileId, string sourcePath, CancellationToken cancellationToken = default);
+    Task UploadFileAsync(long fileId, string sourcePath, CancellationToken cancellationToken = default,
+        string? thumbSizeType = null);
 }
 
 /// <inheritdoc />
@@ -88,9 +91,12 @@ public class StoredFileStorage(
         return true;
     }
 
-    public async Task UploadFileAsync(long fileId, string sourcePath, CancellationToken cancellationToken = default)
+    public async Task UploadFileAsync(long fileId, string sourcePath,
+        CancellationToken cancellationToken = default, string? thumbSizeType = null)
     {
-        var objectName = fileId.ToString(CultureInfo.InvariantCulture);
+        var objectName = string.IsNullOrEmpty(thumbSizeType)
+            ? fileId.ToString(CultureInfo.InvariantCulture)
+            : $"{fileId.ToString(CultureInfo.InvariantCulture)}_{thumbSizeType}";
         var payloadHash = await ComputeSha256Async(sourcePath, cancellationToken);
 
         var now = DateTime.UtcNow;
