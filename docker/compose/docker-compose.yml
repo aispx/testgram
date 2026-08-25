@@ -345,7 +345,13 @@ services:
       # App__IdGeneratorGrpcServiceUrl: ${App__IdGeneratorGrpcServiceUrl}
       # App__MessengerServerGrpcServiceUrl: ${App__MessengerServerGrpcServiceUrl}
       # App__DispatchUnknownObjectToMessengerServer: ${App__DispatchUnknownObjectToMessengerServer}
-      # App__TempAuthKeyExpirationMinutes: ${App__TempAuthKeyExpirationMinutes}
+      # Must not be shorter than the client's own temp-key lifetime. Android binds a temp auth
+      # key with expires_at = now + TEMP_AUTH_KEY_EXPIRE_TIME (24 h, tgnet/Defines.h) and only
+      # drops it on a -404, so with the server default of 720 min a client that stays offline
+      # overnight comes back with a key the server swept out of its cache and every request is
+      # answered with -404 until the handshake is redone. 1500 min = 25 h leaves an hour of
+      # margin so the client always rotates the key before the server forgets it.
+      App__TempAuthKeyExpirationMinutes: ${App__TempAuthKeyExpirationMinutes:-1500}
       # App__CommandServerObjectIds: ${App__CommandServerObjectIds}
       # Route RTMP/group-call stream RPCs arriving on media auth keys through the
       # sticker/media lane; query-server converts them back to messenger queries.
