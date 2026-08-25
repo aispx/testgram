@@ -181,36 +181,44 @@ public sealed class AccessHashHelper2(
         HMACSHA256.HashData(_accessHashSecretKeyBytes, accessHasKeyBytesOfUser, destination);
     }
 
+    /// <summary>
+    /// Mints the access hash a client quotes back for <paramref name="targetId"/>.
+    ///
+    /// <para><b>The byte layout is not ours to choose.</b> Access hashes minted here are validated by
+    /// the closed-source <c>session-server</c> and <c>file-server</c> images before a request ever
+    /// reaches this repository — for 123 request types, among them <c>upload.getFile</c>,
+    /// <c>messages.sendMedia</c> and <c>upload.getWebFile</c>. Both are NativeAOT builds of this exact
+    /// method from before it was rewritten, and both still allocate the single 89-byte buffer below
+    /// (<c>movl $0x59</c> at <c>AccessHashHelper2__GenerateAccessHash</c>). A hash computed any other
+    /// way is answered with <c>DOCUMENT_INVALID</c> / <c>PHOTO_INVALID</c> / <c>STICKERSET_INVALID</c>
+    /// and the client downloads nothing at all, so this method reproduces the deployed layout
+    /// byte for byte.</para>
+    ///
+    /// <para>That layout is weaker than it looks, and deliberately kept: the
+    /// <paramref name="accessHashKeyId"/> write lands on top of the type byte and of the low seven
+    /// bytes of <paramref name="currentUserId"/>, so <b>neither the access hash type nor
+    /// <paramref name="currentUserId"/> binds the result</b> — only <paramref name="accessHashKeyId"/>,
+    /// which is per-user, and <paramref name="targetId"/> do. One consequence is benign
+    /// (<c>AccessHashType.Call</c> and <c>GroupCall</c> collapse into one value, which is what the
+    /// deployed images expect for <c>inputPhoneCall</c>); the rest is a real weakening that cannot be
+    /// fixed here, because the enforcing validator is a stripped native binary with no source.
+    /// Tightening it again — as commit 3d390cd31 did — silently breaks every media download in this
+    /// deployment instead of making anything safer.</para>
+    /// </summary>
     public long GenerateAccessHash(long currentUserId, long accessHashKeyId, long targetId, AccessHashType accessHashType)
     {
-        accessHashType = NormalizeAccessHashType(accessHashType);
-
-        // Keep the MAC input, the key-derivation input and the output in separate buffers. Slicing
-        // one shared buffer previously let the accessHashKeyId write clobber the type byte and
-        // currentUserId, so neither bound the resulting hash: a hash minted for one user/type
-        // validated for another.
-        Span<byte> data = stackalloc byte[17];
-        data[0] = (byte)accessHashType;
-        BinaryPrimitives.WriteInt64LittleEndian(data.Slice(1, 8), currentUserId);
-        BinaryPrimitives.WriteInt64LittleEndian(data.Slice(9, 8), targetId);
-
-        Span<byte> accessHashKeyBytes = stackalloc byte[8];
+        // accessHashType:1 + currentUserId:8 + targetId:8 + hash:32 + keyForUser:32 + accessHashKeyForUser:8 = 89 bytes
+        Span<byte> bytes = stackalloc byte[89];
+        bytes[0] = (byte)accessHashType;
+        BinaryPrimitives.WriteInt64LittleEndian(bytes.Slice(1, 8), currentUserId);
+        BinaryPrimitives.WriteInt64LittleEndian(bytes[17..], targetId);
+        var dest = bytes.Slice(17, 32);
+        var accessHashSecretKey = bytes.Slice(49, 32);
+        var accessHashKeyBytes = bytes[..^8];
         BinaryPrimitives.WriteInt64LittleEndian(accessHashKeyBytes, accessHashKeyId);
-
-        Span<byte> accessHashSecretKey = stackalloc byte[32];
         GenerateAccessHashSecretKeyForUser(accessHashKeyBytes, accessHashSecretKey);
-
-        Span<byte> dest = stackalloc byte[32];
-        HMACSHA256.HashData(accessHashSecretKey, data, dest);
+        HMACSHA256.HashData(accessHashSecretKey, bytes[..17], dest);
 
         return BitConverter.ToInt64(dest);
-    }
-
-    private static AccessHashType NormalizeAccessHashType(AccessHashType accessHashType)
-    {
-        // The deployed closed-source session-server image treats inputPhoneCall as GroupCall
-        // during pre-handler access-hash validation. Generate phone call hashes in that
-        // legacy-compatible lane so phone.acceptCall/phone.discardCall reach messenger.
-        return accessHashType == AccessHashType.Call ? AccessHashType.GroupCall : accessHashType;
     }
 }
