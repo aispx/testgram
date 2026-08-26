@@ -543,37 +543,6 @@ def build_set_keywords(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
     return keywords
 
 
-def build_emoji_keyword_docs(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    keyword_map: Dict[str, set[str]] = defaultdict(set)
-    for entry in entries:
-        if not entry.get("is_custom_emoji"):
-            continue
-        for pack in entry.get("packs", []):
-            emoticon = (pack.get("emoticon") or "").strip()
-            if not emoticon:
-                continue
-            keyword_map[emoticon].add(emoticon)
-            title = (entry.get("title") or "").strip().lower()
-            short_name = (entry.get("short_name") or entry.get("slug") or "").replace("_", " ").strip().lower()
-            if title:
-                keyword_map[title].add(emoticon)
-            if short_name:
-                keyword_map[short_name].add(emoticon)
-
-    docs = []
-    version = 1
-    for keyword in sorted(keyword_map):
-        docs.append({
-            "_id": f"emoji-keyword-en-{keyword}",
-            "LangCode": "en",
-            "Keyword": keyword,
-            "Emoticons": sorted(keyword_map[keyword]),
-            "Version": version,
-        })
-        version += 1
-    return docs
-
-
 """
 Emoji category definitions, modelled on the categories the official clients show in the
 sticker/emoji/GIF search bar. Each entry is (title, icon emoji, member emojis): the icon is
@@ -917,7 +886,12 @@ def infer_set_flags(entry: Dict[str, Any]) -> Dict[str, Any]:
         "inputStickerSetEmojiChannelDefaultStatuses",
     }
     channel_emoji_status = bool(entry.get("channel_emoji_status")) or input_stickerset_type == "inputStickerSetEmojiChannelDefaultStatuses"
-    free = bool(entry.get("free"))
+    # `documentAttributeCustomEmoji.free = true` regardless of what Telegram says, the same decision
+    # seed_emoji_categories.py and seed_default_emoji_lists.py already make. A client honours `free`
+    # by locking the tile behind Premium, and Android marks the *whole* set premium if any one of its
+    # documents is not free (MessageObject.isPremiumEmojiPack), so an honest `false` locks StatusPack
+    # and Topics entirely for accounts this server cannot sell Premium to.
+    free = True
     return {
         "is_custom_emoji": is_custom_emoji,
         "text_color": text_color,
@@ -935,21 +909,20 @@ def extract_doc_alt(entry: Dict[str, Any], doc_id: int) -> str:
 
 
 def update_metadata_collections(db, manifest: List[Dict[str, Any]]) -> None:
-    emoji_keywords_col = db["emoji_keywords"]
     emoji_groups_col = db["emoji_groups"]
     featured_emoji_col = db["featured_emoji_sticker_sets"]
     featured_col = db["featured_sticker_sets"]
     premium_promo_col = db["premium_promo_media"]
 
-    emoji_keyword_docs = build_emoji_keyword_docs(manifest)
     emoji_group_docs = build_emoji_group_docs(manifest)
     featured_docs = build_featured_emoji_set_docs(manifest)
     featured_regular_docs = build_featured_regular_set_docs(manifest)
     premium_promo_docs = build_premium_promo_docs(manifest)
 
-    emoji_keywords_col.delete_many({})
-    if emoji_keyword_docs:
-        emoji_keywords_col.insert_many(emoji_keyword_docs)
+    # `emoji_keywords` is deliberately untouched: it holds Telegram's localized keyword lists, seeded
+    # by seed_emoji_keywords.py. This script used to synthesize it from stickerset titles and pack
+    # emoticons, so a sticker re-seed replaced the real taxonomy with 124 English rows whose keywords
+    # were the emoji themselves.
 
     emoji_groups_col.delete_many({})
     if emoji_group_docs:

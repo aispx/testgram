@@ -14,6 +14,14 @@ internal sealed class GetCustomEmojiDocumentsHandler(
     IMongoDatabase mongoDatabase,
     IAccessHashHelper2 accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetCustomEmojiDocuments, TVector<MyTelegram.Schema.IDocument>>
 {
+    /// <summary>
+    /// How many ids one call may carry. tdlib marks the number as a server-side limit
+    /// (<c>StickersManager.h</c>, <c>MAX_GET_CUSTOM_EMOJI_STICKERS = 200</c>) and splits larger
+    /// requests itself (<c>get_custom_emoji_stickers_unlimited</c>), so no client sends more; the cap
+    /// is here to keep the <c>$in</c> bounded rather than to reject anything real.
+    /// </summary>
+    private const int MaxDocumentIds = 200;
+
     protected override async Task<TVector<MyTelegram.Schema.IDocument>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetCustomEmojiDocuments obj)
     {
         if (obj.DocumentId == null || obj.DocumentId.Count == 0)
@@ -21,14 +29,19 @@ internal sealed class GetCustomEmojiDocumentsHandler(
             return [];
         }
 
+        // Duplicates and order both belong to the client: it matches the answer against its own
+        // request, so a repeated id has to come back repeated and in place. Only the query is deduped.
+        var requestedIds = obj.DocumentId.Take(MaxDocumentIds).ToList();
+        var uniqueIds = requestedIds.Distinct().ToList();
+
         var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var filter = Builders<BsonDocument>.Filter.In("DocumentId", obj.DocumentId.Select(x => (BsonValue)new BsonInt64(x)));
+        var filter = Builders<BsonDocument>.Filter.In("DocumentId", uniqueIds.Select(x => (BsonValue)new BsonInt64(x)));
         var docs = await docCol.Find(filter).ToListAsync();
         var docMap = docs.ToDictionary(d => GetInt64(d["DocumentId"]));
-        var collectibleModelDocumentIds = await GetCollectibleModelDocumentIdsAsync(obj.DocumentId);
-        var result = new List<IDocument>();
+        var collectibleModelDocumentIds = await GetCollectibleModelDocumentIdsAsync(uniqueIds);
+        var result = new List<IDocument>(requestedIds.Count);
 
-        foreach (var documentId in obj.DocumentId)
+        foreach (var documentId in requestedIds)
         {
             if (!docMap.TryGetValue(documentId, out var d))
             {

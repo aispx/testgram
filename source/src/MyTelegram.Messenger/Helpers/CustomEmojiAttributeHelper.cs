@@ -83,7 +83,13 @@ internal static class CustomEmojiAttributeHelper
         {
             return new TInputStickerSetID
             {
-                Id = GetInt64(stickerSetDoc, "Id"),
+                // The driver's automapper maps a member named `Id` to the `_id` element, including
+                // inside a subdocument, so a stickerset reference written through the model lands as
+                // `_id` while the seeders' older rows carry `Id`. Both shapes exist in the collection
+                // and `StickerAttributeSerializer` already accepts either; reading only one of them
+                // yields inputStickerSetID(id = 0), which is invisible until someone long-presses the
+                // emoji and the pack refuses to open.
+                Id = GetInt64(stickerSetDoc, "_id", "Id"),
                 AccessHash = GetInt64(stickerSetDoc, "AccessHash")
             };
         }
@@ -108,19 +114,26 @@ internal static class CustomEmojiAttributeHelper
                discriminator.AsString.EndsWith(typeName, StringComparison.Ordinal);
     }
 
-    private static long GetInt64(BsonDocument document, string fieldName)
+    private static long GetInt64(BsonDocument document, params string[] fieldNames)
     {
-        if (!document.TryGetValue(fieldName, out var value))
+        foreach (var fieldName in fieldNames)
         {
-            return 0;
+            if (!document.TryGetValue(fieldName, out var value))
+            {
+                continue;
+            }
+
+            switch (value.BsonType)
+            {
+                case BsonType.Int64:
+                    return value.AsInt64;
+                case BsonType.Int32:
+                    return value.AsInt32;
+                case BsonType.Double:
+                    return (long)value.AsDouble;
+            }
         }
 
-        return value.BsonType switch
-        {
-            BsonType.Int64 => value.AsInt64,
-            BsonType.Int32 => value.AsInt32,
-            BsonType.Double => (long)value.AsDouble,
-            _ => 0
-        };
+        return 0;
     }
 }

@@ -375,6 +375,7 @@ server.log
 # Scripts - exclude private data
 scripts/*.session*
 scripts/*_manifest.json
+scripts/*.pem
 scripts/reactions_files/
 scripts/stickers/
 

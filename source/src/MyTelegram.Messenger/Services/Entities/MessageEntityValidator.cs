@@ -104,10 +104,6 @@ internal static class MessageEntityValidator
             case TMessageEntityMentionName mentionName when mentionName.UserId <= 0:
                 RpcErrors.RpcErrors400.EntityMentionUserInvalid.ThrowRpcError();
                 break;
-
-            case TMessageEntityCustomEmoji customEmoji when customEmoji.DocumentId == 0:
-                RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
-                break;
         }
     }
 

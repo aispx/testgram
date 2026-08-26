@@ -307,6 +307,7 @@ NullReferenceException.
 | `web_file_cache` | Bodies proxied for `upload.getWebFile` | `_id` = SHA-256 of the URL, Url, MimeType, Bytes, CachedAt (TTL `App__WebFiles__CacheSeconds`) |
 | `web_file_registrations` | URLs already registered with the file-server | `_id` = SHA-256 of the URL, Url, MimeType, FileId, Date |
 | `emoji_groups` | Emoji/sticker/GIF search categories | For (`default`/`stickers`/`status`/`profile_photo`), Kind (`default`/`greeting`/`premium`), Title, IconEmojiId, Emoticons, Order |
+| `emoji_keywords` | Localized emoji keyword lists (`messages.getEmojiKeywords`) | `_id` = `emoji-keyword-{lang}-{keyword}`, LangCode, Keyword, Emoticons, Version (one per language), Deleted |
 | `default_emoji_lists` | Curated custom-emoji pickers (`account.getDefault*Emojis`) | `_id`/For (`profile_photo`/`group_photo`/`background`), DocumentIds (ordered) |
 | `installed_sticker_sets` | Sticker sets a user installed | `_id` = `{UserId}:{StickerSetId}`, StickerSetType (`Regular`/`Mask`/`CustomEmoji`), Archived, Order (desc = top of panel), Date (`installed_date`) |
 | `featured_sticker_sets` / `featured_emoji_sticker_sets` | Trending sets | StickerSetId, Order (asc), Archived (= dropped out of trending, served by `getOldFeaturedStickers`) |
@@ -591,6 +592,75 @@ packs, measured against the live service. Stored in `default_emoji_lists`, serve
 
 See https://corefork.telegram.org/api/emoji-categories and
 https://corefork.telegram.org/api/custom-emoji
+
+---
+
+## Custom emoji in messages
+
+`messageEntityCustomEmoji` carries only a `document_id`; everything a client draws comes back from
+`messages.getCustomEmojiDocuments`, and the entity itself is checked on the way in by
+`MessageEntityService.ProcessCustomEmojiAsync`.
+
+* **A malformed entity is ignored, not refused.** The API says the entity "must wrap exactly one
+  regular emoji (the one contained in `documentAttributeCustomEmoji.alt`) …, otherwise the server
+  will **ignore** it". So an unknown `document_id`, a `document_id` of 0, a document that is not a
+  custom emoji, and text that does not match `alt` all drop the entity and let the text through.
+  Answering `DOCUMENT_INVALID`/`EMOTICON_INVALID` instead — which is what this used to do — means a
+  forward carrying a stale id, or a client whose sticker cache was cleared, cannot send at all.
+  Where the referenced set holds the same emoji under another document the id is repointed rather
+  than dropped.
+* **`message_animated_emoji_max` is the server's to enforce.** It is advertised through
+  `help.getAppConfig` (100 here) and documented as the maximum that may be attached, but no client
+  checks it — neither tdlib (`MessageEntity.cpp`, `OptionManager.cpp`) nor Android
+  (`MessagesController`, `ChatActivityEnterView`) reads the field. Past the limit the extra
+  entities are dropped in reading order, same "ignore" semantics as above. With the current numbers
+  the check cannot fire — `MessageEntityValidator.MaxEntities` is also 100, so 101 custom emojis are
+  already `ENTITIES_TOO_LONG` — it binds as soon as either number moves.
+* **`searchCustomEmoji`'s hash is the client's, computed by the client.** tdlib sends
+  `get_recent_stickers_hash(found_stickers.sticker_ids_)` — the documented
+  [hash generation](https://corefork.telegram.org/api/offsets#hash-generation) over document ids in
+  the order the server returned them (`StickersManager::reload_found_stickers`), so
+  `EmojiListHashHelper`/`VectorHashHelper` is the only correct answer. It used to be FNV-1a, which
+  no client could ever match: `emojiListNotModified` never fired and every tdlib client re-fetched
+  the whole id list every 300 s per searched emoji.
+* **`getCustomEmojiDocuments` answers positionally.** Duplicates and order belong to the client, so
+  only the Mongo query is deduped; the request is capped at 200 ids, the number tdlib marks as the
+  server-side limit (`MAX_GET_CUSTOM_EMOJI_STICKERS`) and splits larger requests against.
+* **`free = true` on every seeded custom emoji.** Clients lock a non-free tile behind Premium, and
+  Android marks the *whole* set premium if one document is not free
+  (`MessageObject.isPremiumEmojiPack`), so copying Telegram's `false` through locked `StatusPack`
+  and `Topics` outright. Same decision already taken for `account.getDefault*Emojis`.
+  `scripts/migrate_custom_emoji_free_flag.py` repairs rows written before that (`--dry-run`).
+* **A stickerset reference inside an attribute is stored as `_id` *or* `Id`** — the driver maps a
+  member named `Id` onto `_id` even in a subdocument, so both shapes are in the collection.
+  `CustomEmojiAttributeHelper` and `StickerAttributeSerializer` both accept either; reading one only
+  yields `inputStickerSetID(id = 0)`, invisible until the pack refuses to open.
+
+### Emoji keywords
+
+`emoji_keywords` holds Telegram's own localized lists, copied verbatim by
+`scripts/seed_emoji_keywords.py` — 4283 keywords for `en`, 5326 for `ru` (measured). It used to be a
+by-product of `seed_stickers.py`, synthesized from stickerset titles and pack emoticons: 124 English
+rows whose keywords were mostly the emoji themselves, so searching an emoji by word found nothing.
+`seed_stickers.py` no longer touches the collection.
+
+* **`Version` is a revision of the language, not a row counter.** Every row of a language carries
+  the `version` Telegram reported. Numbering rows 1..N makes the "version" a client stores the index
+  of the last keyword, and a re-seed producing fewer rows can then never reach it through
+  `getEmojiKeywordsDifference`.
+* **`getEmojiKeywordsLanguages` only names languages that have keywords** (plus `en`, which it is
+  documented to always include). A language it claims is a language the client then fetches and
+  caches empty — Android for an hour (`MediaDataController.fetchNewEmojiKeywords`).
+* **Telegram serves a few keywords twice, differing by a trailing space** ("magic " and "magic").
+  Clients trim what the user typed, so the seeder merges them.
+
+```bash
+TG_API_ID=... TG_API_HASH=... TG_SESSION=/root/sticker_seeder \
+  python3 scripts/seed_emoji_keywords.py --download        # TG_EMOJI_LANGS defaults to "en,ru"
+MONGO_URL=mongodb://172.23.0.8:27017 python3 scripts/seed_emoji_keywords.py --import  # --dry-run ok
+```
+
+See https://corefork.telegram.org/api/custom-emoji
 
 ---
 

@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Emoji;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -12,6 +13,15 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The <c>hash</c> in the request is one the <b>client</b> computed over its own cached list, so
+/// the server has to arrive at the same number from the same ids or <c>emojiListNotModified</c> can
+/// never fire. tdlib sends <c>get_recent_stickers_hash(found_stickers.sticker_ids_)</c>
+/// (<c>StickersManager::reload_found_stickers</c>), i.e. the documented
+/// <a href="https://corefork.telegram.org/api/offsets#hash-generation">hash generation</a> over the
+/// document ids in the order the server returned them - which is what
+/// <see cref="EmojiListHashHelper"/> implements. The cache expires after 300 s, so getting this wrong
+/// means every tdlib client re-downloads the full id list for every emoji it searched, forever.</para>
 /// </remarks>
 internal sealed class SearchCustomEmojiHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSearchCustomEmoji, MyTelegram.Schema.IEmojiList>
 {
@@ -25,7 +35,7 @@ internal sealed class SearchCustomEmojiHandler(IMongoDatabase mongoDatabase) : R
 
         var emoticons = await ResolveEmoticonsAsync(emoticon);
         var documentIds = await FindCustomEmojiDocumentIdsAsync(emoticon, emoticons);
-        var hash = ComputeHash(documentIds);
+        var hash = EmojiListHashHelper.ComputeHash(documentIds);
         if (obj.Hash != 0 && obj.Hash == hash)
         {
             return new TEmojiListNotModified();
@@ -167,27 +177,6 @@ internal sealed class SearchCustomEmojiHandler(IMongoDatabase mongoDatabase) : R
             {
                 documentIds.Add(documentId);
             }
-        }
-    }
-
-    private static long ComputeHash(IEnumerable<long> documentIds)
-    {
-        var ids = documentIds.ToList();
-        if (ids.Count == 0)
-        {
-            return 0;
-        }
-
-        unchecked
-        {
-            long hash = 1469598103934665603;
-            foreach (var documentId in ids)
-            {
-                hash ^= documentId;
-                hash *= 1099511628211;
-            }
-
-            return hash;
         }
     }
 
