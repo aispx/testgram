@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
 using MyTelegram.Messenger.Helpers;
 using MyTelegram.Messenger.Services.Bots;
+using MyTelegram.Messenger.Services.Dice;
 using MyTelegram.Messenger.Services.PaidMedia;
 using MyTelegram.Messenger.Services.Payments;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -286,7 +287,19 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             ? WithBuyButton(obj.ReplyMarkup)
             : obj.ReplyMarkup;
 
-        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), obj.Message, obj.RandomId, clearDraft: obj.ClearDraft, entities: obj.Entities, media: media, //replyToMsgId: replyToMsgId,
+        // A dice carries no caption: TDLib's can_have_message_content_caption is false for it, and Android
+        // clears the text itself before sending (SendMessagesHelper, caption = ""). A client that sends one
+        // anyway has its text dropped rather than the whole send refused, matching how the API treats other
+        // media it says it "ignores". See https://corefork.telegram.org/api/dice
+        var message = obj.Message;
+        var entities = obj.Entities;
+        if (media is TMessageMediaDice)
+        {
+            message = string.Empty;
+            entities = null;
+        }
+
+        var sendMessageInput = new SendMessageInput(input.ToRequestInfo(), input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), message, obj.RandomId, clearDraft: obj.ClearDraft, entities: entities, media: media, //replyToMsgId: replyToMsgId,
  inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), pollId: pollId, topMsgId: topMsgId, sendAs: peerHelper.GetPeer(obj.SendAs, input.UserId), effect: effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, replyMarkup: replyMarkup, silent: obj.Silent, scheduleDate: obj.ScheduleDate, scheduleRepeatPeriod: obj.ScheduleRepeatPeriod, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, messageId: preallocatedMessageId, suggestedPost: obj.SuggestedPost, noForwards: obj.Noforwards);
         await messageAppService.SendMessageAsync([sendMessageInput]);
 

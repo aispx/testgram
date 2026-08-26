@@ -40,6 +40,12 @@ internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper p
 
 {
 
+    /// <summary>
+    /// How long a dice resists "delete for everyone" in a private chat. TDLib and tdesktop both hardcode
+    /// 24 hours for it.
+    /// </summary>
+    private const long DiceRevokeRestrictionSeconds = 86400;
+
     protected override async Task<IAffectedMessages> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestDeleteMessages obj)
 
     {
@@ -86,6 +92,13 @@ internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper p
 
 
 
+            // Refused before anything is mutated: ClearMentionsAsync below settles mention counters that
+            // cannot be put back, so a rejection has to happen first.
+            if (obj.Revoke)
+            {
+                await EnsureDiceCanBeRevokedAsync(input.UserId, messageItemsToBeDeletedList);
+            }
+
             // Read models are gone once the delete command lands, so the mention counters of everyone
             // mentioned in them have to be settled while the messages still exist.
             await ClearMentionsAsync(messageItemsToBeDeletedList);
@@ -123,6 +136,42 @@ internal sealed class DeleteMessagesHandler(ICommandBus commandBus, IPtsHelper p
     }
 
 
+
+    /// <summary>
+    /// A <a href="https://corefork.telegram.org/api/dice">dice</a> in a private chat cannot be deleted for
+    /// everyone for its first 24 hours, so a roll cannot be taken back once the other side has seen it.
+    /// </summary>
+    /// <remarks>
+    /// This is the service's own rule, and the clients mirror it locally rather than owning it: TDLib
+    /// refuses revoke while <c>unix_time() - m-&gt;date &lt; 86400</c> for <c>MessageContentType::Dice</c>
+    /// (<c>MessagesManager.cpp</c>) and tdesktop's <c>MediaDice::allowsRevoke</c> applies the same 24-hour
+    /// window. Without the check here a modified client could still hide a losing throw. Saved Messages,
+    /// groups and channels are all exempt — <c>allowsRevoke</c> returns true immediately for
+    /// <c>peer-&gt;isSelf() || !peer-&gt;isUser()</c>, and there is nobody to hide a roll from in a chat with
+    /// yourself.
+    /// </remarks>
+    private async Task EnsureDiceCanBeRevokedAsync(long userId,
+        IReadOnlyCollection<MessageItemToBeDeleted> itemsToBeDeleted)
+    {
+        var messageIds = itemsToBeDeleted
+            .Where(p => p.ToPeerType == PeerType.User && p.OwnerUserId == userId && p.ToPeerId != userId)
+            .Select(p => p.MessageId)
+            .ToList();
+
+        if (messageIds.Count == 0)
+        {
+            return;
+        }
+
+        var messages = await queryProcessor.ProcessAsync(
+            new GetMessagesByOwnerAndMessageIdListQuery(userId, messageIds));
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (messages.Any(p => p.Media2 is TMessageMediaDice && now - p.Date < DiceRevokeRestrictionSeconds))
+        {
+            RpcErrors.RpcErrors403.MessageDeleteForbidden.ThrowRpcError();
+        }
+    }
 
     private async Task ClearMentionsAsync(IReadOnlyCollection<MessageItemToBeDeleted> itemsToBeDeleted)
 

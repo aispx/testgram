@@ -4,6 +4,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 
 /// <summary>
 /// Get info about a stickerset.
+/// Possible errors
+/// Code Type Description
+/// 400 EMOTICON_STICKERPACK_MISSING inputStickerSetDice.emoji cannot be empty.
+/// 400 STICKERSET_INVALID The provided sticker set is invalid.
 /// <para><c>See <a href="https://corefork.telegram.org/method/messages.getStickerSet"/> </c></para>
 /// </summary>
 /// <remarks>
@@ -15,6 +19,13 @@ internal sealed class GetStickerSetHandler(IStickerSetStore stickerSetStore, ISt
     protected override async Task<MyTelegram.Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input,
         MyTelegram.Schema.Messages.RequestGetStickerSet obj)
     {
+        // An empty dice emoji has its own documented error, distinct from an unknown one:
+        // see https://corefork.telegram.org/api/dice
+        if (obj.Stickerset is TInputStickerSetDice { Emoticon: null or "" })
+        {
+            RpcErrors.RpcErrors400.EmoticonStickerpackMissing.ThrowRpcError();
+        }
+
         var lookup = await stickerSetStore.FindAsync(obj.Stickerset);
         if (lookup.Set == null)
         {

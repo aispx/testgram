@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Dice;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Upload a file and associate it to a chat (without actually sending it to the chat)May also be used in a <a href="https://corefork.telegram.org/api/bots/connected-business-bots">business connection</a>, <em>not</em> by wrapping the query in <a href="https://corefork.telegram.org/method/invokeWithBusinessConnection">invokeWithBusinessConnection »</a>, but rather by specifying the business connection ID in the <code>business_connection_id</code> parameter.
@@ -34,6 +36,10 @@ internal sealed class UploadMediaHandler(
 {
     protected override async Task<IMessageMedia> HandleCoreAsync(IRequestInput input, RequestUploadMedia obj)
     {
+        // There is nothing to pre-upload for a dice, and answering with one would hand the client a value
+        // rolled before the message even exists.
+        DiceMediaGuard.ThrowIfDice(obj.Media);
+
         var media = await mediaHelper.SaveMediaAsync(obj.Media);
         if (media == null)
         {

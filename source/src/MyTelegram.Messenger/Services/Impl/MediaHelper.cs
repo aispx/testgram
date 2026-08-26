@@ -3,6 +3,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Photo;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Dice;
 using MyTelegram.Messenger.Services.Payments;
 using MyTelegram.Messenger.Services.Stories;
 
@@ -181,28 +182,19 @@ public class MediaHelper(
         };
     }
 
-    private IMessageMedia CreateMediaDice(TInputMediaDice inputMediaDice)
+    /// <summary>
+    /// Rolls a <a href="https://corefork.telegram.org/api/dice">dice</a>. The value is the server's, and
+    /// only the server's: <c>inputMediaDice</c> carries nothing but the emoji, and an emoji the server never
+    /// advertised in <c>emojies_send_dice</c> is refused — accepting an arbitrary one produces a
+    /// <c>messageMediaDice</c> for which no client can resolve a sticker set, an empty bubble that never
+    /// resolves and logs nothing.
+    /// </summary>
+    private static IMessageMedia CreateMediaDice(TInputMediaDice inputMediaDice)
     {
-        int value;
-        switch (inputMediaDice.Emoticon)
-        {
-            case "🎰": // Slot machine: 1-64
-                value = Random.Shared.Next(1, 65);
-                break;
-            case "⚽️":
-            case "⚽":
-            case "🏀": // Football/Basketball: 1-5
-                value = Random.Shared.Next(1, 6);
-                break;
-            default: // Dice/Dart/Bowling: 1-6
-                value = Random.Shared.Next(1, 7);
-                break;
-        }
-
         return new TMessageMediaDice
         {
             Emoticon = inputMediaDice.Emoticon,
-            Value = value
+            Value = DiceEmojiHelper.Roll(inputMediaDice.Emoticon)
         };
     }
 
@@ -469,6 +461,16 @@ public class MediaHelper(
                 return await CreateMediaContactAsync(inputMediaContact);
             case TInputMediaDice inputMediaDice:
                 return CreateMediaDice(inputMediaDice);
+            case TInputMediaStakeDice:
+                // The TON stake dice half of https://corefork.telegram.org/api/dice is not served here:
+                // there is no wallet and no commit-reveal, and messages.getEmojiGameInfo answers
+                // emojiGameUnavailable. Falling through to the default arm would answer sendMedia
+                // successfully with no media at all; Android reacts to an error by re-reading the game info
+                // and retrying with a fresh game_hash (SendMessagesHelper.sendMessage), so this has to be
+                // an error rather than a silent success.
+                RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
+
+                return null;
             case TInputMediaDocument:
             case TInputMediaDocumentExternal:
             case TInputMediaPhoto:

@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Dice;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Save a message <a href="https://corefork.telegram.org/api/drafts">draft</a> associated to a chat.
@@ -44,6 +46,10 @@ internal sealed class SaveDraftHandler(ICommandBus commandBus, IPeerHelper peerH
         IMessageMedia? media = null;
         if (obj.Media != null)
         {
+            // A dice has no local form to save: converting it here would roll a value that is then stored
+            // in the draft and sent later as a stale outcome. TDLib's can_be_local_message_content is false.
+            DiceMediaGuard.ThrowIfDice(obj.Media);
+
             media = await mediaHelper.SaveMediaAsync(obj.Media);
         }
 

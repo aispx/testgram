@@ -34,6 +34,16 @@ An honest question beats a silent dummy.
 - **ALWAYS** use `RpcErrors...ThrowRpcError()` instead of `throw new Exception`
 - **ALWAYS** initialize `TVector<T>` — null crashes the client
 
+### Throwaway scripts go in a temp directory, not in `scripts/`
+`scripts/` is for tooling the project keeps: seeders and the checked-in verification scripts. A probe
+written to check one change, a one-off query, a scratch Python file — write it to a temp directory
+(`$TMPDIR`, `/tmp`, or the agent's own job temp dir) and **do not commit it**. Committing it leaves a
+script nobody maintains next to the ones that are actually run, and the next person cannot tell them
+apart.
+
+If a probe turns out to be worth keeping — it covers a whole surface, it is idempotent, its usage is
+documented here — say so and ask before adding it to `scripts/`.
+
 ---
 
 ## Project Structure
@@ -513,6 +523,57 @@ TG_API_ID=... TG_API_HASH=... TG_SERVER_PUBKEY=server_pub.pem TG_PHONE=... MONGO
 ```
 
 See https://corefork.telegram.org/api/stickers
+
+---
+
+## Animated dice
+
+`inputMediaDice` carries only an emoji; the **server** mints the outcome. One table owns the whole
+surface — `Services/Dice/DiceEmojiHelper.cs`: emoji → set short name, highest value, winning
+value/frame. Sending, `inputStickerSetDice` resolution and the `emojies_send_dice` /
+`emojies_send_dice_success` config fields all read it, and a test asserts the table still matches
+what `AppConfigHelper` actually emits (the config keeps its own generated copy because
+`AppConfigHelper._hash` is a constant: change the emitted bytes without bumping it and clients sit on
+`appConfigNotModified` forever).
+
+* **An emoji outside the table is `EMOTICON_INVALID`.** Any string used to be accepted and rolled
+  1..6, producing a `messageMediaDice` whose sticker set no client can resolve — a permanently blank
+  bubble that logs nothing. The range is the server's job too: tdlib's `MessageDice::is_valid()`
+  allows up to 6 for 🎲/🎯 and up to **1000** for the rest, then draws nothing past the end of the set.
+  Values start at 1, because 0 is the client's "not rolled yet" sentinel.
+* **A dice set has to satisfy two incompatible lookups at once.** tdlib indexes `documents`
+  positionally (`sticker_ids_[value]`, index 0 = idle preview), tdesktop ignores the order and reads
+  the keycap packs (`#⃣` → 0, `1⃣`..`6⃣` → 1..6). The seeded sets do both; a re-seed that reorders
+  documents or drops the numeric packs breaks one family silently. `DiceStickerSetManifestTests`
+  pins it. The slot machine is the exception: 21 documents, positional for everyone, its 1..64 value
+  decoded as a bitfield into background/lever/three reels.
+* **The right is `send_stickers`, not `send_games`** — tdlib refuses a dice under `can_send_stickers`
+  ("Not enough rights to send dice to the chat") and Android gates on `canSendStickers`.
+* **Nowhere but a plain send.** No edit, no album, no draft (`MEDIA_INVALID` each — tdlib marks the
+  content non-editable, not groupable, not local), and no caption (dropped, as Android does itself).
+  A forward keeps the value; sending the same emoji again re-rolls.
+* **`messages.uploadMedia` is answered by the external file-server**, which returns a rolled dice and
+  cannot be changed from here. The guard in this repo's `UploadMediaHandler` only covers a deployment
+  without that image — same situation as `GetWebFileHandler`.
+* **Revoke waits 24 hours in private chats** (`403 MESSAGE_DELETE_FORBIDDEN`), so a roll cannot be
+  taken back. Saved Messages, groups and channels are exempt, matching
+  `MediaDice::allowsRevoke`/`MessagesManager.cpp`. The check runs *before* `ClearMentionsAsync`,
+  which is not reversible.
+* **TON stake dice is not implemented.** `getEmojiGameInfo` answers `emojiGameUnavailable` — the
+  honest answer, and exactly what clients gate the staking UI on — and `inputMediaStakeDice` is
+  `MEDIA_INVALID` instead of silently becoming a message with no media.
+
+Probing it against a running deployment needs a throwaway Telethon script (temp dir, not `scripts/`);
+copy the connection and login block out of `scripts/verify_stickers.py`, which already registers this
+server's RSA key. What is worth asserting, all of it verified once by hand: each of the six sets read
+twice so a missing `stickerSetNotModified` on the re-quote shows up; `documents[i]` equal to the
+document named by the `i` keycap pack; a roll per emoji inside its range; the caption coming back
+empty; `EMOTICON_INVALID`, `EMOTICON_STICKERPACK_MISSING` and the four `MEDIA_INVALID` refusals; a
+forward keeping the value; and `MESSAGE_DELETE_FORBIDDEN` on revoking a fresh private-chat dice.
+Telethon humanizes error strings, so match on the error **class** name
+(`MEDIA_INVALID` → `MediaInvalidError`).
+
+See https://corefork.telegram.org/api/dice
 
 ---
 

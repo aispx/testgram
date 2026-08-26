@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Dice;
 
 namespace MyTelegram.Messenger.Services.Stickers;
 
@@ -7,21 +8,6 @@ namespace MyTelegram.Messenger.Services.Stickers;
 public class StickerSetStore(IMongoDatabase mongoDatabase) : IStickerSetStore, ITransientDependency
 {
     public const string CollectionName = "eventflow-stickersetreadmodel";
-
-    /// <summary>
-    /// Which set backs each <a href="https://corefork.telegram.org/api/dice">dice</a> emoji. The
-    /// short names are Telegram's own, so a mirrored catalogue resolves without extra mapping.
-    /// </summary>
-    private static readonly Dictionary<string, string> DiceShortNames = new(StringComparer.Ordinal)
-    {
-        ["🎲"] = "AnimatedDice2",
-        ["🎯"] = "AnimatedDart",
-        ["🏀"] = "AnimatedBasketball",
-        ["⚽"] = "AnimatedPenalty",
-        ["⚽️"] = "AnimatedPenalty",
-        ["🎰"] = "SlotMachineAnimated",
-        ["🎳"] = "AnimatedBowling"
-    };
 
     /// <summary>
     /// The parameterless <c>InputStickerSet</c> constructors, each naming one specific set. Keep this
@@ -55,7 +41,9 @@ public class StickerSetStore(IMongoDatabase mongoDatabase) : IStickerSetStore, I
 
             case TInputStickerSetDice dice:
             {
-                var shortName = DiceShortNames.GetValueOrDefault(dice.Emoticon ?? string.Empty);
+                // Which set backs each dice emoji comes from the one dice table, so sending and drawing
+                // cannot disagree about what a dice is. See https://corefork.telegram.org/api/dice
+                var shortName = DiceEmojiHelper.GetShortName(dice.Emoticon);
                 var set = shortName == null ? null : await FindByShortNameAsync(shortName, cancellationToken);
 
                 return new StickerSetLookup(set, dice.Emoticon);

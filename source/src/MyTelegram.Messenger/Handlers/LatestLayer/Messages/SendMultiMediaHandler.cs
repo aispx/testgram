@@ -1,6 +1,7 @@
 using StackExchange.Redis;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
+using MyTelegram.Messenger.Services.Dice;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Send an <a href="https://corefork.telegram.org/api/files#albums-grouped-media">album or grouped media</a>
@@ -53,6 +54,14 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
     //_requestCacheAppService = requestCacheAppService;
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMultiMedia obj)
     {
+        // A dice cannot be part of an album: TDLib's is_allowed_media_group_content is false for it, so no
+        // client groups one. Checked before anything is charged or written.
+        // See https://corefork.telegram.org/api/dice
+        foreach (var singleMedia in obj.MultiMedia)
+        {
+            DiceMediaGuard.ThrowIfDice(singleMedia.Media);
+        }
+
         var toPeerForPaid = peerHelper.GetPeer(obj.Peer, input.UserId);
         // Item 22: enforce blocklist for album/multimedia sends too. Without this guard
         // a blocked user could spam media albums while their text messages 403'd.
