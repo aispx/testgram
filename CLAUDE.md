@@ -466,6 +466,13 @@ filled by `scripts/seed_stickers.py`; everything per-user is a plain collection 
 * **`getArchivedStickers` is usually asked for the count alone**: Android calls it with `limit = 0`
   purely to number the "Archived stickers" row (`loadArchivedStickersCount`) and hides the row when the
   count is zero.
+* **`config.preload_featured_stickers` has to stay off.** It asks clients to load the full sets behind the
+  trending lists up front, and Android does the custom-emoji half with
+  `loadStickers(TYPE_FEATURED_EMOJIPACKS)` — a constant of `6` indexing `MediaDataController.stickerSets`
+  and `stickersByIds`, which are built with **six** slots (0..5). So the flag plus a non-empty
+  `getFeaturedEmojiStickers` is `ArrayIndexOutOfBoundsException: length=6; index=6` on the UI thread a
+  second after launch: a crash loop, not a degraded screen. The arrays are the same size upstream and real
+  Telegram serves the flag unset (measured), so there is no version of this where enabling it helps.
 * **`readFeaturedStickers` with an empty `id` vector means "clear the whole badge"** — Android sends it
   that way from `markFeaturedStickersAsRead` and only fills a single id when one set was opened. The
   request carries no masks/emojis flag, so the bare form clears both taxonomies.
@@ -770,6 +777,7 @@ See https://corefork.telegram.org/api/pfs
 | Handler is not invoked | `internal sealed class`, namespace `...LatestLayer.<Category>`, was the image rebuilt |
 | Empty/wrong response | uninitialized `TVector`, the data in Mongo, `logs \| grep -i error` |
 | Client crashes on the response | constructor ID match (`/schema-jppgr-am`), unset required fields |
+| Android dies at startup with `ArrayIndexOutOfBoundsException: length=6; index=6` in `MediaDataController.processLoadedStickers` | `config.preload_featured_stickers` is set while a trending emoji list is non-empty; the flag must stay off, see Stickers above. The stack trace is the only evidence — the server logs a perfectly healthy `getFeaturedEmojiStickers` |
 | Half the media never loads | `authKey not found` in session-server — an expired temp key, see PFS above |
 | Part of a screen is empty, logs are clean | diff the surface's methods against **real Telegram** (see Verify above); an empty list with `hash = 0` logs nothing but gets re-requested forever, so a handler called far more often than its refresh interval is the tell |
 | Which connection is actually the user's | gateway `New client connected` by remote IP × `LocalPort`: `172.23.0.1` is the docker host (local scripts), an IP that only sends `req_pq_multi` and drops is a scanner — do not diagnose from their warnings |
