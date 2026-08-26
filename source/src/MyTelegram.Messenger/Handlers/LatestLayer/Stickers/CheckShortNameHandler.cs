@@ -1,8 +1,7 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
-using System.Text.RegularExpressions;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
+
 /// <summary>
 /// Check whether the given short name is available
 /// Possible errors
@@ -12,34 +11,26 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
 /// <para><c>See <a href="https://corefork.telegram.org/method/stickers.checkShortName"/> </c></para>
 /// </summary>
 /// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class CheckShortNameHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestCheckShortName, IBool>
+internal sealed class CheckShortNameHandler(IStickerSetStore stickerSetStore)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestCheckShortName, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stickers.RequestCheckShortName obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Stickers.RequestCheckShortName obj)
     {
-        var shortName = obj.ShortName?.Trim() ?? "";
+        var shortName = obj.ShortName?.Trim() ?? string.Empty;
 
-        // Validate format: must start with letter, contain only letters/digits/underscores, 1-64 chars
-        if (string.IsNullOrEmpty(shortName) || !Regex.IsMatch(shortName, @"^[a-zA-Z][a-zA-Z0-9_]{0,63}$"))
+        if (!StickerShortNameHelper.IsValid(shortName))
         {
             RpcErrors.RpcErrors400.ShortNameInvalid.ThrowRpcError();
         }
 
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
-
-        // Check if short name is already taken
-        var existingSet = await setCol.Find(Builders<BsonDocument>.Filter.Or(
-            Builders<BsonDocument>.Filter.Eq("ShortName", shortName),
-            Builders<BsonDocument>.Filter.Eq("Slug", shortName)
-        )).FirstOrDefaultAsync();
-
-        if (existingSet != null)
+        if (await stickerSetStore.ShortNameExistsAsync(shortName))
         {
             RpcErrors.RpcErrors400.ShortNameOccupied.ThrowRpcError();
         }
 
-        // Short name is available
         return new TBoolTrue();
     }
 }

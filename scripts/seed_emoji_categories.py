@@ -370,7 +370,8 @@ def import_icon_set(db, minio, icon_set: Dict[str, Any], dry_run: bool) -> None:
             "Free": True,
             "TextColor": icon_set["text_color"],
             "Alt": document["alt"],
-            "Stickerset": {"_t": "TInputStickerSetID", "Id": set_id, "AccessHash": access_hash},
+            # "_id", not "Id": the C# driver reads a nested TL object's Id member from the _id element.
+            "Stickerset": {"_t": "TInputStickerSetID", "_id": set_id, "AccessHash": access_hash},
         }
         attributes = [primary, *document["attributes"]]
 

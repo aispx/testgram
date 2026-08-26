@@ -62,4 +62,51 @@ public class MessageIdHelperTest
 
         (id >> 32).ShouldBeInRange(before, after);
     }
+
+    /// <summary>
+    ///     A counter that is only just ahead of the clock is an ordinary tie — two calls in the same
+    ///     millisecond — and must still be resolved by stepping forward, not by reusing the clock value.
+    /// </summary>
+    [Fact]
+    public void GenerateMessageId_ANearFutureCounterStillStepsForward()
+    {
+        var helper = new MessageIdHelper();
+        var justAhead = ((DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 5) << 32) | 1;
+        SetLastMessageId(helper, justAhead);
+
+        helper.GenerateMessageId().ShouldBe(justAhead + 4);
+    }
+
+    /// <summary>
+    ///     A counter far ahead of the clock is corrupt, not a tie: because every id is otherwise derived as
+    ///     `last + 4`, one bad value freezes the time carried by every subsequent msg_id for as long as the
+    ///     process lives. Clients reject a msg_id whose time is far from their own — Telethon logs "Server
+    ///     sent a very new message" and discards it — so the connection completes and then goes deaf.
+    /// </summary>
+    [Fact]
+    public void GenerateMessageId_RecoversFromACounterFarAheadOfTheClock()
+    {
+        var helper = new MessageIdHelper();
+        var twoYearsAhead = ((DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 743 * 86400) << 32) | 1;
+        SetLastMessageId(helper, twoYearsAhead);
+
+        var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var id = helper.GenerateMessageId();
+        var after = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        (id >> 32).ShouldBeInRange(before, after, "the clock has to win over a corrupt counter");
+        (id % 4).ShouldBe(1);
+
+        // And it keeps working from there, rather than snapping back to the bogus value.
+        helper.GenerateMessageId().ShouldBeGreaterThan(id);
+    }
+
+    private static void SetLastMessageId(MessageIdHelper helper, long value)
+    {
+        var field = typeof(MessageIdHelper).GetField("_lastMessageId",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        field.ShouldNotBeNull();
+        field!.SetValue(helper, value);
+    }
 }

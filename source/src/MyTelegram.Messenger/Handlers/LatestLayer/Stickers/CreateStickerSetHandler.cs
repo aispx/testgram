@@ -1,356 +1,171 @@
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
-using MyTelegram.Schema;
-using MyTelegram.Schema.Stickers;
-using TDocument = MyTelegram.Schema.TDocument;
-using TDocumentAttributeCustomEmoji = MyTelegram.Schema.TDocumentAttributeCustomEmoji;
-using TDocumentAttributeSticker = MyTelegram.Schema.TDocumentAttributeSticker;
-using TInputStickerSetID = MyTelegram.Schema.TInputStickerSetID;
-using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
 
+/// <summary>
+/// Create a stickerset, bots only.
+/// Possible errors
+/// Code Type Description
+/// 400 PACK_SHORT_NAME_INVALID Invalid sticker pack name. It must begin with a letter, can't contain consecutive underscores and must end in "_by_&lt;bot username&gt;".
+/// 400 PACK_SHORT_NAME_OCCUPIED A stickerpack with this name already exists.
+/// 400 PACK_TITLE_INVALID The stickerpack title is invalid.
+/// 400 STICKERS_EMPTY No sticker provided.
+/// 400 USER_ID_INVALID The provided user ID is invalid.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stickers.createStickerSet"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
+/// </remarks>
 internal sealed class CreateStickerSetHandler(
     IMongoDatabase mongoDatabase,
-    ILogger<CreateStickerSetHandler> logger) : RpcResultObjectHandler<RequestCreateStickerSet, Schema.Messages.IStickerSet>
+    IStickerSetStore stickerSetStore,
+    IStickerSetEditor stickerSetEditor,
+    IStickerSetMapper stickerSetMapper,
+    IInstalledStickerSetStore installedStickerSetStore,
+    IStickerUpdateNotifier updateNotifier,
+    IUserAppService userAppService,
+    ILogger<CreateStickerSetHandler> logger)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestCreateStickerSet,
+        MyTelegram.Schema.Messages.IStickerSet>
 {
-    protected override async Task<Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input, RequestCreateStickerSet obj)
+    private const int TitleMaxLength = 64;
+
+    protected override async Task<MyTelegram.Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Stickers.RequestCreateStickerSet obj)
     {
-        if (string.IsNullOrWhiteSpace(obj.Title))
+        var title = obj.Title?.Trim();
+        if (string.IsNullOrEmpty(title) || title.Length > TitleMaxLength)
         {
             RpcErrors.RpcErrors400.PackTitleInvalid.ThrowRpcError();
         }
 
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
+        var ownerUserId = await ResolveOwnerAsync(input, obj.UserId);
+        var shortName = await ResolveShortNameAsync(obj.ShortName, title!);
 
-        // Auto-generate ShortName from Title if not provided
-        if (string.IsNullOrWhiteSpace(obj.ShortName))
+        var setId = await NextStickerSetIdAsync();
+        var thumbDocumentId = obj.Thumb is TInputDocument thumb ? thumb.Id : (long?)null;
+
+        var setDocument = await stickerSetEditor.CreateAsync(ownerUserId, setId, title!, shortName,
+            obj.Masks, obj.Emojis, obj.TextColor, [..obj.Stickers.OfType<TInputStickerSetItem>()],
+            thumbDocumentId);
+
+        var type = stickerSetStore.GetStickerSetType(setDocument);
+
+        // The creator gets it installed, which is what makes it show up in their panel straight away.
+        await installedStickerSetStore.InstallAsync(ownerUserId, setId, type, false);
+
+        logger.LogInformation("Created sticker set {SetId} ({ShortName}) with {Count} stickers for user {UserId}",
+            setId, shortName, setDocument.GetInt32("Count"), ownerUserId);
+
+        var result = await stickerSetMapper.BuildFullAsync(input, setDocument);
+
+        await updateNotifier.NotifyNewStickerSetAsync(ownerUserId, result, input.AuthKeyId);
+        await updateNotifier.NotifyStickerSetsAsync(ownerUserId, type, input.AuthKeyId);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Whose set this becomes. The parameter exists for bots, which create sets on behalf of the user who
+    /// is talking to them; a user account may only name itself, and the field was previously ignored
+    /// altogether, so a bot's sets were recorded as belonging to the bot.
+    /// </summary>
+    private async Task<long> ResolveOwnerAsync(IRequestInput input, IInputUser? inputUser)
+    {
+        var targetUserId = inputUser switch
         {
-            obj.ShortName = await GenerateUniqueShortNameAsync(obj.Title, setCol);
+            TInputUserSelf => input.UserId,
+            TInputUser user => user.UserId,
+            null => input.UserId,
+            _ => 0
+        };
+
+        if (targetUserId == 0)
+        {
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
         }
 
-        if (obj.Stickers.Count == 0)
+        if (targetUserId == input.UserId)
         {
-            RpcErrors.RpcErrors400.StickersEmpty.ThrowRpcError();
+            return targetUserId;
         }
 
-        if (!System.Text.RegularExpressions.Regex.IsMatch(obj.ShortName, @"^[a-zA-Z][a-zA-Z0-9_]{0,63}$"))
+        var caller = await userAppService.GetAsync(input.UserId);
+        if (caller?.Bot != true)
+        {
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+        }
+
+        var target = await userAppService.GetAsync(targetUserId);
+        if (target == null)
+        {
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+        }
+
+        return targetUserId;
+    }
+
+    /// <summary>
+    /// The short name must be free and syntactically valid. An empty one is derived from the title, the
+    /// same way <c>stickers.suggestShortName</c> would.
+    /// </summary>
+    private async Task<string> ResolveShortNameAsync(string? requested, string title)
+    {
+        var shortName = requested?.Trim() ?? string.Empty;
+        if (shortName.Length == 0)
+        {
+            shortName = await SuggestFreeShortNameAsync(StickerShortNameHelper.FromTitle(title));
+        }
+
+        if (!StickerShortNameHelper.IsValid(shortName))
         {
             RpcErrors.RpcErrors400.PackShortNameInvalid.ThrowRpcError();
         }
 
-        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var userSetCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-userinstalledstickersetreadmodel");
-
-        var existingSet = await setCol.Find(Builders<BsonDocument>.Filter.Or(
-            Builders<BsonDocument>.Filter.Eq("ShortName", obj.ShortName),
-            Builders<BsonDocument>.Filter.Eq("Slug", obj.ShortName)
-        )).FirstOrDefaultAsync();
-
-        if (existingSet != null)
+        if (await stickerSetStore.ShortNameExistsAsync(shortName))
         {
             RpcErrors.RpcErrors400.PackShortNameOccupied.ThrowRpcError();
         }
 
-        var setId = GenerateId();
-        var accessHash = GenerateAccessHash();
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-        var documentIds = new List<long>();
-        var packs = new BsonArray();
-        var documents = new List<IDocument>();
-        var isEmojiSet = obj.Emojis;
-        var textColor = obj.TextColor;
-
-        foreach (var stickerItem in obj.Stickers)
-        {
-            if (stickerItem is not TInputStickerSetItem sticker)
-            {
-                continue;
-            }
-
-            long docId = 0;
-            long docAccessHash = 0;
-
-            if (sticker.Document is TInputDocument inputDoc)
-            {
-                docId = inputDoc.Id;
-                docAccessHash = inputDoc.AccessHash;
-            }
-            else if (sticker.Document is TInputDocumentEmpty)
-            {
-                RpcErrors.RpcErrors400.StickerFileInvalid.ThrowRpcError();
-            }
-
-            var existingDoc = await docCol.Find(Builders<BsonDocument>.Filter.Eq("DocumentId", docId)).FirstOrDefaultAsync();
-            if (existingDoc == null)
-            {
-                logger.LogWarning("Sticker document {DocId} not found when creating sticker set", docId);
-                continue;
-            }
-
-            // Update document with stickerset information in Attributes2
-            IDocumentAttribute stickerAttribute = isEmojiSet
-                ? new TDocumentAttributeCustomEmoji
-                {
-                    Alt = sticker.Emoji,
-                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                    Free = true,
-                    TextColor = textColor
-                }
-                : new TDocumentAttributeSticker
-                {
-                    Alt = sticker.Emoji,
-                    Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                    Mask = obj.Masks
-                };
-
-            var attributes2List = new List<IDocumentAttribute> { stickerAttribute };
-
-            // Preserve existing attributes if any
-            if (existingDoc.Contains("Attributes2") && existingDoc["Attributes2"] != BsonNull.Value)
-            {
-                try
-                {
-                    // Keep non-primary attributes only; replace stale sticker/custom-emoji
-                    // classification when a document is attached to a new set.
-                    var existingAttrs = BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(existingDoc["Attributes2"].ToJson());
-                    attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker and not TDocumentAttributeCustomEmoji));
-                }
-                catch
-                {
-                    // Ignore deserialization errors
-                }
-            }
-
-            // Serialize properly using BsonSerializer
-            var attributes2Json = System.Text.Json.JsonSerializer.Serialize(new TVector<IDocumentAttribute>(attributes2List));
-            var attributes2Bson = BsonSerializer.Deserialize<BsonDocument>(attributes2Json);
-
-            var updateDoc = Builders<BsonDocument>.Update.Set("Attributes2", attributes2Bson);
-            await docCol.UpdateOneAsync(
-                Builders<BsonDocument>.Filter.Eq("DocumentId", docId),
-                updateDoc
-            );
-
-            documentIds.Add(docId);
-
-            packs.Add(new BsonDocument
-            {
-                ["Emoticon"] = sticker.Emoji,
-                ["Documents"] = new BsonArray(new[] { (BsonValue)docId })
-            });
-
-            var mimeType = existingDoc.Contains("MimeType") ? existingDoc["MimeType"].AsString : "application/octet-stream";
-            var size = GetInt64(existingDoc["Size"]);
-            var dcId = GetInt32(existingDoc["DcId"]);
-
-            byte[] fileRef;
-            if (existingDoc.Contains("FileReference"))
-            {
-                var fr = existingDoc["FileReference"];
-                if (fr.BsonType == BsonType.Binary)
-                    fileRef = fr.AsBsonBinaryData.Bytes;
-                else if (fr.BsonType == BsonType.Array)
-                    fileRef = fr.AsBsonArray.Select(x => (byte)GetInt32(x)).ToArray();
-                else
-                    fileRef = [];
-            }
-            else
-            {
-                fileRef = [];
-            }
-
-            documents.Add(new TDocument
-            {
-                Id = docId,
-                AccessHash = docAccessHash,
-                FileReference = fileRef,
-                Date = 0,
-                MimeType = mimeType,
-                Size = size,
-                Thumbs = new TVector<IPhotoSize>(),
-                VideoThumbs = new TVector<IVideoSize>(),
-                DcId = dcId,
-                Attributes = new TVector<IDocumentAttribute>(new IDocumentAttribute[]
-                {
-                    BuildPrimaryAttribute(isEmojiSet, textColor, sticker.Emoji, setId, accessHash, obj.Masks)
-                })
-            });
-        }
-
-        var newSetDoc = new BsonDocument
-        {
-            ["_id"] = $"stickersetreadmodel-{setId}",
-            ["Id"] = $"stickersetreadmodel-{setId}",
-            ["StickerSetId"] = setId,
-            ["AccessHash"] = accessHash,
-            ["ShortName"] = obj.ShortName,
-            ["Title"] = obj.Title,
-            ["Slug"] = obj.ShortName,
-            ["Count"] = documentIds.Count,
-            ["DocumentIds"] = new BsonArray(documentIds),
-            ["Packs"] = packs,
-            ["Emojis"] = isEmojiSet,
-            ["TextColor"] = textColor,
-            ["CreatorUserId"] = input.UserId,
-            ["Version"] = 1
-        };
-
-        await setCol.InsertOneAsync(newSetDoc);
-
-        await userSetCol.InsertOneAsync(new BsonDocument
-        {
-            ["_id"] = ObjectId.GenerateNewId().ToString(),
-            ["Id"] = ObjectId.GenerateNewId().ToString(),
-            ["UserId"] = input.UserId,
-            ["StickerSetId"] = setId,
-            ["AccessHash"] = accessHash,
-            ["ShortName"] = obj.ShortName,
-            ["Title"] = obj.Title,
-            ["Archived"] = false,
-            ["InstalledAt"] = now,
-            ["Version"] = 1
-        });
-
-        logger.LogInformation("Created sticker set {SetId} ({ShortName}) with {Count} stickers for user {UserId}",
-            setId, obj.ShortName, documentIds.Count, input.UserId);
-
-        var stickerPacks = new List<IStickerPack>();
-        foreach (var p in packs.ToList())
-        {
-            stickerPacks.Add(new TStickerPack
-            {
-                Emoticon = p["Emoticon"].AsString,
-                Documents = new TVector<long>(p["Documents"].AsBsonArray.Select(x => GetInt64(x)).ToList())
-            });
-        }
-
-        return new TStickerSet
-        {
-            Set = new Schema.TStickerSet
-            {
-                Id = setId,
-                AccessHash = accessHash,
-                Title = obj.Title,
-                ShortName = obj.ShortName,
-                Count = documentIds.Count,
-                Hash = 0,
-                Emojis = isEmojiSet,
-                TextColor = textColor
-            },
-            Packs = new TVector<IStickerPack>(stickerPacks),
-            Documents = new TVector<IDocument>(documents),
-            Keywords = new TVector<IStickerKeyword>()
-        };
-    }
-
-    private static long GenerateId()
-    {
-        var bytes = new byte[8];
-        Random.Shared.NextBytes(bytes);
-        bytes[0] &= 0x7F;
-        return BitConverter.ToInt64(bytes, 0) & 0x7FFFFFFFFFFFFFFF;
-    }
-
-    private static IDocumentAttribute BuildPrimaryAttribute(bool isEmojiSet, bool textColor, string alt, long setId, long accessHash, bool mask)
-    {
-        return isEmojiSet
-            ? new TDocumentAttributeCustomEmoji
-            {
-                Alt = alt,
-                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                Free = true,
-                TextColor = textColor
-            }
-            : new TDocumentAttributeSticker
-            {
-                Alt = alt,
-                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                Mask = mask
-            };
-    }
-
-    private static long GenerateAccessHash()
-    {
-        var bytes = new byte[8];
-        Random.Shared.NextBytes(bytes);
-        return BitConverter.ToInt64(bytes, 0);
-    }
-
-    private static long GetInt64(BsonValue v)
-    {
-        return v.BsonType switch
-        {
-            BsonType.Int64 => v.AsInt64,
-            BsonType.Int32 => v.AsInt32,
-            BsonType.Double => (long)v.AsDouble,
-            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int64")
-        };
-    }
-
-    private static int GetInt32(BsonValue v)
-    {
-        return v.BsonType switch
-        {
-            BsonType.Int32 => v.AsInt32,
-            BsonType.Int64 => (int)v.AsInt64,
-            BsonType.Double => (int)v.AsDouble,
-            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int32")
-        };
-    }
-
-    private static async Task<string> GenerateUniqueShortNameAsync(string title, IMongoCollection<BsonDocument> setCol)
-    {
-        // Generate base short_name from title
-        var baseShortName = new string(title
-            .Replace(' ', '_')
-            .ToLowerInvariant()
-            .Where(c => char.IsLetterOrDigit(c) || c == '_')
-            .Take(32)
-            .ToArray());
-
-        // Remove leading/trailing underscores
-        baseShortName = baseShortName.Trim('_');
-
-        // If empty after filtering, use default
-        if (string.IsNullOrEmpty(baseShortName))
-        {
-            baseShortName = "sticker";
-        }
-
-        // First try without suffix
-        var shortName = baseShortName;
-        var exists = await setCol.Find(Builders<BsonDocument>.Filter.Or(
-            Builders<BsonDocument>.Filter.Eq("ShortName", shortName),
-            Builders<BsonDocument>.Filter.Eq("Slug", shortName)
-        )).AnyAsync();
-
-        if (!exists)
-        {
-            return shortName;
-        }
-
-        // If taken, try with random 3-digit suffix
-        for (int attempt = 0; attempt < 10; attempt++)
-        {
-            var suffix = Random.Shared.Next(100, 999);
-            shortName = baseShortName + suffix;
-
-            exists = await setCol.Find(Builders<BsonDocument>.Filter.Or(
-                Builders<BsonDocument>.Filter.Eq("ShortName", shortName),
-                Builders<BsonDocument>.Filter.Eq("Slug", shortName)
-            )).AnyAsync();
-
-            if (!exists)
-            {
-                return shortName;
-            }
-        }
-
-        // Fallback: use timestamp
-        shortName = baseShortName + DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return shortName;
+    }
+
+    private async Task<string> SuggestFreeShortNameAsync(string baseName)
+    {
+        if (!await stickerSetStore.ShortNameExistsAsync(baseName))
+        {
+            return baseName;
+        }
+
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var candidate = $"{baseName}{Random.Shared.Next(100, 1000)}";
+            if (!await stickerSetStore.ShortNameExistsAsync(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return $"{baseName}{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+    }
+
+    /// <summary>
+    /// A sequential id from the shared counter, not a random one: a set id is what clients cache by, and a
+    /// collision would silently merge two packs.
+    /// </summary>
+    private async Task<long> NextStickerSetIdAsync()
+    {
+        var result = await mongoDatabase.GetCollection<BsonDocument>("counters").FindOneAndUpdateAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", "sticker_set_id"),
+            Builders<BsonDocument>.Update.Inc("seq", 1L),
+            new FindOneAndUpdateOptions<BsonDocument>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After
+            });
+
+        return result.GetInt64("seq");
     }
 }

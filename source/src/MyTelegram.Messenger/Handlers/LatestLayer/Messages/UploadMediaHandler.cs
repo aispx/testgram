@@ -27,7 +27,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class UploadMediaHandler(IMediaHelper mediaHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUploadMedia, MyTelegram.Schema.IMessageMedia>
+internal sealed class UploadMediaHandler(
+    IMediaHelper mediaHelper,
+    MyTelegram.Messenger.Services.Stickers.IAttachedStickerRecorder attachedStickerRecorder)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUploadMedia, MyTelegram.Schema.IMessageMedia>
 {
     protected override async Task<IMessageMedia> HandleCoreAsync(IRequestInput input, RequestUploadMedia obj)
     {
@@ -37,6 +40,9 @@ internal sealed class UploadMediaHandler(IMediaHelper mediaHelper) : RpcResultOb
             RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
         }
 
-        return media!;
+        // This method is how a client pre-uploads media it will send later, so the attached stickersets have
+        // to be recorded here too — the send call that follows references the media by id and no longer
+        // carries the sticker list.
+        return (await attachedStickerRecorder.ProcessAsync(obj.Media, media))!;
     }
 }

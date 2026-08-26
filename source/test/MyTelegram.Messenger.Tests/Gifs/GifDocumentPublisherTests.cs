@@ -249,6 +249,6 @@ public class GifDocumentPublisherTests
     {
         // The read model carries `List<IDocumentAttribute>`, which only deserializes once the
         // discriminator conventions this server registers at startup are in place.
-        new ServiceCollection().RegisterMongoDbSerializer();
+        MongoDbTestSerializers.EnsureRegistered();
     }
 }

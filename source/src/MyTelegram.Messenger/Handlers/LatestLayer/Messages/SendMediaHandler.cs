@@ -124,7 +124,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService, IMessageEntityService messageEntityService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
+internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService, IMessageEntityService messageEntityService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor, MyTelegram.Messenger.Services.Stickers.ISentStickerProcessor sentStickerProcessor, MyTelegram.Messenger.Services.Stickers.IAttachedStickerRecorder attachedStickerRecorder) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
     /// <summary>Official poll text limits: 255 chars for the question, 100 per option.</summary>
     private const int PollQuestionMaxLength = 255;
@@ -238,6 +238,14 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
             // added to the sender's saved GIFs — "Uploading a GIF will automatically add it to the
             // saved gifs list". See https://corefork.telegram.org/api/gifs#uploading-gifs
             media = await sentGifProcessor.ProcessAsync(input, media);
+
+            // Stickers the client baked into the image are recorded here, so other users can find their
+            // packs. See https://corefork.telegram.org/api/stickers#attached-stickers
+            media = await attachedStickerRecorder.ProcessAsync(obj.Media, media);
+
+            // A sticker sent from the panel moves its set to the front, when the client asked for it.
+            // See https://corefork.telegram.org/api/stickers#recent-stickersets
+            await sentStickerProcessor.ProcessAsync(input, media, obj.UpdateStickersetsOrder);
 
             if (obj.Media is TInputMediaInvoice)
             {

@@ -308,6 +308,11 @@ NullReferenceException.
 | `web_file_registrations` | URLs already registered with the file-server | `_id` = SHA-256 of the URL, Url, MimeType, FileId, Date |
 | `emoji_groups` | Emoji/sticker/GIF search categories | For (`default`/`stickers`/`status`/`profile_photo`), Kind (`default`/`greeting`/`premium`), Title, IconEmojiId, Emoticons, Order |
 | `default_emoji_lists` | Curated custom-emoji pickers (`account.getDefault*Emojis`) | `_id`/For (`profile_photo`/`group_photo`/`background`), DocumentIds (ordered) |
+| `installed_sticker_sets` | Sticker sets a user installed | `_id` = `{UserId}:{StickerSetId}`, StickerSetType (`Regular`/`Mask`/`CustomEmoji`), Archived, Order (desc = top of panel), Date (`installed_date`) |
+| `featured_sticker_sets` / `featured_emoji_sticker_sets` | Trending sets | StickerSetId, Order (asc), Archived (= dropped out of trending, served by `getOldFeaturedStickers`) |
+| `read_featured_sticker_sets` | Trending badge, per user | `_id` = `{UserId}:{StickerSetType}`, ReadSetIds |
+| `faved_stickers` / `recent_stickers` | Favourites and recents | UserId, DocumentId, Order (desc), Date; `recent_stickers` also Attached (mask list) |
+| `attached_stickers` | Sets baked into a photo/video | `_id` = `photo:{id}` or `document:{id}`, StickerSetIds |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -413,6 +418,93 @@ drops non-`isGifv()` documents out of the list it receives. Everything lives in 
   The messenger keeps its own `GetWebFileHandler` for a deployment without that file-server.
 
 See https://corefork.telegram.org/api/gifs
+
+---
+
+## Stickers
+
+Everything lives in `Services/Stickers/`. The catalogue of sets is `eventflow-stickersetreadmodel`,
+filled by `scripts/seed_stickers.py`; everything per-user is a plain collection (see the table above).
+
+* **A hash a client sends is a hash the client computed.** For those, the server has to reproduce the
+  client's algorithm, not invent one — `VectorHashHelper` is the shared
+  [unsigned accumulator](https://corefork.telegram.org/api/offsets#hash-generation)
+  (`MediaDataController.calcHash`, tdlib `get_vector_hash`). What goes into it differs per method and
+  is not guessable: `allStickers` folds in **each set's own `stickerSet.hash`**
+  (`calcStickersHash`, tdlib `get_sticker_sets_hash`), `featuredStickers` folds in **`set.id` plus an
+  extra `1` per unread set** (`calcFeaturedStickersHash`, `get_featured_sticker_sets_hash`), and
+  `recentStickers`/`favedStickers`/`stickers`/`foundStickers` fold in **document ids**. Get the input
+  wrong and `*NotModified` can never fire; the tell is a method called far more often than its refresh
+  interval.
+* **`stickerSet.hash` is the server's to define, but only from the catalogue row.**
+  `StickerSetHashHelper` hashes id, short name, count, `Version` and the ordered
+  `(documentId, pack emoji)` pairs — deliberately nothing from the document rows, because
+  `getAllStickers` cannot afford to load every document of every installed set on each poll, and the
+  number it reports has to equal the one `getStickerSet` reports. A client caches whichever copy it saw
+  last and then hashes its panel from that. Any edit that the ids and pack emoji do not express — a
+  title, a thumbnail, a re-seed that only fixes per-document alts — must bump `Version`, which is why
+  the seeder `$inc`s it instead of writing `1`.
+* **A `stickers.*` response replaces the client's copy of the set.** They all return the full
+  `messages.stickerSet` through `IStickerSetMapper.BuildFullAsync`; answering with empty
+  `documents`/`packs`, as they used to, empties the pack in the client
+  (Android `MediaDataController.putStickerSet`).
+* **The per-sticker methods find the set by document.** `changeSticker`, `changeStickerPosition`,
+  `removeStickerFromSet` and `replaceSticker` receive only an `InputDocument`;
+  `IStickerSetStore.FindByDocumentIdAsync` is the lookup. They previously filtered
+  `StickerSetId == documentId` and so answered `STICKERSET_INVALID` for every possible input.
+* **`stickerPack` is the set's emoji index, grouped by emoji.** One pack per sticker — even with the
+  right emoji — means only one sticker is ever found by it, because clients build their own
+  emoji-to-sticker map straight from the vector. `StickerSetEditor.Rebuild` keeps `DocumentIds`,
+  `Packs`, `Keywords` and `Count` consistent by construction.
+* **Limits are enforced by the server, and the number must match what the client was told**
+  (`stickers_faved_limit_*`, `config.stickers_recent_limit`): clients truncate a list to the limit
+  *before* hashing it, so returning one entry too many breaks caching permanently. Past the limit the
+  oldest entry is dropped; past the installed-set ceiling (appConfig `stickers_installed_limit`,
+  default 200 — Telegram does not publish this one) the oldest sets are archived and the install answers
+  `messages.stickerSetInstallResultArchive`.
+* **Re-installing an archived set is how clients un-archive it** — there is no separate method.
+* **`getArchivedStickers` is usually asked for the count alone**: Android calls it with `limit = 0`
+  purely to number the "Archived stickers" row (`loadArchivedStickersCount`) and hides the row when the
+  count is zero.
+* **`readFeaturedStickers` with an empty `id` vector means "clear the whole badge"** — Android sends it
+  that way from `markFeaturedStickersAsRead` and only fills a single id when one set was opened. The
+  request carries no masks/emojis flag, so the bare form clears both taxonomies.
+* **Every list mutation pushes an update** (`IStickerUpdateNotifier`): without it a second device shows
+  the old favourites, order and panel until its own hourly refresh. The `update_stickersets_order` flag
+  on the send methods is the same story in reverse — `SentStickerProcessor` moves the set to the top and
+  emits `updateMoveStickerSetToTop`, because the panel is re-read from `getAllStickers` and a client that
+  reordered only locally loses it.
+* **A nested TL `Id` is stored as `_id`.** The driver's automapper maps a member named `Id` to the
+  `_id` element, including inside a subdocument, so `documentAttributeSticker.stickerset` is written as
+  `{"_t": "TInputStickerSetID", "_id": …}`. The seeders wrote `"Id"`, which parses without error and
+  yields `inputStickerSetID(id = 0)` — invisible inside a stickerset response, where the field is
+  overwritten anyway, but in the flat lists it is a sticker whose pack cannot be opened.
+  `StickerAttributeSerializer` accepts both shapes so no migration is needed; new writes use `_id`.
+* **`messages.getAttachedStickers` needs the send path.** The sets come from
+  `inputMediaUploadedPhoto.stickers` / `inputMediaUploadedDocument.stickers`, which nothing read before:
+  `AttachedStickerRecorder` records them from `sendMedia`, `sendMultiMedia` and `uploadMedia`, and marks
+  the media with `photo.has_stickers` / `documentAttributeHasStickers` — that flag is what makes a client
+  offer the action at all.
+
+```bash
+# one-off: move installed sets out of the eventflow read model
+MONGO_URL=mongodb://172.23.0.8:27017 python3 scripts/migrate_installed_sticker_sets.py --dry-run
+MONGO_URL=mongodb://172.23.0.8:27017 python3 scripts/migrate_installed_sticker_sets.py
+
+# set flags (official/masks/emojis/thumb) and the trending list, read from real Telegram.
+# Do NOT use seed_stickers.py --import for this on a live deployment: it rebuilds emoji_groups,
+# emoji_keywords and featured_emoji_sticker_sets from its own manifest and would wipe the emoji taxonomy.
+TG_API_ID=... TG_API_HASH=... TG_SESSION=/root/sticker_seeder MONGO_URL=... \
+  python3 scripts/seed_sticker_set_flags.py --download
+MONGO_URL=... python3 scripts/seed_sticker_set_flags.py --import   # --dry-run supported
+
+# end-to-end check: every list is read twice, the second time quoting the hash the server returned,
+# so a missing *NotModified shows up as a failure. Needs the server's RSA public key (see the header).
+TG_API_ID=... TG_API_HASH=... TG_SERVER_PUBKEY=server_pub.pem TG_PHONE=... MONGO_URL=... \
+  python3 scripts/verify_stickers.py
+```
+
+See https://corefork.telegram.org/api/stickers
 
 ---
 
@@ -681,6 +773,7 @@ See https://corefork.telegram.org/api/pfs
 | Half the media never loads | `authKey not found` in session-server — an expired temp key, see PFS above |
 | Part of a screen is empty, logs are clean | diff the surface's methods against **real Telegram** (see Verify above); an empty list with `hash = 0` logs nothing but gets re-requested forever, so a handler called far more often than its refresh interval is the tell |
 | Which connection is actually the user's | gateway `New client connected` by remote IP × `LocalPort`: `172.23.0.1` is the docker host (local scripts), an IP that only sends `req_pq_multi` and drops is a scanner — do not diagnose from their warnings |
+| Telethon connects, then hangs and drops | server→client msg_ids on the encrypted path are frozen ~743 days ahead, so Telethon discards every one of them (`Server sent a very new message`) — the handshake and `config.date` are correct, official clients tolerate it. Widen `MSG_TOO_NEW_DELTA`/`MSG_TOO_OLD_DELTA` in `telethon/network/mtprotostate.py` to probe. Cause: the deployed session-server carries the pre-fix `MessageIdHelper` whose `last + 4` branch can never return to the clock |
 | Calls do not work | `env \| grep WebRtc`, `systemctl status coturn`, `db.call_sessions.find().sort({Date:-1}).limit(5)` |
 
 ---

@@ -1,4 +1,7 @@
+using MyTelegram.Messenger.Services.Stickers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
+
 /// <summary>
 /// Suggests a short name for a given stickerpack name
 /// Possible errors
@@ -7,44 +10,31 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
 /// <para><c>See <a href="https://corefork.telegram.org/method/stickers.suggestShortName"/> </c></para>
 /// </summary>
 /// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SuggestShortNameHandler : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestSuggestShortName, MyTelegram.Schema.Stickers.ISuggestedShortName>
+internal sealed class SuggestShortNameHandler(IStickerSetStore stickerSetStore)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestSuggestShortName,
+        MyTelegram.Schema.Stickers.ISuggestedShortName>
 {
-    protected override Task<MyTelegram.Schema.Stickers.ISuggestedShortName> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stickers.RequestSuggestShortName obj)
+    protected override async Task<MyTelegram.Schema.Stickers.ISuggestedShortName> HandleCoreAsync(
+        IRequestInput input, MyTelegram.Schema.Stickers.RequestSuggestShortName obj)
     {
-        // Validate title: must not start with digit
-        if (!string.IsNullOrEmpty(obj.Title) && char.IsDigit(obj.Title[0]))
+        // A null title used to reach String.Replace and take the request down with a NullReferenceException.
+        if (string.IsNullOrWhiteSpace(obj.Title))
         {
             RpcErrors.RpcErrors400.TitleInvalid.ThrowRpcError();
         }
 
-        // Generate short_name from title
-        // Replace spaces with underscores, keep only alphanumeric and underscores, convert to lowercase
-        var shortName = new string(obj.Title
-            .Replace(' ', '_')
-            .ToLowerInvariant()
-            .Where(c => char.IsLetterOrDigit(c) || c == '_')
-            .Take(32)
-            .ToArray());
+        var baseName = StickerShortNameHelper.FromTitle(obj.Title);
 
-        // Remove leading/trailing underscores
-        shortName = shortName.Trim('_');
-
-        // If empty after filtering, throw error
-        if (string.IsNullOrEmpty(shortName))
+        // The client puts the suggestion straight into createStickerSet, so handing back a name that is
+        // already taken turns into PACK_SHORT_NAME_OCCUPIED one call later.
+        var shortName = baseName;
+        for (var attempt = 0; attempt < 10 && await stickerSetStore.ShortNameExistsAsync(shortName); attempt++)
         {
-            RpcErrors.RpcErrors400.TitleInvalid.ThrowRpcError();
+            shortName = $"{baseName}{Random.Shared.Next(100, 1000)}";
         }
 
-        // Add random suffix (3 digits like in original Telegram)
-        shortName += Random.Shared.Next(100, 999);
-
-        return Task.FromResult<MyTelegram.Schema.Stickers.ISuggestedShortName>(
-            new MyTelegram.Schema.Stickers.TSuggestedShortName
-            {
-                ShortName = shortName
-            });
+        return new MyTelegram.Schema.Stickers.TSuggestedShortName { ShortName = shortName };
     }
 }
- 

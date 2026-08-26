@@ -1,7 +1,7 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
+
 /// <summary>
 /// Clear recent stickers
 /// <para><c>See <a href="https://corefork.telegram.org/method/messages.clearRecentStickers"/> </c></para>
@@ -9,17 +9,18 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class ClearRecentStickersHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestClearRecentStickers, IBool>
+internal sealed class ClearRecentStickersHandler(
+    IStickerDocumentListStore listStore,
+    IStickerUpdateNotifier updateNotifier)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestClearRecentStickers, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestClearRecentStickers obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestClearRecentStickers obj)
     {
-        var recentCol = mongoDatabase.GetCollection<BsonDocument>("recent_stickers");
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("Attached", obj.Attached)
-        );
-
-        await recentCol.DeleteManyAsync(filter);
+        if (await listStore.ClearAsync(StickerDocumentListKind.Recent, input.UserId, obj.Attached))
+        {
+            await updateNotifier.NotifyRecentAsync(input.UserId, input.AuthKeyId);
+        }
 
         return new TBoolTrue();
     }

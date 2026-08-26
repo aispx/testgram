@@ -19,7 +19,10 @@ internal sealed class ConfigConverter(IObjectMapper objectMapper) : IConfigConve
 
             //PhonecallsEnabled = true,
             DefaultP2pContacts = true,
-            //PreloadFeaturedStickers = true,
+            // Clients preload the trending stickerset list on startup only when this is set; it stayed off
+            // while messages.getFeaturedStickers had nothing to return.
+            // See https://corefork.telegram.org/api/stickers#featured-stickersets
+            PreloadFeaturedStickers = true,
             //IgnorePhoneEntities = false,
             RevokePmInbox = true,
             BlockedMode = false,

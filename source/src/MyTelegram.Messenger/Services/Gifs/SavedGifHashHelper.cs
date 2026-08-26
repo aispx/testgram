@@ -4,16 +4,8 @@ namespace MyTelegram.Messenger.Services.Gifs;
 /// The <a href="https://corefork.telegram.org/api/offsets#hash-generation">hash generation</a>
 /// algorithm, over the ids of the documents in a saved-GIF list.
 ///
-/// <para>This exists separately from <c>MessageSearchMongoHelper.CalcHash</c> because that one
-/// shifts a signed <c>long</c> right, while the specification and every client shift
-/// <b>unsigned</b>. The accumulator regularly goes negative for real document ids, so the two
-/// disagree — and a saved-GIF hash that disagrees with the client means
-/// <c>messages.savedGifsNotModified</c> can never fire and the list is re-downloaded on every
-/// poll.</para>
-///
-/// <para>Reference implementations, all identical:
-/// tdlib <c>td/telegram/misc.cpp get_vector_hash</c>, Telegram Android
-/// <c>MediaDataController.calcHash</c>, tdesktop <c>Api::HashUpdate</c>.</para>
+/// <para>The algorithm itself lives in <see cref="VectorHashHelper"/>; this type only records what
+/// gets fed into it for saved GIFs, and the Android truncation quirk below.</para>
 /// </summary>
 public static class SavedGifHashHelper
 {
@@ -24,17 +16,7 @@ public static class SavedGifHashHelper
     /// </summary>
     public static long ComputeHash(IEnumerable<long> documentIds)
     {
-        var acc = 0UL;
-
-        foreach (var documentId in documentIds)
-        {
-            acc ^= acc >> 21;
-            acc ^= acc << 35;
-            acc ^= acc >> 4;
-            acc += (ulong)documentId;
-        }
-
-        return (long)acc;
+        return VectorHashHelper.ComputeHash(documentIds);
     }
 
     /// <summary>

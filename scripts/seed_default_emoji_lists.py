@@ -234,8 +234,9 @@ def import_orphans(db, minio, orphans: List[Dict[str, Any]], dry_run: bool) -> i
             "Free": True,
             "TextColor": document["text_color"],
             "Alt": document["alt"],
+            # "_id", not "Id": the C# driver reads a nested TL object's Id member from the _id element.
             "Stickerset": {"_t": "TInputStickerSetID",
-                           "Id": document["set_id"],
+                           "_id": document["set_id"],
                            "AccessHash": document["set_access_hash"] & 0x7FFFFFFFFFFFFFFF},
         }
 

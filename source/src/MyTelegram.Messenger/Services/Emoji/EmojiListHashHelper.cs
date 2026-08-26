@@ -19,34 +19,11 @@ namespace MyTelegram.Messenger.Services.Emoji;
 public static class EmojiListHashHelper
 {
     /// <summary>
-    /// Hashes the document ids in the given order. The accumulator is unsigned, matching tdlib's
-    /// <c>get_vector_hash</c>, Android's <c>MediaDataController.calcHash</c> and tdesktop's
-    /// <c>Api::HashUpdate</c> — shifting a signed accumulator right disagrees with every client as
-    /// soon as it goes negative, which real document ids make it do immediately.
+    /// Hashes the document ids in the given order. Delegates to <see cref="VectorHashHelper"/>, which
+    /// keeps the accumulator unsigned and never yields zero for a non-empty list.
     /// </summary>
     public static long ComputeHash(IEnumerable<long> documentIds)
     {
-        var acc = 0UL;
-        var empty = true;
-
-        foreach (var documentId in documentIds)
-        {
-            empty = false;
-            acc ^= acc >> 21;
-            acc ^= acc << 35;
-            acc ^= acc >> 4;
-            acc += (ulong)documentId;
-        }
-
-        if (empty)
-        {
-            return 0;
-        }
-
-        var hash = (long)acc;
-
-        // Zero is the client's "nothing cached" sentinel. A non-empty list must never produce it,
-        // so nudge the one input that would.
-        return hash == 0 ? 1 : hash;
+        return VectorHashHelper.ComputeNonZeroHash(documentIds);
     }
 }

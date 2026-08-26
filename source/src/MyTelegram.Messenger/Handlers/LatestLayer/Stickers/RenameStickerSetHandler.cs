@@ -1,101 +1,48 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
-using MyTelegram.Schema;
-using MyTelegram.Schema.Messages;
-using MyTelegram.Schema.Stickers;
-using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
 
+/// <summary>
+/// Renames a stickerset.
+/// Possible errors
+/// Code Type Description
+/// 400 STICKERSET_INVALID The provided sticker set is invalid.
+/// 400 PACK_TITLE_INVALID The stickerpack name is invalid.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stickers.renameStickerSet"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
+/// </remarks>
 internal sealed class RenameStickerSetHandler(
-    IMongoDatabase mongoDatabase,
-    ILogger<RenameStickerSetHandler> logger) : RpcResultObjectHandler<Schema.Stickers.RequestRenameStickerSet, Schema.Messages.IStickerSet>
+    IOwnedStickerSetResolver ownedStickerSetResolver,
+    IStickerSetStore stickerSetStore,
+    IStickerSetMapper stickerSetMapper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestRenameStickerSet,
+        MyTelegram.Schema.Messages.IStickerSet>
 {
-    protected override async Task<Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input, Schema.Stickers.RequestRenameStickerSet obj)
-    {
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
-        var userSetCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-userinstalledstickersetreadmodel");
+    /// <summary>
+    /// Telegram's own ceiling for a pack title, from the stickerset creation flow in @Stickers.
+    /// </summary>
+    private const int TitleMaxLength = 64;
 
-        if (string.IsNullOrWhiteSpace(obj.Title))
+    protected override async Task<MyTelegram.Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Stickers.RequestRenameStickerSet obj)
+    {
+        var title = obj.Title?.Trim();
+        if (string.IsNullOrEmpty(title) || title.Length > TitleMaxLength)
         {
             RpcErrors.RpcErrors400.PackTitleInvalid.ThrowRpcError();
         }
 
-        BsonDocument? setDoc = null;
+        var setDocument = await ownedStickerSetResolver.ResolveAsync(input, obj.Stickerset);
 
-        if (obj.Stickerset is TInputStickerSetID setById)
-        {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", setById.Id)).FirstOrDefaultAsync();
-        }
-        else if (obj.Stickerset is TInputStickerSetShortName shortNameSet)
-        {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("ShortName", shortNameSet.ShortName)).FirstOrDefaultAsync();
-            if (setDoc == null)
-            {
-                setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("Slug", shortNameSet.ShortName)).FirstOrDefaultAsync();
-            }
-        }
+        setDocument["Title"] = title;
+        // The revision is what makes the new title reach clients: the set's contents did not change, so
+        // without it the hash stays the same and every client keeps showing the old name.
+        setDocument["Version"] = setDocument.GetInt64("Version") + 1;
 
-        if (setDoc == null)
-        {
-            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
-        }
+        await stickerSetStore.ReplaceAsync(setDocument);
 
-        var setId = GetInt64(setDoc["StickerSetId"]);
-
-        // Check if user is the creator of the sticker set
-        var creatorUserId = setDoc.Contains("CreatorUserId") ? GetInt64(setDoc["CreatorUserId"]) : 0;
-        if (creatorUserId != input.UserId)
-        {
-            logger.LogWarning("User {UserId} tried to rename set {SetId} created by {CreatorUserId}",
-                input.UserId, setId, creatorUserId);
-            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
-        }
-
-        var accessHash = GetInt64(setDoc["AccessHash"]);
-        var shortName = setDoc.Contains("ShortName") ? setDoc["ShortName"].AsString : setDoc["Slug"].AsString;
-
-        setDoc["Title"] = obj.Title;
-        await setCol.ReplaceOneAsync(
-            Builders<BsonDocument>.Filter.Eq("StickerSetId", setId),
-            setDoc);
-
-        await userSetCol.UpdateManyAsync(
-            Builders<BsonDocument>.Filter.Eq("StickerSetId", setId),
-            Builders<BsonDocument>.Update.Set("Title", obj.Title));
-
-        logger.LogInformation("Renamed sticker set {SetId} to '{Title}'", setId, obj.Title);
-
-        return new TStickerSet
-        {
-            Set = new Schema.TStickerSet
-            {
-                Id = setId,
-                AccessHash = accessHash,
-                Title = obj.Title,
-                ShortName = shortName,
-                Count = GetInt32(setDoc["Count"]),
-                Hash = 0
-            },
-            Packs = new TVector<IStickerPack>(),
-            Documents = new TVector<IDocument>(),
-            Keywords = new TVector<IStickerKeyword>()
-        };
+        return await stickerSetMapper.BuildFullAsync(input, setDocument);
     }
-
-    private static long GetInt64(BsonValue v) => v.BsonType switch
-    {
-        BsonType.Int64 => v.AsInt64,
-        BsonType.Int32 => v.AsInt32,
-        BsonType.Double => (long)v.AsDouble,
-        _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int64")
-    };
-
-    private static int GetInt32(BsonValue v) => v.BsonType switch
-    {
-        BsonType.Int32 => v.AsInt32,
-        BsonType.Int64 => (int)v.AsInt64,
-        BsonType.Double => (int)v.AsDouble,
-        _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int32")
-    };
 }

@@ -2,7 +2,14 @@
 public class MessageIdHelper : IMessageIdHelper, ISingletonDependency
 {
     private long _lastMessageId;
-    //private readonly long _timeDelta = 0;
+
+    /// <summary>
+    ///     How far <see cref="_lastMessageId" /> may run ahead of the clock before it is treated as corrupt
+    ///     rather than as "the same millisecond again". One second is <c>1 &lt;&lt; 32</c> in msg_id units, so
+    ///     this is five minutes — comfortably more than any legitimate burst, and well inside the ±300 s window
+    ///     clients accept (<a href="https://corefork.telegram.org/mtproto/description#message-identifier-msg-id" />).
+    /// </summary>
+    private const long MaxDriftAheadOfClock = 300L << 32;
 
     /// <summary>
     ///     Generates a server message id. This type is a singleton shared by every connection, so the
@@ -28,10 +35,18 @@ public class MessageIdHelper : IMessageIdHelper, ISingletonDependency
             // Clear the low two bits and set msg_id mod 4 == 1.
             var messageId = (((seconds << 32) | fraction) & ~3L) | 1;
 
-            if (messageId <= last)
+            // Same millisecond (or a clock that went backwards): keep strictly increasing while
+            // preserving the 1 mod 4 residue.
+            //
+            // Unless the stored value is *implausibly* far ahead, in which case it is not a tie but a
+            // corrupt counter — one bad value (a clock that was wrong when the process started, a
+            // future-dated value that got in some other way) otherwise pins every id that follows to that
+            // bogus time for the lifetime of the process, because each one is only ever `last + 4`. The
+            // symptom is a msg_id whose time is frozen years away while the low bits count up, which
+            // clients reject outright: Telethon discards such a message ("Server sent a very new
+            // message"), so the connection completes the handshake and then goes deaf.
+            if (messageId <= last && last - messageId <= MaxDriftAheadOfClock)
             {
-                // Same millisecond (or a clock that went backwards): keep strictly increasing while
-                // preserving the 1 mod 4 residue.
                 messageId = last + 4;
             }
 

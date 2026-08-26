@@ -296,6 +296,15 @@ async def fetch_sticker_set(
             "packs": packs,
             "promo_sections": promo_sections,
             "input_stickerset_type": input_stickerset_type,
+            # Set-level flags as Telegram serves them. Without official/masks the server cannot tell a
+            # trending candidate from a mask pack, and cannot fill stickerSet.official at all.
+            "official": bool(getattr(s, "official", False)),
+            "masks": bool(getattr(s, "masks", False)),
+            "emojis": bool(getattr(s, "emojis", False)),
+            "text_color": bool(getattr(s, "text_color", False)),
+            "channel_emoji_status": bool(getattr(s, "channel_emoji_status", False)),
+            # The document a custom-emoji set uses as its own icon.
+            "thumb_document_id": getattr(s, "thumb_document_id", None),
         },
         "downloaded_count": downloaded_count,
         "skipped_count": skipped_count,
@@ -455,9 +464,12 @@ def to_int64(v):
 
 
 def build_input_stickerset_id(set_id: int, set_access_hash: int) -> Dict[str, Any]:
+    # The nested id goes under "_id": the C# MongoDB driver's automapper maps a member called Id to the
+    # BSON element _id, so that is the only spelling the server reads back. Writing "Id" here parses
+    # without error but yields inputStickerSetID(id=0), which is a sticker whose pack cannot be opened.
     return {
         "_t": "TInputStickerSetID",
-        "Id": set_id,
+        "_id": set_id,
         "AccessHash": set_access_hash,
     }
 
@@ -812,20 +824,43 @@ def build_emoji_group_docs(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
 
 def build_featured_emoji_set_docs(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return build_featured_set_docs(entries, custom_emoji=True, id_prefix="featured-emoji-set")
+
+
+def build_featured_regular_set_docs(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Trending sets for messages.getFeaturedStickers.
+
+    The downloader already pulls the list from real Telegram (messages.getFeaturedStickers); only the
+    custom-emoji half used to be written, which is why the normal trending page was empty while the
+    emoji one worked.
+    """
+    return build_featured_set_docs(entries, custom_emoji=False, id_prefix="featured-set")
+
+
+def build_featured_set_docs(entries: List[Dict[str, Any]], custom_emoji: bool,
+                            id_prefix: str) -> List[Dict[str, Any]]:
     docs = []
     seen_set_ids = set()
     order = 1
     for entry in entries:
-        if not entry.get("is_custom_emoji"):
+        flags = infer_set_flags(entry)
+        if bool(flags["is_custom_emoji"]) != custom_emoji:
+            continue
+        # A mask set is never trending: masks are attached to photos, not sent.
+        if not custom_emoji and entry.get("masks"):
             continue
         set_id = to_int64(entry["set_id"])
         if set_id in seen_set_ids:
             continue
         seen_set_ids.add(set_id)
         docs.append({
-            "_id": f"featured-emoji-set-{set_id}",
+            "_id": f"{id_prefix}-{set_id}",
             "StickerSetId": set_id,
+            # Read state is per user, in read_featured_sticker_sets; this field is left for the rows
+            # written before that existed and is ignored.
             "Unread": False,
+            # Archived means "no longer trending", which is what getOldFeaturedStickers pages through.
+            "Archived": False,
             "Order": order,
             "Version": 1,
         })
@@ -903,11 +938,13 @@ def update_metadata_collections(db, manifest: List[Dict[str, Any]]) -> None:
     emoji_keywords_col = db["emoji_keywords"]
     emoji_groups_col = db["emoji_groups"]
     featured_emoji_col = db["featured_emoji_sticker_sets"]
+    featured_col = db["featured_sticker_sets"]
     premium_promo_col = db["premium_promo_media"]
 
     emoji_keyword_docs = build_emoji_keyword_docs(manifest)
     emoji_group_docs = build_emoji_group_docs(manifest)
     featured_docs = build_featured_emoji_set_docs(manifest)
+    featured_regular_docs = build_featured_regular_set_docs(manifest)
     premium_promo_docs = build_premium_promo_docs(manifest)
 
     emoji_keywords_col.delete_many({})
@@ -922,13 +959,18 @@ def update_metadata_collections(db, manifest: List[Dict[str, Any]]) -> None:
     if featured_docs:
         featured_emoji_col.insert_many(featured_docs)
 
+    featured_col.delete_many({})
+    if featured_regular_docs:
+        featured_col.insert_many(featured_regular_docs)
+
     premium_promo_col.delete_many({})
     if premium_promo_docs:
         premium_promo_col.insert_many(premium_promo_docs)
 
     print(
         f"Updated emoji metadata: keywords={len(emoji_keyword_docs)}, groups={len(emoji_group_docs)}, "
-        f"featured_sets={len(featured_docs)}, premium_promo={len(premium_promo_docs)}"
+        f"featured_emoji_sets={len(featured_docs)}, featured_sets={len(featured_regular_docs)}, "
+        f"premium_promo={len(premium_promo_docs)}"
     )
 
     if premium_promo_docs:
@@ -1083,24 +1125,40 @@ def cmd_import():
                 "Documents": pack_doc_ids,
             })
 
+        set_flags = infer_set_flags(entry)
+        set_fields = {
+            "_id": f"stickersetreadmodel-{set_id}",
+            "StickerSetId": set_id,
+            "AccessHash": set_access_hash & 0x7FFFFFFFFFFFFFFF,
+            "ShortName": entry["short_name"],
+            "Title": entry["title"],
+            "Slug": entry["slug"],
+            "Count": len(doc_ids),
+            "DocumentIds": doc_ids,
+            "Packs": packs,
+            "Keywords": entry.get("keywords", []),
+            "Emojis": set_flags["is_custom_emoji"],
+            "TextColor": set_flags["text_color"],
+            "ChannelEmojiStatus": set_flags["channel_emoji_status"],
+            # Masks belong to their own panel and never appear in the sticker or emoji lists.
+            "Masks": bool(entry.get("masks", False)),
+            # official is what makes a client draw the verified badge on the pack, and is the fallback
+            # trending list when nothing has been seeded into featured_sticker_sets.
+            "Official": bool(entry.get("official", False)),
+        }
+
+        thumb_document_id = entry.get("thumb_document_id")
+        if thumb_document_id:
+            set_fields["ThumbDocumentId"] = to_int64(thumb_document_id) & 0x7FFFFFFFFFFFFFFF
+
         set_col.update_one(
             {"_id": f"stickersetreadmodel-{set_id}"},
-            {"$set": {
-                "_id": f"stickersetreadmodel-{set_id}",
-                "StickerSetId": set_id,
-                "AccessHash": set_access_hash & 0x7FFFFFFFFFFFFFFF,
-                "ShortName": entry["short_name"],
-                "Title": entry["title"],
-                "Slug": entry["slug"],
-                "Count": len(doc_ids),
-                "DocumentIds": doc_ids,
-                "Packs": packs,
-                "Keywords": entry.get("keywords", []),
-                "Emojis": entry.get("is_custom_emoji", False),
-                "TextColor": entry.get("text_color", False),
-                "ChannelEmojiStatus": entry.get("channel_emoji_status", False),
-                "Version": 1,
-            }},
+            {
+                "$set": set_fields,
+                # Version feeds stickerSet.hash, so a re-seed has to move it: with a hardcoded 1 the hash
+                # never changed and clients kept the copy they had, including its stale alt values.
+                "$inc": {"Version": 1},
+            },
             upsert=True,
         )
         print(f"  Upserted sticker set {set_id} ({len(doc_ids)} docs)")

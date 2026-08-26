@@ -1,320 +1,40 @@
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
-using MongoDB.Driver;
-using MyTelegram.Schema;
-using MyTelegram.Schema.Stickers;
-using IStickerSet = MyTelegram.Schema.Messages.IStickerSet;
-using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
-using TDocument = MyTelegram.Schema.TDocument;
-using TDocumentAttributeCustomEmoji = MyTelegram.Schema.TDocumentAttributeCustomEmoji;
-using TDocumentAttributeSticker = MyTelegram.Schema.TDocumentAttributeSticker;
-using TInputStickerSetID = MyTelegram.Schema.TInputStickerSetID;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
 
+/// <summary>
+/// Add a sticker to a stickerset, bots only. The sticker set must have been created by the bot.
+/// Possible errors
+/// Code Type Description
+/// 400 STICKERSET_INVALID The provided sticker set is invalid.
+/// 400 STICKER_FILE_INVALID Sticker file invalid.
+/// 400 STICKERPACK_STICKERS_TOO_MUCH There are too many stickers in this stickerpack, you can't add any more.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stickers.addStickerToSet"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
+/// </remarks>
 internal sealed class AddStickerToSetHandler(
-    IMongoDatabase mongoDatabase,
-    ILogger<AddStickerToSetHandler> logger) : RpcResultObjectHandler<RequestAddStickerToSet, IStickerSet>
+    IOwnedStickerSetResolver ownedStickerSetResolver,
+    IStickerSetEditor stickerSetEditor,
+    IStickerSetMapper stickerSetMapper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestAddStickerToSet,
+        MyTelegram.Schema.Messages.IStickerSet>
 {
-    protected override async Task<IStickerSet> HandleCoreAsync(IRequestInput input, RequestAddStickerToSet obj)
+    protected override async Task<MyTelegram.Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Stickers.RequestAddStickerToSet obj)
     {
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
-        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
+        var setDocument = await ownedStickerSetResolver.ResolveAsync(input, obj.Stickerset);
 
-        BsonDocument? setDoc = null;
-
-        if (obj.Stickerset is TInputStickerSetID setById)
+        if (obj.Sticker is not TInputStickerSetItem sticker)
         {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", setById.Id)).FirstOrDefaultAsync();
-        }
-        else if (obj.Stickerset is TInputStickerSetShortName shortNameSet)
-        {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("ShortName", shortNameSet.ShortName)).FirstOrDefaultAsync();
-            if (setDoc == null)
-            {
-                setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("Slug", shortNameSet.ShortName)).FirstOrDefaultAsync();
-            }
+            RpcErrors.RpcErrors400.StickerInvalid.ThrowRpcError();
+            return null!;
         }
 
-        if (setDoc == null)
-        {
-            logger.LogWarning("Stickerset not found: {Type}", obj.Stickerset.GetType().Name);
-            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
-        }
+        await stickerSetEditor.AddAsync(setDocument, sticker);
 
-        // Check if user is the creator of the sticker set
-        var creatorUserId = setDoc.Contains("CreatorUserId") ? GetInt64(setDoc["CreatorUserId"]) : 0;
-        if (creatorUserId != input.UserId)
-        {
-            logger.LogWarning("User {UserId} tried to add sticker to set {SetId} created by {CreatorUserId}",
-                input.UserId, GetInt64(setDoc["StickerSetId"]), creatorUserId);
-            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
-        }
-
-        var setId = GetInt64(setDoc["StickerSetId"]);
-        var accessHash = GetInt64(setDoc["AccessHash"]);
-        var title = setDoc["Title"].AsString;
-        var shortName = setDoc.Contains("ShortName") ? setDoc["ShortName"].AsString : setDoc["Slug"].AsString;
-        var isEmojiSet = setDoc.Contains("Emojis") && setDoc["Emojis"].ToBoolean();
-        var textColor = setDoc.Contains("TextColor") && setDoc["TextColor"].ToBoolean();
-        
-        var docIds = new List<long>();
-        if (setDoc.Contains("DocumentIds") && setDoc["DocumentIds"].IsBsonArray)
-        {
-            docIds = setDoc["DocumentIds"].AsBsonArray.Select(x => GetInt64(x)).ToList();
-        }
-
-        var sticker = obj.Sticker;
-        if (sticker is IInputStickerSetItem stickerItem)
-        {
-            long docId = 0;
-            long docAccessHash = 0;
-
-            if (stickerItem.Document is TInputDocument inputDoc)
-            {
-                docId = inputDoc.Id;
-                docAccessHash = inputDoc.AccessHash;
-            }
-            else if (stickerItem.Document is TInputDocumentEmpty)
-            {
-                RpcErrors.RpcErrors400.StickerFileInvalid.ThrowRpcError();
-            }
-
-            if (docIds.Contains(docId))
-            {
-                logger.LogWarning("Sticker {DocId} already in set {SetId}", docId, setId);
-                return await BuildStickerSetResponseAsync(setDoc, setId, accessHash);
-            }
-
-            var existingDoc = await docCol.Find(Builders<BsonDocument>.Filter.Eq("DocumentId", docId)).FirstOrDefaultAsync();
-            if (existingDoc == null)
-            {
-                logger.LogWarning("Sticker document {DocId} not found", docId);
-                RpcErrors.RpcErrors400.StickerFileInvalid.ThrowRpcError();
-            }
-
-            // Update document with stickerset information in Attributes2
-            var stickerAttribute = BuildPrimaryAttribute(isEmojiSet, textColor, stickerItem.Emoji, setId, accessHash);
-
-            var attributes2List = new List<IDocumentAttribute> { stickerAttribute };
-
-            // Preserve existing attributes if any
-            if (existingDoc.Contains("Attributes2") && existingDoc["Attributes2"] != BsonNull.Value)
-            {
-                try
-                {
-                    // Keep only non-primary attributes; sticker/custom-emoji identity must
-                    // follow the destination set type.
-                    var existingAttrs = BsonSerializer.Deserialize<TVector<IDocumentAttribute>>(existingDoc["Attributes2"].ToJson());
-                    attributes2List.AddRange(existingAttrs.Where(a => a is not TDocumentAttributeSticker and not TDocumentAttributeCustomEmoji));
-                }
-                catch
-                {
-                    // Ignore deserialization errors
-                }
-            }
-
-            // Serialize properly using BsonSerializer
-            var attributes2Json = System.Text.Json.JsonSerializer.Serialize(new TVector<IDocumentAttribute>(attributes2List));
-            var attributes2Bson = BsonSerializer.Deserialize<BsonDocument>(attributes2Json);
-
-            var updateDoc = Builders<BsonDocument>.Update.Set("Attributes2", attributes2Bson);
-            await docCol.UpdateOneAsync(
-                Builders<BsonDocument>.Filter.Eq("DocumentId", docId),
-                updateDoc
-            );
-
-            docIds.Add(docId);
-            setDoc["DocumentIds"] = new BsonArray(docIds);
-            setDoc["Count"] = docIds.Count;
-
-            var packs = new BsonArray();
-            if (setDoc.Contains("Packs") && setDoc["Packs"].IsBsonArray)
-            {
-                packs = new BsonArray(setDoc["Packs"].AsBsonArray);
-            }
-
-            packs.Add(new BsonDocument
-            {
-                ["Emoticon"] = stickerItem.Emoji,
-                ["Documents"] = new BsonArray(new[] { (BsonValue)docId })
-            });
-            setDoc["Packs"] = packs;
-
-            await setCol.ReplaceOneAsync(
-                Builders<BsonDocument>.Filter.Eq("StickerSetId", setId),
-                setDoc);
-
-            logger.LogInformation("Added sticker {DocId} to set {SetId} with emoji {Emoji}", 
-                docId, setId, stickerItem.Emoji);
-        }
-
-        return await BuildStickerSetResponseAsync(setDoc, setId, accessHash);
-    }
-
-    private async Task<IStickerSet> BuildStickerSetResponseAsync(BsonDocument setDoc, long setId, long accessHash)
-    {
-        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        
-        var title = setDoc["Title"].AsString;
-        var shortName = setDoc.Contains("ShortName") ? setDoc["ShortName"].AsString : setDoc["Slug"].AsString;
-        var count = GetInt32(setDoc["Count"]);
-        var isEmojiSet = setDoc.Contains("Emojis") && setDoc["Emojis"].ToBoolean();
-        var textColor = setDoc.Contains("TextColor") && setDoc["TextColor"].ToBoolean();
-        
-        var docIds = new List<long>();
-        if (setDoc.Contains("DocumentIds") && setDoc["DocumentIds"].IsBsonArray)
-        {
-            docIds = setDoc["DocumentIds"].AsBsonArray.Select(x => GetInt64(x)).ToList();
-        }
-        
-        var documents = new List<IDocument>();
-        if (docIds.Count > 0)
-        {
-            var docFilter = Builders<BsonDocument>.Filter.In("DocumentId", 
-                docIds.Select(id => (BsonValue)new BsonInt64(id)));
-            var docDocs = await docCol.Find(docFilter).ToListAsync();
-            
-            var docMap = docDocs.ToDictionary(d => GetInt64(d["DocumentId"]));
-            
-            foreach (var docId in docIds)
-            {
-                if (docMap.TryGetValue(docId, out var docBson))
-                {
-                    documents.Add(BuildDocument(docBson, setId, accessHash, isEmojiSet, textColor, GetAltForDocument(setDoc, docId)));
-                }
-            }
-        }
-        
-        var packs = new List<IStickerPack>();
-        if (setDoc.Contains("Packs") && setDoc["Packs"].IsBsonArray)
-        {
-            foreach (var p in setDoc["Packs"].AsBsonArray)
-            {
-                packs.Add(new TStickerPack
-                {
-                    Emoticon = p["Emoticon"].AsString,
-                    Documents = new TVector<long>(p["Documents"].AsBsonArray.Select(x => GetInt64(x)).ToList())
-                });
-            }
-        }
-        
-        return new TStickerSet
-        {
-            Set = new Schema.TStickerSet
-            {
-                Id = setId,
-                AccessHash = accessHash,
-                Title = title,
-                ShortName = shortName,
-                Count = count,
-                Hash = 0,
-                Emojis = isEmojiSet,
-                TextColor = textColor
-            },
-            Packs = new TVector<IStickerPack>(packs),
-            Documents = new TVector<IDocument>(documents),
-            Keywords = new TVector<IStickerKeyword>()
-        };
-    }
-
-    private IDocument BuildDocument(BsonDocument docBson, long setId, long setAccessHash, bool isEmojiSet, bool textColor, string alt)
-    {
-        var docId = GetInt64(docBson["DocumentId"]);
-        var accessHash = GetInt64(docBson["AccessHash"]);
-        var mimeType = docBson.Contains("MimeType") ? docBson["MimeType"].AsString : "application/octet-stream";
-        var size = GetInt64(docBson["Size"]);
-        var dcId = GetInt32(docBson["DcId"]);
-        
-        byte[] fileRef;
-        if (docBson.Contains("FileReference"))
-        {
-            var fr = docBson["FileReference"];
-            if (fr.BsonType == BsonType.Binary)
-                fileRef = fr.AsBsonBinaryData.Bytes;
-            else if (fr.BsonType == BsonType.Array)
-                fileRef = fr.AsBsonArray.Select(x => (byte)GetInt32(x)).ToArray();
-            else
-                fileRef = [];
-        }
-        else
-        {
-            fileRef = [];
-        }
-        
-        return new TDocument
-        {
-            Id = docId,
-            AccessHash = accessHash,
-            FileReference = fileRef,
-            Date = 0,
-            MimeType = mimeType,
-            Size = size,
-            Thumbs = new TVector<IPhotoSize>(),
-            VideoThumbs = new TVector<IVideoSize>(),
-            DcId = dcId,
-            Attributes = new TVector<IDocumentAttribute>(new IDocumentAttribute[]
-            {
-                BuildPrimaryAttribute(isEmojiSet, textColor, alt, setId, setAccessHash)
-            })
-        };
-    }
-
-    private static IDocumentAttribute BuildPrimaryAttribute(bool isEmojiSet, bool textColor, string alt, long setId, long accessHash)
-    {
-        return isEmojiSet
-            ? new TDocumentAttributeCustomEmoji
-            {
-                Alt = alt,
-                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                Free = true,
-                TextColor = textColor
-            }
-            : new TDocumentAttributeSticker
-            {
-                Alt = alt,
-                Stickerset = new TInputStickerSetID { Id = setId, AccessHash = accessHash },
-                Mask = false
-            };
-    }
-
-    private static string GetAltForDocument(BsonDocument setDoc, long documentId)
-    {
-        if (!setDoc.Contains("Packs") || !setDoc["Packs"].IsBsonArray)
-        {
-            return string.Empty;
-        }
-
-        foreach (var pack in setDoc["Packs"].AsBsonArray.Select(x => x.AsBsonDocument))
-        {
-            if (pack.Contains("Documents") && pack["Documents"].AsBsonArray.Any(x => GetInt64(x) == documentId))
-            {
-                return pack.Contains("Emoticon") ? pack["Emoticon"].AsString : string.Empty;
-            }
-        }
-
-        return string.Empty;
-    }
-
-    private static long GetInt64(BsonValue v)
-    {
-        return v.BsonType switch
-        {
-            BsonType.Int64 => v.AsInt64,
-            BsonType.Int32 => v.AsInt32,
-            BsonType.Double => (long)v.AsDouble,
-            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int64")
-        };
-    }
-
-    private static int GetInt32(BsonValue v)
-    {
-        return v.BsonType switch
-        {
-            BsonType.Int32 => v.AsInt32,
-            BsonType.Int64 => (int)v.AsInt64,
-            BsonType.Double => (int)v.AsDouble,
-            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int32")
-        };
+        // The full set, not just its header: clients replace their cached copy with whatever this returns.
+        return await stickerSetMapper.BuildFullAsync(input, setDocument);
     }
 }
