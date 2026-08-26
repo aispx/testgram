@@ -312,17 +312,11 @@ public partial class AppConfigHelper
                     },
                 },
 
-                //// A map of soundbites to be played when the user clicks on the specified animated emoji; the file reference field should be base64-decoded before downloading the file (map of file IDs (inputDocument.id), with emoji string keys)
-                //new TJsonObjectValue
-                //{
-                //    Key = "emojies_sounds",
-                //    Value = new TJsonArray
-                //    {
-                //        Value =
-                //        [
-                //        ]
-                //    }
-                //},
+                // emojies_sounds is not served from here. It is a map of soundbites (a jsonObject of
+                // jsonObjects whose id/access_hash/file_reference_base64 are all jsonString, not an
+                // array as this placeholder used to claim) and it carries per-session document access
+                // hashes, so GetAppConfigHandler adds it per caller through IEmojiSoundAppConfigBuilder.
+                // See https://corefork.telegram.org/api/animated-emojis#emojis-with-sounds
 
                 // Maximum UTF-8 length of fact-checks ».  (integer)
                 new TJsonObjectValue { Key = "factcheck_length_limit", Value = new TJsonNumber { Value = 1024 } },

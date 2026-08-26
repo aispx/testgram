@@ -516,6 +516,63 @@ See https://corefork.telegram.org/api/stickers
 
 ---
 
+## Animated emojis
+
+Three separate surfaces, all served from here: the animated emoji itself, the sound it plays when
+clicked, and the reaction animation the *other* participant sees.
+
+* **The two special sets are mirrored whole and must stay identical to prod**: `AnimatedEmojies`
+  (`inputStickerSetAnimatedEmoji`) is 599 documents / 580 packs, `EmojiAnimations`
+  (`inputStickerSetAnimatedEmojiAnimations`) 121 / 124, `EmojiGenericAnimations` 6 / 1 — measured
+  against the live service. `StickerSetStore.SpecialShortNames` maps the parameterless
+  `InputStickerSet` constructors onto those short names.
+* **`EmojiAnimations` carries a keycap pack (`1⃣`) listing every document, and that is not junk.**
+  tdlib picks which animation to play by looking for a keycap-number emoji among a sticker's *pack*
+  emoticons (`get_emoji_number`, exactly `'0'..'9'` + U+20E3) and finds the candidates by comparing
+  the *document's* `alt` to the clicked emoji (`get_animated_emoji_click_stickers`). So the `alt` has
+  to be the bare emoji and the numeric packs have to survive every re-seed: the `i` index a client
+  sends in the interaction payload is that keycap number, and dropping the pack makes every click a
+  no-op.
+* **`emojies_sounds` is per session and cannot live in `AppConfigHelper.g.cs`.** The map hands out an
+  `access_hash` that clients quote back in `upload.getFile`, and document access hashes here are
+  minted from the caller's `AccessHashKeyId` (`AccessHashHelper2`), which the closed file-server
+  validates. So `GetAppConfigHandler` appends the key per caller through `IEmojiSoundAppConfigBuilder`
+  and folds its hash into the config hash — otherwise a client that re-logs in is answered
+  `appConfigNotModified` while holding access hashes that download nothing. Real Telegram can publish
+  one constant per document; this server cannot.
+* **All three fields of a sound are `jsonString`.** tdlib's `ConfigManager` skips any member of the
+  object that is not a string and then rejects the entry for the missing id; Android
+  (`MessagesController.applyAppConfig`) casts to `TL_jsonString` and decodes the reference with
+  `Base64.URL_SAFE`. A numeric `id` is silently discarded by every client. The reference is unpadded
+  base64url (`is_base64url` rejects some padded lengths); Telegram currently ships it empty, we ship
+  the document's real one.
+* **Nine sounds, copied verbatim** (🎃 ⚰ 🧟 🧟‍♂ 🧟‍♀ 🍑 🎊 🎄 🦾, ~4–7 KB Ogg each), stored as plain
+  `audio/ogg` documents that belong to no sticker set — a client never fetches the `document` object
+  for a soundbite, tdlib registers the id as a bare `FullRemoteFileLocation(FileType::VoiceNote, …)`.
+  An emoji whose document row is missing is dropped rather than advertised.
+* **`sendMessageEmojiInteraction.msg_id` must be translated, because private chats number messages per
+  user.** The clicking client names the message by *its own* id, the receiving client resolves it in
+  *its own* box, so relaying the action verbatim delivers a healthy-looking `updateUserTyping` that
+  points at an unrelated message — nothing is drawn and nothing is logged anywhere.
+  `IEmojiInteractionMsgIdMapper` (in `SetTypingHandler`, private chats only) reuses
+  `GetReplyToMsgIdListQuery`, the same mapper `sendMessage` uses for reply ids, and drops the update
+  instead of failing the call when the message cannot be mapped. Verified: A's `32002` arrives at B as
+  B's own `52`, and back. Group/channel peers stay a plain passthrough — one fan-out update cannot
+  carry a different id per member, and clients only send interactions in private chats.
+
+```bash
+# 1. download from real Telegram (9 sounds), 2. import bodies + rows (--dry-run supported)
+TG_API_ID=... TG_API_HASH=... TG_SESSION=/root/sticker_seeder \
+  python3 scripts/seed_emoji_sounds.py --download
+MONGO_URL=mongodb://172.23.0.8:27017 MINIO_ENDPOINT=172.23.0.10:9000 \
+MINIO_ACCESS_KEY=... MINIO_SECRET_KEY=... \
+  python3 scripts/seed_emoji_sounds.py --import
+```
+
+See https://corefork.telegram.org/api/animated-emojis
+
+---
+
 ## Emoji categories and animated emoji
 
 The tabs above the GIF/sticker/emoji grid are **animated custom-emoji documents**, not system emoji.
@@ -853,6 +910,7 @@ See https://corefork.telegram.org/api/pfs
 | Which connection is actually the user's | gateway `New client connected` by remote IP × `LocalPort`: `172.23.0.1` is the docker host (local scripts), an IP that only sends `req_pq_multi` and drops is a scanner — do not diagnose from their warnings |
 | Telethon cannot talk to the server at all | it ships Telegram's public keys and cannot match the fingerprint in our `res_pq`, so the handshake dies at step 1 with `auth_key generation failed` while auth-server logs only `[Step1] ReqPqMultiHandler` retries. Register the server key: `docker cp <auth-server>:/app/private.pkcs8.key`, `openssl rsa -pubout \| openssl rsa -pubin -RSAPublicKey_out`, then `telethon.crypto.rsa.add_key(pem, old=False)` — see `scripts/verify_stickers.py` |
 | Telethon connects, then hangs and drops | server→client msg_ids arriving ~743 days in the future, which Telethon discards (`Server sent a very new message`). **Check which host you are actually talking to** — this was traced to a *different* testgram deployment (`109.107.181.246`), not this one, where the skew is 0. A deployment shows it when its session-server carries the pre-fix `MessageIdHelper`, whose `last + 4` branch can never return to the clock; widen `MSG_TOO_NEW_DELTA`/`MSG_TOO_OLD_DELTA` in `telethon/network/mtprotostate.py` to probe such a host |
+| Clicking an animated emoji animates nothing on the other device | the interaction is relayed but its `msg_id` belongs to the clicking user's own numbering — see Animated emojis above; both sides log a healthy `setTyping`/`updateUserTyping`, so the only evidence is the id itself |
 | Calls do not work | `env \| grep WebRtc`, `systemctl status coturn`, `db.call_sessions.find().sort({Date:-1}).limit(5)` |
 
 ---
