@@ -1,4 +1,7 @@
+using MyTelegram.Messenger.Services.Stickers;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
+
 /// <summary>
 /// Method for fetching previously featured stickers
 /// <para><c>See <a href="https://corefork.telegram.org/method/messages.getOldFeaturedStickers"/> </c></para>
@@ -6,10 +9,15 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetOldFeaturedStickersHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetOldFeaturedStickers, MyTelegram.Schema.Messages.IFeaturedStickers>
+internal sealed class GetOldFeaturedStickersHandler(IFeaturedStickerSetListService listService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetOldFeaturedStickers,
+        MyTelegram.Schema.Messages.IFeaturedStickers>
 {
-    protected override Task<MyTelegram.Schema.Messages.IFeaturedStickers> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetOldFeaturedStickers obj)
+    protected override Task<MyTelegram.Schema.Messages.IFeaturedStickers> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestGetOldFeaturedStickers obj)
     {
-        throw new NotImplementedException();
+        // Only normal stickers have a trending history: the custom-emoji list has no paginated
+        // counterpart in the API.
+        return listService.GetOldFeaturedAsync(input, StickerSetType.Regular, obj.Offset, obj.Limit, obj.Hash);
     }
 }

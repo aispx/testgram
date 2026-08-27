@@ -5,6 +5,7 @@ public class DialogReadModel : IDialogReadModel,
     IAmReadModelFor<DialogAggregate, DialogId, SetOutboxTopMessageSuccessEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, InboxMessageReceivedEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, DraftSavedEvent>,
+    IAmReadModelFor<DialogAggregate, DialogId, DraftClearedEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, ReadInboxMessage2Event>,
     IAmReadModelFor<DialogAggregate, DialogId, OutboxMessageHasReadEvent>,
     IAmReadModelFor<DialogAggregate, DialogId, ReadChannelInboxMessageEvent>,
@@ -178,9 +179,39 @@ public class DialogReadModel : IDialogReadModel,
         IDomainEvent<DialogAggregate, DialogId, DraftSavedEvent> domainEvent,
         CancellationToken cancellationToken)
     {
+        // dialog.draft is the chat level draft only; a topic draft lives in its own DraftReadModel row
+        // and is served through forumTopic.draft / monoForumDialog.draft.
+        if (!DraftTopicKey.IsChatLevel(DraftTopicKey.Create(domainEvent.AggregateEvent.Draft)))
+        {
+            return Task.CompletedTask;
+        }
+
         Id = domainEvent.AggregateIdentity.Value;
 
+        // Typing into a chat that has no dialog yet creates this row, so it has to carry the identity
+        // too — otherwise it stays owner 0 and messages.getDialogs, which filters by owner, can never
+        // return the draft.
+        OwnerId = domainEvent.AggregateEvent.OwnerPeerId;
+        ToPeerType = domainEvent.AggregateEvent.Peer.PeerType;
+        ToPeerId = domainEvent.AggregateEvent.Peer.PeerId;
+        if (!Version.HasValue)
+        {
+            CreationTime = DateTime.UtcNow;
+        }
+
         Draft = domainEvent.AggregateEvent.Draft;
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyAsync(IReadModelContext context,
+        IDomainEvent<DialogAggregate, DialogId, DraftClearedEvent> domainEvent,
+        CancellationToken cancellationToken)
+    {
+        if (DraftTopicKey.OrChatLevel(domainEvent.AggregateEvent.Topics).Any(p => p.IsChatLevel))
+        {
+            Draft = null;
+        }
+
         return Task.CompletedTask;
     }
 

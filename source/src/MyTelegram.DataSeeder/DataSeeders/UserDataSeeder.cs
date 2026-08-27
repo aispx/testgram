@@ -1,4 +1,7 @@
 using EventFlow.Queries;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MyTelegram.Domain.Aggregates.UserName;
 using MyTelegram.Queries;
 
 namespace MyTelegram.DataSeeder.DataSeeders;
@@ -7,6 +10,7 @@ public class UserDataSeeder(
     ICommandBus commandBus,
     IEventStore eventStore,
     IQueryProcessor queryProcessor,
+    IMongoDatabase database,
     ILogger<UserDataSeeder> logger,
     IOptionsMonitor<MyTelegramDataSeederOptions> options,
     IDataSeederHelper dataSeederHelper,
@@ -24,6 +28,7 @@ public class UserDataSeeder(
             // Added after the first seeding run of the installs that already exist, so it cannot live
             // behind the "users were created" flag.
             await CreateChatImporterBotUserAsync();
+            await CreateGifSearchBotUserAsync();
 
             return;
         }
@@ -34,6 +39,7 @@ public class UserDataSeeder(
         await CreateAnonymousUserAsync();
         await CreateGroupAnonymousBotUserAsync();
         await CreateBotFatherUserAsync();
+        await CreateGifSearchBotUserAsync();
 
         if (options.CurrentValue.CreateTestUsers)
         {
@@ -227,6 +233,96 @@ public class UserDataSeeder(
             await UpdateUserBioAsync(MyTelegramConsts.BotFatherUserId,
                 "I can help you create and manage bots. Use /start to begin.");
         }
+    }
+
+    /// <summary>
+    /// The <c>@gif</c> bot, which is what <c>config.gif_search_username</c> points clients at for GIF
+    /// search. It answers inline queries in-process (<c>GifSearchBotService</c>) rather than through a
+    /// webhook, so it needs no token — but it does need <c>InlineEnabled</c>, which is the only thing
+    /// <c>messages.getInlineBotResults</c> checks before letting a query through.
+    /// See https://corefork.telegram.org/api/gifs#searching-gifs
+    /// </summary>
+    private async Task CreateGifSearchBotUserAsync()
+    {
+        var userId = MyTelegramConsts.GifSearchBotUserId;
+        var created = await CreateUserIfNeededAsync(userId,
+            string.Empty,
+            "GIF",
+            null,
+            "gif",
+            true);
+
+        if (!created)
+        {
+            // Only ever write state for an account that really is this bot. The id is reserved and the
+            // allocator skips it, but an install that handed it out before it was reserved would
+            // otherwise have some user's bot renamed and given inline rights it never asked for.
+            var existing = await queryProcessor.ProcessAsync(new GetUserByIdQuery(userId));
+            if (existing != null && !string.IsNullOrEmpty(existing.UserName) &&
+                !string.Equals(existing.UserName, "gif", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning(
+                    "User id {UserId} is reserved for the @gif bot but is held by {UserName}; GIF search " +
+                    "will not work until that account is moved.", userId, existing.UserName);
+
+                return;
+            }
+        }
+
+        // The username is what clients resolve config.gif_search_username through. A first attempt that
+        // failed - the peer existed before service usernames were allowed to be shorter than five
+        // characters - leaves the account without one, so it is registered here rather than only inside
+        // the create-user saga.
+        await EnsureGifUserNameAsync(userId);
+
+        // Checked against the read model rather than published unconditionally: republishing the same
+        // command on every seeding run is how a DuplicateOperationException ends a run.
+        var user = await queryProcessor.ProcessAsync(new GetUserByIdQuery(userId));
+        if (user is { Verified: false })
+        {
+            await commandBus.PublishAsync(new SetVerifiedCommand(UserId.Create(userId), true));
+        }
+
+        if (string.IsNullOrEmpty(user?.About))
+        {
+            await UpdateUserBioAsync(userId, "I search GIFs. Type @gif followed by what you are looking for.");
+        }
+
+        // Idempotent, and applied even when the user already existed: an install that was seeded before
+        // this bot was added would otherwise have the account without the flag that makes it usable.
+        await database.GetCollection<BsonDocument>("botfather-bot-state").UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("BotUserId", userId),
+            Builders<BsonDocument>.Update
+                .Set("BotUserId", userId)
+                .Set("Username", "gif")
+                .Set("Name", "GIF")
+                .Set("InlineEnabled", true)
+                .SetOnInsert("OwnerId", 0L)
+                .SetOnInsert("CreatedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+            new UpdateOptions { IsUpsert = true });
+    }
+
+    private async Task EnsureGifUserNameAsync(long userId)
+    {
+        var existing = await queryProcessor.ProcessAsync(new GetUserNameByNameQuery("gif"));
+        if (existing != null && existing.PeerId == userId)
+        {
+            return;
+        }
+
+        if (existing != null)
+        {
+            logger.LogWarning("The username @gif is held by {PeerType} {PeerId}; GIF search will not work",
+                existing.PeerType, existing.PeerId);
+
+            return;
+        }
+
+        await commandBus.PublishAsync(new CreateUserNameCommand(UserNameId.Create("gif"),
+            new Peer(PeerType.User, userId), "gif",
+            (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+
+        logger.LogInformation("Registered the username @gif for the GIF search bot");
     }
 
     private async Task CreateOfficialUserAsync()

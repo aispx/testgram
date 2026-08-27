@@ -1,7 +1,7 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
+
 /// <summary>
 /// Mark or unmark a sticker as favorite
 /// Possible errors
@@ -12,46 +12,43 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class FaveStickerHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestFaveSticker, IBool>
+internal sealed class FaveStickerHandler(
+    IStickerDocumentListStore listStore,
+    IStickerDocumentValidator documentValidator,
+    IStickerLimitResolver limitResolver,
+    IStickerUpdateNotifier updateNotifier)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestFaveSticker, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestFaveSticker obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestFaveSticker obj)
     {
-        if (obj.Id is not TInputDocument inputDoc)
+        if (obj.Id is not TInputDocument inputDocument)
         {
             RpcErrors.RpcErrors400.StickerIdInvalid.ThrowRpcError();
             return null!;
         }
 
-        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var docExists = await docCol.Find(Builders<BsonDocument>.Filter.Eq("DocumentId", inputDoc.Id)).AnyAsync();
+        if (obj.Unfave)
+        {
+            if (await listStore.RemoveAsync(StickerDocumentListKind.Faved, input.UserId, inputDocument.Id, false))
+            {
+                await updateNotifier.NotifyFavedAsync(input.UserId, input.AuthKeyId);
+            }
 
-        if (!docExists)
+            return new TBoolTrue();
+        }
+
+        if (!await documentValidator.IsStickerAsync(inputDocument.Id))
         {
             RpcErrors.RpcErrors400.StickerIdInvalid.ThrowRpcError();
         }
 
-        var favedCol = mongoDatabase.GetCollection<BsonDocument>("faved_stickers");
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("DocumentId", inputDoc.Id)
-        );
+        // Past the limit the oldest favourite is dropped rather than the request refused: clients truncate
+        // to stickers_faved_limit before hashing, so a longer list can never match again.
+        await listStore.AddAsync(StickerDocumentListKind.Faved, input.UserId, inputDocument.Id, false,
+            await limitResolver.GetFavedLimitAsync(input.UserId));
 
-        if (obj.Unfave)
-        {
-            // Remove from favorites
-            await favedCol.DeleteOneAsync(filter);
-        }
-        else
-        {
-            // Add to favorites
-            var now = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var update = Builders<BsonDocument>.Update
-                .Set("UserId", input.UserId)
-                .Set("DocumentId", inputDoc.Id)
-                .Set("Date", now);
-
-            await favedCol.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
-        }
+        await updateNotifier.NotifyFavedAsync(input.UserId, input.AuthKeyId);
 
         return new TBoolTrue();
     }

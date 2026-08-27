@@ -18,6 +18,8 @@ internal sealed class GetPreparedInlineMessageHandler(
     IMongoDatabase mongoDatabase,
     IUserAppService userAppService,
     IAccessHashHelper2 accessHashHelper,
+    MyTelegram.Messenger.Services.Gifs.IInlineResultMediaResolver mediaResolver,
+    MyTelegram.Messenger.Services.WebFiles.IWebDocumentProxy webDocumentProxy,
     IUserConverterService userConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetPreparedInlineMessage, MyTelegram.Schema.Messages.IPreparedInlineMessage>
 {
     private const string Collection = "prepared_inline_messages";
@@ -65,7 +67,11 @@ internal sealed class GetPreparedInlineMessageHandler(
             RpcErrors.RpcErrors400.IdInvalid.ThrowRpcError();
         }
 
-        var result = InlineResultConverter.ToBotInlineResult(inputResult!);
+        // Resolve the media the result references, or the client is handed a media result with no
+        // media in it and has nothing to preview.
+        var document = await mediaResolver.ResolveDocumentAsync(inputResult!);
+        var result = InlineResultConverter.ToBotInlineResult(inputResult!, document: document,
+            urlSigner: webDocumentProxy);
         if (result == null)
         {
             RpcErrors.RpcErrors400.IdInvalid.ThrowRpcError();

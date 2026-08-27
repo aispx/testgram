@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 internal sealed class GetSavedDialogsHandler(
@@ -8,7 +9,9 @@ internal sealed class GetSavedDialogsHandler(
     IMessageAppService messageAppService,
     IGetHistoryConverterService getHistoryConverterService,
     IChannelAppService channelAppService,
+    IDraftConverterService draftConverterService,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSavedDialogs, MyTelegram.Schema.Messages.ISavedDialogs>
+
 {
     protected override async Task<MyTelegram.Schema.Messages.ISavedDialogs> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSavedDialogs obj)
     {
@@ -64,6 +67,11 @@ internal sealed class GetSavedDialogsHandler(
                 page.Select(p => p.SavedPeerId!));
             var messageCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
 
+            // A monoforum topic keeps its own draft, keyed by the monoforum_peer_id the client sends in
+            // messages.saveDraft. See https://corefork.telegram.org/api/drafts
+            var topicDrafts = await MonoForumDraftHelper.GetTopicDraftsAsync(queryProcessor,
+                draftConverterService, input.UserId, monoforumPeer.PeerId, input.Layer);
+
             var monoDialogs = new List<ISavedDialog>();
             foreach (var m in page)
             {
@@ -85,7 +93,8 @@ internal sealed class GetSavedDialogsHandler(
                     ReadOutboxMaxId = MonoForumTopicStateHelper.GetReadOutboxMaxId(state),
                     UnreadCount = unreadCount,
                     UnreadReactionsCount = 0,
-                    UnreadMark = MonoForumTopicStateHelper.GetUnreadMark(state)
+                    UnreadMark = MonoForumTopicStateHelper.GetUnreadMark(state),
+                    Draft = topicDrafts.GetValueOrDefault(m.SavedPeerId!.PeerId)
                 });
             }
 

@@ -3,6 +3,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Shared;
 using MyTelegram.Messenger.Helpers;
+using MyTelegram.Messenger.Services.Dice;
 using MyTelegram.Messenger.Services.GeoLive;
 using MyTelegram.Messenger.Services.Scheduled;
 
@@ -91,6 +92,10 @@ internal sealed class EditMessageHandler(IMediaHelper mediaHelper, ICommandBus c
         IMessageMedia? media = null;
         if (obj.Media != null)
         {
+            // A dice cannot be edited into a message: the value is the server's and a second conversion
+            // would simply roll a new one. TDLib marks the content non-editable, so no client asks.
+            DiceMediaGuard.ThrowIfDice(obj.Media);
+
             if (obj.Media is TInputMediaEmpty)
             {
                 media = new TMessageMediaEmpty();

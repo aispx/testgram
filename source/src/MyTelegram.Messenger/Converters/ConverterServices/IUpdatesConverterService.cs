@@ -31,7 +31,11 @@ public interface IUpdatesConverterService
 
     IUpdates ToUpdatePinnedMessageUpdates(ReceiveInboxMessageCompletedSagaEvent aggregateEvent);
 
-    IUpdates ToDraftsUpdates(IReadOnlyCollection<IDraftReadModel> draftReadModels, int layer);
+    IUpdates ToDraftsUpdates(IReadOnlyCollection<IDraftReadModel> draftReadModels,
+        int layer,
+        IEnumerable<IUser>? users = null,
+        IEnumerable<IChat>? chats = null);
+
 
     IUpdates ToChannelUpdates(IRequestWithAccessHashKeyId request, IChannelReadModel channelReadModel, IPhotoReadModel? photoReadModel, int layer);
 }

@@ -27,6 +27,12 @@ public partial class AppConfigHelper : IAppConfigHelper, ISingletonDependency
         SetConfig("passkeys_account_passkeys_max", new TJsonNumber { Value = 20 });
         SetConfig("factcheck_length_limit", new TJsonNumber { Value = 1024 });
 
+        // GIF search runs through the built-in @gif inline bot. Only the legacy config#cc1a241e field
+        // carried this before, and the generated appConfig mentions the key in a comment without ever
+        // emitting it, so clients that read it from appConfig found nothing.
+        // See https://corefork.telegram.org/api/gifs#searching-gifs
+        SetConfig("gif_search_username", new TJsonString { Value = "gif" });
+
         // Affiliate Programs configuration
         SetConfig("starref_program_allowed", new TJsonBool { Value = true });
         SetConfig("starref_connect_allowed", new TJsonBool { Value = true });

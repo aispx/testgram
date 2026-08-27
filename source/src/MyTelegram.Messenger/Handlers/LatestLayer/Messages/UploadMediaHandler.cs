@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Dice;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Upload a file and associate it to a chat (without actually sending it to the chat)May also be used in a <a href="https://corefork.telegram.org/api/bots/connected-business-bots">business connection</a>, <em>not</em> by wrapping the query in <a href="https://corefork.telegram.org/method/invokeWithBusinessConnection">invokeWithBusinessConnection »</a>, but rather by specifying the business connection ID in the <code>business_connection_id</code> parameter.
@@ -27,16 +29,26 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class UploadMediaHandler(IMediaHelper mediaHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUploadMedia, MyTelegram.Schema.IMessageMedia>
+internal sealed class UploadMediaHandler(
+    IMediaHelper mediaHelper,
+    MyTelegram.Messenger.Services.Stickers.IAttachedStickerRecorder attachedStickerRecorder)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestUploadMedia, MyTelegram.Schema.IMessageMedia>
 {
     protected override async Task<IMessageMedia> HandleCoreAsync(IRequestInput input, RequestUploadMedia obj)
     {
+        // There is nothing to pre-upload for a dice, and answering with one would hand the client a value
+        // rolled before the message even exists.
+        DiceMediaGuard.ThrowIfDice(obj.Media);
+
         var media = await mediaHelper.SaveMediaAsync(obj.Media);
         if (media == null)
         {
             RpcErrors.RpcErrors400.MediaInvalid.ThrowRpcError();
         }
 
-        return media!;
+        // This method is how a client pre-uploads media it will send later, so the attached stickersets have
+        // to be recorded here too — the send call that follows references the media by id and no longer
+        // carries the sticker list.
+        return (await attachedStickerRecorder.ProcessAsync(obj.Media, media))!;
     }
 }

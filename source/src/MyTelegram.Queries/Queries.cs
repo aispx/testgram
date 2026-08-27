@@ -8,6 +8,14 @@ public record GetAllBlockedQuery(int Skip, int Limit) : IQuery<IReadOnlyCollecti
 
 public record GetAllDraftQuery(long OwnerPeerId) : IQuery<IReadOnlyCollection<IDraftReadModel>>;
 
+/// <summary>
+/// The drafts a user holds in one peer: the chat level one plus one per forum or monoforum topic.
+/// See https://corefork.telegram.org/api/drafts
+/// </summary>
+public record GetDraftListByPeerQuery(long OwnerPeerId, PeerType PeerType, long PeerId)
+    : IQuery<IReadOnlyCollection<IDraftReadModel>>;
+
+
 public record GetAllUserNameQuery(
     int Skip,
     int Limit) : IQuery<IReadOnlyCollection<IUserNameReadModel>>;

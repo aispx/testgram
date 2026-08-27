@@ -25,7 +25,8 @@ public class DraftReadModel : IDraftReadModel,
         IDomainEvent<DialogAggregate, DialogId, DraftSavedEvent> domainEvent,
         CancellationToken cancellationToken)
     {
-        Id = domainEvent.AggregateIdentity.Value;
+        // Not the aggregate id: there is one row per topic, so the id comes from the locator.
+        Id = context.ReadModelId;
         OwnerPeerId = domainEvent.AggregateEvent.OwnerPeerId;
         Peer = domainEvent.AggregateEvent.Peer;
         Draft = domainEvent.AggregateEvent.Draft;

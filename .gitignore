@@ -361,6 +361,10 @@ docker/compose/data/
 
 # Bot
 bot/codes.db
+# WAL sidecars of that database (the bot runs SQLite in WAL mode)
+bot/codes.db-shm
+bot/codes.db-wal
+bot/bot.log
 bot/.env
 
 # Local appsettings with custom IPs
@@ -375,6 +379,7 @@ server.log
 # Scripts - exclude private data
 scripts/*.session*
 scripts/*_manifest.json
+scripts/*.pem
 scripts/reactions_files/
 scripts/stickers/
 
@@ -411,3 +416,12 @@ telethon-testgram/
 
 # OMC (oh-my-claudecode) plugin per-session state — rewritten on every tool call
 .omc/
+
+# Working directories of the emoji seeders: downloaded sticker bodies and their manifests. Only the
+# scripts belong in the tree; the payloads are re-downloadable and run to tens of megabytes.
+emoji_categories/
+emoji_categories_manifest.json
+emoji_alts_manifest.json
+default_emoji_lists/
+default_emoji_lists_manifest.json
+emoji_sounds/

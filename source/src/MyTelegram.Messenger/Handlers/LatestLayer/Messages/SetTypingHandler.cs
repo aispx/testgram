@@ -1,3 +1,5 @@
+using MyTelegram.Messenger.Services.Emoji;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Sends a current user typing event (see <a href="https://corefork.telegram.org/type/SendMessageAction">SendMessageAction</a> for all event types) to a conversation partner or group.
@@ -24,7 +26,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SetTypingHandler(IPeerHelper peerHelper, IObjectMessageSender messageSender, IBlockCacheAppService blockCacheAppService, IChannelAppService channelAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSetTyping, IBool>
+internal sealed class SetTypingHandler(IPeerHelper peerHelper, IObjectMessageSender messageSender, IBlockCacheAppService blockCacheAppService, IChannelAppService channelAppService, IEmojiInteractionMsgIdMapper emojiInteractionMsgIdMapper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSetTyping, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestSetTyping obj)
     {
@@ -38,15 +40,25 @@ internal sealed class SetTypingHandler(IPeerHelper peerHelper, IObjectMessageSen
             case PeerType.Self:
                 break;
             case PeerType.User:
-                update = new TUpdateUserTyping
-                {
-                    Action = obj.Action,
-                    UserId = userId
-                };
                 if (await blockCacheAppService.IsBlockedAsync(peer.PeerId, userId))
                 {
                     return new TBoolTrue();
                 }
+
+                // An emoji interaction names a message by the clicking user's own id, and the two sides
+                // of a private chat number their messages separately, so it has to be translated.
+                // See https://corefork.telegram.org/api/animated-emojis#emoji-reactions
+                var action = await emojiInteractionMsgIdMapper.TranslateAsync(input, peer, obj.Action);
+                if (action == null)
+                {
+                    return new TBoolTrue();
+                }
+
+                update = new TUpdateUserTyping
+                {
+                    Action = action,
+                    UserId = userId
+                };
 
                 break;
             case PeerType.Chat:

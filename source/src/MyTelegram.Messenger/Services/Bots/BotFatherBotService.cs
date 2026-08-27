@@ -833,6 +833,14 @@ public class BotFatherBotService(
         => await mongoDatabase.GetCollection<BsonDocument>(BotCollection)
             .Find(new BsonDocument("OwnerId", fromUserId)).ToListAsync();
 
+    /// <summary>
+    /// The id for the next bot a user creates: one past the highest bot id in use.
+    ///
+    /// <para>The block reserved for the server's own bots (<c>@gif</c> and anything added later) is
+    /// excluded from both the search and the result. Without that exclusion the reserved ids would be
+    /// handed to user-created bots — and, since the next id is derived from the highest one in use, a
+    /// single system bot at the top would drag every later allocation into the reserved range.</para>
+    /// </summary>
     private async Task<long> GetNextUserIdAsync()
     {
         var filter = new BsonDocument
@@ -841,13 +849,21 @@ public class BotFatherBotService(
             { "UserId", new BsonDocument
                 {
                     { "$gte", MyTelegramConsts.BotUserInitId },
-                    { "$lt", MyTelegramConsts.ChatIdInitId }
+                    { "$lt", MyTelegramConsts.SystemBotUserIdBase }
                 }
             }
         };
         var last = await mongoDatabase.GetCollection<BsonDocument>("eventflow-userreadmodel")
             .Find(filter).Sort(new BsonDocument("UserId", -1)).Limit(1).FirstOrDefaultAsync();
-        return Math.Max(last?["UserId"].AsInt64 + 1 ?? MyTelegramConsts.BotUserInitId + 1, MyTelegramConsts.BotUserInitId + 1);
+        var next = Math.Max(last?["UserId"].AsInt64 + 1 ?? MyTelegramConsts.BotUserInitId + 1,
+            MyTelegramConsts.BotUserInitId + 1);
+
+        if (MyTelegramConsts.IsReservedSystemBotUserId(next))
+        {
+            next = MyTelegramConsts.SystemBotUserIdBase + MyTelegramConsts.SystemBotUserIdReservedCount;
+        }
+
+        return next;
     }
 
     private static string GenerateToken()

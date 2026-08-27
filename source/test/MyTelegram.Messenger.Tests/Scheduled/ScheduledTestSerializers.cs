@@ -1,20 +1,12 @@
-using Microsoft.Extensions.DependencyInjection;
-using MyTelegram.ReadModel.MongoDB;
-
 namespace MyTelegram.Messenger.Tests.Scheduled;
 
 /// <summary>
-/// Runs the same MongoDB serializer registration the servers run, once per test process: it is what
-/// teaches the driver to write the <c>_t</c> discriminators of the TL objects stored inside a queued
-/// message. Registering it twice throws, so every test class goes through this gate.
+/// Kept as a thin alias so the scheduled-message tests read as before; the gate itself is shared with
+/// every other test that needs the driver's discriminator conventions
+/// (see <see cref="MongoDbTestSerializers"/>). Registration is process-global, so there must be exactly
+/// one gate.
 /// </summary>
 internal static class ScheduledTestSerializers
 {
-    private static readonly Lazy<bool> Registered = new(() =>
-    {
-        new ServiceCollection().RegisterMongoDbSerializer();
-        return true;
-    });
-
-    public static void EnsureRegistered() => _ = Registered.Value;
+    public static void EnsureRegistered() => MongoDbTestSerializers.EnsureRegistered();
 }

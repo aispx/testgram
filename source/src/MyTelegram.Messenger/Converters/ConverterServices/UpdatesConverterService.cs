@@ -179,21 +179,28 @@ public class UpdatesConverterService(
         };
     }
 
-    public virtual IUpdates ToDraftsUpdates(IReadOnlyCollection<IDraftReadModel> draftReadModels, int layer)
+    public virtual IUpdates ToDraftsUpdates(IReadOnlyCollection<IDraftReadModel> draftReadModels,
+        int layer,
+        IEnumerable<IUser>? users = null,
+        IEnumerable<IChat>? chats = null)
     {
         var converter = draftMessageLayeredService.GetConverter(layer);
-        var draftUpdates = draftReadModels.Select(p => new TUpdateDraftMessage
-        {
-            Draft = converter.ToDraftMessage(p),
-            Peer = p.Peer.ToPeer(),
-            TopMsgId = p.Draft.TopMsgId
-        });
+        var draftUpdates = draftReadModels
+            // Drafts written before the saved event carried its peer: there is no peer to name them by.
+            .Where(p => p.Peer != null)
+            .Select(p => new TUpdateDraftMessage
+            {
+                Draft = converter.ToDraftMessage(p),
+                Peer = p.Peer.ToPeer(),
+                TopMsgId = p.Draft?.TopMsgId,
+                SavedPeerId = p.Draft?.SavedPeerId?.ToPeer()
+            });
 
         return new TUpdates
         {
-            Chats = [],
+            Chats = chats == null ? [] : [.. chats],
             Date = DateTime.UtcNow.ToTimestamp(),
-            Users = [],
+            Users = users == null ? [] : [.. users],
             Updates = [.. draftUpdates]
         };
     }

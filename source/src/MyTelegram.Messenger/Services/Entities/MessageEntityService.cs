@@ -10,11 +10,17 @@ public class MessageEntityService(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IUserAppService userAppService,
-    IQueryProcessor queryProcessor)
+    IQueryProcessor queryProcessor,
+    IAppConfigHelper appConfigHelper)
     : IMessageEntityService, ITransientDependency
 {
     /// <summary>How many hashtags of a text are indexed for search.</summary>
     private const int MaxIndexedHashtags = 10;
+
+    /// <summary>
+    /// Fallback for <c>message_animated_emoji_max</c>, matching the value this server advertises.
+    /// </summary>
+    private const int DefaultAnimatedEmojiMax = 100;
 
     public async Task<MessageEntityProcessingResult> ProcessAsync(
         string? text,
@@ -127,6 +133,20 @@ public class MessageEntityService(
         }
     }
 
+    /// <summary>
+    /// Resolves and sanity-checks <c>messageEntityCustomEmoji</c>.
+    ///
+    /// <para>An entity that does not wrap exactly the one emoji named by
+    /// <c>documentAttributeCustomEmoji.alt</c> is <b>ignored</b> - the entity is dropped and the
+    /// message goes out as text - because that is what
+    /// <a href="https://corefork.telegram.org/api/custom-emoji">the API documents</a>: "otherwise the
+    /// server will ignore it". Failing the whole send instead means a forward carrying a stale
+    /// document id, or a client whose sticker cache was cleared, cannot send at all.</para>
+    ///
+    /// <para>Where the same emoji exists in the referenced set under a different document, the id is
+    /// repointed rather than dropped, so a client that cached an older copy of the set still gets its
+    /// custom emoji.</para>
+    /// </summary>
     private async Task ProcessCustomEmojiAsync(string message, List<IMessageEntity> entities)
     {
         var customEmojiEntities = entities.OfType<TMessageEntityCustomEmoji>().ToList();
@@ -136,26 +156,27 @@ public class MessageEntityService(
         }
 
         var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var documentIds = customEmojiEntities.Select(x => x.DocumentId).Distinct().ToList();
-        var filter = Builders<BsonDocument>.Filter.In("DocumentId", documentIds.Select(x => (BsonValue)new BsonInt64(x)));
-        var documents = await docCol.Find(filter).ToListAsync();
+        var documentIds = customEmojiEntities
+            .Select(x => x.DocumentId)
+            .Where(x => x != 0)
+            .Distinct()
+            .ToList();
+        var documents = documentIds.Count == 0
+            ? []
+            : await docCol.Find(Builders<BsonDocument>.Filter.In("DocumentId",
+                documentIds.Select(x => (BsonValue)new BsonInt64(x)))).ToListAsync();
         var documentMap = documents.ToDictionary(x => x["DocumentId"].ToInt64());
 
         foreach (var entity in customEmojiEntities)
         {
-            if (!documentMap.TryGetValue(entity.DocumentId, out var document))
+            if (!documentMap.TryGetValue(entity.DocumentId, out var document) ||
+                !TryGetCustomEmojiAttributeForEntity(document, out var attribute))
             {
-                RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
-            }
-
-            if (!TryGetCustomEmojiAttributeForEntity(document!, out var attribute))
-            {
-                if (await TryDowngradeLegacyAnimatedEmojiEntityAsync(message, entities, entity))
-                {
-                    continue;
-                }
-
-                RpcErrors.RpcErrors400.DocumentInvalid.ThrowRpcError();
+                // No such document, or one that is not a custom emoji: among other things this is how
+                // an entity pointing into the legacy AnimatedEmojies set arrives, where the emoji is
+                // rendered from the plain text anyway.
+                entities.Remove(entity);
+                continue;
             }
 
             var text = message.Substring(entity.Offset, entity.Length);
@@ -171,43 +192,44 @@ public class MessageEntityService(
                 continue;
             }
 
-            RpcErrors.RpcErrors400.EmoticonInvalid.ThrowRpcError();
+            entities.Remove(entity);
         }
+
+        EnforceAnimatedEmojiLimit(entities);
     }
 
-    private async Task<bool> TryDowngradeLegacyAnimatedEmojiEntityAsync(
-        string message,
-        List<IMessageEntity> entities,
-        TMessageEntityCustomEmoji entity)
+    /// <summary>
+    /// Keeps at most <c>message_animated_emoji_max</c> custom emojis per message, dropping the rest.
+    ///
+    /// <para>The limit is advertised through <c>help.getAppConfig</c> and the API documents it as the
+    /// maximum that may be attached, but no client enforces it - neither tdlib nor Android reads the
+    /// field - so the server is the only place it can hold. Excess entities are dropped rather than
+    /// rejected, for the same reason a mismatched one is.</para>
+    ///
+    /// <para>With the numbers this server currently serves the check never fires: the advertised
+    /// maximum is 100 and <see cref="MessageEntityValidator.MaxEntities"/> already refuses more than
+    /// 100 entities of any kind. It binds as soon as either number moves, which is the point of
+    /// reading the limit instead of hardcoding it.</para>
+    /// </summary>
+    private void EnforceAnimatedEmojiLimit(List<IMessageEntity> entities)
     {
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
-        var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("ShortName", "AnimatedEmojies"))
-            .FirstOrDefaultAsync();
-        if (setDoc == null || !setDoc.Contains("Packs") || !setDoc["Packs"].IsBsonArray)
+        var limit = appConfigHelper.GetInt32Value("message_animated_emoji_max", DefaultAnimatedEmojiMax);
+        if (limit <= 0)
         {
-            return false;
+            return;
         }
 
-        var text = message.Substring(entity.Offset, entity.Length);
-        var belongsToLegacyAnimatedEmojiSet = setDoc["Packs"].AsBsonArray
-            .Where(x => x.IsBsonDocument)
-            .Select(x => x.AsBsonDocument)
-            .Any(x =>
-                x.Contains("Emoticon") &&
-                x["Emoticon"].IsString &&
-                IsSameEmoji(text, x["Emoticon"].AsString) &&
-                x.Contains("Documents") &&
-                x["Documents"].IsBsonArray &&
-                x["Documents"].AsBsonArray.Any(documentId => documentId.ToInt64() == entity.DocumentId));
-
-        if (!belongsToLegacyAnimatedEmojiSet)
+        var customEmojiEntities = entities.OfType<TMessageEntityCustomEmoji>().ToList();
+        if (customEmojiEntities.Count <= limit)
         {
-            return false;
+            return;
         }
 
-        entities.Remove(entity);
-
-        return true;
+        // Reading order, so the ones a user sees first are the ones that survive.
+        foreach (var entity in customEmojiEntities.OrderBy(x => x.Offset).Skip(limit))
+        {
+            entities.Remove(entity);
+        }
     }
 
     private async Task<long?> TryResolveReplacementCustomEmojiDocumentAsync(

@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Helpers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
@@ -15,7 +16,9 @@ internal sealed class GetSavedDialogsByIDHandler(
     IMessageAppService messageAppService,
     IGetHistoryConverterService getHistoryConverterService,
     IChannelAppService channelAppService,
+    IDraftConverterService draftConverterService,
     IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetSavedDialogsByID, MyTelegram.Schema.Messages.ISavedDialogs>
+
 {
     protected override async Task<MyTelegram.Schema.Messages.ISavedDialogs> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetSavedDialogsByID obj)
     {
@@ -77,6 +80,8 @@ internal sealed class GetSavedDialogsByIDHandler(
             input.UserId,
             topMessages.Select(p => p.SavedPeerId!));
         var messageCollection = mongoDatabase.GetCollection<BsonDocument>("eventflow-messagereadmodel");
+        var topicDrafts = await MonoForumDraftHelper.GetTopicDraftsAsync(queryProcessor, draftConverterService,
+            input.UserId, monoforumPeer.PeerId, input.Layer);
         var monoDialogs = new List<ISavedDialog>();
         foreach (var m in topMessages)
         {
@@ -98,7 +103,8 @@ internal sealed class GetSavedDialogsByIDHandler(
                 ReadOutboxMaxId = MonoForumTopicStateHelper.GetReadOutboxMaxId(state),
                 UnreadCount = unreadCount,
                 UnreadReactionsCount = 0,
-                UnreadMark = MonoForumTopicStateHelper.GetUnreadMark(state)
+                UnreadMark = MonoForumTopicStateHelper.GetUnreadMark(state),
+                Draft = topicDrafts.GetValueOrDefault(m.SavedPeerId!.PeerId)
             });
         }
 

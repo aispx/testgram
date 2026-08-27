@@ -20,10 +20,16 @@ public static class InlineResultConverter
     /// </summary>
     /// <param name="photo">Resolved photo for <c>inputBotInlineResultPhoto</c>, if the caller found one.</param>
     /// <param name="document">Resolved document for <c>inputBotInlineResultDocument</c>, if the caller found one.</param>
+    /// <param name="urlSigner">
+    /// Signs the URLs of web documents so they can be read back through <c>upload.getWebFile</c>. Without
+    /// one — or for a host this server will not fetch from — the media is emitted as
+    /// <c>webDocumentNoProxy</c>, which tells the client to fetch the URL itself.
+    /// </param>
     public static IBotInlineResult? ToBotInlineResult(
         IInputBotInlineResult input,
         IPhoto? photo = null,
-        IDocument? document = null)
+        IDocument? document = null,
+        WebFiles.IWebDocumentProxy? urlSigner = null)
     {
         switch (input)
         {
@@ -35,8 +41,8 @@ public static class InlineResultConverter
                     Title = generic.Title,
                     Description = generic.Description,
                     Url = generic.Url,
-                    Thumb = ToWebDocument(generic.Thumb),
-                    Content = ToWebDocument(generic.Content),
+                    Thumb = ToWebDocument(generic.Thumb, urlSigner),
+                    Content = ToWebDocument(generic.Content, urlSigner),
                     SendMessage = ToBotInlineMessage(generic.SendMessage)
                 };
 
@@ -190,14 +196,30 @@ public static class InlineResultConverter
         };
     }
 
-    private static IWebDocument? ToWebDocument(IInputWebDocument? input)
+    private static IWebDocument? ToWebDocument(IInputWebDocument? input,
+        WebFiles.IWebDocumentProxy? urlSigner)
     {
         if (input is not TInputWebDocument document)
         {
             return null;
         }
 
-        // The server does not proxy inline thumbnails, so the no-proxy variant is the honest one.
+        // Proxied whenever this server can serve the body: Telegram clients only render inline media
+        // that is a `webDocument` — Android's ContextLinkCell tests `instanceof TL_webDocument`, and
+        // `webDocumentNoProxy` is a sibling class, so a no-proxy result leaves an empty tile. The access
+        // hash is the signature that lets the URL back in through upload.getWebFile.
+        if (urlSigner != null && urlSigner.CanProxy(document.Url))
+        {
+            return new TWebDocument
+            {
+                Url = document.Url,
+                AccessHash = urlSigner.Sign(document.Url),
+                Size = document.Size,
+                MimeType = document.MimeType,
+                Attributes = document.Attributes
+            };
+        }
+
         return new TWebDocumentNoProxy
         {
             Url = document.Url,

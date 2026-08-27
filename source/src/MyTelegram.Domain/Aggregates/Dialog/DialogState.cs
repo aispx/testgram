@@ -35,6 +35,13 @@ public class DialogState : AggregateState<DialogAggregate, DialogId, DialogState
 {
     public int ChannelHistoryMinId { get; private set; }
     public Draft? Draft { get; private set; }
+
+    /// <summary>
+    /// The <see cref="DraftTopicKey"/>s of the topics that currently hold a draft. Only their presence
+    /// is tracked, not their contents: the state is read to decide whether a clear is worth an event,
+    /// and the drafts themselves live in the read models.
+    /// </summary>
+    public HashSet<string> TopicDraftKeys { get; private set; } = [];
     public int? FolderId { get; private set; }
     public long OwnerId { get; private set; }
     public bool Pinned { get; private set; }
@@ -87,14 +94,40 @@ public class DialogState : AggregateState<DialogAggregate, DialogId, DialogState
         ToPeer = aggregateEvent.ToPeer;
     }
 
+    /// <summary>Whether the chat, or one of its topics, currently holds a draft.</summary>
+    public bool HasDraft(string topicKey)
+    {
+        return DraftTopicKey.IsChatLevel(topicKey)
+            ? Draft != null
+            : TopicDraftKeys.Contains(topicKey);
+    }
+
     public void Apply(DraftClearedEvent aggregateEvent)
     {
-        Draft = null;
+        foreach (var topic in DraftTopicKey.OrChatLevel(aggregateEvent.Topics))
+        {
+            if (topic.IsChatLevel)
+            {
+                Draft = null;
+            }
+            else
+            {
+                TopicDraftKeys.Remove(topic.Key);
+            }
+        }
     }
 
     public void Apply(DraftSavedEvent aggregateEvent)
     {
-        Draft = aggregateEvent.Draft;
+        var topicKey = DraftTopicKey.Create(aggregateEvent.Draft);
+        if (DraftTopicKey.IsChatLevel(topicKey))
+        {
+            Draft = aggregateEvent.Draft;
+        }
+        else
+        {
+            TopicDraftKeys.Add(topicKey);
+        }
     }
 
     public void Apply(HistoryClearedEvent aggregateEvent)
@@ -236,6 +269,7 @@ public class DialogState : AggregateState<DialogAggregate, DialogId, DialogState
         Pinned = snapshot.Pinned;
         ChannelHistoryMinId = snapshot.ChannelHistoryMinId;
         Draft = snapshot.Draft;
+        TopicDraftKeys = snapshot.TopicDraftKeys == null ? [] : [.. snapshot.TopicDraftKeys];
         UnreadMentionsCount = snapshot.UnreadMentionsCount;
         UnreadReactionsCount = snapshot.UnreadReactionsCount;
         UnreadPollVotesCount = snapshot.UnreadPollVotesCount;

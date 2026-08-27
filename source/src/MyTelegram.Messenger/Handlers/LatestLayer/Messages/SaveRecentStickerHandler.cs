@@ -1,7 +1,7 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
+
 /// <summary>
 /// Add/remove sticker from recent stickers list
 /// Possible errors
@@ -12,63 +12,47 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SaveRecentStickerHandler(IMongoDatabase mongoDatabase) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSaveRecentSticker, IBool>
+internal sealed class SaveRecentStickerHandler(
+    IStickerDocumentListStore listStore,
+    IStickerDocumentValidator documentValidator,
+    IStickerLimitResolver limitResolver,
+    IStickerUpdateNotifier updateNotifier)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSaveRecentSticker, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSaveRecentSticker obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestSaveRecentSticker obj)
     {
-        if (obj.Id is not TInputDocument inputDoc)
+        if (obj.Id is not TInputDocument inputDocument)
         {
             RpcErrors.RpcErrors400.StickerIdInvalid.ThrowRpcError();
             return null!;
         }
 
-        var docCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var docExists = await docCol.Find(Builders<BsonDocument>.Filter.Eq("DocumentId", inputDoc.Id)).AnyAsync();
+        // attached picks the separate list of mask stickers used on photos; the two never mix.
+        var attached = obj.Attached;
 
-        if (!docExists)
+        if (obj.Unsave)
+        {
+            if (await listStore.RemoveAsync(StickerDocumentListKind.Recent, input.UserId, inputDocument.Id,
+                    attached))
+            {
+                await updateNotifier.NotifyRecentAsync(input.UserId, input.AuthKeyId);
+            }
+
+            return new TBoolTrue();
+        }
+
+        if (!await documentValidator.IsStickerAsync(inputDocument.Id))
         {
             RpcErrors.RpcErrors400.StickerIdInvalid.ThrowRpcError();
         }
 
-        var recentCol = mongoDatabase.GetCollection<BsonDocument>("recent_stickers");
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("DocumentId", inputDoc.Id),
-            Builders<BsonDocument>.Filter.Eq("Attached", obj.Attached)
-        );
+        // config.stickers_recent_limit, not a hardcoded 20: the client truncates to the advertised limit
+        // before hashing, and a list capped shorter than that means it never stops re-fetching.
+        await listStore.AddAsync(StickerDocumentListKind.Recent, input.UserId, inputDocument.Id, attached,
+            limitResolver.GetRecentLimit());
 
-        if (obj.Unsave)
-        {
-            // Remove from recent
-            await recentCol.DeleteOneAsync(filter);
-        }
-        else
-        {
-            // Add or update recent
-            var now = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var update = Builders<BsonDocument>.Update
-                .Set("UserId", input.UserId)
-                .Set("DocumentId", inputDoc.Id)
-                .Set("Attached", obj.Attached)
-                .Set("Date", now);
-
-            await recentCol.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
-
-            // Keep only last 20 recent stickers per user
-            var allRecent = await recentCol
-                .Find(Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-                    Builders<BsonDocument>.Filter.Eq("Attached", obj.Attached)
-                ))
-                .SortByDescending(x => x["Date"])
-                .ToListAsync();
-
-            if (allRecent.Count > 20)
-            {
-                var toDelete = allRecent.Skip(20).Select(d => d["_id"]).ToList();
-                await recentCol.DeleteManyAsync(Builders<BsonDocument>.Filter.In("_id", toDelete));
-            }
-        }
+        await updateNotifier.NotifyRecentAsync(input.UserId, input.AuthKeyId);
 
         return new TBoolTrue();
     }

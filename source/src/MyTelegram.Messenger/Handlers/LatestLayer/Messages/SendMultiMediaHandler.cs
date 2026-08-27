@@ -1,6 +1,7 @@
 using StackExchange.Redis;
 using MongoDB.Driver;
 using MyTelegram.Messenger.Handlers.LatestLayer.Payments;
+using MyTelegram.Messenger.Services.Dice;
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <summary>
 /// Send an <a href="https://corefork.telegram.org/api/files#albums-grouped-media">album or grouped media</a>
@@ -47,12 +48,20 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService, IMediaHelper mediaHelper, //IRequestCacheAppService requestCacheAppService,
- IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService, IUserAppService userAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
+ IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService, IUserAppService userAppService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor, MyTelegram.Messenger.Services.Stickers.ISentStickerProcessor sentStickerProcessor, MyTelegram.Messenger.Services.Stickers.IAttachedStickerRecorder attachedStickerRecorder) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
 {
     //private readonly IRequestCacheAppService _requestCacheAppService;
     //_requestCacheAppService = requestCacheAppService;
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMultiMedia obj)
     {
+        // A dice cannot be part of an album: TDLib's is_allowed_media_group_content is false for it, so no
+        // client groups one. Checked before anything is charged or written.
+        // See https://corefork.telegram.org/api/dice
+        foreach (var singleMedia in obj.MultiMedia)
+        {
+            DiceMediaGuard.ThrowIfDice(singleMedia.Media);
+        }
+
         var toPeerForPaid = peerHelper.GetPeer(obj.Peer, input.UserId);
         // Item 22: enforce blocklist for album/multimedia sends too. Without this guard
         // a blocked user could spam media albums while their text messages 403'd.
@@ -157,6 +166,12 @@ internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService
         foreach (var inputSingleMedia in obj.MultiMedia)
         {
             var media = await mediaHelper.SaveMediaAsync(inputSingleMedia.Media);
+
+            // Same GIF handling as the single-media path: convert to MPEG4 when needed and add the
+            // result to the sender's saved GIFs.
+            media = await sentGifProcessor.ProcessAsync(input, media);
+            media = await attachedStickerRecorder.ProcessAsync(inputSingleMedia.Media, media);
+            await sentStickerProcessor.ProcessAsync(input, media, obj.UpdateStickersetsOrder);
             var sendMessageInput = new SendMessageInput(requestInfo, input.UserId, peerHelper.GetPeer(obj.Peer, input.UserId), inputSingleMedia.Message, inputSingleMedia.RandomId, clearDraft: obj.ClearDraft, entities: inputSingleMedia.Entities, media: media, //replyToMsgId: replyToMsgId,
  inputReplyTo: obj.ReplyTo, sendMessageType: SendMessageType.Media, messageType: mediaHelper.GeMessageType(media), groupId: groupId, groupItemCount: groupItemCount, topMsgId: topMsgId, sendAs: sendAs, effect: effect, inputQuickReplyShortcut: obj.QuickReplyShortcut, isSendGroupedMessage: true, silent: obj.Silent, scheduleDate: obj.ScheduleDate, invertMedia: obj.InvertMedia, paidMessageStars: paidMessageStars, savedPeerId: savedPeerId, noForwards: obj.Noforwards);
             inputs.Add(sendMessageInput);

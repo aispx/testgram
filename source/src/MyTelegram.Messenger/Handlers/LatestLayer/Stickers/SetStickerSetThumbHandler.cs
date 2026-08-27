@@ -1,104 +1,37 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
-using MyTelegram.Schema;
-using MyTelegram.Schema.Messages;
-using MyTelegram.Schema.Stickers;
-using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
 
+/// <summary>
+/// Set stickerset thumbnail
+/// Possible errors
+/// Code Type Description
+/// 400 STICKERSET_INVALID The provided sticker set is invalid.
+/// <para><c>See <a href="https://corefork.telegram.org/method/stickers.setStickerSetThumb"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✔] [Anonymous ✖]
+/// </remarks>
 internal sealed class SetStickerSetThumbHandler(
-    IMongoDatabase mongoDatabase,
-    ILogger<SetStickerSetThumbHandler> logger) : RpcResultObjectHandler<Schema.Stickers.RequestSetStickerSetThumb, Schema.Messages.IStickerSet>
+    IOwnedStickerSetResolver ownedStickerSetResolver,
+    IStickerSetEditor stickerSetEditor,
+    IStickerSetMapper stickerSetMapper)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestSetStickerSetThumb,
+        MyTelegram.Schema.Messages.IStickerSet>
 {
-    protected override async Task<Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input, Schema.Stickers.RequestSetStickerSetThumb obj)
+    protected override async Task<MyTelegram.Schema.Messages.IStickerSet> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Stickers.RequestSetStickerSetThumb obj)
     {
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
+        var setDocument = await ownedStickerSetResolver.ResolveAsync(input, obj.Stickerset);
 
-        BsonDocument? setDoc = null;
-        
-        if (obj.Stickerset is TInputStickerSetID setById)
-        {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", setById.Id)).FirstOrDefaultAsync();
-        }
-        else if (obj.Stickerset is TInputStickerSetShortName shortNameSet)
-        {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("ShortName", shortNameSet.ShortName)).FirstOrDefaultAsync();
-            if (setDoc == null)
-            {
-                setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("Slug", shortNameSet.ShortName)).FirstOrDefaultAsync();
-            }
-        }
+        // Either form names a document already in the set; thumb_document_id is what custom emoji sets use,
+        // where the thumbnail is one of the emoji rather than a separately uploaded image.
+        var thumbDocumentId = obj.Thumb is TInputDocument inputDocument
+            ? inputDocument.Id
+            : obj.ThumbDocumentId;
 
-        if (setDoc == null)
-        {
-            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
-        }
+        await stickerSetEditor.SetThumbAsync(setDocument, thumbDocumentId);
 
-        var setId = GetInt64(setDoc["StickerSetId"]);
-
-        // Check if user is the creator of the sticker set
-        var creatorUserId = setDoc.Contains("CreatorUserId") ? GetInt64(setDoc["CreatorUserId"]) : 0;
-        if (creatorUserId != input.UserId)
-        {
-            logger.LogWarning("User {UserId} tried to set thumb for set {SetId} created by {CreatorUserId}",
-                input.UserId, setId, creatorUserId);
-            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
-        }
-
-        var accessHash = GetInt64(setDoc["AccessHash"]);
-        var title = setDoc["Title"].AsString;
-        var shortName = setDoc.Contains("ShortName") ? setDoc["ShortName"].AsString : setDoc["Slug"].AsString;
-        var count = GetInt32(setDoc["Count"]);
-        
-        if (obj.Thumb != null)
-        {
-            if (obj.Thumb is TInputDocument inputDoc)
-            {
-                setDoc["ThumbId"] = inputDoc.Id;
-                logger.LogInformation("Set thumb {ThumbId} for sticker set {SetId}", inputDoc.Id, setId);
-            }
-        }
-        else if (obj.ThumbDocumentId != 0)
-        {
-            setDoc["ThumbId"] = obj.ThumbDocumentId;
-            logger.LogInformation("Set thumb {ThumbId} for sticker set {SetId}", obj.ThumbDocumentId, setId);
-        }
-
-        await setCol.ReplaceOneAsync(
-            Builders<BsonDocument>.Filter.Eq("StickerSetId", setId),
-            setDoc);
-
-        return new TStickerSet
-        {
-            Set = new Schema.TStickerSet
-            {
-                Id = setId,
-                AccessHash = accessHash,
-                Title = title,
-                ShortName = shortName,
-                Count = count,
-                Hash = 0
-            },
-            Packs = new TVector<IStickerPack>(),
-            Documents = new TVector<IDocument>(),
-            Keywords = new TVector<IStickerKeyword>()
-        };
+        return await stickerSetMapper.BuildFullAsync(input, setDocument);
     }
-
-    private static long GetInt64(BsonValue v) => v.BsonType switch
-    {
-        BsonType.Int64 => v.AsInt64,
-        BsonType.Int32 => v.AsInt32,
-        BsonType.Double => (long)v.AsDouble,
-        _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int64")
-    };
-
-    private static int GetInt32(BsonValue v) => v.BsonType switch
-    {
-        BsonType.Int32 => v.AsInt32,
-        BsonType.Int64 => (int)v.AsInt64,
-        BsonType.Double => (int)v.AsDouble,
-        _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int32")
-    };
 }

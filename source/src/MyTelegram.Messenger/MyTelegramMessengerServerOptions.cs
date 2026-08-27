@@ -67,6 +67,82 @@ public class MyTelegramMessengerServerOptions
     public HistoryImportConfig HistoryImport { get; set; } = new();
     public PassportConfig Passport { get; set; } = new();
     public PaymentsConfig Payments { get; set; } = new();
+    public GifsConfig Gifs { get; set; } = new();
+    public WebFilesConfig WebFiles { get; set; } = new();
+}
+
+/// <summary>
+/// Web files this server fetches on a client's behalf for <c>upload.getWebFile</c> — the bodies behind a
+/// proxied <c>webDocument</c>, which is how the previews of a GIF search reach the client.
+/// See https://corefork.telegram.org/method/upload.getWebFile
+/// </summary>
+public class WebFilesConfig
+{
+    /// <summary>
+    /// Hosts that may be fetched, matched on the host itself or any subdomain of it. A URL still has to
+    /// carry the signature this server issued, so this is a second fence rather than the only one.
+    /// Tenor serves its renditions from <c>media.tenor.com</c> and its numbered siblings.
+    /// </summary>
+    public List<string> AllowedHosts { get; set; } = ["tenor.com", "tenorapi.com", "googleusercontent.com"];
+
+    /// <summary>
+    /// Largest body that will be proxied. A GIF preview is tens of kilobytes. The cache keeps a body in
+    /// one document, and BSON caps a document at 16 MB, so this stays well under that.
+    /// </summary>
+    public long MaxBytes { get; set; } = 8L * 1024 * 1024;
+
+    /// <summary>How long a fetched body is kept, so reading it in slices costs one download.</summary>
+    public int CacheSeconds { get; set; } = 3600;
+
+    public int TimeoutSeconds { get; set; } = 15;
+}
+
+/// <summary>
+/// GIF search, served by the built-in <c>@gif</c> inline bot named by
+/// <c>config.gif_search_username</c>. Results come from the GIFs already stored on this server plus,
+/// when enabled, Tenor.
+/// See https://corefork.telegram.org/api/gifs#searching-gifs
+/// </summary>
+public class GifsConfig
+{
+    /// <summary>How many results one inline query answers with. Telegram caps a page at 50.</summary>
+    [Range(1, 50)]
+    public int ResultLimit { get; set; } = 30;
+
+    /// <summary>
+    /// How many of the results may come from this server's own GIFs, so a searched-for term still
+    /// mostly returns Tenor matches rather than being crowded out by locally stored files.
+    /// </summary>
+    [Range(0, 50)]
+    public int LocalResultLimit { get; set; } = 6;
+
+    /// <summary>
+    /// How long clients may cache an answer, in seconds — echoed back in <c>botResults.cache_time</c>.
+    /// </summary>
+    public int CacheTimeSeconds { get; set; } = 300;
+
+    public TenorConfig Tenor { get; set; } = new();
+}
+
+/// <summary>
+/// Tenor is the provider Telegram itself credits through <c>appConfig.gif_search_branding</c>.
+/// The default key is the public gboard client key; a deployment may swap it or switch Tenor off
+/// entirely, in which case GIF search answers from this server's own GIFs alone.
+/// </summary>
+public class TenorConfig
+{
+    public bool Enabled { get; set; } = true;
+
+    public string ApiKey { get; set; } = "AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCYQ";
+
+    public string ClientKey { get; set; } = "gboard";
+
+    public string BaseUrl { get; set; } = "https://tenor.googleapis.com/v2";
+
+    /// <summary><c>off</c>, <c>low</c>, <c>medium</c> or <c>high</c>, as Tenor defines them.</summary>
+    public string ContentFilter { get; set; } = "medium";
+
+    public int TimeoutSeconds { get; set; } = 10;
 }
 
 /// <summary>

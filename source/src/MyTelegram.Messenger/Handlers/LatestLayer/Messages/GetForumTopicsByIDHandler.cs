@@ -16,7 +16,10 @@ internal sealed class GetForumTopicsByIDHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IChannelAppService channelAppService,
-    IMentionReadStateService mentionReadStateService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopicsByID, MyTelegram.Schema.Messages.IForumTopics>
+    IMentionReadStateService mentionReadStateService,
+    IQueryProcessor queryProcessor,
+    IDraftConverterService draftConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopicsByID, MyTelegram.Schema.Messages.IForumTopics>
+
 {
     protected override async Task<MyTelegram.Schema.Messages.IForumTopics> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestGetForumTopicsByID obj)
     {
@@ -44,6 +47,8 @@ internal sealed class GetForumTopicsByIDHandler(
         var byId = topicDocs.ToDictionary(d => d["TopicId"].AsInt32);
 
         var mentionCounts = await mentionReadStateService.GetTopicMentionCountsAsync(input.UserId, peer);
+        var topicDrafts = await ForumTopicHelper.GetTopicDraftsAsync(queryProcessor, draftConverterService,
+            input.UserId, channelId, input.Layer);
 
         var topics = new TVector<IForumTopic>();
         var messages = new TVector<IMessage>();
@@ -53,7 +58,8 @@ internal sealed class GetForumTopicsByIDHandler(
             if (byId.TryGetValue(topicId, out var doc))
             {
                 mentionCounts.TryGetValue(topicId, out var unreadMentionsCount);
-                topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId, unreadMentionsCount));
+                topicDrafts.TryGetValue(topicId, out var draft);
+                topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId, unreadMentionsCount, draft));
             }
         }
 

@@ -1,38 +1,28 @@
+using MyTelegram.Services.Services;
+
 namespace MyTelegram.SmsSender;
 
-public class TelegramBotSmsOptions
+/// <summary>
+/// Delivers a login code through the Telegram bot by queueing it (see <see cref="IBotCodeQueue"/>),
+/// instead of the HTTP POST to the bot's own port this used to do.
+/// </summary>
+public class TelegramBotSmsSender(IBotCodeQueue botCodeQueue) : ISmsSender
 {
-    public string SenderApiUrl { get; set; } = "http://127.0.0.1:5005/send";
-    public bool Enabled { get; set; } = true;
-}
+    public bool Enabled => botCodeQueue.Enabled;
 
-public class TelegramBotSmsSender(
-    IOptions<TelegramBotSmsOptions> options,
-    ILogger<TelegramBotSmsSender> logger) : ISmsSender
-{
-    private static readonly HttpClient _http = new();
-
-    public bool Enabled => options.Value.Enabled;
-
-    public async Task SendAsync(SmsMessage smsMessage)
+    public Task SendAsync(SmsMessage smsMessage)
     {
-        var text = smsMessage.Text;
-        var code = System.Text.RegularExpressions.Regex.Match(text, @"\d{4,8}$").Value;
-        if (string.IsNullOrEmpty(code)) code = text;
+        // The code and its expiry come as properties: an SMS needs the whole sentence, the bot needs the
+        // bare code, and digging it back out of the text with a regular expression was one formatting
+        // change away from sending the wrong thing.
+        var code = GetProperty(smsMessage, "code") ?? smsMessage.Text;
+        var expire = long.TryParse(GetProperty(smsMessage, "expire"), out var parsed) ? parsed : (long?)null;
 
-        try
-        {
-            var response = await _http.PostAsJsonAsync(options.Value.SenderApiUrl, new
-            {
-                phone = smsMessage.PhoneNumber,
-                code
-            });
-            if (!response.IsSuccessStatusCode)
-                logger.LogWarning("TelegramBotSmsSender: {Status}", response.StatusCode);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "TelegramBotSmsSender failed for {Phone}", smsMessage.PhoneNumber);
-        }
+        return botCodeQueue.PublishAsync(smsMessage.PhoneNumber, code, expire);
+    }
+
+    private static string? GetProperty(SmsMessage smsMessage, string name)
+    {
+        return smsMessage.Properties.TryGetValue(name, out var value) ? value?.ToString() : null;
     }
 }

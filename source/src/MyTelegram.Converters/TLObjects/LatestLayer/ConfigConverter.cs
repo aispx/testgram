@@ -19,7 +19,13 @@ internal sealed class ConfigConverter(IObjectMapper objectMapper) : IConfigConve
 
             //PhonecallsEnabled = true,
             DefaultP2pContacts = true,
-            //PreloadFeaturedStickers = true,
+            // preload_featured_stickers stays off, exactly as real Telegram serves it (measured). It asks the
+            // client to load the full sets behind the trending list on startup, and Android implements that by
+            // calling loadStickers(TYPE_FEATURED_EMOJIPACKS = 6) for the custom-emoji taxonomy — an index into
+            // MediaDataController.stickerSets, which only has six slots (0..5). So a non-empty
+            // messages.getFeaturedEmojiStickers plus this flag is a guaranteed
+            // ArrayIndexOutOfBoundsException: length=6; index=6 on the UI thread at startup, i.e. a crash loop.
+            // See https://corefork.telegram.org/api/stickers#featured-stickersets
             //IgnorePhoneEntities = false,
             RevokePmInbox = true,
             BlockedMode = false,

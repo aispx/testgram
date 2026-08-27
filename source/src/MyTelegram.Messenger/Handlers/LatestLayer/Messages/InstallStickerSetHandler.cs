@@ -1,127 +1,66 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stickers;
 using MyTelegram.Schema.Messages;
-using TStickerSet = MyTelegram.Schema.Messages.TStickerSet;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 
+/// <summary>
+/// Install a stickerset.
+/// Possible errors
+/// Code Type Description
+/// 400 STICKERSET_INVALID The provided sticker set is invalid.
+/// <para><c>See <a href="https://corefork.telegram.org/method/messages.installStickerSet"/> </c></para>
+/// </summary>
+/// <remarks>
+/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+/// </remarks>
 internal sealed class InstallStickerSetHandler(
-    IMongoDatabase mongoDatabase,
-    ILogger<InstallStickerSetHandler> logger) : RpcResultObjectHandler<RequestInstallStickerSet, IStickerSetInstallResult>
+    IStickerSetStore stickerSetStore,
+    IInstalledStickerSetStore installedStickerSetStore,
+    IStickerSetMapper stickerSetMapper,
+    IStickerLimitResolver limitResolver,
+    IStickerUpdateNotifier updateNotifier)
+    : RpcResultObjectHandler<RequestInstallStickerSet, IStickerSetInstallResult>
 {
-    private static readonly Dictionary<string, string> DiceSlugMap = new()
+    protected override async Task<IStickerSetInstallResult> HandleCoreAsync(IRequestInput input,
+        RequestInstallStickerSet obj)
     {
-        ["🎲"] = "AnimatedDice2",
-        ["🎯"] = "AnimatedDart",
-        ["🏀"] = "AnimatedBasketball",
-        ["⚽"] = "AnimatedPenalty",
-        ["⚽️"] = "AnimatedPenalty",
-        ["🎰"] = "SlotMachineAnimated",
-        ["🎳"] = "AnimatedBowling",
-    };
-
-    private static readonly Dictionary<Type, string> SpecialSetSlugMap = new()
-    {
-        [typeof(TInputStickerSetAnimatedEmoji)] = "AnimatedEmojies",
-        [typeof(TInputStickerSetAnimatedEmojiAnimations)] = "EmojiAnimations",
-        [typeof(TInputStickerSetPremiumGifts)] = "GiftsPremium",
-        [typeof(TInputStickerSetEmojiGenericAnimations)] = "EmojiGenericAnimations",
-        [typeof(TInputStickerSetEmojiDefaultStatuses)] = "StatusPack",
-        [typeof(TInputStickerSetEmojiDefaultTopicIcons)] = "Topics",
-        [typeof(TInputStickerSetEmojiChannelDefaultStatuses)] = "StatusPack",
-    };
-
-    protected override async Task<IStickerSetInstallResult> HandleCoreAsync(IRequestInput input, RequestInstallStickerSet obj)
-    {
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
-        BsonDocument? setDoc = null;
-
-        if (obj.Stickerset is TInputStickerSetDice dice)
+        var lookup = await stickerSetStore.FindAsync(obj.Stickerset);
+        if (lookup.Set == null)
         {
-            var slug = DiceSlugMap.GetValueOrDefault(dice.Emoticon) ?? "";
-            setDoc = await FindSetBySlugAsync(setCol, slug);
-        }
-        else if (SpecialSetSlugMap.TryGetValue(obj.Stickerset.GetType(), out var slug))
-        {
-            setDoc = await FindSetBySlugAsync(setCol, slug);
-        }
-        else if (obj.Stickerset is TInputStickerSetID setById)
-        {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", setById.Id)).FirstOrDefaultAsync();
-        }
-        else if (obj.Stickerset is TInputStickerSetShortName shortNameSet)
-        {
-            setDoc = await FindSetBySlugAsync(setCol, shortNameSet.ShortName);
-        }
-
-        if (setDoc == null)
-        {
-            logger.LogWarning("Stickerset not found for install");
             RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
         }
 
-        var setId = GetInt64(setDoc["StickerSetId"]);
-        var setAccessHash = GetInt64(setDoc["AccessHash"]);
+        var setDocument = lookup.Set!;
+        var setId = setDocument.GetInt64("StickerSetId");
+        var type = stickerSetStore.GetStickerSetType(setDocument);
 
-        var userSetCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-userinstalledstickersetreadmodel");
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("StickerSetId", setId)
-        );
+        // Installing a set the user already has, with archived unset, is how clients un-archive it — the
+        // store rewrites Archived either way and moves the set back to the front.
+        await installedStickerSetStore.InstallAsync(input.UserId, setId, type, obj.Archived);
 
-        var existing = await userSetCol.Find(filter).FirstOrDefaultAsync();
-        if (existing == null)
+        var stickerSet = await stickerSetMapper.BuildFullAsync(input, setDocument, lookup.Emoticon);
+
+        await updateNotifier.NotifyNewStickerSetAsync(input.UserId, stickerSet, input.AuthKeyId);
+        await updateNotifier.NotifyStickerSetsAsync(input.UserId, type, input.AuthKeyId);
+
+        if (obj.Archived)
         {
-            var userSetId = ObjectId.GenerateNewId();
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            
-            await userSetCol.InsertOneAsync(new BsonDocument
-            {
-                ["_id"] = userSetId.ToString(),
-                ["Id"] = userSetId.ToString(),
-                ["UserId"] = input.UserId,
-                ["StickerSetId"] = setId,
-                ["AccessHash"] = setAccessHash,
-                ["ShortName"] = setDoc["ShortName"].AsString,
-                ["Title"] = setDoc["Title"].AsString,
-                ["Archived"] = obj.Archived,
-                ["InstalledAt"] = now,
-                ["Version"] = 1
-            });
-
-            logger.LogInformation("User {UserId} installed sticker set {SetId} ({ShortName})", 
-                input.UserId, setId, setDoc["ShortName"].AsString);
-        }
-        else if (obj.Archived)
-        {
-            await userSetCol.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Set("Archived", true));
-            logger.LogInformation("User {UserId} archived sticker set {SetId}", input.UserId, setId);
+            return new TStickerSetInstallResultSuccess();
         }
 
-        return new TStickerSetInstallResultSuccess();
-    }
-
-    private async Task<BsonDocument?> FindSetBySlugAsync(IMongoCollection<BsonDocument> setCol, string slug)
-    {
-        if (string.IsNullOrEmpty(slug))
-            return null;
-
-        var setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("Slug", slug)).FirstOrDefaultAsync();
-        if (setDoc == null)
+        // Past the limit the server archives the least recently used sets and says so, rather than
+        // refusing the install. Clients show the returned covers in an "archived stickers" popup.
+        var archived = await installedStickerSetStore.ArchiveOverflowAsync(input.UserId, type,
+            limitResolver.GetInstalledLimit());
+        if (archived.Count == 0)
         {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("ShortName", slug)).FirstOrDefaultAsync();
+            return new TStickerSetInstallResultSuccess();
         }
-        return setDoc;
-    }
 
-    private static long GetInt64(BsonValue v)
-    {
-        return v.BsonType switch
-        {
-            BsonType.Int64 => v.AsInt64,
-            BsonType.Int32 => v.AsInt32,
-            BsonType.Double => (long)v.AsDouble,
-            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int64")
-        };
+        var archivedCatalogue = await stickerSetStore.FindManyAsync(archived);
+        var covered = await stickerSetMapper.BuildCoveredAsync(input,
+            archived.Where(archivedCatalogue.ContainsKey).Select(p => archivedCatalogue[p]).ToList(), false);
+
+        return new TStickerSetInstallResultArchive { Sets = new TVector<IStickerSetCovered>(covered) };
     }
 }

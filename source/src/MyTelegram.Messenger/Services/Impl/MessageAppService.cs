@@ -350,9 +350,9 @@ public class MessageAppService(
         {
             var command = new StartSendMessageCommand(TempId.New, requestInfo,
                 sendMessageItems,
-                firstInput.ClearDraft,
-                firstInput.IsSendGroupedMessage,
-                firstInput.IsSendQuickReplyMessage);
+                isSendQuickReplyMessages: firstInput.IsSendQuickReplyMessage,
+                isSendGroupedMessages: firstInput.IsSendGroupedMessage,
+                clearDraft: firstInput.ClearDraft);
 
             await commandBus.PublishAsync(command);
         }
@@ -528,15 +528,21 @@ public class MessageAppService(
     /// is allowed. Media without a right of its own (contacts, geo, venues, web pages) is only
     /// governed by <c>send_media</c>, which the caller has already checked.
     /// </summary>
-    private static RpcError? GetMediaBannedRightsError(IMessageMedia media, ChatBannedRights bannedRights)
+    internal static RpcError? GetMediaBannedRightsError(IMessageMedia media, ChatBannedRights bannedRights)
     {
         return media switch
         {
             TMessageMediaPhoto or TMessageMediaPaidMedia =>
                 bannedRights.SendPhotos ? RpcErrors.RpcErrors403.ChatSendPhotosForbidden : null,
             TMessageMediaDocument document => GetDocumentBannedRightsError(document, bannedRights),
-            TMessageMediaGame or TMessageMediaDice =>
+            TMessageMediaGame =>
                 bannedRights.SendGames ? RpcErrors.RpcErrors403.ChatSendGameForbidden : null,
+            // A dice is governed by send_stickers, not send_games, however much it looks like a game:
+            // TDLib refuses it with "Not enough rights to send dice to the chat" under can_send_stickers
+            // (MessageContent.cpp), and Android gates the send on canSendStickers (SendMessagesHelper).
+            // Under send_games a client would offer a dice the server then refuses, and vice versa.
+            TMessageMediaDice =>
+                bannedRights.SendStickers ? RpcErrors.RpcErrors403.ChatSendStickersForbidden : null,
             _ => null
         };
     }

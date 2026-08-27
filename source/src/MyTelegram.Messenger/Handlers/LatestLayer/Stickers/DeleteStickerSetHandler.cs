@@ -1,7 +1,7 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Stickers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
+
 /// <summary>
 /// Deletes a stickerset we created.
 /// Possible errors
@@ -13,64 +13,29 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stickers;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class DeleteStickerSetHandler(
-    IMongoDatabase mongoDatabase,
-    ILogger<DeleteStickerSetHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestDeleteStickerSet, IBool>
+    IOwnedStickerSetResolver ownedStickerSetResolver,
+    IStickerSetStore stickerSetStore,
+    IInstalledStickerSetStore installedStickerSetStore,
+    IStickerUpdateNotifier updateNotifier,
+    ILogger<DeleteStickerSetHandler> logger)
+    : RpcResultObjectHandler<MyTelegram.Schema.Stickers.RequestDeleteStickerSet, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Stickers.RequestDeleteStickerSet obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Stickers.RequestDeleteStickerSet obj)
     {
-        var setCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-stickersetreadmodel");
-        var userSetCol = mongoDatabase.GetCollection<BsonDocument>("eventflow-userinstalledstickersetreadmodel");
+        var setDocument = await ownedStickerSetResolver.ResolveAsync(input, obj.Stickerset);
+        var setId = setDocument.GetInt64("StickerSetId");
+        var type = stickerSetStore.GetStickerSetType(setDocument);
 
-        BsonDocument? setDoc = null;
+        await stickerSetStore.DeleteAsync(setId);
 
-        if (obj.Stickerset is TInputStickerSetID setById)
-        {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("StickerSetId", setById.Id)).FirstOrDefaultAsync();
-        }
-        else if (obj.Stickerset is TInputStickerSetShortName shortNameSet)
-        {
-            setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("ShortName", shortNameSet.ShortName)).FirstOrDefaultAsync();
-            if (setDoc == null)
-            {
-                setDoc = await setCol.Find(Builders<BsonDocument>.Filter.Eq("Slug", shortNameSet.ShortName)).FirstOrDefaultAsync();
-            }
-        }
-
-        if (setDoc == null)
-        {
-            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
-        }
-
-        var setId = GetInt64(setDoc["StickerSetId"]);
-
-        // Check if user is the creator of the sticker set
-        var creatorUserId = setDoc.Contains("CreatorUserId") ? GetInt64(setDoc["CreatorUserId"]) : 0;
-        if (creatorUserId != input.UserId)
-        {
-            logger.LogWarning("User {UserId} tried to delete set {SetId} created by {CreatorUserId}",
-                input.UserId, setId, creatorUserId);
-            RpcErrors.RpcErrors400.StickersetInvalid.ThrowRpcError();
-        }
-
-        // Delete from main collection
-        await setCol.DeleteOneAsync(Builders<BsonDocument>.Filter.Eq("StickerSetId", setId));
-
-        // Delete from user installed sets
-        await userSetCol.DeleteManyAsync(Builders<BsonDocument>.Filter.Eq("StickerSetId", setId));
+        // Everyone who had it installed loses it, not just the creator.
+        await installedStickerSetStore.RemoveForAllUsersAsync(setId);
 
         logger.LogInformation("Deleted sticker set {SetId} by user {UserId}", setId, input.UserId);
 
-        return new TBoolTrue();
-    }
+        await updateNotifier.NotifyStickerSetsAsync(input.UserId, type, input.AuthKeyId);
 
-    private static long GetInt64(BsonValue v)
-    {
-        return v.BsonType switch
-        {
-            BsonType.Int64 => v.AsInt64,
-            BsonType.Int32 => v.AsInt32,
-            BsonType.Double => (long)v.AsDouble,
-            _ => throw new InvalidCastException($"Cannot convert {v.BsonType} to Int64")
-        };
+        return new TBoolTrue();
     }
 }

@@ -66,9 +66,11 @@ def to_int64(v):
 
 
 def build_input_stickerset_id(set_id: int, set_access_hash: int) -> Dict[str, Any]:
+    # "_id", not "Id" — see the same note in seed_stickers.py: the C# driver reads a nested TL object's
+    # Id member from the _id element, and the other spelling silently yields id 0.
     return {
         "_t": "TInputStickerSetID",
-        "Id": set_id,
+        "_id": set_id,
         "AccessHash": set_access_hash,
     }
 
