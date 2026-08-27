@@ -350,9 +350,9 @@ public class MessageAppService(
         {
             var command = new StartSendMessageCommand(TempId.New, requestInfo,
                 sendMessageItems,
-                firstInput.ClearDraft,
-                firstInput.IsSendGroupedMessage,
-                firstInput.IsSendQuickReplyMessage);
+                isSendQuickReplyMessages: firstInput.IsSendQuickReplyMessage,
+                isSendGroupedMessages: firstInput.IsSendGroupedMessage,
+                clearDraft: firstInput.ClearDraft);
 
             await commandBus.PublishAsync(command);
         }

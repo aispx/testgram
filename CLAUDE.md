@@ -782,6 +782,74 @@ See https://corefork.telegram.org/api/custom-emoji
 
 ---
 
+## Message drafts
+
+A draft is stored on `DialogAggregate` (`DraftSavedEvent` / `DraftClearedEvent`) and read back from
+`DraftReadModel` (`getAllDrafts`, `forumTopic.draft`, `monoForumDialog.draft`) and `DialogReadModel`
+(`dialog.draft`). Everything else is `SaveDraftHandler`, `ClearAllDraftsHandler` and
+`DraftDomainEventHandler`.
+
+* **`updateDraftMessage` is not optional.** Syncing drafts between devices is the whole point, and
+  nothing else does it: Android asks for the full list exactly once per account
+  (`UserConfig.draftsLoaded` is persisted forever), and tdlib's `clear_all_draft_messages` drops only
+  *secret chat* drafts locally — for every cloud dialog it waits for the server to send
+  `draftMessageEmpty`. Push through `DomainEventHandlerBase.PushMessageToPeerAsync` rather than
+  `IObjectMessageSender` directly, so the update is stored with a `globalSeqNo` and a session that was
+  offline still gets it from `updates.getDifference`; `updateDraftMessage` carries no `pts`. The
+  originating session is excluded — it applied the draft locally and an echo rewrites the text the user
+  is typing (Android posts `newDraftReceived`).
+* **The peers travel with the updates.** tdlib feeds `getAllDrafts` into its update manager and repairs
+  a draft for a dialog it does not know with `getPeerDialogs`, but only when it has read access to the
+  peer (`MessagesManager::on_update_dialog_draft_message`) — that is, only when the user or channel came
+  with the answer. `PeerType.Self` is a user too; filtering on `PeerType.User` alone leaves the Saved
+  Messages draft unnamed.
+* **An empty `saveDraft` is a clear, not an empty draft.** That is how every client drops a cloud draft
+  (tdlib `SaveDraftMessageQuery`, Android `MediaDataController.saveDraft`). Empty means: no text, no
+  media, no reply target and no `suggested_post`; an `effect` alone is not a draft. A reply with no text
+  *is* a draft.
+* **`reply_to` carries three unrelated things**: the message being replied to, the forum topic
+  (`top_msg_id`) and the monoforum topic (`monoforum_peer_id`). A `reply_to_msg_id` of 0 is **not** a
+  reply — tdlib clears a topic draft by sending exactly that, so treating it as one stores a draft that
+  can never be cleared again.
+* **One draft per topic** (`DraftTopicKey`): the chat level draft keeps the bare `DialogId` as its read
+  model id, a topic draft gets `_t{topMsgId}` / `_m{savedPeerId}`. Clients read which one an update is
+  about from `top_msg_id` / `saved_peer_id`; tdesktop sends `top_msg_id` for topic drafts
+  (`Data::ReplyToForMTP`), Android does not, so a topic draft written from Android is a chat level draft.
+* **The owner and the peer come from the command, never from `_state`.** Typing into a chat you have
+  never messaged is a draft on a dialog that does not exist yet; reading them off the empty state stored
+  it under owner 0 with no peer, invisible to `getAllDrafts`, which filters by owner.
+* **`clearAllDrafts` clears through the dialog**, not by deleting draft rows: deleting them left
+  `dialog.draft` in place and the next `getDialogs` handed every draft straight back. All topics of one
+  dialog travel in one `ClearDraftsCommand` because a `DistinctCommand` hashes **only** the request's
+  `msg_id` (not the aggregate id), so a second command for the same dialog in the same request is
+  silently skipped.
+* **A clear emits only for topics that actually hold a draft.** Clients set `clear_draft` on practically
+  every send, and an unconditional event would push a `draftMessageEmpty` to every other session on
+  every message.
+* **`clear_draft` on send belongs to the user, not to the message box.** The outbox item of a channel or
+  group message is owned by the peer itself, so addressing the dialog by `OutboxMessageItem.OwnerPeer`
+  cleared a dialog nobody holds a draft in — the draft survived every send in a group. Use
+  `RequestInfo.UserId`.
+* **`draftMessage.media` is an `InputMedia`**: it is echoed back to the clients, never uploaded, and in
+  practice only ever `inputMediaWebPage` (the manual link preview). Registering it on the file server, as
+  `saveDraft` used to, uploaded media on every keystroke for a value nothing ever read. A dice stays
+  `MEDIA_INVALID` (see Animated dice).
+* **`MSG_ID_INVALID` is deliberately not enforced** for the reply target: a draft is not a message, and
+  refusing one whose target was deleted makes the draft impossible to save at all, on every keystroke.
+
+Probing needs a throwaway Telethon script (temp dir, not `scripts/`) with two logins of the same
+account — A writes, B watches for `updateDraftMessage`. `auth.signIn` flood-waits after a handful of
+logins; rather than logging in again, build the session from an auth key that is already signed in
+(`eventflow-authkeyreadmodel.Data` → `session.auth_key = AuthKey(bytes)`). Worth asserting:
+`getAllDrafts` returns the draft *and* names its peer, the other session gets `draftMessage` /
+`draftMessageEmpty`, `dialog.draft` appears and disappears, a forum topic draft and the chat draft
+coexist, `forumTopic.draft` is filled, sending into a topic clears that topic only, and a send with no
+draft pushes nothing.
+
+See https://corefork.telegram.org/api/drafts
+
+---
+
 ## Account deletion
 
 `account.deleteAccount` → `IAccountDeletionService.DeleteAccountAsync`: emits `UserDeletedEvent`
@@ -967,6 +1035,7 @@ See https://corefork.telegram.org/api/pfs
 | Client crashes on the response | constructor ID match (`/schema-jppgr-am`), unset required fields |
 | Android dies at startup with `ArrayIndexOutOfBoundsException: length=6; index=6` in `MediaDataController.processLoadedStickers` | `config.preload_featured_stickers` is set while a trending emoji list is non-empty; the flag must stay off, see Stickers above. The stack trace is the only evidence — the server logs a perfectly healthy `getFeaturedEmojiStickers` |
 | Half the media never loads | `authKey not found` in session-server — an expired temp key, see PFS above |
+| A draft shows up on one device only, or comes back after being cleared | no `updateDraftMessage` was pushed, or it was pushed without a `globalSeqNo`; check that the clear went through the dialog (`DraftClearedEvent`) and not around it, see Message drafts above |
 | Part of a screen is empty, logs are clean | diff the surface's methods against **real Telegram** (see Verify above); an empty list with `hash = 0` logs nothing but gets re-requested forever, so a handler called far more often than its refresh interval is the tell |
 | Which connection is actually the user's | gateway `New client connected` by remote IP × `LocalPort`: `172.23.0.1` is the docker host (local scripts), an IP that only sends `req_pq_multi` and drops is a scanner — do not diagnose from their warnings |
 | Telethon cannot talk to the server at all | it ships Telegram's public keys and cannot match the fingerprint in our `res_pq`, so the handshake dies at step 1 with `auth_key generation failed` while auth-server logs only `[Step1] ReqPqMultiHandler` retries. Register the server key: `docker cp <auth-server>:/app/private.pkcs8.key`, `openssl rsa -pubout \| openssl rsa -pubin -RSAPublicKey_out`, then `telethon.crypto.rsa.add_key(pem, old=False)` — see `scripts/verify_stickers.py` |

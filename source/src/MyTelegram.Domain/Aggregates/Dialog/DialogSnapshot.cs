@@ -14,13 +14,20 @@ public class DialogSnapshot(
     int unreadMentionsCount,
     int? folderId,
     int unreadReactionsCount = 0,
-    int unreadPollVotesCount = 0
+    int unreadPollVotesCount = 0,
+    List<string>? topicDraftKeys = null
     )
     : ISnapshot
 {
     public int ChannelHistoryMinId { get; } = channelHistoryMinId;
 
     public Draft? Draft { get; } = draft;
+
+    /// <summary>
+    /// Null in snapshots written before per topic drafts existed; the keys are rebuilt from the events
+    /// replayed after the snapshot.
+    /// </summary>
+    public List<string>? TopicDraftKeys { get; } = topicDraftKeys;
     public int UnreadMentionsCount { get; } = unreadMentionsCount;
 
     /// <summary>

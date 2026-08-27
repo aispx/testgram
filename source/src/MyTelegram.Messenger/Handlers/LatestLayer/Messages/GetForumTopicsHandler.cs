@@ -17,7 +17,10 @@ internal sealed class GetForumTopicsHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
     IChannelAppService channelAppService,
-    IMentionReadStateService mentionReadStateService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopics, MyTelegram.Schema.Messages.IForumTopics>
+    IMentionReadStateService mentionReadStateService,
+    IQueryProcessor queryProcessor,
+    IDraftConverterService draftConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetForumTopics, MyTelegram.Schema.Messages.IForumTopics>
+
 {
     private const int MinSearchQueryLength = 2;
     private const int MaxLimit = 100;
@@ -87,13 +90,16 @@ internal sealed class GetForumTopicsHandler(
         var topicDocs = await topicsCol.Find(filter).Sort(sort).Limit(limit).ToListAsync();
 
         var mentionCounts = await mentionReadStateService.GetTopicMentionCountsAsync(input.UserId, peer);
+        var topicDrafts = await ForumTopicHelper.GetTopicDraftsAsync(queryProcessor, draftConverterService,
+            input.UserId, channelId, input.Layer);
 
         var topics = new TVector<IForumTopic>();
         foreach (var doc in topicDocs)
         {
             var topicId = ForumTopicHelper.GetTopicId(doc);
             mentionCounts.TryGetValue(topicId, out var unreadMentionsCount);
-            topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId, unreadMentionsCount));
+            topicDrafts.TryGetValue(topicId, out var draft);
+            topics.Add(ForumTopicHelper.ToForumTopic(doc, channelId, input.UserId, unreadMentionsCount, draft));
         }
 
         return new TForumTopics

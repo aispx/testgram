@@ -133,12 +133,29 @@ public class SendMessageSaga : MyInMemoryAggregateSaga<SendMessageSaga, SendMess
 
     private void ClearDraft(OutboxMessageCreatedEvent aggregateEvent)
     {
-        if (aggregateEvent.ClearDraft)
+        if (!aggregateEvent.ClearDraft)
         {
-            var command = new ClearDraftCommand(DialogId.Create(aggregateEvent.OutboxMessageItem.OwnerPeer.PeerId,
-                aggregateEvent.OutboxMessageItem.ToPeer));
-            Publish(command);
+            return;
         }
+
+        // The draft belongs to the user who typed it, not to the box the message was written into: for a
+        // channel or a group the outbox item is owned by the peer itself, and addressing the dialog by
+        // that owner cleared a dialog nobody holds a draft in.
+        var ownerUserId = aggregateEvent.RequestInfo.UserId;
+        if (ownerUserId == 0)
+        {
+            return;
+        }
+
+        var item = aggregateEvent.OutboxMessageItem;
+
+        // Sending into a topic clears the draft of that topic, not the draft of the chat.
+        var command = new ClearDraftsCommand(DialogId.Create(ownerUserId, item.ToPeer),
+            aggregateEvent.RequestInfo,
+            ownerUserId,
+            item.ToPeer,
+            [new DraftTopic(item.TopMsgId, item.SavedPeerId)]);
+        Publish(command);
     }
 
     /// <summary>

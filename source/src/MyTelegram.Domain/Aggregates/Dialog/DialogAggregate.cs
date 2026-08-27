@@ -32,12 +32,33 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
         Emit(new ChannelHistoryClearedEvent(requestInfo, channelId, historyMinId));
     }
 
-    public void ClearDraft()
+    /// <summary>
+    /// Drops the drafts of the given topics, or of the chat itself for <see cref="DraftTopic.ChatLevel"/>.
+    /// Called from <c>messages.saveDraft</c> with empty values, from a send with <c>clear_draft</c> and
+    /// from <c>messages.clearAllDrafts</c>.
+    /// </summary>
+    /// <remarks>
+    /// Several topics at once rather than one command each, because a request command is deduplicated by
+    /// the request's <c>msg_id</c> alone (<c>DistinctCommand</c> hashes nothing else), so a second
+    /// command for the same dialog within one request would be skipped and that draft would survive
+    /// <c>clearAllDrafts</c>.
+    ///
+    /// <para>Only the topics that hold a draft are emitted: emitting unconditionally would push an
+    /// <c>updateDraftMessage</c> with <c>draftMessageEmpty</c> to every other session on every message
+    /// sent, since clients set <c>clear_draft</c> on practically every send.</para>
+    /// </remarks>
+    public void ClearDrafts(RequestInfo requestInfo,
+        long ownerPeerId,
+        Peer peer,
+        List<DraftTopic> requestedTopics)
     {
-        if (!IsNew)
+        var topics = requestedTopics.Where(p => _state.HasDraft(p.Key)).ToList();
+        if (topics.Count == 0)
         {
-            Emit(new DraftClearedEvent());
+            return;
         }
+
+        Emit(new DraftClearedEvent(requestInfo, ownerPeerId, peer, topics));
     }
 
     public void ClearHistory(RequestInfo requestInfo,
@@ -288,18 +309,25 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
         ));
     }
 
+    /// <summary>
+    /// Stores a draft. See https://corefork.telegram.org/api/drafts
+    /// </summary>
+    /// <remarks>
+    /// The owner and the peer come from the command, not from the state: typing into a chat you have
+    /// never messaged is a draft on a dialog that does not exist yet, and reading them from an empty
+    /// state stored the draft under owner 0 with no peer — invisible to <c>messages.getAllDrafts</c>,
+    /// which filters by owner.
+    /// </remarks>
     public void SaveDraft(RequestInfo requestInfo,
-        Draft draft,
-        int? topicId
+        long ownerPeerId,
+        Peer peer,
+        Draft draft
     )
     {
-        //Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
-        var ownerPeerId = _state.OwnerId;
-        var peer = _state.ToPeer;
         Emit(new DraftSavedEvent(requestInfo,
             ownerPeerId,
             peer,
-           draft, topicId));
+            draft));
     }
 
     [DoNotInheritRequestCommand]
@@ -394,8 +422,10 @@ public class DialogAggregate : MyInMemorySnapshotAggregateRoot<DialogAggregate, 
             _state.UnreadMentionsCount,
             _state.FolderId,
             _state.UnreadReactionsCount,
-            _state.UnreadPollVotesCount
+            _state.UnreadPollVotesCount,
+            [.. _state.TopicDraftKeys]
         ));
+
     }
 
     protected override Task LoadSnapshotAsync(DialogSnapshot snapshot,

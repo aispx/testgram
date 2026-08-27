@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MyTelegram.Messenger\MyTelegram.Messenger.csproj" />
+    <ProjectReference Include="..\..\src\MyTelegram.Messenger.QueryServer\MyTelegram.Messenger.QueryServer.csproj" />
     <ProjectReference Include="..\..\src\MyTelegram.Schema\MyTelegram.Schema.csproj" />
   </ItemGroup>
 

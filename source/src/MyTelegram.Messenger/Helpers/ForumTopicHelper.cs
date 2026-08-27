@@ -52,8 +52,13 @@ internal static class ForumTopicHelper
     /// Unread mentions of the current user inside this topic. A forum keeps a mention counter per
     /// topic on top of the dialog one, see https://corefork.telegram.org/api/mentions
     /// </param>
+    /// <param name="draft">
+    /// The draft the current user holds in this topic, if any. A topic keeps its own draft, keyed by the
+    /// <c>top_msg_id</c> the client sends in <c>messages.saveDraft</c>, see
+    /// https://corefork.telegram.org/api/drafts
+    /// </param>
     public static TForumTopic ToForumTopic(BsonDocument doc, long channelId, long currentUserId = 0,
-        int unreadMentionsCount = 0)
+        int unreadMentionsCount = 0, IDraftMessage? draft = null)
     {
         var topicId = GetInt32(doc, "TopicId", GeneralTopicId);
         var creatorId = GetInt64(doc, "CreatorId", 0);
@@ -81,8 +86,37 @@ internal static class ForumTopicHelper
             Hidden = GetBoolean(doc, "Hidden", false),
             Pinned = GetBoolean(doc, "Pinned", false),
             Short = GetBoolean(doc, "Short", false),
-            TitleMissing = GetBoolean(doc, "TitleMissing", false)
+            TitleMissing = GetBoolean(doc, "TitleMissing", false),
+            Draft = draft
         };
+    }
+
+    /// <summary>
+    /// The drafts a user holds in the topics of one forum, by topic id. The chat level draft is left
+    /// out: it belongs to <c>dialog.draft</c>.
+    /// </summary>
+    public static async Task<Dictionary<int, IDraftMessage>> GetTopicDraftsAsync(
+        IQueryProcessor queryProcessor,
+        IDraftConverterService draftConverterService,
+        long selfUserId,
+        long channelId,
+        int layer)
+    {
+        var drafts = await queryProcessor.ProcessAsync(
+            new GetDraftListByPeerQuery(selfUserId, PeerType.Channel, channelId));
+
+        var result = new Dictionary<int, IDraftMessage>();
+        foreach (var draft in drafts)
+        {
+            if (draft.Draft?.TopMsgId is not > 0)
+            {
+                continue;
+            }
+
+            result[draft.Draft.TopMsgId.Value] = draftConverterService.ToDraftMessage(draft, layer);
+        }
+
+        return result;
     }
 
     public static int? GetRequestedTopicId(IInputReplyTo? inputReplyTo)
