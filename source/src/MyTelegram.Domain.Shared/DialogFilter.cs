@@ -18,5 +18,6 @@ public record DialogFilter
     IList<InputPeer> PinnedPeers,
     IList<InputPeer> IncludePeers,
     IList<InputPeer> ExcludePeers,
-    bool IsChatlist
+    bool IsChatlist,
+    string? ImportedFromSlug = null
 );

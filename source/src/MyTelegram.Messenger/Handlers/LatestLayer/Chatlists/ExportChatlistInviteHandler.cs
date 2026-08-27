@@ -1,39 +1,40 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Schema.Chatlists;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 
 /// <summary>
 /// Export a <a href="https://corefork.telegram.org/api/folders">folder »</a>, creating a <a href="https://corefork.telegram.org/api/links#chat-folder-links">chat folder deep link »</a>.
+/// Possible errors
+/// Code Type Description
+/// 400 FILTER_ID_INVALID The specified filter ID is invalid.
+/// 400 FILTER_NOT_SUPPORTED The specified folder cannot be shared.
+/// 400 INVITES_TOO_MUCH Too many links exported for this folder.
+/// 400 PEERS_LIST_EMPTY No peers were provided.
+/// 400 PEER_ID_INVALID The provided peer id is invalid.
 /// <para><c>See <a href="https://corefork.telegram.org/method/chatlists.exportChatlistInvite"/> </c></para>
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>Exporting turns the owner's folder into a shareable one: the live service answers such a folder as
+/// <c>dialogFilterChatlist</c> with <c>has_my_invites</c> (measured), and Android reads exactly that pair as
+/// "I administer this shared folder" (<c>FLAG_CHATLIST</c> + <c>FLAG_CHATLIST_ADMIN</c>). Only folders built
+/// from explicit chats can be shared, which is why a folder carrying type flags or exclusions is refused
+/// rather than silently stripped.</para>
 /// </remarks>
-internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestExportChatlistInvite, MyTelegram.Schema.Chatlists.IExportedChatlistInvite>
+internal sealed class ExportChatlistInviteHandler(
+    ICommandBus commandBus,
+    IQueryProcessor queryProcessor,
+    IPeerHelper peerHelper,
+    IChatlistInviteStore chatlistInviteStore,
+    IDialogFilterLimitResolver limitResolver,
+    ILayeredService<IDialogFilterConverter> dialogFilterLayeredService)
+    : RpcResultObjectHandler<RequestExportChatlistInvite, MyTelegram.Schema.Chatlists.IExportedChatlistInvite>
 {
-    private readonly IMongoDatabase _database;
-    private readonly IQueryProcessor _queryProcessor;
-    private readonly IPeerHelper _peerHelper;
-    private readonly ILayeredService<IDialogFilterConverter> _dialogFilterLayeredService;
-
-    public ExportChatlistInviteHandler(
-        IMongoDatabase database,
-        IQueryProcessor queryProcessor,
-        IPeerHelper peerHelper,
-        ILayeredService<IDialogFilterConverter> dialogFilterLayeredService)
-    {
-        _database = database;
-        _queryProcessor = queryProcessor;
-        _peerHelper = peerHelper;
-        _dialogFilterLayeredService = dialogFilterLayeredService;
-    }
-
     protected override async Task<MyTelegram.Schema.Chatlists.IExportedChatlistInvite> HandleCoreAsync(
         IRequestInput input,
-        MyTelegram.Schema.Chatlists.RequestExportChatlistInvite obj)
+        RequestExportChatlistInvite obj)
     {
-        // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
@@ -41,82 +42,79 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
         }
 
         var filterId = chatlistFilter.FilterId;
-
-        // 2. Check if filter exists and belongs to user
-        var filterReadModels = await _queryProcessor.ProcessAsync(
-            new GetDialogFiltersQuery(input.UserId),
-            CancellationToken.None);
-
-        var filter = filterReadModels.FirstOrDefault(f => f.Filter.Id == filterId);
-        if (filter == null)
+        var readModel = await queryProcessor.ProcessAsync(new GetDialogFilterByIdQuery(input.UserId, filterId));
+        if (readModel == null)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
-            return null!;
         }
 
-        // 3. Validate peers (must be channels/groups)
+        var stored = readModel!.Filter;
+        var hasTypeFlag = stored.Contacts || stored.NonContacts || stored.Groups || stored.Broadcasts || stored.Bots;
+        if (hasTypeFlag || stored.ExcludePeers.Count > 0)
+        {
+            RpcErrors.RpcErrors400.FilterNotSupported.ThrowRpcError();
+        }
+
         if (obj.Peers.Count == 0)
         {
             RpcErrors.RpcErrors400.PeersListEmpty.ThrowRpcError();
         }
 
-        var peerIds = new List<long>();
-        var peerTypes = new List<string>();
+        var inviteCount = await chatlistInviteStore.CountByFilterAsync(input.UserId, filterId);
+        if (inviteCount >= await limitResolver.GetChatlistInvitesLimitAsync(input.UserId))
+        {
+            RpcErrors.RpcErrors400.InvitesTooMuch.ThrowRpcError();
+        }
 
+        var peers = new List<Peer>();
         foreach (var inputPeer in obj.Peers)
         {
-            var peer = _peerHelper.GetPeer(inputPeer, input.UserId);
+            var peer = peerHelper.GetPeer(inputPeer, input.UserId);
 
-            if (peer.PeerType == PeerType.User)
+            // Only groups and channels travel in a folder link: a private chat cannot be joined by a link.
+            if (peer.PeerType is not (PeerType.Channel or PeerType.Chat))
             {
                 RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
             }
 
-            peerIds.Add(peer.PeerId);
-            peerTypes.Add(peer.PeerType.ToString());
+            peers.Add(peer);
         }
 
-        // 4. Generate unique slug
         var slug = GenerateSlug();
+        var title = string.IsNullOrEmpty(obj.Title) ? stored.Title.Text : obj.Title;
 
-        // 5. Store invite in MongoDB
-        var collection = _database.GetCollection<BsonDocument>("chatlist_invites");
-
-        var inviteDoc = new BsonDocument
+        await chatlistInviteStore.InsertAsync(new ChatlistInviteDocument
         {
-            ["_id"] = $"chatlist-invite-{slug}",
-            ["Slug"] = slug,
-            ["CreatorUserId"] = input.UserId,
-            ["FilterId"] = filterId,
-            ["Title"] = obj.Title,
-            ["PeerIds"] = new BsonArray(peerIds),
-            ["PeerTypes"] = new BsonArray(peerTypes),
-            ["CreatedDate"] = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            ["Revoked"] = false
-        };
+            Id = ChatlistInviteDocument.MakeId(slug),
+            Slug = slug,
+            CreatorUserId = input.UserId,
+            FilterId = filterId,
+            Title = title,
+            PeerIds = [.. peers.Select(p => p.PeerId)],
+            PeerTypes = [.. peers.Select(p => p.PeerType.ToString())],
+            CreatedDate = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Revoked = false
+        });
 
-        await collection.InsertOneAsync(inviteDoc);
-
-        // 6. Build response
-        var url = $"https://t.me/addlist/{slug}";
-
-        var peers = new TVector<IPeer>();
-        for (int i = 0; i < peerIds.Count; i++)
+        if (!readModel.IsShareableFolder)
         {
-            var peerType = Enum.Parse<PeerType>(peerTypes[i]);
-            peers.Add(new Peer(peerType, peerIds[i]).ToPeer());
+            var shareable = stored with { IsChatlist = true };
+            await commandBus.PublishAsync(
+                new UpdateDialogFilterCommand(DialogFilterId.Create(input.UserId, filterId), input.ToRequestInfo(),
+                    input.UserId, shareable), CancellationToken.None);
+            stored = shareable;
         }
 
         var invite = new MyTelegram.Schema.TExportedChatlistInvite
         {
-            Title = obj.Title,
-            Url = url,
-            Peers = peers
+            Title = title,
+            Url = $"https://t.me/addlist/{slug}",
+            Peers = [.. peers.Select(p => p.ToPeer())]
         };
 
         return new MyTelegram.Schema.Chatlists.TExportedChatlistInvite
         {
-            Filter = _dialogFilterLayeredService.GetConverter(input.Layer).ToDialogFilter(filter.Filter),
+            Filter = dialogFilterLayeredService.GetConverter(input.Layer).ToDialogFilter(stored, true),
             Invite = invite
         };
     }
@@ -124,8 +122,13 @@ internal sealed class ExportChatlistInviteHandler : RpcResultObjectHandler<MyTel
     private static string GenerateSlug()
     {
         const string chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        var random = new Random();
-        return new string(Enumerable.Repeat(chars, 16)
-            .Select(s => s[random.Next(s.Length)]).ToArray());
+
+        return string.Create(16, chars, (span, source) =>
+        {
+            for (var i = 0; i < span.Length; i++)
+            {
+                span[i] = source[Random.Shared.Next(source.Length)];
+            }
+        });
     }
 }

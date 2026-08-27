@@ -5,7 +5,16 @@ public class GetDialogsByFolderIdQueryHandler(IQueryOnlyReadModelStore<DialogRea
 {
     public async Task<IReadOnlyCollection<Peer>> ExecuteQueryAsync(GetDialogsByFolderIdQuery query, CancellationToken cancellationToken)
     {
-        return await store.FindAsync(p => p.OwnerId == query.OwnerUserId && p.FolderId == query.FolderId,
+        // Folder 0 is the main list, where a dialog that was never archived carries no FolderId at all.
+        if (query.FolderId == 0)
+        {
+            return await store.FindAsync(
+                p => p.OwnerId == query.OwnerUserId && !p.IsDeleted && (p.FolderId == null || p.FolderId == 0),
+                p => new Peer(p.ToPeerType, p.ToPeerId), cancellationToken: cancellationToken);
+        }
+
+        return await store.FindAsync(
+            p => p.OwnerId == query.OwnerUserId && !p.IsDeleted && p.FolderId == query.FolderId,
             p => new Peer(p.ToPeerType, p.ToPeerId), cancellationToken: cancellationToken);
     }
 }

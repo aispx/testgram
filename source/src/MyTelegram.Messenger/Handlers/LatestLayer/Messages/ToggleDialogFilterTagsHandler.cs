@@ -8,11 +8,38 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The value is per user and is read back through <c>messages.dialogFilters.tags_enabled</c>;
+/// Android mirrors it into <c>MessagesController.folderTags</c> on every <c>getDialogFilters</c>, so a
+/// toggle that is not stored turns itself back on for every session. The live service answers
+/// <c>tags_enabled = false</c> for an account without the subscription (measured), which is why the
+/// gate is here and not only in the UI.</para>
 /// </remarks>
-internal sealed class ToggleDialogFilterTagsHandler : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestToggleDialogFilterTags, IBool>
+internal sealed class ToggleDialogFilterTagsHandler(ICommandBus commandBus, IUserAppService userAppService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestToggleDialogFilterTags, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestToggleDialogFilterTags obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestToggleDialogFilterTags obj)
     {
-        return Task.FromResult<IBool>(new TBoolTrue());
+        var user = await userAppService.GetAsync(input.UserId);
+        if (user == null)
+        {
+            RpcErrors.RpcErrors400.UserIdInvalid.ThrowRpcError();
+        }
+
+        if (user!.Premium != true)
+        {
+            RpcErrors.RpcErrors403.PremiumAccountRequired.ThrowRpcError();
+        }
+
+        var command = new ToggleDialogFilterTagsCommand(
+            DialogFilterSettingsId.Create(input.UserId),
+            input.ToRequestInfo(),
+            input.UserId,
+            obj.Enabled);
+
+        await commandBus.PublishAsync(command, CancellationToken.None);
+
+        return null!;
     }
 }

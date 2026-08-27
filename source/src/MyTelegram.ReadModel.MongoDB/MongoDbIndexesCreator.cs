@@ -124,6 +124,7 @@ public class MongoDbIndexesCreator(
         await CreateIndexAsync<ReplyReadModel>(p => p.MessageId);
 
         await CreateIndexAsync<DialogFilterReadModel>(p => p.OwnerUserId);
+        await CreateIndexAsync<DialogFilterSettingsReadModel>(p => p.OwnerUserId);
         await CreateIndexAsync<PollReadModel>(p => p.ToPeerId);
         await CreateIndexAsync<PollReadModel>(p => p.PollId);
         // Scanned by the poll auto-close background service.

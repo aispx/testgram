@@ -324,6 +324,8 @@ NullReferenceException.
 | `read_featured_sticker_sets` | Trending badge, per user | `_id` = `{UserId}:{StickerSetType}`, ReadSetIds |
 | `faved_stickers` / `recent_stickers` | Favourites and recents | UserId, DocumentId, Order (desc), Date; `recent_stickers` also Attached (mask list) |
 | `attached_stickers` | Sets baked into a photo/video | `_id` = `photo:{id}` or `document:{id}`, StickerSetIds |
+| `chatlist_invites` | Exported chat-folder links | `_id` = `chatlist-invite-{slug}`, Slug, CreatorUserId, FilterId, Title, PeerIds/PeerTypes, Revoked |
+| `chatlist_hidden_updates` | Peers dismissed in a shared folder | `_id` = `{UserId}:{FilterId}`, HiddenPeerIds |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -850,6 +852,71 @@ See https://corefork.telegram.org/api/drafts
 
 ---
 
+## Dialog folders
+
+Four surfaces on one API page: the tab folders (dialog filters), folder tags, shared folders (chatlists)
+and peer folders (the archive). Services live in `Services/Folders/`; the folders themselves are
+`DialogFilterAggregate`, everything per user is `DialogFilterSettingsAggregate`
+(`eventflow-dialogfiltersettingsreadmodel`: `Order`, `TagsEnabled`, `ArchivePinned`).
+
+* **The order of `getDialogFilters` is the contract.** Clients adopt the vector verbatim and number their
+  own tabs by position (Android `MessagesStorage.checkLoadedRemoteFilters` assigns `filter.order` from the
+  index), so `updateDialogFiltersOrder` has to store it — it used to answer `boolTrue` and drop the vector,
+  which undid every reorder on the next start. The vector includes **`0` for `dialogFilterDefault`**
+  ("All chats" can be moved), so id 0 owns a slot without owning a folder; a folder created after the last
+  reorder is appended, lowest id first.
+* **Folder ids below 2 are reserved.** Clients allocate from 2 upwards (`FilterCreateActivity`), 0 is the
+  default folder, and `messages.updateDialogFilter` now answers `FILTER_ID_INVALID` below that instead of
+  storing a folder that shadows "All chats".
+* **`tags_enabled` is per user and behind the subscription.** The live service answers `false` for an
+  account without one (measured); it was hardcoded `true` here, which turned folder tags on everywhere,
+  and `toggleDialogFilterTags` stored nothing so the toggle could never be turned off.
+  `updateDialogFilters` is pushed only when the value actually changed, as the API states.
+* **An imported folder is a `dialogFilterChatlist`, and so is one whose owner exported a link.** Android
+  reads the pair (constructor, `has_my_invites`) as "shared folder" / "I administer this shared folder";
+  the converter used to emit `dialogFilter` for everything and `updateDialogFilter` with a
+  `dialogFilterChatlist` threw `NotImplementedException`, which is exactly what a client sends when
+  renaming an imported folder. `has_my_invites` is derived per request from `chatlist_invites`.
+* **The identity of an imported folder is the slug, not the exporter's `filter_id`.** That number belongs
+  to the exporter's account: reusing it overwrote whichever folder of the importer carried the same
+  number, and `checkChatlistInvite` reported "already joined" for an unrelated folder.
+  `joinChatlistInvite` allocates a free id (`IDialogFilterIdAllocator`) and stores `ImportedFromSlug`.
+* **`joinChatlistInvite` must answer with the `updateDialogFilter` it produced** — Android scans the
+  returned updates for it to learn the folder id and scroll to the new tab (`FolderBottomSheet`), so an
+  empty `updates` leaves the user with nothing to look at. It also joins the channels it added
+  (`IChatlistMembershipService`, with `ReqMsgId = 0` so the join saga does not answer this request, and one
+  `TempId` per channel so the `msg_id` based command dedupe cannot collapse the batch).
+* **The three update methods are a diff against the link**: `getChatlistUpdates` answers the link's peers
+  minus the folder's minus the dismissed ones (`chatlist_hidden_updates`), `joinChatlistUpdates` accepts
+  only peers that diff currently offers, `hideChatlistUpdates` remembers the rest. All three used to answer
+  empty, so a shared folder never picked up a chat its owner added later.
+* **Only folders 0 and 1 exist for peers** — "no other folder_id is allowed at the moment" — and
+  `folders.editPeerFolders` answers `FOLDER_ID_INVALID` for anything else. A peer with no dialog row is
+  dropped: `DialogAggregate.UpdateDialogFolder` asserts the dialog exists, so the command failed, the saga
+  kept waiting for the event it counts and **the request was never answered at all**.
+* **An absent `folder_id` means folder 0** (measured: `getDialogs()` and `getDialogs(folder_id=0)` are the
+  same answer, archived chats only under 1), and a dialog that was never archived stores no `FolderId` —
+  so the main list matches `null` too. Without that, archiving a chat left it in both lists.
+* **`updateFolderPeers` also goes to the other sessions.** The saga consumes a `pts` for it, so answering
+  only the caller left every other device with a gap `updates.getDifference` can never fill.
+* **`dialogFolder` is served only for a pinned archive.** The live service sends none for an unpinned one
+  (measured with 8 archived chats) and Android builds the row locally
+  (`ensureFolderDialogExists`); `toggleDialogPin` with an `inputDialogPeerFolder` stores the flag, and the
+  push carries no `order` so clients re-read `getPinnedDialogs` instead of dropping their other pins.
+* **`getSuggestedDialogFilters` serves six entries and suppresses the ones already built**, comparing flag
+  sets exactly — measured: an account with groups-only, channels-only and bots-only folders was offered
+  neither, but still got `Personal` while owning contacts-only *and* non-contacts-only folders. `Unread` and
+  `Personal` are verbatim; the other four descriptions are extrapolated from them and are the one part of
+  the surface that is not measured (a fresh prod account with no folders would show the rest).
+* **Pushes exclude `RequestInfo.PermAuthKeyId`, not `AuthKeyId`**: with PFS a request arrives on a
+  temporary key, so excluding the temporary id fails to exclude the originating session and it is told
+  about the folder it just wrote itself.
+
+See https://corefork.telegram.org/api/folders and
+https://corefork.telegram.org/api/links#chat-folder-links
+
+---
+
 ## Account deletion
 
 `account.deleteAccount` → `IAccountDeletionService.DeleteAccountAsync`: emits `UserDeletedEvent`
@@ -1036,6 +1103,8 @@ See https://corefork.telegram.org/api/pfs
 | Android dies at startup with `ArrayIndexOutOfBoundsException: length=6; index=6` in `MediaDataController.processLoadedStickers` | `config.preload_featured_stickers` is set while a trending emoji list is non-empty; the flag must stay off, see Stickers above. The stack trace is the only evidence — the server logs a perfectly healthy `getFeaturedEmojiStickers` |
 | Half the media never loads | `authKey not found` in session-server — an expired temp key, see PFS above |
 | A draft shows up on one device only, or comes back after being cleared | no `updateDraftMessage` was pushed, or it was pushed without a `globalSeqNo`; check that the clear went through the dialog (`DraftClearedEvent`) and not around it, see Message drafts above |
+| An archived chat is still in the main list, or the archive looks empty | `getDialogs` folder predicate: an absent `folder_id` and `0` both mean the main list, and a dialog that was never archived stores no `FolderId` — see Dialog folders above. A second device that never learns about the archiving is the missing `updateFolderPeers` push |
+| Folder tabs revert their order, or folder tags turn themselves on | `eventflow-dialogfiltersettingsreadmodel` for that user: no `Order` means `updateDialogFiltersOrder` never reached the aggregate, and `TagsEnabled` is what `messages.dialogFilters.tags_enabled` must report — never a constant |
 | Part of a screen is empty, logs are clean | diff the surface's methods against **real Telegram** (see Verify above); an empty list with `hash = 0` logs nothing but gets re-requested forever, so a handler called far more often than its refresh interval is the tell |
 | Which connection is actually the user's | gateway `New client connected` by remote IP × `LocalPort`: `172.23.0.1` is the docker host (local scripts), an IP that only sends `req_pq_multi` and drops is a scanner — do not diagnose from their warnings |
 | Telethon cannot talk to the server at all | it ships Telegram's public keys and cannot match the fingerprint in our `res_pq`, so the handshake dies at step 1 with `auth_key generation failed` while auth-server logs only `[Step1] ReqPqMultiHandler` retries. Register the server key: `docker cp <auth-server>:/app/private.pkcs8.key`, `openssl rsa -pubout \| openssl rsa -pubin -RSAPublicKey_out`, then `telethon.crypto.rsa.add_key(pem, old=False)` — see `scripts/verify_stickers.py` |

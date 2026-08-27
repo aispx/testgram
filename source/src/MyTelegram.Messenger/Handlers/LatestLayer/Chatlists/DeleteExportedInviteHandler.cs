@@ -1,5 +1,4 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Schema.Chatlists;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// <summary>
@@ -14,37 +13,23 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The link is revoked rather than removed, so a client that still holds the slug is told the link
+/// expired instead of being handed a folder again.</para>
 /// </remarks>
-internal sealed class DeleteExportedInviteHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestDeleteExportedInvite, IBool>
+internal sealed class DeleteExportedInviteHandler(IChatlistInviteStore chatlistInviteStore)
+    : RpcResultObjectHandler<RequestDeleteExportedInvite, IBool>
 {
-    private readonly IMongoDatabase _database;
-
-    public DeleteExportedInviteHandler(IMongoDatabase database)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestDeleteExportedInvite obj)
     {
-        _database = database;
-    }
-
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestDeleteExportedInvite obj)
-    {
-        // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
             return null!;
         }
 
-        // 2. Find and revoke invite
-        var collection = _database.GetCollection<BsonDocument>("chatlist_invites");
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("Slug", obj.Slug),
-            Builders<BsonDocument>.Filter.Eq("CreatorUserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("FilterId", chatlistFilter.FilterId)
-        );
-
-        var update = Builders<BsonDocument>.Update.Set("Revoked", true);
-        var result = await collection.UpdateOneAsync(filter, update);
-
-        if (result.MatchedCount == 0)
+        var revoked = await chatlistInviteStore.RevokeAsync(obj.Slug, input.UserId, chatlistFilter.FilterId);
+        if (!revoked)
         {
             RpcErrors.RpcErrors400.InviteSlugInvalid.ThrowRpcError();
         }

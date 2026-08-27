@@ -20,6 +20,10 @@ public class DialogFilterReadModel : IDialogFilterReadModel,
         OwnerUserId = domainEvent.AggregateEvent.OwnerUserId;
         FolderId = domainEvent.AggregateEvent.Filter.Id;
         Filter = domainEvent.AggregateEvent.Filter;
+        // A folder imported from a chat folder deep link must come back as dialogFilterChatlist, and the
+        // slug is its identity: the exporter's filter id collides with the importer's own folders.
+        IsShareableFolder = domainEvent.AggregateEvent.Filter.IsChatlist;
+        ImportedFromSlug = domainEvent.AggregateEvent.Filter.ImportedFromSlug;
 
         return Task.CompletedTask;
     }

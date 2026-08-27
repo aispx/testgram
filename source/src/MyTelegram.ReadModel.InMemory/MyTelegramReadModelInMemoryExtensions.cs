@@ -104,6 +104,8 @@ public static class MyTelegramReadModelInMemoryExtensions
             .UseMyInMemoryReadStoreFor<ReadingHistoryAggregate, ReadingHistoryId, ReadingHistoryReadModel>()
             .UseMyInMemoryReadStoreFor<ReplyReadModel, IReplyReadModelLocator>()
             .UseMyInMemoryReadStoreFor<DialogFilterAggregate, DialogFilterId, DialogFilterReadModel>()
+            .UseMyInMemoryReadStoreFor<DialogFilterSettingsAggregate, DialogFilterSettingsId,
+                DialogFilterSettingsReadModel>()
             .UseMyInMemoryReadStoreFor<PollAggregate, PollId, PollReadModel>()
             .UseMyInMemoryReadStoreFor<PollAnswerVoterReadModel, IPollAnswerVoterReadModelLocator>()
             .UseMyInMemoryReadStoreFor<AccessHashReadModel, IAccessHashReadModelLocator>()

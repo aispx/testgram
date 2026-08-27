@@ -8,6 +8,10 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The vector may carry an <c>inputDialogPeerFolder</c> for a pinned chat archive. It holds no order of
+/// its own: every client draws the archive row above the pinned chats regardless (Android's dialog comparator
+/// sorts a <c>dialogFolder</c> first), so the entry is skipped and only the chats around it are reordered.</para>
 /// </remarks>
 internal sealed class ReorderPinnedDialogsHandler(IDialogAppService dialogAppService, IPeerHelper peerHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestReorderPinnedDialogs, IBool>
 {
@@ -21,10 +25,12 @@ internal sealed class ReorderPinnedDialogsHandler(IDialogAppService dialogAppSer
                 case TInputDialogPeer inputDialogPeer1:
                     peerList.Add(peerHelper.GetPeer(inputDialogPeer1.Peer, input.UserId));
                     break;
-                    //case TInputDialogPeerFolder inputDialogPeerFolder:
-                    //    break;
-                    //default:
-                    //    throw new ArgumentOutOfRangeException(nameof(inputDialogPeer));
+                case TInputDialogPeerFolder:
+                    // The archive itself; its pinned state is toggled through messages.toggleDialogPin.
+                    break;
+                default:
+                    RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
+                    break;
             }
         }
 
