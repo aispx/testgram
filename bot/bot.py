@@ -29,12 +29,20 @@ logger = logging.getLogger("testgram-bot")
 # started by hand from /root/testgram.
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 if os.path.exists(env_path):
+    seen_keys = set()
     with open(env_path) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+                k = k.strip()
+                # A repeated key is almost always a second bot token pasted under the same name, where
+                # only the first one counts. Saying so beats wondering why the bot never came up.
+                if k in seen_keys:
+                    logger.warning("%s is set more than once in .env; keeping the first value. "
+                                   "Extra bots go in BOT_TOKEN1..BOT_TOKEN9", k)
+                seen_keys.add(k)
+                os.environ.setdefault(k, v.strip())
 else:
     logger.warning(".env not found at %s, using the environment only", env_path)
 
@@ -458,12 +466,16 @@ async def main():
 
     for token in BOT_TOKENS:
         session = AiohttpSession(proxy=proxy_url) if proxy_url else None
-        b = Bot(token=token, session=session)
+        # Creating the Bot can fail on its own for a malformed token, and one bad token must not take the
+        # other bots down with it.
+        b = None
         try:
+            b = Bot(token=token, session=session)
             me = await b.get_me()
         except Exception as e:
-            logger.error("Skipping a bot that could not authorize: %s", e)
-            await b.session.close()
+            logger.error("Skipping bot %s...: %s", token.split(":")[0], e)
+            if b is not None:
+                await b.session.close()
             continue
         bots[b.id] = b
         logger.info("Configured bot @%s (id=%s)", me.username, b.id)
