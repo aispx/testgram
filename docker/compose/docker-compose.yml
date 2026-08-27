@@ -673,7 +673,13 @@ services:
       #RabbitMQ__EventBus__ClientName: ${RabbitMQ__EventBus__ClientName}
       RabbitMQ__EventBus__ExchangeName: ${RabbitMQ__EventBus__ExchangeName}
       TelegramBotSms__Enabled: "true"
-      TelegramBotSms__SenderApiUrl: http://172.18.0.1:5005/send
+      # The code goes to the delivery bot through a durable RabbitMQ queue. It used to be an HTTP POST to
+      # a port the bot opened, addressed at a docker bridge IP that does not exist on this host: every
+      # code then sat in HttpClient for its full 100s timeout, and the open port let anyone send a code
+      # to any linked number.
+      TelegramBotSms__ExchangeName: ${TelegramBotSms__ExchangeName:-telegram-bot-codes}
+      TelegramBotSms__QueueName: ${TelegramBotSms__QueueName:-telegram-bot-codes}
+      TelegramBotSms__RoutingKey: ${TelegramBotSms__RoutingKey:-code}
     volumes:
       - ./data/mytelegram/sms-sender/logs:/app/Logs
     depends_on:

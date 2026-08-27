@@ -68,6 +68,10 @@ builder.ConfigureServices((ctx,
     services.Configure<EventBusRabbitMqOptions>(ctx.Configuration.GetRequiredSection("RabbitMQ:EventBus"));
     services.Configure<RabbitMqOptions>(ctx.Configuration.GetRequiredSection("RabbitMQ:Connections:Default"));
 
+    // Verification codes reach the Telegram delivery bot through a queue, not an HTTP call.
+    services.Configure<MyTelegram.Services.Services.BotCodeQueueOptions>(
+        ctx.Configuration.GetSection("TelegramBotSms"));
+
     var eventBusOptions = ctx.Configuration.GetRequiredSection("RabbitMQ:EventBus").Get<EventBusRabbitMqOptions>();
     var rabbitMqOptions = ctx.Configuration.GetRequiredSection("RabbitMQ:Connections:Default").Get<RabbitMqOptions>();
 

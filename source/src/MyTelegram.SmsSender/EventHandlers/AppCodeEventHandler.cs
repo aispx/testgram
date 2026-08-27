@@ -21,7 +21,15 @@ public class AppCodeEventHandler(ISmsSenderFactory smsSenderFactory, ILogger<App
         try
         {
             var smsSender = smsSenderFactory.Create(eventData.PhoneNumber);
-            await smsSender.SendAsync(phoneNumber, $"MyTelegram code: {eventData.Code}");
+
+            // The code and its expiry travel as properties as well as inside the text: an SMS sender
+            // needs the sentence, the Telegram bot needs the bare code, and digging it back out of the
+            // text with a regular expression is one formatting change away from sending the wrong thing.
+            var smsMessage = new SmsMessage(phoneNumber, $"MyTelegram code: {eventData.Code}");
+            smsMessage.Properties["code"] = eventData.Code;
+            smsMessage.Properties["expire"] = eventData.Expire;
+
+            await smsSender.SendAsync(smsMessage);
         }
         catch (Exception ex)
         {

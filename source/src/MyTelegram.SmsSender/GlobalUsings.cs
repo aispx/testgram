@@ -8,5 +8,3 @@ global using MyTelegram.SmsSender.EventHandlers;
 global using MyTelegram.Abstractions;
 global using MyTelegram.EventBus.RabbitMQ;
 global using Microsoft.Extensions.Options;
-global using System.Net.Http.Json;
-global using System.Net.Http;

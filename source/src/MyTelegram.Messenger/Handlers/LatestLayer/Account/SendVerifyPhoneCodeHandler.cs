@@ -1,17 +1,9 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Schema.Auth;
-using Microsoft.Extensions.Options;
-using System.Net.Http;
-using System.Text.Json;
+using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
-
-public class TelegramBotSmsOptions
-{
-    public bool Enabled { get; set; }
-    public string SenderApiUrl { get; set; } = string.Empty;
-}
 
 /// <summary>
 /// Send the verification phone code for telegram passport.
@@ -22,28 +14,36 @@ public class TelegramBotSmsOptions
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The code is queued for the Telegram delivery bot. It used to be POSTed to the bot's own HTTP
+/// port under a payload shape the bot did not understand (<c>message</c> where it reads <c>code</c>), so
+/// this verification never actually reached anyone.</para>
 /// </remarks>
 internal sealed class SendVerifyPhoneCodeHandler(
     IMongoDatabase database,
-    IOptions<TelegramBotSmsOptions> smsOptions) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSendVerifyPhoneCode, MyTelegram.Schema.Auth.ISentCode>
+    IBotCodeQueue botCodeQueue,
+    ILogger<SendVerifyPhoneCodeHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSendVerifyPhoneCode, MyTelegram.Schema.Auth.ISentCode>
 {
+    private const int CodeLength = 5;
+    private const int TimeoutSeconds = 300;
+
     protected override async Task<MyTelegram.Schema.Auth.ISentCode> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSendVerifyPhoneCode obj)
     {
-        // Validate phone number format
         if (string.IsNullOrWhiteSpace(obj.PhoneNumber))
         {
             RpcErrors.RpcErrors400.PhoneNumberInvalid.ThrowRpcError();
         }
 
-        // Generate 5-digit code
         var code = Random.Shared.Next(10000, 99999).ToString();
         var phoneCodeHash = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var expireDate = now + 300; // 5 minutes
+        var expireDate = now + TimeoutSeconds;
 
-        // Store code in MongoDB
         var collection = database.GetCollection<BsonDocument>("phone_verification_codes");
-        var doc = new BsonDocument
+
+        // Only the newest code of a number is valid.
+        await collection.DeleteManyAsync(Builders<BsonDocument>.Filter.Eq("PhoneNumber", obj.PhoneNumber));
+        await collection.InsertOneAsync(new BsonDocument
         {
             ["PhoneNumber"] = obj.PhoneNumber,
             ["Code"] = code,
@@ -51,59 +51,24 @@ internal sealed class SendVerifyPhoneCodeHandler(
             ["CreatedAt"] = now,
             ["ExpireDate"] = expireDate,
             ["UserId"] = input.UserId
-        };
+        });
 
-        // Remove old codes for this phone
-        await collection.DeleteManyAsync(
-            Builders<BsonDocument>.Filter.Eq("PhoneNumber", obj.PhoneNumber)
-        );
-
-        await collection.InsertOneAsync(doc);
-
-        // Send SMS via TelegramBotSms if enabled
-        var options = smsOptions.Value;
-        if (options.Enabled && !string.IsNullOrEmpty(options.SenderApiUrl))
+        if (botCodeQueue.Enabled)
         {
-            try
-            {
-                await SendSmsAsync(obj.PhoneNumber, code, options);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SMS ERROR] Failed to send SMS: {ex.Message}");
-                // Don't fail the request if SMS sending fails
-            }
+            await botCodeQueue.PublishAsync(obj.PhoneNumber, code, expireDate);
         }
         else
         {
-            // For testing, log the code
-            Console.WriteLine($"[PHONE VERIFICATION] Phone: {obj.PhoneNumber}, Code: {code}, Hash: {phoneCodeHash}");
+            logger.LogInformation("Phone verification code for {Phone} is {Code} (delivery is disabled)",
+                obj.PhoneNumber, code);
         }
 
         return new TSentCode
         {
-            Type = new TSentCodeTypeApp { Length = 5 },
+            Type = new TSentCodeTypeApp { Length = CodeLength },
             PhoneCodeHash = phoneCodeHash,
             NextType = new TCodeTypeCall(),
-            Timeout = 300
+            Timeout = TimeoutSeconds
         };
-    }
-
-    private static async Task SendSmsAsync(string phoneNumber, string code, TelegramBotSmsOptions options)
-    {
-        using var client = new HttpClient();
-        var message = $"Your Testgram verification code is: {code}";
-
-        var payload = new
-        {
-            phone = phoneNumber,
-            message = message
-        };
-
-        var json = System.Text.Json.JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-
-        var response = await client.PostAsync(options.SenderApiUrl, content);
-        response.EnsureSuccessStatusCode();
     }
 }

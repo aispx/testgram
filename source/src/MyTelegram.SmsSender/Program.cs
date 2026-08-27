@@ -3,6 +3,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using MyTelegram.EventBus.RabbitMQ.Extensions;
+using MyTelegram.Services.Services;
 using MyTelegram.SmsSender;
 using Serilog;
 using Serilog.Sinks.SystemConsole.Themes;
@@ -35,7 +36,7 @@ builder.ConfigureServices((context,
     services) =>
 {
     services.Configure<TwilioSmsOptions>(context.Configuration.GetRequiredSection("TwilioSms"));
-    services.Configure<TelegramBotSmsOptions>(context.Configuration.GetSection("TelegramBotSms"));
+    services.Configure<BotCodeQueueOptions>(context.Configuration.GetSection("TelegramBotSms"));
     services.Configure<EventBusRabbitMqOptions>(context.Configuration.GetRequiredSection("RabbitMQ:EventBus"));
     services.Configure<RabbitMqOptions>(context.Configuration.GetRequiredSection("RabbitMQ:Connections:Default"));
 

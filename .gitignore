@@ -361,6 +361,10 @@ docker/compose/data/
 
 # Bot
 bot/codes.db
+# WAL sidecars of that database (the bot runs SQLite in WAL mode)
+bot/codes.db-shm
+bot/codes.db-wal
+bot/bot.log
 bot/.env
 
 # Local appsettings with custom IPs
