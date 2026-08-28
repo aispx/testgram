@@ -11,6 +11,7 @@ using MyTelegram.Core;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Messenger.Services.Interfaces;
 using MyTelegram.Messenger.Services.Phone;
+using MyTelegram.Messenger.Services.TopPeers;
 using MyTelegram.Queries;
 using MyTelegram.ReadModel.Interfaces;
 using MyTelegram.Schema;
@@ -42,6 +43,12 @@ public static class PhoneTestFixtures
     /// handler declares, so tests only pass the dependencies they actually exercise. Returns
     /// <paramref name="args"/> unchanged when the caller already supplied every parameter.
     /// </summary>
+    /// <summary>
+    /// Fills in a <see cref="NullLogger{T}"/> for every <c>ILogger&lt;T&gt;</c> constructor parameter the
+    /// handler declares, plus a no-op <see cref="ITopPeerUsageRecorder"/> for the top-peer rating a call
+    /// contributes to, so tests only pass the dependencies they actually exercise. Returns
+    /// <paramref name="args"/> unchanged when the caller already supplied every parameter.
+    /// </summary>
     public static object[] WithNullLoggers(Type handlerType, object[] args)
     {
         var constructor = handlerType.GetConstructors()
@@ -63,6 +70,10 @@ public static class PhoneTestFixtures
                 var nullLogger = typeof(NullLogger<>).MakeGenericType(parameterType.GetGenericArguments()[0]);
                 // NullLogger<T>.Instance is a static field, not a property.
                 filled[i] = nullLogger.GetField("Instance")!.GetValue(null)!;
+            }
+            else if (parameterType == typeof(ITopPeerUsageRecorder))
+            {
+                filled[i] = new Mock<ITopPeerUsageRecorder>(MockBehavior.Loose).Object;
             }
             else
             {
@@ -117,6 +128,12 @@ public static class PhoneTestFixtures
             if (parameterType == typeof(IPeerHelper))
             {
                 filled[i] = new PeerHelper();
+                continue;
+            }
+
+            if (parameterType == typeof(ITopPeerUsageRecorder))
+            {
+                filled[i] = new Mock<ITopPeerUsageRecorder>(MockBehavior.Loose).Object;
                 continue;
             }
 

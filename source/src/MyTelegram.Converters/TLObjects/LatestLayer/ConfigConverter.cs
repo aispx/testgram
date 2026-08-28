@@ -61,7 +61,7 @@ internal sealed class ConfigConverter(IObjectMapper objectMapper) : IConfigConve
             EditTimeLimit = 172800, // _options.EditTimeLimit, //172800
             RevokeTimeLimit = 2147483647,
             RevokePmTimeLimit = 2147483647,
-            RatingEDecay = 2419200,
+            RatingEDecay = TopPeerRatingConstants.RatingEDecaySeconds,
             StickersRecentLimit = 200,
             //StickersFavedLimit = 5,
             ChannelsReadMediaPeriod = 604800,

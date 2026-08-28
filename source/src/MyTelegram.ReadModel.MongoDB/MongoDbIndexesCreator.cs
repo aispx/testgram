@@ -44,6 +44,13 @@ public class MongoDbIndexesCreator(
         await CreateCompoundIndexAsync<MessageReadModel>("idx_message_owner_topmsg_msgid",
             p => p.OwnerPeerId, p => p.TopMsgId, p => p.MessageId);
 
+        // contacts.getTopPeers aggregates one user's recent outgoing messages, and this is the largest
+        // collection in the system: without Out and Date in the index, the single-field OwnerPeerId one
+        // above makes it fetch every message that user ever sent just to re-check the two.
+        // See https://corefork.telegram.org/api/top-rating
+        await CreateCompoundIndexAsync<MessageReadModel>("idx_message_owner_out_date",
+            p => p.OwnerPeerId, p => p.Out, p => p.Date);
+
         await CreateIndexAsync<UserReadModel>(p => p.UserId);
         await CreateIndexAsync<UserReadModel>(p => p.PhoneNumber);
         await CreateIndexAsync<UserReadModel>(p => p.FirstName);

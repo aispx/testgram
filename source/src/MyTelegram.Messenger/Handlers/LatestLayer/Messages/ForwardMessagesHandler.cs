@@ -71,7 +71,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper, IBlockCacheAppService blockCacheAppService, IPrivacyAppService privacyAppService, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
+public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper peerHelper, IChannelAppService channelAppService, IMessageAppService messageAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IMessageEncryptionHelper messageEncryptionHelper, IBlockCacheAppService blockCacheAppService, IPrivacyAppService privacyAppService, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, ITopPeerUsageRecorder topPeerUsageRecorder) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestForwardMessages, MyTelegram.Schema.IUpdates>
 {
     public async Task<IUpdates> HandleAsync(IRequestInput input, RequestForwardMessages obj)
     {
@@ -245,6 +245,8 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
         {
             var command = new StartForwardMessagesCommand(TempId.New, input.ToRequestInfo(), obj.Silent, obj.Background, obj.WithMyScore, obj.DropAuthor, obj.DropMediaCaptions, obj.Noforwards || targetNoForwards, fromPeer, toPeer, obj.Id.ToList(), obj.RandomId.ToList(), obj.ScheduleDate, sendAs, false, post, fromNames);
             await commandBus.PublishAsync(command);
+            await RecordForwardUsageAsync(input, toPeer);
+
             return null!;
         }
 
@@ -341,7 +343,22 @@ public sealed class ForwardMessagesHandler(ICommandBus commandBus, IPeerHelper p
         }
 
         await messageAppService.SendMessageAsync(inputs);
+        await RecordForwardUsageAsync(input, toPeer);
+
         return null!;
+    }
+
+    /// <summary>
+    /// One use per forward action, not per message: tdlib counts the action too, and a 100-message
+    /// forward is one decision about where to send it. Recorded here rather than inferred from
+    /// <c>messageReadModel.FwdHeader</c>, which <c>drop_author</c> nulls out. Both dispatch paths have to
+    /// call it — the ordinary forward leaves through the saga command above and never reaches the
+    /// scheduled/monoforum tail.
+    /// See https://corefork.telegram.org/api/top-rating
+    /// </summary>
+    private Task RecordForwardUsageAsync(IRequestInput input, Peer toPeer)
+    {
+        return topPeerUsageRecorder.RecordForwardAsync(input.UserId, toPeer.PeerType, toPeer.PeerId);
     }
 
     /// <summary>

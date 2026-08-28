@@ -12,6 +12,7 @@ internal sealed class DiscardCallHandler(
     IUserConverterService userConverterService,
     IObjectMessageSender objectMessageSender,
     IMessageAppService messageAppService,
+    ITopPeerUsageRecorder topPeerUsageRecorder,
     IAccessHashHelper2 accessHashHelper2)
     : RpcResultObjectHandler<MyTelegram.Schema.Phone.RequestDiscardCall, IUpdates>
 {
@@ -136,6 +137,15 @@ internal sealed class DiscardCallHandler(
             obj.Duration,
             obj.Reason,
             session.Video || obj.Video);
+
+        // A finished call is what topPeerCategoryPhoneCalls ranks, and it counts for both parties: the
+        // other side becomes a likely call destination for each of them. Recorded here rather than at
+        // phone.requestCall so a call is counted once — the idempotent re-discard above returns early.
+        // See https://corefork.telegram.org/api/top-rating
+        await topPeerUsageRecorder.RecordAsync(session.CallerId, TopPeerCategory.PhoneCalls, PeerType.User,
+            session.CalleeId);
+        await topPeerUsageRecorder.RecordAsync(session.CalleeId, TopPeerCategory.PhoneCalls, PeerType.User,
+            session.CallerId);
 
         return new TUpdates
         {
