@@ -1,5 +1,4 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Schema.Chatlists;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// <summary>
@@ -11,67 +10,70 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The chats named by the links travel with the answer, because the client draws each link as the list
+/// of chats it carries and has no other source for peers it may not have loaded.</para>
 /// </remarks>
-internal sealed class GetExportedInvitesHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestGetExportedInvites, MyTelegram.Schema.Chatlists.IExportedInvites>
+internal sealed class GetExportedInvitesHandler(
+    IQueryProcessor queryProcessor,
+    IChatlistInviteStore chatlistInviteStore,
+    IChatConverterService chatConverterService,
+    IUserConverterService userConverterService)
+    : RpcResultObjectHandler<RequestGetExportedInvites, IExportedInvites>
 {
-    private readonly IMongoDatabase _database;
-
-    public GetExportedInvitesHandler(IMongoDatabase database)
+    protected override async Task<IExportedInvites> HandleCoreAsync(IRequestInput input,
+        RequestGetExportedInvites obj)
     {
-        _database = database;
-    }
-
-    protected override async Task<MyTelegram.Schema.Chatlists.IExportedInvites> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestGetExportedInvites obj)
-    {
-        // 1. Validate chatlist
         if (obj.Chatlist is not TInputChatlistDialogFilter chatlistFilter)
         {
             RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
             return null!;
         }
 
-        var filterId = chatlistFilter.FilterId;
-
-        // 2. Find all invites for this filter
-        var collection = _database.GetCollection<BsonDocument>("chatlist_invites");
-        var filter = Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("CreatorUserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("FilterId", filterId),
-            Builders<BsonDocument>.Filter.Eq("Revoked", false)
-        );
-
-        var inviteDocs = await collection.Find(filter).ToListAsync();
-
-        // 3. Build response
-        var invites = new TVector<IExportedChatlistInvite>();
-
-        foreach (var doc in inviteDocs)
+        var readModel = await queryProcessor.ProcessAsync(
+            new GetDialogFilterByIdQuery(input.UserId, chatlistFilter.FilterId));
+        if (readModel == null)
         {
-            var slug = doc["Slug"].AsString;
-            var title = doc["Title"].AsString;
-            var peerIds = doc["PeerIds"].AsBsonArray.Select(p => p.AsInt64).ToList();
-            var peerTypes = doc["PeerTypes"].AsBsonArray.Select(p => p.AsString).ToList();
+            RpcErrors.RpcErrors400.FilterIdInvalid.ThrowRpcError();
+        }
 
-            var peers = new TVector<IPeer>();
-            for (int i = 0; i < peerIds.Count; i++)
-            {
-                var peerType = Enum.Parse<PeerType>(peerTypes[i]);
-                peers.Add(new Peer(peerType, peerIds[i]).ToPeer());
-            }
+        var inviteDocuments = await chatlistInviteStore.GetByFilterAsync(input.UserId, chatlistFilter.FilterId);
+
+        var invites = new TVector<MyTelegram.Schema.IExportedChatlistInvite>();
+        var peers = new List<Peer>();
+        foreach (var document in inviteDocuments)
+        {
+            var invitePeers = document.ToPeers();
+            peers.AddRange(invitePeers);
 
             invites.Add(new MyTelegram.Schema.TExportedChatlistInvite
             {
-                Title = title,
-                Url = $"https://t.me/addlist/{slug}",
-                Peers = peers
+                Title = document.Title,
+                Url = $"https://t.me/addlist/{document.Slug}",
+                Peers = [.. invitePeers.Select(p => p.ToPeer())]
             });
         }
 
-        return new MyTelegram.Schema.Chatlists.TExportedInvites
+        var chats = new TVector<IChat>();
+        var users = new TVector<IUser>();
+
+        var channelIds = peers.Where(p => p.PeerType == PeerType.Channel).Select(p => p.PeerId).Distinct().ToList();
+        if (channelIds.Count > 0)
+        {
+            chats.AddRange(await chatConverterService.GetChannelListAsync(input, channelIds, layer: input.Layer));
+        }
+
+        var userIds = peers.Where(p => p.PeerType == PeerType.User).Select(p => p.PeerId).Distinct().ToList();
+        if (userIds.Count > 0)
+        {
+            users.AddRange(await userConverterService.GetUserListAsync(input, userIds, false, false, input.Layer));
+        }
+
+        return new TExportedInvites
         {
             Invites = invites,
-            Chats = new TVector<IChat>(),
-            Users = new TVector<IUser>()
+            Chats = chats,
+            Users = users
         };
     }
 }

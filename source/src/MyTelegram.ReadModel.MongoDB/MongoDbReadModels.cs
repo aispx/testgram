@@ -49,6 +49,10 @@ public class DialogFilterReadModel : Impl.DialogFilterReadModel, IMongoDbReadMod
 {
 }
 
+public class DialogFilterSettingsReadModel : Impl.DialogFilterSettingsReadModel, IMongoDbReadModel
+{
+}
+
 public class DialogReadModel : Impl.DialogReadModel, IMongoDbReadModel
 {
 }

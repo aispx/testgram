@@ -1,5 +1,4 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Schema.Chatlists;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// <summary>
@@ -8,6 +7,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// Code Type Description
 /// 400 CHANNELS_TOO_MUCH You have joined too many channels/supergroups.
 /// 400 CHATLISTS_TOO_MUCH You have created too many folder links, hitting the <code>chatlist_invites_limit_default</code>/<code>chatlist_invites_limit_premium</code> <a href="https://corefork.telegram.org/api/config#chatlist-invites-limit-default">limits »</a>.
+/// 400 DIALOG_FILTERS_TOO_MUCH Too many folders.
 /// 400 FILTER_INCLUDE_EMPTY The include_peers vector of the filter is empty.
 /// 400 INVITE_SLUG_EMPTY The specified invite slug is empty.
 /// 400 INVITE_SLUG_EXPIRED The specified chat folder link has expired.
@@ -15,95 +15,129 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The answer has to carry the resulting <c>updateDialogFilter</c>: Android reads the new folder id out
+/// of it (<c>FolderBottomSheet</c> scans the returned updates for <c>TL_updateDialogFilter</c>) and scrolls
+/// to that tab, so an empty <c>updates</c> leaves the user on the chat list with no folder to look at.</para>
 /// </remarks>
-internal sealed class JoinChatlistInviteHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestJoinChatlistInvite, MyTelegram.Schema.IUpdates>
+internal sealed class JoinChatlistInviteHandler(
+    ICommandBus commandBus,
+    IQueryProcessor queryProcessor,
+    IPeerHelper peerHelper,
+    IChatlistInviteStore chatlistInviteStore,
+    IChatlistHiddenUpdateStore hiddenUpdateStore,
+    IChatlistMembershipService membershipService,
+    IChatlistPeerObjectsResolver peerObjectsResolver,
+    IDialogFilterIdAllocator filterIdAllocator,
+    IDialogFilterLimitResolver limitResolver,
+    ILayeredService<IDialogFilterConverter> dialogFilterLayeredService)
+    : RpcResultObjectHandler<RequestJoinChatlistInvite, MyTelegram.Schema.IUpdates>
 {
-    private readonly IMongoDatabase _database;
-    private readonly ICommandBus _commandBus;
-    private readonly IPeerHelper _peerHelper;
-
-    public JoinChatlistInviteHandler(
-        IMongoDatabase database,
-        ICommandBus commandBus,
-        IPeerHelper peerHelper)
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input,
+        RequestJoinChatlistInvite obj)
     {
-        _database = database;
-        _commandBus = commandBus;
-        _peerHelper = peerHelper;
-    }
+        if (string.IsNullOrWhiteSpace(obj.Slug))
+        {
+            RpcErrors.RpcErrors400.InviteSlugEmpty.ThrowRpcError();
+        }
 
-    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestJoinChatlistInvite obj)
-    {
-        // 1. Find invite
-        var collection = _database.GetCollection<BsonDocument>("chatlist_invites");
-        var filter = Builders<BsonDocument>.Filter.Eq("Slug", obj.Slug);
-        var inviteDoc = await collection.Find(filter).FirstOrDefaultAsync();
-
-        if (inviteDoc == null || inviteDoc["Revoked"].AsBoolean)
+        var invite = await chatlistInviteStore.GetBySlugAsync(obj.Slug);
+        if (invite == null || invite.Revoked)
         {
             RpcErrors.RpcErrors400.InviteSlugExpired.ThrowRpcError();
         }
 
-        var filterId = inviteDoc["FilterId"].AsInt32;
-        var title = inviteDoc["Title"].AsString;
-
-        // 2. Convert selected peers to InputPeer
-        var includePeers = new List<InputPeer>();
+        // Only the peers the link actually offers may be imported; anything else would let a caller build a
+        // folder out of peers it has no link to.
+        var invitePeerIds = invite!.PeerIds.ToHashSet();
+        var selectedPeers = new List<Peer>();
         foreach (var inputPeer in obj.Peers)
         {
-            var peer = _peerHelper.GetPeer(inputPeer, input.UserId);
-            long accessHash = 0;
-
-            switch (inputPeer)
+            var peer = peerHelper.GetPeer(inputPeer, input.UserId);
+            if (invitePeerIds.Contains(peer.PeerId) && selectedPeers.All(p => p.PeerId != peer.PeerId))
             {
-                case TInputPeerChannel inputPeerChannel:
-                    accessHash = inputPeerChannel.AccessHash;
-                    break;
-                case TInputPeerUser inputPeerUser:
-                    accessHash = inputPeerUser.AccessHash;
-                    break;
+                selectedPeers.Add(peer);
             }
-
-            includePeers.Add(new InputPeer(peer, accessHash));
         }
 
-        // 3. Create dialogFilterChatlist
-        var dialogFilter = new DialogFilter(
+        if (selectedPeers.Count == 0)
+        {
+            RpcErrors.RpcErrors400.FilterIncludeEmpty.ThrowRpcError();
+        }
+
+        var existing = await queryProcessor.ProcessAsync(new GetImportedDialogFolderQuery(input.UserId, obj.Slug));
+        var filterId = existing?.Filter.Id ?? 0;
+        var includePeers = existing?.Filter.IncludePeers.ToList() ?? [];
+        var pinnedPeers = existing?.Filter.PinnedPeers.ToList() ?? [];
+
+        if (existing == null)
+        {
+            var filters = await queryProcessor.ProcessAsync(new GetDialogFiltersQuery(input.UserId));
+
+            if (filters.Count(p => p.IsShareableFolder) >= await limitResolver.GetJoinedChatlistLimitAsync(input.UserId))
+            {
+                RpcErrors.RpcErrors400.ChatlistsTooMuch.ThrowRpcError();
+            }
+
+            if (filters.Count >= await limitResolver.GetFilterLimitAsync(input.UserId))
+            {
+                throw new RpcException(new RpcError(400, "DIALOG_FILTERS_TOO_MUCH"));
+            }
+
+            filterId = await filterIdAllocator.AllocateAsync(input.UserId);
+        }
+
+        var known = includePeers.Select(p => p.Peer.PeerId).Concat(pinnedPeers.Select(p => p.Peer.PeerId)).ToHashSet();
+        var addedPeers = selectedPeers.Where(p => !known.Contains(p.PeerId)).ToList();
+
+        var chatsLimit = await limitResolver.GetChatsPerFilterLimitAsync(input.UserId);
+        if (includePeers.Count + pinnedPeers.Count + addedPeers.Count > chatsLimit)
+        {
+            throw new RpcException(new RpcError(400, "FILTER_INCLUDE_TOO_MUCH"));
+        }
+
+        await membershipService.JoinAsync(input, addedPeers);
+
+        includePeers.AddRange(addedPeers.Select(p => new InputPeer(p, 0)));
+
+        var filter = new DialogFilter(
             filterId,
-            false, // Contacts
-            false, // NonContacts
-            false, // Groups
-            false, // Broadcasts
-            false, // Bots
-            false, // ExcludeMuted
-            false, // ExcludeRead
-            false, // ExcludeArchived
-            false, // TitleNoAnimate
-            new TTextWithEntities { Text = title, Entities = new TVector<IMessageEntity>() },
-            null, // Emoticon
-            null, // Color
-            new List<InputPeer>(), // PinnedPeers
+            false, false, false, false, false, false, false, false,
+            existing?.Filter.TitleNoAnimate ?? false,
+            existing?.Filter.Title ?? new TTextWithEntities
+            {
+                Text = invite.Title,
+                Entities = new TVector<IMessageEntity>()
+            },
+            existing?.Filter.Emoticon,
+            existing?.Filter.Color,
+            pinnedPeers,
             includePeers,
-            new List<InputPeer>(), // ExcludePeers
-            true // IsChatlist
-        );
+            [],
+            true,
+            obj.Slug);
 
-        // 4. Create folder via command
-        var command = new UpdateDialogFilterCommand(
-            DialogFilterId.Create(input.UserId, filterId),
-            input.ToRequestInfo(),
-            input.UserId,
-            dialogFilter
-        );
+        await commandBus.PublishAsync(
+            new UpdateDialogFilterCommand(DialogFilterId.Create(input.UserId, filterId), input.ToRequestInfo(),
+                input.UserId, filter), CancellationToken.None);
 
-        await _commandBus.PublishAsync(command, default);
+        // Peers that just made it into the folder are no longer pending updates.
+        await hiddenUpdateStore.UnhideAsync(input.UserId, filterId, [.. addedPeers.Select(p => p.PeerId)]);
 
-        // 5. Return empty Updates (folder will sync via updateDialogFilter)
+        var hasMyInvites = await chatlistInviteStore.HasInvitesAsync(input.UserId, filterId);
+        var update = new TUpdateDialogFilter
+        {
+            Id = filterId,
+            Filter = dialogFilterLayeredService.GetConverter(input.Layer).ToDialogFilter(filter, hasMyInvites)
+        };
+
+        var (chats, users) = await peerObjectsResolver.ResolveAsync(input, selectedPeers);
+
         return new TUpdates
         {
-            Updates = new TVector<IUpdate>(),
-            Users = new TVector<IUser>(),
-            Chats = new TVector<IChat>(),
+            Updates = new TVector<IUpdate>(update),
+            Users = users,
+            Chats = chats,
             Date = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             Seq = 0
         };

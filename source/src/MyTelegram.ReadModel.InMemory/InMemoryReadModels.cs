@@ -52,6 +52,11 @@ public class DialogFilterReadModel : Impl.DialogFilterReadModel
 }
 
 
+public class DialogFilterSettingsReadModel : Impl.DialogFilterSettingsReadModel
+{
+}
+
+
 public class DialogReadModel : Impl.DialogReadModel
 {
 }

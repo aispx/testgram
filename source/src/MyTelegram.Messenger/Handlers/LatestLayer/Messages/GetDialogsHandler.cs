@@ -13,8 +13,18 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>An absent <c>folder_id</c> means the main list, exactly as <c>folder_id = 0</c> does — measured against
+/// the live service, whose two answers are identical and whose archived chats appear only under
+/// <c>folder_id = 1</c>. A pinned archive is prepended as a <c>dialogFolder</c>; an unpinned one is not
+/// announced at all, again matching what the live service sends.</para>
 /// </remarks>
-internal sealed class GetDialogsHandler(IDialogAppService dialogAppService, IPeerHelper peerHelper, IDialogConverterService dialogConverterService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetDialogs, MyTelegram.Schema.Messages.IDialogs>
+internal sealed class GetDialogsHandler(
+    IDialogAppService dialogAppService,
+    IPeerHelper peerHelper,
+    IArchiveFolderService archiveFolderService,
+    IDialogConverterService dialogConverterService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetDialogs, MyTelegram.Schema.Messages.IDialogs>
 {
     protected override async Task<IDialogs> HandleCoreAsync(IRequestInput input, RequestGetDialogs obj)
     {
@@ -35,6 +45,26 @@ internal sealed class GetDialogsHandler(IDialogAppService dialogAppService, IPee
             OwnerId = userId,
             OffsetPeer = offsetPeer
         });
-        return dialogConverterService.ToDialogs(input, getDialogOutput, input.Layer);
+        var dialogs = dialogConverterService.ToDialogs(input, getDialogOutput, input.Layer);
+
+        if ((obj.FolderId ?? 0) == 0 && !obj.ExcludePinned)
+        {
+            var archive = await archiveFolderService.GetPinnedArchiveDialogAsync(userId);
+            if (archive != null)
+            {
+                switch (dialogs)
+                {
+                    case TDialogs allDialogs:
+                        allDialogs.Dialogs.Insert(0, archive);
+                        break;
+                    case TDialogsSlice slice:
+                        slice.Dialogs.Insert(0, archive);
+                        slice.Count++;
+                        break;
+                }
+            }
+        }
+
+        return dialogs;
     }
 }

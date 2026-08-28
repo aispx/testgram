@@ -1,3 +1,5 @@
+using MyTelegram.Schema.Chatlists;
+
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// <summary>
 /// Dismiss new pending peers recently added to a <a href="https://corefork.telegram.org/api/links#chat-folder-links">chat folder deep link »</a>.
@@ -9,12 +11,24 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Chatlists;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The dismissal has to be remembered on the server: clients call this instead of
+/// <c>joinChatlistUpdates</c> when the user wants none of the offered chats, and a dismissal that is not
+/// stored means the same chats are offered again on the next poll, every
+/// <c>chatlist_update_period</c> seconds.</para>
 /// </remarks>
-internal sealed class HideChatlistUpdatesHandler : RpcResultObjectHandler<MyTelegram.Schema.Chatlists.RequestHideChatlistUpdates, IBool>
+internal sealed class HideChatlistUpdatesHandler(
+    IChatlistUpdateResolver updateResolver,
+    IChatlistHiddenUpdateStore hiddenUpdateStore)
+    : RpcResultObjectHandler<RequestHideChatlistUpdates, IBool>
 {
-    protected override Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Chatlists.RequestHideChatlistUpdates obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestHideChatlistUpdates obj)
     {
-        // Just return success (no updates to hide)
-        return Task.FromResult<IBool>(new TBoolTrue());
+        var info = await updateResolver.ResolveAsync(input.UserId, obj.Chatlist);
+
+        await hiddenUpdateStore.HideAsync(input.UserId, info.Folder.Filter.Id,
+            [.. info.MissingPeers.Select(p => p.PeerId)]);
+
+        return new TBoolTrue();
     }
 }

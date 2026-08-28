@@ -135,6 +135,12 @@ public record GetDialogByIdQuery(string Id) : IQuery<IDialogReadModel?>;
 public record GetDialogFilterByIdQuery(long OwnerUserId, int FolderId) : IQuery<IDialogFilterReadModel?>;
 public record GetDialogFiltersQuery(long OwnerUserId) : IQuery<IReadOnlyCollection<IDialogFilterReadModel>>;
 
+/// <summary>
+/// The per-user folder order, the folder tags toggle and the pinned state of the archive.
+/// See https://corefork.telegram.org/api/folders
+/// </summary>
+public record GetDialogFilterSettingsQuery(long OwnerUserId) : IQuery<IDialogFilterSettingsReadModel?>;
+
 public record GetDialogsQuery(
     long OwnerId,
     bool? Pinned,

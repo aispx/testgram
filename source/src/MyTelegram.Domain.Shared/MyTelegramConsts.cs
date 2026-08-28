@@ -43,6 +43,12 @@ public class MyTelegramConsts
 
     public const int FolderInitId = 1;
 
+    /// <summary>
+    /// The chat archive, the only <a href="https://corefork.telegram.org/api/folders#peer-folders">peer
+    /// folder</a> that exists besides the main list (0): "no other folder_id is allowed at the moment".
+    /// </summary>
+    public const int ArchiveFolderId = 1;
+
     public const int PtsInitId = 1;
 
     public const long NotificationServiceUserId = 777000;
