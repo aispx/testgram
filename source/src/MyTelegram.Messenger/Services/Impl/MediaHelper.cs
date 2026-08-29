@@ -17,6 +17,7 @@ public class MediaHelper(
     IObjectMapper objectMapper,
     ICommandBus commandBus,
     ILogger<MediaHelper> logger,
+    IFileReferenceHelper fileReferenceHelper,
     IMongoDatabase mongoDatabase)
     : IMediaHelper, ITransientDependency
 {
@@ -418,7 +419,7 @@ public class MediaHelper(
         {
             Peer = StoryHelper.CreatePeer(ownerPeerType, ownerPeerId),
             Id = inputMediaStory.Id,
-            Story = story != null ? StoryHelper.ConvertToStoryItem(story) : null
+            Story = story != null ? StoryHelper.ConvertToStoryItem(fileReferenceHelper, story) : null
         };
     }
 

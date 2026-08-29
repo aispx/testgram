@@ -16,6 +16,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// </remarks>
 internal sealed class UploadRingtoneHandler(
     IMongoDatabase database,
+    IFileReferenceHelper fileReferenceHelper,
     ILogger<UploadRingtoneHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUploadRingtone, MyTelegram.Schema.IDocument>
 {
     protected override async Task<MyTelegram.Schema.IDocument> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUploadRingtone obj)
@@ -69,7 +70,6 @@ internal sealed class UploadRingtoneHandler(
             ["_id"] = $"documentreadmodel-{documentId}",
             ["DocumentId"] = documentId,
             ["AccessHash"] = accessHash,
-            ["FileReference"] = Array.Empty<byte>(),
             ["Date"] = (int)now,
             ["MimeType"] = obj.MimeType,
             ["Size"] = fileSize,
@@ -105,7 +105,8 @@ internal sealed class UploadRingtoneHandler(
         {
             Id = documentId,
             AccessHash = accessHash,
-            FileReference = Array.Empty<byte>(),
+            // See https://corefork.telegram.org/api/file-references
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = (int)now,
             MimeType = obj.MimeType,
             Size = fileSize,

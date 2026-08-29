@@ -80,7 +80,12 @@ public class GifDocumentPublisher(
 
         var thumb = await PublishThumbnailAsync(fileId, path, info, cancellationToken);
 
-        await WriteDocumentAsync(userId, fileId, fileName, file.Length, info, thumb, cancellationToken);
+        // Recorded while the body is still on disk, because messages.getDocumentByHash looks a document
+        // up by the hash of its bytes and nothing else here can produce it later without downloading the
+        // file back. See https://corefork.telegram.org/method/messages.getDocumentByHash
+        var sha256 = await ComputeSha256Async(path, cancellationToken);
+
+        await WriteDocumentAsync(userId, fileId, fileName, file.Length, info, thumb, sha256, cancellationToken);
 
         // Read back rather than mapped from what was written: the send path and the saved-GIF list both
         // read the document from here, so a row they cannot read is worth finding out about now.
@@ -156,7 +161,7 @@ public class GifDocumentPublisher(
     }
 
     private Task WriteDocumentAsync(long userId, long fileId, string fileName, long size, VideoInfo? info,
-        (int Width, int Height, int Size)? thumb, CancellationToken cancellationToken)
+        (int Width, int Height, int Size)? thumb, string sha256, CancellationToken cancellationToken)
     {
         var attributes = new List<IDocumentAttribute> { new TDocumentAttributeAnimated() };
 
@@ -185,10 +190,11 @@ public class GifDocumentPublisher(
             // Bodies the server stores itself are unencrypted and live on the media DC, like the ones
             // created for sticker sets.
             ["DcId"] = MyTelegramConsts.MediaDcId,
-            // Non-empty on purpose: a client that receives a document with an empty file_reference treats
-            // it as stale and tries to refresh it through the message it came from before downloading
-            // anything, and a GIF then sits at a spinner forever. Nothing here validates the value.
-            ["FileReference"] = new BsonBinaryData(GenerateFileReference()),
+            // No FileReference is stored. It used to hold sixteen random bytes, because a client that
+            // receives an empty reference tries to refresh it before downloading anything and the GIF then
+            // sits at a spinner forever. References are now derived from the document id on the way out
+            // (IFileReferenceStamper), so there is nothing left to keep here.
+            // See https://corefork.telegram.org/api/file-references
             ["MimeType"] = GifDocumentHelper.Mp4MimeType,
             ["Name"] = fileName,
             ["Size"] = size,
@@ -215,6 +221,7 @@ public class GifDocumentPublisher(
             ["VideoThumbId"] = BsonNull.Value,
             ["Fingerprint"] = BsonNull.Value,
             ["Md5CheckSum"] = BsonNull.Value,
+            ["Sha256"] = sha256,
             ["Version"] = 1L
         };
 
@@ -234,11 +241,11 @@ public class GifDocumentPublisher(
         return BitConverter.ToInt64(bytes, 0) & 0x7FFFFFFFFFFFFFFF;
     }
 
-    private static byte[] GenerateFileReference()
+    private static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
     {
-        var bytes = new byte[16];
-        Random.Shared.NextBytes(bytes);
+        await using var stream = File.OpenRead(path);
 
-        return bytes;
+        return Convert.ToHexStringLower(
+            await System.Security.Cryptography.SHA256.HashDataAsync(stream, cancellationToken));
     }
 }

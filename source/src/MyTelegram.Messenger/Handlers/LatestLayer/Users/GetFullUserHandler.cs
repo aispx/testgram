@@ -14,7 +14,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// Returns extended user info by ID.
 /// <para><c>See <a href="https://corefork.telegram.org/method/users.getFullUser"/> </c></para>
 /// </summary>
-internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IAccessHashHelper2 accessHashHelper, IFromMessagePeerResolver fromMessagePeerResolver, IChatWallPaperService chatWallPaperService, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
+internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IAccessHashHelper2 accessHashHelper, IFromMessagePeerResolver fromMessagePeerResolver, IChatWallPaperService chatWallPaperService, IFileReferenceHelper fileReferenceHelper, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
 {
     protected override async Task<MyTelegram.Schema.Users.IUserFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetFullUser obj)
     {
@@ -127,7 +127,7 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
             var storyItems = new TVector<MyTelegram.Schema.IStoryItem>();
             foreach (var story in stories)
             {
-                storyItems.Add(StoryHelper.ConvertToStoryItem(story, requesterId));
+                storyItems.Add(StoryHelper.ConvertToStoryItem(fileReferenceHelper, story, requesterId));
             }
             
             var peerStories = new MyTelegram.Schema.TPeerStories
@@ -528,12 +528,8 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         }
     }
 
-    private static IDocument ConvertToDocument(BsonDocument doc)
+    private IDocument ConvertToDocument(BsonDocument doc)
     {
-        var fileRef = doc.Contains("FileReference") && !doc["FileReference"].IsBsonNull
-            ? doc["FileReference"].AsBsonBinaryData.Bytes
-            : Array.Empty<byte>();
-
         var attributes = new TVector<IDocumentAttribute>();
 
         // Use Attributes2 if available (proper serialization)
@@ -573,11 +569,14 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
             }
         }
 
+        var documentId = doc["DocumentId"].AsInt64;
+
         return new TDocument
         {
-            Id = doc["DocumentId"].AsInt64,
+            Id = documentId,
             AccessHash = doc["AccessHash"].AsInt64,
-            FileReference = fileRef,
+            // See https://corefork.telegram.org/api/file-references
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = doc["Date"].AsInt32,
             MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "audio/mpeg",
             Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,

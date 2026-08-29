@@ -994,7 +994,7 @@ def cmd_import():
 
     existing_docs = {
         to_int64(d["DocumentId"]): d
-        for d in doc_col.find({}, {"DocumentId": 1, "Attributes2": 1, "AccessHash": 1, "FileReference": 1, "Date": 1, "DcId": 1, "MimeType": 1, "Size": 1, "Name": 1, "Thumbs": 1, "Version": 1})
+        for d in doc_col.find({}, {"DocumentId": 1, "Attributes2": 1, "AccessHash": 1, "Date": 1, "DcId": 1, "MimeType": 1, "Size": 1, "Name": 1, "Thumbs": 1, "Version": 1})
     }
     print(f"Found {len(existing_docs)} existing documents in MongoDB")
 
@@ -1054,7 +1054,6 @@ def cmd_import():
                 continue
 
             data = p.read_bytes()
-            file_ref = list(os.urandom(16))
             access_hash = to_int64(doc.get("access_hash", 0)) or int.from_bytes(os.urandom(8), "little", signed=True)
             ext = doc.get("ext", "bin")
 
@@ -1069,7 +1068,8 @@ def cmd_import():
                 "DocumentId": doc_id,
                 "LocalFile": str(p),
                 "AccessHash": access_hash,
-                "FileReference": file_ref,
+                # No FileReference: derived from the document id on the way out.
+                # See https://corefork.telegram.org/api/file-references
                 "Date": int(time.time()),
                 "DcId": DC_ID,
                 "MimeType": mime,

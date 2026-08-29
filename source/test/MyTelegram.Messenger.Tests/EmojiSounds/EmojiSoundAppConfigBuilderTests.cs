@@ -36,7 +36,7 @@ public class EmojiSoundAppConfigBuilderTests
             .Returns((long userId, long keyId, long targetId, AccessHashType _) =>
                 accessHash?.Invoke(userId, keyId, targetId) ?? targetId + keyId);
 
-        return new EmojiSoundAppConfigBuilder(store.Object, helper.Object);
+        return new EmojiSoundAppConfigBuilder(store.Object, helper.Object, TestFileReferences.Helper);
     }
 
     private static IRequestWithAccessHashKeyId Request(long userId = 2010001, long accessHashKeyId = 777)
@@ -90,38 +90,53 @@ public class EmojiSoundAppConfigBuilderTests
     {
         var entry = await Builder([new EmojiSound("🎃", 1, Reference)]).BuildAsync(Request());
 
-        var reference = entry!.Value.Value.ShouldBeOfType<TJsonObject>().Value
-            .Cast<TJsonObjectValue>()
-            .Single(p => p.Key == "🎃").Value
-            .ShouldBeOfType<TJsonObject>().Value
-            .Cast<TJsonObjectValue>()
-            .Single(p => p.Key == "file_reference_base64").Value
-            .ShouldBeOfType<TJsonString>().Value;
+        var reference = ReferenceOf(entry, "🎃");
 
-        // Standard base64 of these bytes is "/+++AQID"; the URL-safe alphabet and no padding are what
-        // is_base64url accepts and what Base64.URL_SAFE decodes.
-        reference.ShouldBe("_---AQID");
+        // The URL-safe alphabet and no padding are what is_base64url accepts and what
+        // Base64.URL_SAFE decodes.
         reference.ShouldNotContain("=");
         reference.ShouldNotContain("+");
         reference.ShouldNotContain("/");
     }
 
+    /// <summary>
+    /// The reference served here is minted from the document id, not copied out of the row, because it is
+    /// a real reference that clients quote back in <c>upload.getFile</c> and the stored value expires.
+    /// See https://corefork.telegram.org/api/file-references
+    /// </summary>
     [Fact]
-    public async Task An_empty_file_reference_stays_empty()
+    public async Task File_reference_is_minted_from_the_document_id()
     {
-        // Telegram itself currently serves an empty reference, and an empty string is valid base64url;
-        // it must not turn into something a client would fail to decode.
+        var entry = await Builder([new EmojiSound("🎃", 4242, Reference)]).BuildAsync(Request());
+
+        var expected = EmojiSoundAppConfigBuilder.ToBase64Url(
+            TestFileReferences.Helper.Create(AccessHashType.Document, 4242));
+
+        ReferenceOf(entry, "🎃").ShouldBe(expected);
+    }
+
+    /// <summary>
+    /// A soundbite whose row carries no reference — every row, after the migration — must still be served
+    /// with one. An empty <c>file_reference_base64</c> is a reference no client can download with once
+    /// checking is enforced.
+    /// </summary>
+    [Fact]
+    public async Task An_empty_stored_reference_is_not_served_empty()
+    {
         var entry = await Builder([new EmojiSound("🎃", 1, [])]).BuildAsync(Request());
 
-        var reference = entry!.Value.Value.ShouldBeOfType<TJsonObject>().Value
+        ReferenceOf(entry, "🎃").ShouldNotBeEmpty();
+    }
+
+    private static string ReferenceOf(EmojiSoundAppConfigEntry? entry, string emoticon)
+    {
+        return entry!.Value.Value.ShouldBeOfType<TJsonObject>().Value
             .Cast<TJsonObjectValue>()
-            .Single(p => p.Key == "🎃").Value
+            .Single(p => p.Key == emoticon).Value
             .ShouldBeOfType<TJsonObject>().Value
             .Cast<TJsonObjectValue>()
             .Single(p => p.Key == "file_reference_base64").Value
             .ShouldBeOfType<TJsonString>().Value;
-
-        reference.ShouldBe(string.Empty);
     }
 
     [Fact]

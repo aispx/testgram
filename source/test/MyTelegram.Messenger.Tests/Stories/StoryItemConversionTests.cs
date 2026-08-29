@@ -77,7 +77,7 @@ public class StoryItemConversionTests
     {
         // The defect that emptied the profile: pinning exists precisely so an expired story stays
         // visible, so expiry must not turn it into a tombstone.
-        var item = StoryHelper.ConvertToStoryItem(ExpiredPhotoStory(), OwnerId);
+        var item = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, ExpiredPhotoStory(), OwnerId);
 
         item.ShouldBeOfType<TStoryItem>().Id.ShouldBe(11001);
     }
@@ -87,7 +87,7 @@ public class StoryItemConversionTests
     {
         var doc = ExpiredPhotoStory();
 
-        var item = StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItem>();
+        var item = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId).ShouldBeOfType<TStoryItem>();
 
         // The client is told the truth about expiry; it just is not told the story is gone.
         item.ExpireDate.ShouldBe((int)doc.ExpireDate);
@@ -100,7 +100,7 @@ public class StoryItemConversionTests
         var doc = ExpiredPhotoStory();
         doc.Deleted = true;
 
-        var item = StoryHelper.ConvertToStoryItem(doc, OwnerId);
+        var item = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId);
 
         item.ShouldBeOfType<TStoryItemDeleted>().Id.ShouldBe(11001);
     }
@@ -111,14 +111,14 @@ public class StoryItemConversionTests
         var doc = ExpiredPhotoStory();
         doc.ExpireDate = Now + 100_000;
 
-        StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItem>();
+        StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId).ShouldBeOfType<TStoryItem>();
     }
 
     [Fact]
     public void Real_photo_sizes_are_used_when_the_read_model_is_supplied()
     {
         var item = StoryHelper
-            .ConvertToStoryItem(ExpiredPhotoStory(), OwnerId, photo: new FakePhotoReadModel())
+            .ConvertToStoryItem(TestFileReferences.Helper, ExpiredPhotoStory(), OwnerId, photo: new FakePhotoReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         var photo = item.Media.ShouldBeOfType<TMessageMediaPhoto>()
@@ -133,8 +133,8 @@ public class StoryItemConversionTests
     {
         var doc = ExpiredPhotoStory();
 
-        var guessed = StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItem>();
-        var real = StoryHelper.ConvertToStoryItem(doc, OwnerId, photo: new FakePhotoReadModel())
+        var guessed = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId).ShouldBeOfType<TStoryItem>();
+        var real = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId, photo: new FakePhotoReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         // Without a photo row there is nothing trustworthy to offer beyond the base object.
@@ -152,7 +152,7 @@ public class StoryItemConversionTests
         // Access hash and file reference are stored on the story and already agree with the photo
         // read model; only the size breakdown was missing.
         var item = StoryHelper
-            .ConvertToStoryItem(ExpiredPhotoStory(), OwnerId, photo: new FakePhotoReadModel())
+            .ConvertToStoryItem(TestFileReferences.Helper, ExpiredPhotoStory(), OwnerId, photo: new FakePhotoReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         var photo = ((TMessageMediaPhoto)item.Media).Photo.ShouldBeOfType<TPhoto>();
@@ -167,7 +167,7 @@ public class StoryItemConversionTests
         var doc = ExpiredPhotoStory();
         doc.MediaFileId = 0;
 
-        StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItemDeleted>();
+        StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId).ShouldBeOfType<TStoryItemDeleted>();
     }
 
     [Fact]
@@ -177,7 +177,7 @@ public class StoryItemConversionTests
         var doc = ExpiredPhotoStory();
         doc.MediaSize = 400_000;
 
-        var item = StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItem>();
+        var item = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId).ShouldBeOfType<TStoryItem>();
 
         var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
         sizes.Select(s => ((TPhotoSize)s).Size).ShouldContain(400_000);
@@ -192,7 +192,7 @@ public class StoryItemConversionTests
         var doc = ExpiredPhotoStory();
         doc.MediaSize = 0;
 
-        var item = StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItem>();
+        var item = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId).ShouldBeOfType<TStoryItem>();
 
         var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
         sizes.Count.ShouldBe(1);
@@ -205,7 +205,7 @@ public class StoryItemConversionTests
         // The read model is the contract with storage: if it lists m and x, the response must not
         // also offer y or w. 154 of 326 live photos declared sizes with no object behind them.
         var item = StoryHelper
-            .ConvertToStoryItem(ExpiredPhotoStory(), OwnerId, photo: new TwoSizePhotoReadModel())
+            .ConvertToStoryItem(TestFileReferences.Helper, ExpiredPhotoStory(), OwnerId, photo: new TwoSizePhotoReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
@@ -269,6 +269,7 @@ public class StoryItemConversionTests
         public ReadOnlyMemory<byte> FileReference => new byte[] { 1, 2, 3, 4 };
         public int? Fingerprint => null;
         public string? Md5CheckSum => null;
+        public string? Sha256 => null;
         public string? Name => "video.mp4";
         public string MimeType => "video/mp4";
         public long Size => 3107812;
@@ -284,7 +285,7 @@ public class StoryItemConversionTests
     {
         // The state that showed no preview: the story itself has no inline thumbnail, so unless the
         // document read model is supplied there is nothing for the client to draw.
-        var item = StoryHelper.ConvertToStoryItem(VideoStory(), OwnerId).ShouldBeOfType<TStoryItem>();
+        var item = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, VideoStory(), OwnerId).ShouldBeOfType<TStoryItem>();
 
         var doc = item.Media.ShouldBeOfType<TMessageMediaDocument>().Document.ShouldBeOfType<TDocument>();
         doc.Thumbs.ShouldBeEmpty();
@@ -294,7 +295,7 @@ public class StoryItemConversionTests
     public void A_video_story_gets_its_thumbnail_from_the_document_row()
     {
         var item = StoryHelper
-            .ConvertToStoryItem(VideoStory(), OwnerId, document: new VideoDocumentReadModel())
+            .ConvertToStoryItem(TestFileReferences.Helper, VideoStory(), OwnerId, document: new VideoDocumentReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         var doc = item.Media.ShouldBeOfType<TMessageMediaDocument>().Document.ShouldBeOfType<TDocument>();
@@ -313,7 +314,7 @@ public class StoryItemConversionTests
         story.StrippedThumbBytes = [1, 2, 3];
 
         var item = StoryHelper
-            .ConvertToStoryItem(story, OwnerId, document: new VideoDocumentReadModel())
+            .ConvertToStoryItem(TestFileReferences.Helper, story, OwnerId, document: new VideoDocumentReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         var doc = (TDocument)((TMessageMediaDocument)item.Media).Document;
@@ -326,7 +327,7 @@ public class StoryItemConversionTests
     public void The_video_document_keeps_its_identity_and_attributes()
     {
         var item = StoryHelper
-            .ConvertToStoryItem(VideoStory(), OwnerId, document: new VideoDocumentReadModel())
+            .ConvertToStoryItem(TestFileReferences.Helper, VideoStory(), OwnerId, document: new VideoDocumentReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         var doc = (TDocument)((TMessageMediaDocument)item.Media).Document;
@@ -347,7 +348,7 @@ public class StoryItemConversionTests
         doc.StrippedThumbBytes = [1, 2, 3];
 
         var item = StoryHelper
-            .ConvertToStoryItem(doc, OwnerId, photo: new FakePhotoReadModel())
+            .ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId, photo: new FakePhotoReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
@@ -361,7 +362,7 @@ public class StoryItemConversionTests
         var doc = ExpiredPhotoStory();
         doc.StrippedThumbBytes = [1, 2, 3];
 
-        var item = StoryHelper.ConvertToStoryItem(doc, OwnerId).ShouldBeOfType<TStoryItem>();
+        var item = StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId).ShouldBeOfType<TStoryItem>();
 
         var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
         sizes[0].ShouldBeOfType<TPhotoStrippedSize>().Type.ShouldBe("i");
@@ -372,7 +373,7 @@ public class StoryItemConversionTests
     {
         // Older stories have no stripped bytes; they must still produce their usual sizes.
         var item = StoryHelper
-            .ConvertToStoryItem(ExpiredPhotoStory(), OwnerId, photo: new FakePhotoReadModel())
+            .ConvertToStoryItem(TestFileReferences.Helper, ExpiredPhotoStory(), OwnerId, photo: new FakePhotoReadModel())
             .ShouldBeOfType<TStoryItem>();
 
         var sizes = ((TPhoto)((TMessageMediaPhoto)item.Media).Photo).Sizes;
@@ -389,7 +390,7 @@ public class StoryItemConversionTests
         var doc = ExpiredPhotoStory();
         doc.MediaUnusable = true;
 
-        StoryHelper.ConvertToStoryItem(doc, OwnerId, photo: new FakePhotoReadModel())
+        StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId, photo: new FakePhotoReadModel())
             .ShouldBeOfType<TStoryItemDeleted>().Id.ShouldBe(11001);
     }
 
@@ -399,7 +400,7 @@ public class StoryItemConversionTests
         var doc = VideoStory();
         doc.MediaUnusable = true;
 
-        StoryHelper.ConvertToStoryItem(doc, OwnerId, document: new VideoDocumentReadModel())
+        StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId, document: new VideoDocumentReadModel())
             .ShouldBeOfType<TStoryItemDeleted>();
     }
 
@@ -410,7 +411,7 @@ public class StoryItemConversionTests
         var doc = ExpiredPhotoStory();
         doc.MediaUnusable.ShouldBeFalse();
 
-        StoryHelper.ConvertToStoryItem(doc, OwnerId, photo: new FakePhotoReadModel())
+        StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, doc, OwnerId, photo: new FakePhotoReadModel())
             .ShouldBeOfType<TStoryItem>();
     }
 }

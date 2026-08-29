@@ -39,7 +39,7 @@ public interface IChatWallPaperService
         MyTelegram.Schema.IWallPaperSettings? settings);
 }
 
-public sealed class ChatWallPaperService(IMongoDatabase database) : IChatWallPaperService, ITransientDependency
+public sealed class ChatWallPaperService(IMongoDatabase database, IFileReferenceHelper fileReferenceHelper) : IChatWallPaperService, ITransientDependency
 {
     private const string ChatWallPapersCollection = "chat_wallpapers";
     private const string WallPapersCollection = "wallpapers";
@@ -287,7 +287,7 @@ public sealed class ChatWallPaperService(IMongoDatabase database) : IChatWallPap
 
         var doc = value.AsBsonDocument;
 
-        return new MyTelegram.Schema.TWallPaperSettings
+        return WallPaperSettingsHelper.PairSharedFlags(new MyTelegram.Schema.TWallPaperSettings
         {
             Blur = doc.GetValue("Blur", false).ToBoolean(),
             Motion = doc.GetValue("Motion", false).ToBoolean(),
@@ -298,7 +298,7 @@ public sealed class ChatWallPaperService(IMongoDatabase database) : IChatWallPap
             Intensity = GetInt32(doc, "Intensity"),
             Rotation = GetInt32(doc, "Rotation"),
             Emoticon = doc.Contains("Emoticon") && !doc["Emoticon"].IsBsonNull ? doc["Emoticon"].AsString : null
-        };
+        });
     }
 
     private static int? GetInt32(BsonDocument doc, string name)
@@ -306,20 +306,16 @@ public sealed class ChatWallPaperService(IMongoDatabase database) : IChatWallPap
         return doc.Contains(name) && !doc[name].IsBsonNull ? doc[name].ToInt32() : null;
     }
 
-    private static MyTelegram.Schema.IDocument ToDocument(BsonDocument doc)
+    private MyTelegram.Schema.IDocument ToDocument(BsonDocument doc)
     {
-        var fileReference = doc.GetValue("FileReference", BsonNull.Value) switch
-        {
-            { BsonType: BsonType.Binary } binary => binary.AsBsonBinaryData.Bytes,
-            { BsonType: BsonType.Array } array => array.AsBsonArray.Select(p => (byte)p.ToInt32()).ToArray(),
-            _ => []
-        };
+        var documentId = doc["DocumentId"].ToInt64();
 
         return new MyTelegram.Schema.TDocument
         {
-            Id = doc["DocumentId"].ToInt64(),
+            Id = documentId,
             AccessHash = doc.GetValue("AccessHash", 0L).ToInt64(),
-            FileReference = fileReference,
+            // See https://corefork.telegram.org/api/file-references
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = doc.GetValue("Date", 0).ToInt32(),
             MimeType = doc.GetValue("MimeType", "image/jpeg").AsString,
             Size = doc.GetValue("Size", 0L).ToInt64(),

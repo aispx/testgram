@@ -453,6 +453,9 @@ services:
       App__ReadModelDatabaseName: ${App__ReadModelDatabaseName}
       App__AccessHashSecretKey: ${App__AccessHashSecretKey}
       App__FileServerGrpcServiceUrl: ${App__FileServerGrpcServiceUrl}
+      # file_reference lifetime and enforcement, see https://corefork.telegram.org/api/file-references
+      App__FileReferences__Mode: ${App__FileReferences__Mode:-LogOnly}
+      App__FileReferences__TtlHours: ${App__FileReferences__TtlHours:-48}
       # Server side video processing (alternative qualities of videos posted to big channels):
       # ffmpeg runs inside this container, the renditions are stored in the same MinIO bucket the
       # file server uses. See https://corefork.telegram.org/api/scheduled-messages
@@ -556,6 +559,9 @@ services:
       App__ReadModelDatabaseName: ${App__ReadModelDatabaseName}
       App__AccessHashSecretKey: ${App__AccessHashSecretKey}
       App__FileServerGrpcServiceUrl: ${App__FileServerGrpcServiceUrl}
+      # file_reference lifetime and enforcement, see https://corefork.telegram.org/api/file-references
+      App__FileReferences__Mode: ${App__FileReferences__Mode:-LogOnly}
+      App__FileReferences__TtlHours: ${App__FileReferences__TtlHours:-48}
       App__FixedVerifyCode: ${App__FixedVerifyCode}
       App__VerificationCodeLength: ${App__VerificationCodeLength}
       App__VerificationCodeExpirationSeconds: ${App__VerificationCodeExpirationSeconds}

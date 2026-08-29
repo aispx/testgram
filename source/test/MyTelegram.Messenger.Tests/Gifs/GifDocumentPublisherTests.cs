@@ -54,8 +54,10 @@ public class GifDocumentPublisherTests
             // Server-made bodies are unencrypted and live on the media DC, like sticker files.
             stored.DcId.ShouldBe(MyTelegramConsts.MediaDcId);
             stored.AccessHash.ShouldBeGreaterThan(0);
-            // A client treats an empty file reference as stale and refreshes instead of downloading.
-            stored.FileReference.Length.ShouldBeGreaterThan(0);
+            // No reference is stored any more. It used to be sixteen random bytes, because a client that
+            // receives an empty one refreshes instead of downloading; references are now derived from the
+            // document id on the way out. See https://corefork.telegram.org/api/file-references
+            stored.FileReference.Length.ShouldBe(0);
 
             // The property everything else depends on.
             GifDocumentHelper.IsAnimatedMp4(stored).ShouldBeTrue();

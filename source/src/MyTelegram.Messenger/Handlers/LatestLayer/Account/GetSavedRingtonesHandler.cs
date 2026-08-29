@@ -9,7 +9,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetSavedRingtonesHandler(IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetSavedRingtones, MyTelegram.Schema.Account.ISavedRingtones>
+internal sealed class GetSavedRingtonesHandler(IMongoDatabase database, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetSavedRingtones, MyTelegram.Schema.Account.ISavedRingtones>
 {
     protected override async Task<MyTelegram.Schema.Account.ISavedRingtones> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetSavedRingtones obj)
     {
@@ -49,12 +49,8 @@ internal sealed class GetSavedRingtonesHandler(IMongoDatabase database) : RpcRes
         };
     }
 
-    private static MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
+    private MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
     {
-        var fileRef = doc.Contains("FileReference") && !doc["FileReference"].IsBsonNull
-            ? doc["FileReference"].AsBsonBinaryData.Bytes
-            : Array.Empty<byte>();
-
         var attributes = new TVector<MyTelegram.Schema.IDocumentAttribute>();
 
         if (doc.Contains("Attributes2") && !doc["Attributes2"].IsBsonNull)
@@ -90,11 +86,16 @@ internal sealed class GetSavedRingtonesHandler(IMongoDatabase database) : RpcRes
             }
         }
 
+        var documentId = doc["DocumentId"].AsInt64;
+
         return new MyTelegram.Schema.TDocument
         {
-            Id = doc["DocumentId"].AsInt64,
+            Id = documentId,
             AccessHash = doc["AccessHash"].AsInt64,
-            FileReference = fileRef,
+            // A ringtone was stored with an empty reference by account.uploadRingtone, so this list used
+            // to hand out references no client could refresh.
+            // See https://corefork.telegram.org/api/file-references
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = doc["Date"].AsInt32,
             MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "audio/mpeg",
             Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,

@@ -1,8 +1,9 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using MyTelegram.Services.Services;
+using System.Diagnostics.CodeAnalysis;
 
 namespace MyTelegram.Converters.Mappers.LatestLayer;
 
-internal sealed class DocumentMapper
+internal sealed class DocumentMapper(IFileReferenceHelper fileReferenceHelper)
     : IObjectMapper<IDocumentReadModel, TDocument>,
         IObjectMapper<TDocument, TDocument>,
         ILayeredMapper,
@@ -23,7 +24,10 @@ internal sealed class DocumentMapper
     {
         destination.Id = source.DocumentId;
         destination.AccessHash = source.AccessHash;
-        destination.FileReference = source.FileReference;
+        // Minted, never read back from the row: the stored value was a random constant that could not
+        // expire and that a client could overwrite through bots.addPreviewMedia.
+        // See https://corefork.telegram.org/api/file-references
+        destination.FileReference = fileReferenceHelper.Create(AccessHashType.Document, source.DocumentId);
         destination.Date = source.Date;
         destination.MimeType = source.MimeType;
         destination.Size = source.Size;
@@ -118,7 +122,11 @@ internal sealed class DocumentMapper
     {
         destination.Id = source.Id;
         destination.AccessHash = source.AccessHash;
-        destination.FileReference = source.FileReference;
+        // Re-minted rather than copied, so a document that came in with a reference of any age leaves
+        // with a current one. The TDocument -> TDocument overload is how media crosses from one response
+        // into another (a forward, an inline result), where the reference the source object carried is
+        // not the one the receiving client should cache.
+        destination.FileReference = fileReferenceHelper.Create(AccessHashType.Document, source.Id);
         destination.Date = source.Date;
         destination.MimeType = source.MimeType;
         destination.Size = source.Size;

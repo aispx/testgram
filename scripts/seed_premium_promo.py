@@ -283,7 +283,6 @@ def cmd_import() -> int:
                 print(f"  WARNING: file missing for section {section}: {path}")
                 continue
             data = path.read_bytes()
-            file_ref = list(os.urandom(16))
             minio.put_object(MINIO_BUCKET, str(doc_id), io.BytesIO(data), length=len(data), content_type=mime)
             document = {
                 "_id": f"documentreadmodel-{doc_id}",
@@ -291,7 +290,8 @@ def cmd_import() -> int:
                 "DocumentId": doc_id,
                 "LocalFile": str(path),
                 "AccessHash": to_int64(doc.get("access_hash", 0)) or int.from_bytes(os.urandom(8), "little", signed=True),
-                "FileReference": file_ref,
+                # No FileReference: derived from the document id on the way out.
+                # See https://corefork.telegram.org/api/file-references
                 "Date": int(time.time()),
                 "DcId": DC_ID,
                 "MimeType": mime,

@@ -125,7 +125,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService, IMessageEntityService messageEntityService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor, MyTelegram.Messenger.Services.Stickers.ISentStickerProcessor sentStickerProcessor, MyTelegram.Messenger.Services.Stickers.IAttachedStickerRecorder attachedStickerRecorder) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
+internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppService messageAppService, IPeerHelper peerHelper, IRandomHelper randomHelper, ICommandBus commandBus, IPrivacyAppService privacyAppService, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IIdGenerator idGenerator, IUserAppService userAppService, IMessageEffectAppService messageEffectAppService, IBotFatherBotService botFatherBotService, IMessageEntityService messageEntityService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor, MyTelegram.Messenger.Services.Stickers.ISentStickerProcessor sentStickerProcessor, MyTelegram.Messenger.Services.Stickers.IAttachedStickerRecorder attachedStickerRecorder, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMedia, MyTelegram.Schema.IUpdates>
 {
     /// <summary>Official poll text limits: 255 chars for the question, 100 per option.</summary>
     private const int PollQuestionMaxLength = 255;
@@ -133,6 +133,11 @@ internal sealed class SendMediaHandler(IMediaHelper mediaHelper, IMessageAppServ
 
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMedia obj)
     {
+        // Before anything is validated or charged for: a reference this server did not issue cannot
+        // resolve to media, and the client's own repair loop is waiting for this error.
+        // See https://corefork.telegram.org/api/file-references
+        InputMediaFileReferenceChecker.Check(fileReferenceHelper, obj.Media);
+
         await ValidateCaptionLengthAsync(input.UserId, obj.Message);
 
         // Only voice notes are covered by privacyKeyVoiceMessages. This used to match any

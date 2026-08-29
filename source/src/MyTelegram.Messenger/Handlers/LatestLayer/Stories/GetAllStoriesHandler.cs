@@ -21,7 +21,8 @@ internal sealed class GetAllStoriesHandler(
     IMongoDatabase mongoDatabase,
     IQueryProcessor queryProcessor,
     IStoryAccessService storyAccessService,
-    IStoryResponseBuilder storyResponseBuilder)
+    IStoryResponseBuilder storyResponseBuilder,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<RequestGetAllStories, IAllStories>
 {
     /// <summary>Peers returned per page; the client pages with the <c>next</c> flag and <c>state</c>.</summary>
@@ -81,7 +82,7 @@ internal sealed class GetAllStoriesHandler(
             foreach (var story in group.OrderBy(s => s.StoryId))
             {
                 sentReactions.TryGetValue((ownerPeerId, ownerPeerType, story.StoryId), out var sentReaction);
-                storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner));
+                storyItems.Add(StoryHelper.ConvertToStoryItem(fileReferenceHelper, story, input.UserId, sentReaction, isOwner));
             }
 
             readsMap.TryGetValue((ownerPeerId, ownerPeerType), out var maxReadId);

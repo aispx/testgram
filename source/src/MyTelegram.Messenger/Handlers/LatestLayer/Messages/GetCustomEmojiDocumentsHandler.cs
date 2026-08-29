@@ -12,6 +12,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class GetCustomEmojiDocumentsHandler(
     IMongoDatabase mongoDatabase,
+    IFileReferenceHelper fileReferenceHelper,
     IAccessHashHelper2 accessHashHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetCustomEmojiDocuments, TVector<MyTelegram.Schema.IDocument>>
 {
     /// <summary>
@@ -114,24 +115,16 @@ internal sealed class GetCustomEmojiDocumentsHandler(
 
     private IDocument BuildDocument(IRequestInput input, BsonDocument d, bool isCollectibleModelDocument)
     {
-        byte[] fileRef = [];
-        if (d.Contains("FileReference") && !d["FileReference"].IsBsonNull)
-        {
-            var fr = d["FileReference"];
-            if (fr.BsonType == BsonType.Binary)
-                fileRef = fr.AsBsonBinaryData.Bytes;
-            else if (fr.BsonType == BsonType.Array)
-                fileRef = fr.AsBsonArray.Select(x => (byte)GetInt32(x)).ToArray();
-        }
+        var documentId = GetInt64(d["DocumentId"]);
 
         var attributes = GetValidCustomEmojiAttributes(input, d, isCollectibleModelDocument);
         var thumbs = ReadThumbs(d);
 
         return new TDocument
         {
-            Id = GetInt64(d["DocumentId"]),
-            AccessHash = accessHashHelper.GenerateAccessHash(input.UserId, input.AccessHashKeyId, GetInt64(d["DocumentId"]), AccessHashType.Document),
-            FileReference = fileRef,
+            Id = documentId,
+            AccessHash = accessHashHelper.GenerateAccessHash(input.UserId, input.AccessHashKeyId, documentId, AccessHashType.Document),
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = d.Contains("Date") ? GetInt32(d["Date"]) : 0,
             MimeType = d.Contains("MimeType") ? d["MimeType"].AsString : "application/octet-stream",
             Size = d.Contains("Size") ? GetInt64(d["Size"]) : 0,

@@ -25,7 +25,8 @@ internal sealed class EditStoryHandler(
     IStoryConfigProvider storyConfigProvider,
     IStoryMediaService storyMediaService,
     IStoryUpdatesSender storyUpdatesSender,
-    IMessageEntityService messageEntityService)
+    IMessageEntityService messageEntityService,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<RequestEditStory, IUpdates>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
@@ -158,7 +159,7 @@ internal sealed class EditStoryHandler(
                     new TUpdateStory
                     {
                         Peer = peer,
-                        Story = StoryHelper.ConvertToStoryItem(updatedStory)
+                        Story = StoryHelper.ConvertToStoryItem(fileReferenceHelper, updatedStory)
                     }
                 },
                 Chats = new TVector<IChat>(),
@@ -174,7 +175,7 @@ internal sealed class EditStoryHandler(
                 new TUpdateStory
                 {
                     Peer = peer,
-                    Story = StoryHelper.ConvertToStoryItem(updatedStory, input.UserId, includePrivacy: true)
+                    Story = StoryHelper.ConvertToStoryItem(fileReferenceHelper, updatedStory, input.UserId, includePrivacy: true)
                 }
             },
             Chats = new TVector<IChat>(),

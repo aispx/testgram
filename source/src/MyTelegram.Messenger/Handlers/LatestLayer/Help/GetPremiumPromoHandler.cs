@@ -11,6 +11,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Help;
 /// </remarks>
 internal sealed class GetPremiumPromoHandler(
     IMongoDatabase mongoDatabase,
+    IFileReferenceHelper fileReferenceHelper,
     ILayeredService<IPremiumPromoConverter> layeredPremiumPromoService) : RpcResultObjectHandler<MyTelegram.Schema.Help.RequestGetPremiumPromo, MyTelegram.Schema.Help.IPremiumPromo>
 {
     protected override async Task<MyTelegram.Schema.Help.IPremiumPromo> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Help.RequestGetPremiumPromo obj)
@@ -69,17 +70,9 @@ internal sealed class GetPremiumPromoHandler(
         return result;
     }
 
-    private static IDocument BuildDocument(BsonDocument d)
+    private IDocument BuildDocument(BsonDocument d)
     {
-        byte[] fileRef = [];
-        if (d.Contains("FileReference") && !d["FileReference"].IsBsonNull)
-        {
-            var fr = d["FileReference"];
-            if (fr.BsonType == BsonType.Binary)
-                fileRef = fr.AsBsonBinaryData.Bytes;
-            else if (fr.BsonType == BsonType.Array)
-                fileRef = fr.AsBsonArray.Select(x => (byte)GetInt32(x)).ToArray();
-        }
+        var documentId = GetInt64(d["DocumentId"]);
 
         TVector<IDocumentAttribute> attributes = [];
         if (d.Contains("Attributes2") && !d["Attributes2"].IsBsonNull)
@@ -96,9 +89,9 @@ internal sealed class GetPremiumPromoHandler(
 
         return new TDocument
         {
-            Id = GetInt64(d["DocumentId"]),
+            Id = documentId,
             AccessHash = GetInt64(d["AccessHash"]),
-            FileReference = fileRef,
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = d.Contains("Date") ? GetInt32(d["Date"]) : 0,
             MimeType = d.Contains("MimeType") ? d["MimeType"].AsString : "application/octet-stream",
             Size = d.Contains("Size") ? GetInt64(d["Size"]) : 0,

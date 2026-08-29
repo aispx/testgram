@@ -20,7 +20,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //ILayeredService<IChatConverter> layeredService,
- IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IChatWallPaperService chatWallPaperService) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
+ IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IChatWallPaperService chatWallPaperService, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
 {
     protected override async Task<MyTelegram.Schema.Messages.IChatFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetFullChannel obj)
     {
@@ -191,7 +191,7 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
         foreach (var story in stories)
         {
             sentReactions.TryGetValue(story.StoryId, out var sentReaction);
-            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction));
+            storyItems.Add(StoryHelper.ConvertToStoryItem(fileReferenceHelper, story, input.UserId, sentReaction));
         }
 
         var maxReadId = await GetChannelMaxReadIdAsync(input.UserId, channelId);

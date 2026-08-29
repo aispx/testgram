@@ -12,11 +12,14 @@ internal sealed class GetAvailableReactionsHandler : RpcResultObjectHandler<MyTe
 {
     private readonly IMongoDatabase _database;
     private readonly IAccessHashHelper2 _accessHashHelper;
+    private readonly IFileReferenceHelper _fileReferenceHelper;
 
-    public GetAvailableReactionsHandler(IMongoDatabase database, IAccessHashHelper2 accessHashHelper)
+    public GetAvailableReactionsHandler(IMongoDatabase database, IAccessHashHelper2 accessHashHelper,
+        IFileReferenceHelper fileReferenceHelper)
     {
         _database = database;
         _accessHashHelper = accessHashHelper;
+        _fileReferenceHelper = fileReferenceHelper;
     }
 
     protected override async Task<MyTelegram.Schema.Messages.IAvailableReactions> HandleCoreAsync(
@@ -88,7 +91,9 @@ internal sealed class GetAvailableReactionsHandler : RpcResultObjectHandler<MyTe
         {
             Id = documentId,
             AccessHash = _accessHashHelper.GenerateAccessHash(input.UserId, input.AccessHashKeyId, documentId, AccessHashType.Document),
-            FileReference = GetByteArray(doc["FileReference"]),
+            // Minted rather than read from the row: the seeded value was a random constant, and the row
+            // no longer carries the field at all. See https://corefork.telegram.org/api/file-references
+            FileReference = _fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = GetInt32(doc["Date"]),
             MimeType = mimeType,
             Size = GetInt64(doc["Size"]),

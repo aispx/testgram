@@ -11,6 +11,14 @@ public interface IDocumentReadModel : IReadModel
     ReadOnlyMemory<byte> FileReference { get; }
     int? Fingerprint { get; }
     string? Md5CheckSum { get; }
+
+    /// <summary>
+    /// Lowercase hex SHA-256 of the file body, which is what <c>messages.getDocumentByHash</c> looks a
+    /// document up by. Null for a document whose body this server never held.
+    /// See https://corefork.telegram.org/method/messages.getDocumentByHash
+    /// </summary>
+    string? Sha256 { get; }
+
     string? Name { get; }
     string MimeType { get; }
     long Size { get; }

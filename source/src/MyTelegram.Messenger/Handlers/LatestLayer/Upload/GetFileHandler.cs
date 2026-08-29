@@ -18,6 +18,7 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
     private readonly IEncryptedFileStore _encryptedFileStore;
     private readonly IPassportFileStore _passportFileStore;
     private readonly IAccessHashHelper2 _accessHashHelper;
+    private readonly IFileReferenceHelper _fileReferenceHelper;
 
     public GetFileHandler(
         IMongoDatabase database,
@@ -25,7 +26,8 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
         IHlsGroupCallStreamService hlsGroupCallStreamService,
         IEncryptedFileStore encryptedFileStore,
         IPassportFileStore passportFileStore,
-        IAccessHashHelper2 accessHashHelper)
+        IAccessHashHelper2 accessHashHelper,
+        IFileReferenceHelper fileReferenceHelper)
     {
         _database = database;
         _logger = logger;
@@ -33,6 +35,7 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
         _encryptedFileStore = encryptedFileStore;
         _passportFileStore = passportFileStore;
         _accessHashHelper = accessHashHelper;
+        _fileReferenceHelper = fileReferenceHelper;
     }
 
     protected override async Task<MyTelegram.Schema.Upload.IFile> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Upload.RequestGetFile obj)
@@ -111,6 +114,23 @@ internal sealed class GetFileHandler : RpcResultObjectHandler<MyTelegram.Schema.
         if (fileId == 0)
         {
             RpcErrors.RpcErrors400.LocationInvalid.ThrowRpcError();
+        }
+
+        // The two location types that carry a file reference. upload.getFile is the one download method
+        // whose documented errors include FILE_REFERENCE_EMPTY / _EXPIRED / _INVALID, and answering them
+        // is what starts the client's repair loop; a request that reaches this handler with a bad
+        // reference was routed here by FileDownloadLaneRouter precisely so it can be refused.
+        // See https://corefork.telegram.org/api/file-references
+        switch (obj.Location)
+        {
+            case TInputDocumentFileLocation documentLocation:
+                _fileReferenceHelper.Check(documentLocation.FileReference.Span, AccessHashType.Document,
+                    documentLocation.Id);
+                break;
+            case TInputPhotoFileLocation photoLocation:
+                _fileReferenceHelper.Check(photoLocation.FileReference.Span, AccessHashType.Photo,
+                    photoLocation.Id);
+                break;
         }
 
         // Try to get file from uploaded parts first (for recently uploaded files)

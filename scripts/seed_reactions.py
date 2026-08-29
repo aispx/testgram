@@ -204,7 +204,7 @@ def cmd_import():
     # Build name -> doc_id mapping from existing MongoDB records
     existing = {d["Name"]: to_int64(d["DocumentId"])
                 for d in doc_col.find({}, {"Name": 1, "DocumentId": 1, "AccessHash": 1,
-                                       "FileReference": 1, "MimeType": 1, "Size": 1})}
+                                       "MimeType": 1, "Size": 1})}
 
     attrs_bytes = list(struct.pack("<II", 0x15c4b51c, 0))
     imported = 0
@@ -261,7 +261,6 @@ def cmd_import():
                 mime = ("application/x-tgsticker" if p.suffix == ".tgs"
                         else "image/webp" if p.suffix == ".webp"
                         else "application/octet-stream")
-                file_ref = list(os.urandom(16))
                 access_hash = int.from_bytes(os.urandom(8), "little", signed=True)
 
                 # Use original Telegram ID as document ID (fits int64)
@@ -276,7 +275,8 @@ def cmd_import():
                     "DocumentId": doc_id,
                     "LocalFile": f"reactions_files/{name}",
                     "AccessHash": access_hash,
-                    "FileReference": file_ref,
+                    # No FileReference: derived from the document id on the way out.
+                    # See https://corefork.telegram.org/api/file-references
                     "Date": int(time.time()),
                     "DcId": DC_ID, "MimeType": mime, "Size": len(data),
                     "Name": name, "Thumbs": thumbs, "VideoThumbs": None,
@@ -296,7 +296,6 @@ def cmd_import():
                 reaction_doc[field_name] = {
                     "Id": to_int64(doc_meta["DocumentId"]),
                     "AccessHash": to_int64(doc_meta["AccessHash"]),
-                    "FileReference": doc_meta["FileReference"],
                     "Date": doc_meta["Date"],
                     "MimeType": doc_meta["MimeType"],
                     "Size": doc_meta["Size"],

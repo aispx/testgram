@@ -14,6 +14,7 @@ internal sealed class StartLiveHandler(
     IStoryConfigProvider storyConfigProvider,
     IUserAppService userAppService,
     IMessageEntityService messageEntityService,
+    IFileReferenceHelper fileReferenceHelper,
     IOptionsMonitor<MyTelegramMessengerServerOptions> options)
     : RpcResultObjectHandler<RequestStartLive, IUpdates>
 {
@@ -173,7 +174,7 @@ internal sealed class StartLiveHandler(
 
     private IUpdates BuildUpdates(GroupCallDocument groupCall, StoryDocument storyDocument, long randomId)
     {
-        var storyItem = StoryHelper.ConvertToStoryItem(storyDocument, groupCall.CreatorId);
+        var storyItem = StoryHelper.ConvertToStoryItem(fileReferenceHelper, storyDocument, groupCall.CreatorId);
 
         return GroupCallStateHelper.Updates(
             new TUpdateStoryID { Id = storyDocument.StoryId, RandomId = randomId },

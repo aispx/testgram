@@ -27,7 +27,8 @@ internal sealed class SendReactionHandler(
     ICommandBus commandBus,
     IQueryProcessor queryProcessor,
     IStoryAccessService storyAccessService,
-    IStoryUpdatesSender storyUpdatesSender)
+    IStoryUpdatesSender storyUpdatesSender,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<MyTelegram.Schema.Stories.RequestSendReaction, IUpdates>
 {
     private const string RecentKey = "recent_reactions";
@@ -118,7 +119,7 @@ internal sealed class SendReactionHandler(
                     new TUpdateStory
                     {
                         Peer = peer,
-                        Story = StoryHelper.ConvertToStoryItem(updatedStory)
+                        Story = StoryHelper.ConvertToStoryItem(fileReferenceHelper, updatedStory)
                     }
                 },
                 Chats = new TVector<IChat>(),

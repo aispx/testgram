@@ -178,7 +178,7 @@ public class GetAvailableEffectsHandlerTests
             handlerType,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             binder: null,
-            args: [effectAppService, accessHashHelper.Object],
+            args: [effectAppService, accessHashHelper.Object, TestFileReferences.Helper],
             culture: null)!;
 
         var method = handlerType.GetMethod("HandleCoreAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;

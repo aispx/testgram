@@ -380,9 +380,8 @@ def import_icon_set(db, minio, icon_set: Dict[str, Any], dry_run: bool) -> None:
             "Id": f"documentreadmodel-{doc_id}",
             "DocumentId": doc_id,
             "AccessHash": document["access_hash"] & 0x7FFFFFFFFFFFFFFF,
-            # Non-empty on purpose: a client that receives an empty file_reference treats the
-            # document as stale and tries to refresh it before downloading anything.
-            "FileReference": list(os.urandom(16)),
+            # No FileReference: it is derived from the document id when the server serves the document.
+            # See https://corefork.telegram.org/api/file-references
             "Date": int(time.time()),
             "DcId": DC_ID,
             "MimeType": document["mime"],
@@ -404,10 +403,6 @@ def import_icon_set(db, minio, icon_set: Dict[str, Any], dry_run: bool) -> None:
             written += 1
             continue
 
-        existing = doc_col.find_one({"DocumentId": doc_id}, {"FileReference": 1})
-        if existing is not None:
-            # Keep the reference a client may already hold rather than invalidating its cache.
-            row["FileReference"] = existing.get("FileReference") or row["FileReference"]
         doc_col.replace_one({"DocumentId": doc_id}, row, upsert=True)
         written += 1
 

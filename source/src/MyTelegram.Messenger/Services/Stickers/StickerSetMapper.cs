@@ -9,7 +9,8 @@ public class StickerSetMapper(
     IMongoDatabase mongoDatabase,
     IStickerSetStore stickerSetStore,
     IInstalledStickerSetStore installedStickerSetStore,
-    IAccessHashHelper2 accessHashHelper) : IStickerSetMapper, ITransientDependency
+    IAccessHashHelper2 accessHashHelper,
+    IFileReferenceHelper fileReferenceHelper) : IStickerSetMapper, ITransientDependency
 {
     public const string DocumentCollectionName = "eventflow-documentreadmodel";
 
@@ -287,7 +288,7 @@ public class StickerSetMapper(
             // Per-session, like every other media reference on this server; see AccessHashHelper2.
             AccessHash = accessHashHelper.GenerateAccessHash(input.UserId, input.AccessHashKeyId, documentId,
                 AccessHashType.Document),
-            FileReference = row.GetFileReference(),
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = row.GetInt32("Date"),
             MimeType = row.GetString("MimeType", "application/octet-stream"),
             Size = row.GetInt64("Size"),

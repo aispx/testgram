@@ -1,8 +1,10 @@
-﻿namespace MyTelegram.Converters.TLObjects.LatestLayer;
+﻿using MyTelegram.Services.Services;
 
-public class PhotoConverter : IPhotoConverter, ITransientDependency
+namespace MyTelegram.Converters.TLObjects.LatestLayer;
+
+public class PhotoConverter(IFileReferenceHelper fileReferenceHelper) : IPhotoConverter, ITransientDependency
 {
-    
+
     public virtual int Layer => Layers.LayerLatest;
 
     public virtual IChatPhoto ToChatPhoto(IPhotoReadModel? photoReadModel)
@@ -34,7 +36,9 @@ public class PhotoConverter : IPhotoConverter, ITransientDependency
             AccessHash = photoReadModel.AccessHash,
             Date = photoReadModel.Date,
             DcId = photoReadModel.DcId,
-            FileReference = photoReadModel.FileReference
+            // Minted per response rather than read from the row, as documents are.
+            // See https://corefork.telegram.org/api/file-references
+            FileReference = fileReferenceHelper.Create(AccessHashType.Photo, photoReadModel.PhotoId)
         };
 
         if (photoReadModel.Sizes2 != null)
