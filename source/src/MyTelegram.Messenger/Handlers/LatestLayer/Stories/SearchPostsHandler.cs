@@ -23,7 +23,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 internal sealed class SearchPostsHandler(
     IMongoDatabase mongoDatabase,
     IChannelAppService channelAppService,
-    IStoryResponseBuilder storyResponseBuilder)
+    IStoryResponseBuilder storyResponseBuilder,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<MyTelegram.Schema.Stories.RequestSearchPosts, IFoundStories>
 {
     private const int MaxLimit = 100;
@@ -131,7 +132,7 @@ internal sealed class SearchPostsHandler(
             foundStories.Add(new TFoundStory
             {
                 Peer = StoryHelper.CreatePeer(story.OwnerPeerType, story.OwnerPeerId),
-                Story = StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction)
+                Story = StoryHelper.ConvertToStoryItem(fileReferenceHelper, story, input.UserId, sentReaction)
             });
         }
 

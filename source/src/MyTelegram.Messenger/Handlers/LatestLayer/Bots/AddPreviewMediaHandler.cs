@@ -14,6 +14,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 /// </remarks>
 internal sealed class AddPreviewMediaHandler(
     IMongoDatabase mongoDatabase,
+    IFileReferenceHelper fileReferenceHelper,
     IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Bots.RequestAddPreviewMedia, MyTelegram.Schema.IBotPreviewMedia>
 {
     protected override async Task<MyTelegram.Schema.IBotPreviewMedia> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Bots.RequestAddPreviewMedia obj)
@@ -59,7 +60,10 @@ internal sealed class AddPreviewMediaHandler(
             doc["MediaType"] = "photo";
             doc["PhotoId"] = inputPhoto.Id;
             doc["AccessHash"] = inputPhoto.AccessHash;
-            doc["FileReference"] = inputPhoto.FileReference.ToArray();
+            // The reference the client sent is not stored. It used to be written here as the canonical
+            // value of the row, which let a client decide what this server would serve back to everyone.
+            // References are derived from the media id instead.
+            // See https://corefork.telegram.org/api/file-references
 
             resultMedia = new TMessageMediaPhoto
             {
@@ -67,7 +71,7 @@ internal sealed class AddPreviewMediaHandler(
                 {
                     Id = inputPhoto.Id,
                     AccessHash = inputPhoto.AccessHash,
-                    FileReference = inputPhoto.FileReference.ToArray(),
+                    FileReference = fileReferenceHelper.Create(AccessHashType.Photo, inputPhoto.Id),
                     Date = date,
                     Sizes = new TVector<IPhotoSize>(),
                     DcId = 2
@@ -80,7 +84,7 @@ internal sealed class AddPreviewMediaHandler(
             doc["MediaType"] = "document";
             doc["DocumentId"] = inputDoc.Id;
             doc["AccessHash"] = inputDoc.AccessHash;
-            doc["FileReference"] = inputDoc.FileReference.ToArray();
+            // See the photo branch above: the client's reference is not the row's to keep.
 
             resultMedia = new TMessageMediaDocument
             {
@@ -88,7 +92,7 @@ internal sealed class AddPreviewMediaHandler(
                 {
                     Id = inputDoc.Id,
                     AccessHash = inputDoc.AccessHash,
-                    FileReference = inputDoc.FileReference.ToArray(),
+                    FileReference = fileReferenceHelper.Create(AccessHashType.Document, inputDoc.Id),
                     Date = date,
                     MimeType = "video/mp4",
                     Size = 0,

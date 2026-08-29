@@ -369,6 +369,110 @@ unconverted rather than lost.
 
 ---
 
+## File references
+
+Every `document` and `photo` carries a `file_reference` that a client caches, quotes back, and must be
+able to refresh when it expires. It used to be sixteen random bytes minted once at creation and stored
+in Mongo — never expiring, never validated, and empty on the wallpaper, ringtone, theme and story
+paths. `Services/Services/FileReferenceHelper.cs` now mints and validates it.
+
+* **20 bytes: `ts(4B big-endian unix) || HMAC-SHA256(secret, type||id||ts)[0..15]`.** The timestamp
+  travels in the clear so validation is one HMAC rather than a walk over the whole lifetime; the value
+  stays opaque, no client parses it. The secret is `App__FileReferences__SecretKey`, falling back to
+  `App__AccessHashSecretKey` so an existing deployment needs no new variable.
+* **The issue timestamp is quantised to half the lifetime**, and that is load-bearing twice over. A
+  reference that changed per call would change the bytes of responses whose hash clients quote back —
+  `emojies_sounds` carries one per document and `GetAppConfigHandler` folds it into the config hash, so
+  `appConfigNotModified` could never fire again. And it puts a floor on validity: whenever a client
+  fetches, at least half the lifetime is left, so an ordinary session never meets an expiry mid-download.
+* **Not bound to the caller, and not bound to the source.** `AccessHashHelper2` already binds media to a
+  session, and a per-session reference would break every path where a media object travels between
+  accounts (a forward, an inline result, a bot reading a Passport scan). Telegram encodes the source,
+  which is why its docs say to refetch from where the media last appeared; here that is left to the
+  access hash. Clients cope either way — every one of them keys its repair machinery off the error
+  prefix, not off the contents (tdlib `FileReferenceManager::is_file_reference_error`, Android
+  `FileRefController.isFileRefError`, tdesktop `ApiWrap::refreshFileReference`).
+* **One stamp on the way out, not forty by hand.** `IFileReferenceStamper`, called from
+  `QueuedObjectMessageSender` next to `DcIdNormalizer`, walks the outgoing object graph through the
+  generated `IAccessHashOwner` map and re-stamps every `TDocument`/`TPhoto`. Forty-odd places build a
+  `TDocument`; a missed one is media no client can download *and* no client can repair, so completeness
+  had to be structural. Individual builders mint too, which keeps the source honest — the same
+  belt-and-braces the DcId normaliser uses.
+* **A value inside a `jsonString` is out of the walk's reach.** `EmojiSoundAppConfigBuilder` puts the
+  reference into `emojies_sounds.*.file_reference_base64` as text, so it mints its own; anything else
+  that smuggles a reference through a non-`FileReference` field has to do the same.
+* **Only four methods refuse a reference, because only four document the errors** (checked against
+  corefork): `messages.sendMedia` (`FILE_REFERENCE_EMPTY`/`_EXPIRED`), `messages.sendMultiMedia` (the
+  `FILE_REFERENCE_%d_*` forms), `channels.editPhoto` (`_INVALID`) and `upload.getFile` (all three).
+  `saveGif`, `faveSticker`, the `stickers.*` editors, `editMessage`, `uploadMedia`, `photos.*`,
+  `upload.getFileHashes` list none of them, and refusing there would break a client whose only fault is
+  a cache older than the lifetime. **Before adding a check anywhere, read that method's "Possible
+  errors" list.**
+* **The spelling is the contract.** tdlib takes the digits straight after `FILE_REFERENCE_` as the index
+  into the failing vector and then looks for a `COVER_` prefix; Android's `getFileRefErrorIndex` only
+  parses an index out of a name that also ends in `_EXPIRED`, and its `isFileRefErrorCover` looks for
+  `COVER_EXPIRED`. So `inputMediaDocument.video_cover` is refused as `FILE_REFERENCE_[%d_]COVER_*` —
+  reporting it as the document's own reference makes the client repair the wrong file.
+  `FILE_REFERENCE_%d_EMPTY` and the `COVER_` family are composed in the helper: the generated
+  `RpcErrors` list does not carry them.
+* **`upload.getFile` for a stored document never reaches this repository** — `FileDownloadLaneRouter`
+  forwards everything but `inputGroupCallStream` to the closed file-server, which ignores the field. So
+  the router validates the reference itself and diverts **only the failures** into the messenger lane,
+  where `GetFileHandler` answers the error before its `FILE_ID_INVALID` fallback. Valid requests go
+  straight through as before; a parse failure forwards as before, because the router sits on the path of
+  all downloading.
+* **`App__FileReferences__Mode` is `Off` / `LogOnly` / `Enforce`, and `LogOnly` is not optional on first
+  deploy.** It computes the check and logs `file_reference would have been refused` without failing the
+  request. An emit path still handing out a stale or empty reference shows up there as a log line
+  instead of as dead media. An unset or misspelled mode means `LogOnly`, never `Off` and never `Enforce`.
+
+```bash
+# 1. deploy with Mode=LogOnly, watch for a full day
+docker compose -p mytelegram logs --since 24h messenger-command-server messenger-query-server \
+  | grep "file_reference would have been refused"
+# 2. only then App__FileReferences__Mode=Enforce
+```
+
+The stored `FileReference` fields left in `eventflow-documentreadmodel` and `eventflow-photoreadmodel`
+are dead: nothing reads them, and new writes do not create them. They are harmless and deliberately not
+migrated away — one `$unset` sweep would be all it takes, but it buys nothing a deployment can feel.
+
+Probing it needs a throwaway Telethon script (temp dir, not `scripts/`); copy the connection and RSA
+registration block out of `scripts/verify_stickers.py`. Worth asserting: a download with a fresh
+reference; one flipped byte answering `FileReferenceInvalidError`; an empty one answering
+`FileReferenceEmptyError`; a three-item `sendMultiMedia` whose second entry is broken answering exactly
+`FILE_REFERENCE_1_INVALID` (Telethon humanizes the class, so match on `error.message`); and every
+refresh source — `getStickerSet`, `getSavedGifs`, `getWallPapers`, `getSavedRingtones`,
+`getStoriesByID`, `getPremiumPromo`, `getMessages` — returning a **non-empty** reference. A source that
+returns an empty or stale one is dead media the moment `Enforce` goes on.
+
+### messages.getDocumentByHash
+
+Answers "do you already have these bytes?" so a client can send a file by id instead of uploading it
+again. It threw `NotImplementedException`, which clients read as a hard error rather than as "not here".
+
+* All three arguments match: `sha256`, `size` and `mime_type`. The hash alone would return a document of
+  a different length or type for the same bytes.
+* A digest that is not 32 bytes is `SHA256_HASH_INVALID`; an unknown body is **`documentEmpty`**, which
+  is what lets the client fall back to uploading. (The `documentEmpty` answer is inferred from the
+  method's error list — it documents no "not found" error — and is not measured against prod.)
+* `Sha256` on `eventflow-documentreadmodel` is recorded at creation time, and only where this repo holds
+  the bytes: `GifDocumentPublisher` and the video renditions. **Documents stored before this — every
+  sticker, custom emoji, ringtone, theme, and anything the file-server created — carry no hash and are
+  never matched**, so a client asking about them is told `documentEmpty` and uploads the file again.
+  That is the correct fallback, just not the optimal one; filling them in would mean streaming every body
+  back out of the `tg-files` bucket and hashing it, which is a one-off sweep nobody has asked for. A hash
+  must never be invented for a body the server cannot read — a client would then send a file this server
+  has no way to serve.
+* There is **no index** on `(Sha256, Size, MimeType)`. The lookup is a scan, which is affordable because
+  clients call this once per file they are about to upload, and `MongoDbIndexesCreator` only covers read
+  models EventFlow projects — this one it does not. Add one there if the method ever gets hot.
+
+See https://corefork.telegram.org/api/file-references and
+https://corefork.telegram.org/method/messages.getDocumentByHash
+
+---
+
 ## GIFs
 
 A GIF on Telegram is an **MPEG4 without sound** — `video/mp4` plus `documentAttributeAnimated`. Both
@@ -1186,6 +1290,7 @@ See https://corefork.telegram.org/api/pfs
 | Client crashes on the response | constructor ID match (`/schema-jppgr-am`), unset required fields |
 | Android dies at startup with `ArrayIndexOutOfBoundsException: length=6; index=6` in `MediaDataController.processLoadedStickers` | `config.preload_featured_stickers` is set while a trending emoji list is non-empty; the flag must stay off, see Stickers above. The stack trace is the only evidence — the server logs a perfectly healthy `getFeaturedEmojiStickers` |
 | Half the media never loads | `authKey not found` in session-server — an expired temp key, see PFS above |
+| Media stops loading for everyone at once, logs show `FILE_REFERENCE_*` | a refresh source is handing out an empty or stale `file_reference`. Check it returns a non-empty one (see File references above); `App__FileReferences__Mode=LogOnly` turns the refusal back into a log line while you find the path |
 | A draft shows up on one device only, or comes back after being cleared | no `updateDraftMessage` was pushed, or it was pushed without a `globalSeqNo`; check that the clear went through the dialog (`DraftClearedEvent`) and not around it, see Message drafts above |
 | An archived chat is still in the main list, or the archive looks empty | `getDialogs` folder predicate: an absent `folder_id` and `0` both mean the main list, and a dialog that was never archived stores no `FolderId` — see Dialog folders above. A second device that never learns about the archiving is the missing `updateFolderPeers` push |
 | Folder tabs revert their order, or folder tags turn themselves on | `eventflow-dialogfiltersettingsreadmodel` for that user: no `Order` means `updateDialogFiltersOrder` never reached the aggregate, and `TagsEnabled` is what `messages.dialogFilters.tags_enabled` must report — never a constant |

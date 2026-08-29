@@ -244,9 +244,9 @@ def import_sounds(db, minio, manifest: List[Dict[str, Any]], dry_run: bool) -> N
             "DocumentId": doc_id,
             # Decorative: what a client quotes back is minted per session by AccessHashHelper2.
             "AccessHash": doc_id & 0x7FFFFFFFFFFFFFFF,
-            # Non-empty on purpose: a client that receives an empty file_reference treats the
-            # document as stale and tries to refresh it before downloading anything.
-            "FileReference": list(os.urandom(16)),
+            # No FileReference: it is derived from the document id when the server serves the document,
+            # including inside the emojies_sounds entry of help.getAppConfig.
+            # See https://corefork.telegram.org/api/file-references
             "Date": int(time.time()),
             "DcId": DC_ID,
             "MimeType": MIME_TYPE,
@@ -280,11 +280,6 @@ def import_sounds(db, minio, manifest: List[Dict[str, Any]], dry_run: bool) -> N
         if dry_run:
             print(f"    would write document {doc_id} ({len(body)} bytes) and sound {sound['emoji']}")
             continue
-
-        existing = doc_col.find_one({"DocumentId": doc_id}, {"FileReference": 1})
-        if existing is not None:
-            # Keep the reference a client may already hold rather than invalidating its cache.
-            row["FileReference"] = existing.get("FileReference") or row["FileReference"]
 
         doc_col.replace_one({"DocumentId": doc_id}, row, upsert=True)
         written += 1

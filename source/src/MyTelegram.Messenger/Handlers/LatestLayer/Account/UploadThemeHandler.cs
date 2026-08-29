@@ -17,6 +17,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// </remarks>
 internal sealed class UploadThemeHandler(
     IMongoDatabase database,
+    IFileReferenceHelper fileReferenceHelper,
     ILogger<UploadThemeHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestUploadTheme, MyTelegram.Schema.IDocument>
 {
     protected override async Task<MyTelegram.Schema.IDocument> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestUploadTheme obj)
@@ -85,7 +86,6 @@ internal sealed class UploadThemeHandler(
             ["_id"] = $"documentreadmodel-{documentId}",
             ["DocumentId"] = documentId,
             ["AccessHash"] = accessHash,
-            ["FileReference"] = Array.Empty<byte>(),
             ["Date"] = (int)now,
             ["MimeType"] = obj.MimeType,
             ["Size"] = fileSize,
@@ -117,7 +117,8 @@ internal sealed class UploadThemeHandler(
         {
             Id = documentId,
             AccessHash = accessHash,
-            FileReference = Array.Empty<byte>(),
+            // See https://corefork.telegram.org/api/file-references
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = (int)now,
             MimeType = obj.MimeType,
             Size = fileSize,

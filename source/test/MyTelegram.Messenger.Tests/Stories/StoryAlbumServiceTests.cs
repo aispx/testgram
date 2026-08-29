@@ -25,7 +25,7 @@ public class StoryAlbumServiceTests
     public async Task Album_ids_are_allocated_from_a_counter_and_increase()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
 
         var first = await service.CreateAlbumAsync(OwnerId, PeerType, "First", []);
         var second = await service.CreateAlbumAsync(OwnerId, PeerType, "Second", []);
@@ -38,7 +38,7 @@ public class StoryAlbumServiceTests
     public async Task Album_ids_are_scoped_per_peer()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
 
         var mine = await service.CreateAlbumAsync(OwnerId, PeerType, "Mine", []);
         var theirs = await service.CreateAlbumAsync(999, PeerType, "Theirs", []);
@@ -53,7 +53,7 @@ public class StoryAlbumServiceTests
     public async Task A_story_can_belong_to_several_albums()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
         await SeedStoriesAsync(mongo.Database, 1);
 
         var travel = await service.CreateAlbumAsync(OwnerId, PeerType, "Travel", [1]);
@@ -67,7 +67,7 @@ public class StoryAlbumServiceTests
     public async Task Removing_a_story_from_one_album_leaves_its_other_albums_alone()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
         await SeedStoriesAsync(mongo.Database, 1);
 
         var travel = await service.CreateAlbumAsync(OwnerId, PeerType, "Travel", [1]);
@@ -82,7 +82,7 @@ public class StoryAlbumServiceTests
     public async Task Deleting_an_album_keeps_its_stories()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
         await SeedStoriesAsync(mongo.Database, 1, 2);
 
         var album = await service.CreateAlbumAsync(OwnerId, PeerType, "Trip", [1, 2]);
@@ -97,7 +97,7 @@ public class StoryAlbumServiceTests
     public async Task An_emptied_album_still_exists()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
         await SeedStoriesAsync(mongo.Database, 1);
 
         var album = await service.CreateAlbumAsync(OwnerId, PeerType, "Trip", [1]);
@@ -112,7 +112,7 @@ public class StoryAlbumServiceTests
     public async Task The_cover_follows_the_newest_remaining_story()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
         await SeedStoriesAsync(mongo.Database, 1, 2, 3);
 
         var album = await service.CreateAlbumAsync(OwnerId, PeerType, "Trip", [1, 2, 3]);
@@ -126,7 +126,7 @@ public class StoryAlbumServiceTests
     public async Task Reordering_places_the_listed_albums_first_and_keeps_the_rest_after()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
 
         var a = await service.CreateAlbumAsync(OwnerId, PeerType, "A", []);
         var b = await service.CreateAlbumAsync(OwnerId, PeerType, "B", []);
@@ -143,7 +143,7 @@ public class StoryAlbumServiceTests
     public async Task Renaming_an_album_does_not_touch_its_stories()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new StoryAlbumService(mongo.Database);
+        var service = new StoryAlbumService(mongo.Database, TestFileReferences.Helper);
         await SeedStoriesAsync(mongo.Database, 1);
 
         var album = await service.CreateAlbumAsync(OwnerId, PeerType, "Old", [1]);

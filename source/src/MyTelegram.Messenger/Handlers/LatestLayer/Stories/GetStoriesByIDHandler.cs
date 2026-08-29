@@ -23,7 +23,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 internal sealed class GetStoriesByIDHandler(
     IMongoDatabase mongoDatabase,
     IStoryAccessService storyAccessService,
-    IStoryResponseBuilder storyResponseBuilder)
+    IStoryResponseBuilder storyResponseBuilder,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<RequestGetStoriesByID, IStories>
 {
     private readonly IMongoCollection<StoryDocument> _storyCollection =
@@ -63,7 +64,7 @@ internal sealed class GetStoriesByIDHandler(
         foreach (var story in visible.OrderByDescending(s => s.StoryId))
         {
             sentReactions.TryGetValue(story.StoryId, out var sentReaction);
-            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner));
+            storyItems.Add(StoryHelper.ConvertToStoryItem(fileReferenceHelper, story, input.UserId, sentReaction, isOwner));
         }
 
         var peers = await storyResponseBuilder.BuildPeersAsync(input, visible, [peerId]);

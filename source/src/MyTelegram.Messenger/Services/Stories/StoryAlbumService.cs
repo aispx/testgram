@@ -42,7 +42,7 @@ public interface IStoryAlbumService
 /// <see cref="StoryDocument.AlbumIds"/> and is maintained here.
 /// </para>
 /// </summary>
-public class StoryAlbumService(IMongoDatabase mongoDatabase) : IStoryAlbumService, ITransientDependency
+public class StoryAlbumService(IMongoDatabase mongoDatabase, IFileReferenceHelper fileReferenceHelper) : IStoryAlbumService, ITransientDependency
 {
     private readonly IMongoCollection<StoryAlbumDocument> _albumCollection =
         mongoDatabase.GetCollection<StoryAlbumDocument>("story_albums");
@@ -243,8 +243,8 @@ public class StoryAlbumService(IMongoDatabase mongoDatabase) : IStoryAlbumServic
             {
                 AlbumId = album.AlbumId,
                 Title = album.Title,
-                IconPhoto = StoryHelper.BuildAlbumIconPhoto(cover),
-                IconVideo = StoryHelper.BuildAlbumIconVideo(cover)
+                IconPhoto = StoryHelper.BuildAlbumIconPhoto(fileReferenceHelper, cover),
+                IconVideo = StoryHelper.BuildAlbumIconVideo(fileReferenceHelper, cover)
             });
         }
 

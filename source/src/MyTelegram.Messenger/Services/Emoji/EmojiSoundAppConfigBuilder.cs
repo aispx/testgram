@@ -43,7 +43,10 @@ public interface IEmojiSoundAppConfigBuilder
 public sealed record EmojiSoundAppConfigEntry(TJsonObjectValue Value, int Hash);
 
 /// <inheritdoc />
-public class EmojiSoundAppConfigBuilder(IEmojiSoundStore store, IAccessHashHelper2 accessHashHelper)
+public class EmojiSoundAppConfigBuilder(
+    IEmojiSoundStore store,
+    IAccessHashHelper2 accessHashHelper,
+    IFileReferenceHelper fileReferenceHelper)
     : IEmojiSoundAppConfigBuilder, ITransientDependency
 {
     public const string ConfigKey = "emojies_sounds";
@@ -79,7 +82,12 @@ public class EmojiSoundAppConfigBuilder(IEmojiSoundStore store, IAccessHashHelpe
                 sound.DocumentId, AccessHashType.Document);
             var id = sound.DocumentId.ToString(CultureInfo.InvariantCulture);
             var accessHashText = accessHash.ToString(CultureInfo.InvariantCulture);
-            var fileReference = ToBase64Url(sound.FileReference);
+            // Minted, not read from the row: this value is a real file reference that clients quote back
+            // in upload.getFile, and the stored one no longer means anything. It has to come from the same
+            // helper as every other reference or the download is refused.
+            // See https://corefork.telegram.org/api/file-references
+            var fileReference = ToBase64Url(
+                fileReferenceHelper.Create(AccessHashType.Document, sound.DocumentId));
 
             values.Add(new TJsonObjectValue
             {

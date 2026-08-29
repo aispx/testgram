@@ -9,7 +9,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// </remarks>
 internal sealed class GetAvailableEffectsHandler(
     IMessageEffectAppService messageEffectAppService,
-    IAccessHashHelper2 accessHashHelper)
+    IAccessHashHelper2 accessHashHelper,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetAvailableEffects,
         MyTelegram.Schema.Messages.IAvailableEffects>
 {
@@ -70,7 +71,7 @@ internal sealed class GetAvailableEffectsHandler(
             Id = source.DocumentId,
             AccessHash = accessHashHelper.GenerateAccessHash(
                 input.UserId, input.AccessHashKeyId, source.DocumentId, AccessHashType.Document),
-            FileReference = source.FileReference,
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, source.DocumentId),
             Date = source.Date,
             MimeType = source.MimeType,
             Size = source.Size,

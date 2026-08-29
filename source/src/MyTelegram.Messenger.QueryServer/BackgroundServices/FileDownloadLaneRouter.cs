@@ -21,6 +21,7 @@ public sealed class FileDownloadLaneRouter(
     IOptionsMonitor<RabbitMqOptions> rabbitMqOptions,
     IRabbitMqSerializer rabbitMqSerializer,
     MessengerQueryDataProcessor queryDataProcessor,
+    IFileReferenceHelper fileReferenceHelper,
     IUserAccessHashKeyCache userAccessHashKeyCache)
     : BackgroundService, IFileDownloadLaneRouter, IDisposable
 {
@@ -239,14 +240,21 @@ public sealed class FileDownloadLaneRouter(
 
     private async Task<bool> TryRerouteGroupCallStreamFileAsync(DataReceivedEvent eventData)
     {
-        if (!IsGetFileObjectId(eventData.ObjectId) || !IsGroupCallStreamGetFile(eventData))
+        if (!IsGetFileObjectId(eventData.ObjectId))
+        {
+            return false;
+        }
+
+        var reason = GetRerouteReason(eventData);
+        if (reason == null)
         {
             return false;
         }
 
         await userAccessHashKeyCache.RememberAsync(eventData.UserId, eventData.AccessHashKeyId);
         logger.LogInformation(
-            "Rerouting upload.getFile inputGroupCallStream from direct file-server queue to messenger query lane, reqMsgId: {ReqMsgId}",
+            "Rerouting upload.getFile from direct file-server queue to messenger query lane ({Reason}), reqMsgId: {ReqMsgId}",
+            reason,
             eventData.ReqMsgId);
         await queryDataProcessor.ProcessAsync(
             new MessengerQueryDataReceivedEvent(eventData.ConnectionId, eventData.ConnectionType, eventData.RequestId, eventData.ObjectId,
@@ -255,14 +263,23 @@ public sealed class FileDownloadLaneRouter(
         return true;
     }
 
-    private bool IsGroupCallStreamGetFile(DataReceivedEvent eventData)
+    /// <summary>
+    /// Why this <c>upload.getFile</c> must be answered by the messenger instead of the file-server, or
+    /// <c>null</c> to forward it as usual.
+    ///
+    /// <para>Two reasons. A group-call stream is served from here because the file-server knows nothing
+    /// about it. And a request whose <c>file_reference</c> this server did not issue has to be refused with
+    /// <c>FILE_REFERENCE_*</c>, which the file-server would never do — it ignores the field — leaving the
+    /// client with media it can neither download nor repair. Only the failures are diverted: a valid
+    /// request still goes straight to the file-server, because this repository cannot serve stored
+    /// documents at all. See https://corefork.telegram.org/api/file-references</para>
+    /// </summary>
+    private string? GetRerouteReason(DataReceivedEvent eventData)
     {
+        RequestGetFile? request = null;
         try
         {
-            if (eventData.Data.ToTObject<IObject>() is RequestGetFile { Location: TInputGroupCallStream })
-            {
-                return true;
-            }
+            request = eventData.Data.ToTObject<IObject>() as RequestGetFile;
         }
         catch (Exception ex)
         {
@@ -272,7 +289,42 @@ public sealed class FileDownloadLaneRouter(
                 eventData.ReqMsgId);
         }
 
-        return ContainsConstructorId(eventData.Data.Span, InputGroupCallStreamConstructorId);
+        if (request == null)
+        {
+            return ContainsConstructorId(eventData.Data.Span, InputGroupCallStreamConstructorId)
+                ? "inputGroupCallStream"
+                : null;
+        }
+
+        if (request.Location is TInputGroupCallStream)
+        {
+            return "inputGroupCallStream";
+        }
+
+        var state = request.Location switch
+        {
+            TInputDocumentFileLocation document => fileReferenceHelper.Validate(document.FileReference.Span,
+                AccessHashType.Document, document.Id),
+            TInputPhotoFileLocation photo => fileReferenceHelper.Validate(photo.FileReference.Span,
+                AccessHashType.Photo, photo.Id),
+            _ => FileReferenceState.Valid
+        };
+
+        if (state == FileReferenceState.Valid)
+        {
+            return null;
+        }
+
+        if (fileReferenceHelper.Mode != FileReferenceMode.Enforce)
+        {
+            logger.LogWarning(
+                "upload.getFile carries a file_reference that would have been refused: state={State}, reqMsgId={ReqMsgId}. Forwarded to the file-server because file references are not enforced.",
+                state,
+                eventData.ReqMsgId);
+            return null;
+        }
+
+        return $"file_reference {state}";
     }
 
     private static bool IsGetFileObjectId(uint objectId)

@@ -21,6 +21,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- FileReferenceHelper exposes its clock as an internal seam so the expiry boundary can be tested
+         without sleeping through a 48 hour lifetime. -->
+    <InternalsVisibleTo Include="MyTelegram.Services.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Update="Fody">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>

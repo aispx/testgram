@@ -22,7 +22,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 internal sealed class GetStoriesArchiveHandler(
     IMongoDatabase mongoDatabase,
     IStoryAccessService storyAccessService,
-    IStoryResponseBuilder storyResponseBuilder)
+    IStoryResponseBuilder storyResponseBuilder,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<RequestGetStoriesArchive, IStories>
 {
     private const int MaxLimit = 100;
@@ -79,7 +80,7 @@ internal sealed class GetStoriesArchiveHandler(
             photos.TryGetValue(story.MediaFileId, out var photo);
             documents.TryGetValue(story.MediaFileId, out var document);
             // The archive is only visible to the owner, so the privacy rules are theirs to see.
-            storyItems.Add(StoryHelper.ConvertToStoryItem(
+            storyItems.Add(StoryHelper.ConvertToStoryItem(fileReferenceHelper,
                 story, input.UserId, sentReaction, includePrivacy: true, photo: photo, document: document));
         }
 

@@ -23,7 +23,8 @@ internal sealed class GetAlbumStoriesHandler(
     IMongoDatabase mongoDatabase,
     IStoryAccessService storyAccessService,
     IStoryAlbumService storyAlbumService,
-    IStoryResponseBuilder storyResponseBuilder)
+    IStoryResponseBuilder storyResponseBuilder,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<RequestGetAlbumStories, IStories>
 {
     private const int DefaultLimit = 100;
@@ -74,7 +75,7 @@ internal sealed class GetAlbumStoriesHandler(
             sentReactions.TryGetValue(story.StoryId, out var sentReaction);
             photos.TryGetValue(story.MediaFileId, out var photo);
             documents.TryGetValue(story.MediaFileId, out var document);
-            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner, photo, document));
+            storyItems.Add(StoryHelper.ConvertToStoryItem(fileReferenceHelper, story, input.UserId, sentReaction, isOwner, photo, document));
         }
 
         var peers = await storyResponseBuilder.BuildPeersAsync(input, visible);

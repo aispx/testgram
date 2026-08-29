@@ -12,7 +12,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class SaveRingtoneHandler(IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSaveRingtone, MyTelegram.Schema.Account.ISavedRingtone>
+internal sealed class SaveRingtoneHandler(IMongoDatabase database, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSaveRingtone, MyTelegram.Schema.Account.ISavedRingtone>
 {
     protected override async Task<MyTelegram.Schema.Account.ISavedRingtone> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSaveRingtone obj)
     {
@@ -94,12 +94,8 @@ internal sealed class SaveRingtoneHandler(IMongoDatabase database) : RpcResultOb
         }
     }
 
-    private static MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
+    private MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
     {
-        var fileRef = doc.Contains("FileReference") && !doc["FileReference"].IsBsonNull
-            ? doc["FileReference"].AsBsonBinaryData.Bytes
-            : Array.Empty<byte>();
-
         var attributes = new TVector<MyTelegram.Schema.IDocumentAttribute>();
 
         // Add audio attributes if available
@@ -136,11 +132,14 @@ internal sealed class SaveRingtoneHandler(IMongoDatabase database) : RpcResultOb
             }
         }
 
+        var documentId = doc["DocumentId"].AsInt64;
+
         return new MyTelegram.Schema.TDocument
         {
-            Id = doc["DocumentId"].AsInt64,
+            Id = documentId,
             AccessHash = doc["AccessHash"].AsInt64,
-            FileReference = fileRef,
+            // See https://corefork.telegram.org/api/file-references
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = doc["Date"].AsInt32,
             MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "audio/mpeg",
             Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,

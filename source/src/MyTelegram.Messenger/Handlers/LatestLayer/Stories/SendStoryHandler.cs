@@ -26,7 +26,8 @@ internal sealed class SendStoryHandler(
     IStoryConfigProvider storyConfigProvider,
     IStoryMediaService storyMediaService,
     IStoryUpdatesSender storyUpdatesSender,
-    IMessageEntityService messageEntityService)
+    IMessageEntityService messageEntityService,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<RequestSendStory, IUpdates>
 {
     /// <summary>
@@ -159,7 +160,7 @@ internal sealed class SendStoryHandler(
                     new TUpdateStory
                     {
                         Peer = StoryHelper.CreatePeer(ownerPeerType, ownerPeerId),
-                        Story = StoryHelper.ConvertToStoryItem(storyDocument)
+                        Story = StoryHelper.ConvertToStoryItem(fileReferenceHelper, storyDocument)
                     }
                 },
                 Chats = new TVector<IChat>(),
@@ -302,7 +303,7 @@ internal sealed class SendStoryHandler(
                 new TUpdateStory
                 {
                     Peer = StoryHelper.CreatePeer(storyDocument.OwnerPeerType, storyDocument.OwnerPeerId),
-                    Story = StoryHelper.ConvertToStoryItem(
+                    Story = StoryHelper.ConvertToStoryItem(fileReferenceHelper,
                         storyDocument, requestingUserId, includePrivacy: true)
                 }
             },

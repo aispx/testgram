@@ -38,7 +38,7 @@ public class ChatWallPaperTests
     {
         using var mongo = EmbeddedMongoServer.Start();
         await SeedWallPaperAsync(mongo.Database);
-        var service = new ChatWallPaperService(mongo.Database);
+        var service = new ChatWallPaperService(mongo.Database, TestFileReferences.Helper);
 
         await service.SetChatWallPaperAsync(CallerUserId, PeerPeer, WallPaperId,
             new TWallPaperSettings { Blur = true, Intensity = 42 }, overridden: false);
@@ -56,7 +56,7 @@ public class ChatWallPaperTests
     {
         using var mongo = EmbeddedMongoServer.Start();
         await SeedWallPaperAsync(mongo.Database);
-        var service = new ChatWallPaperService(mongo.Database);
+        var service = new ChatWallPaperService(mongo.Database, TestFileReferences.Helper);
 
         await service.SetChatWallPaperAsync(PeerUserId, CallerPeer, WallPaperId, null, overridden: true);
 
@@ -70,7 +70,7 @@ public class ChatWallPaperTests
     {
         using var mongo = EmbeddedMongoServer.Start();
         await SeedWallPaperAsync(mongo.Database);
-        var service = new ChatWallPaperService(mongo.Database);
+        var service = new ChatWallPaperService(mongo.Database, TestFileReferences.Helper);
         await service.SetChatWallPaperAsync(CallerUserId, PeerPeer, WallPaperId, null, overridden: false);
 
         await service.SetChatWallPaperAsync(CallerUserId, PeerPeer, null, null, overridden: false);
@@ -91,7 +91,7 @@ public class ChatWallPaperTests
             { "WallpaperId", WallPaperId }
         });
 
-        var (wallPaper, overridden) = await new ChatWallPaperService(mongo.Database)
+        var (wallPaper, overridden) = await new ChatWallPaperService(mongo.Database, TestFileReferences.Helper)
             .GetChatWallPaperAsync(CallerUserId, PeerPeer);
 
         wallPaper!.ShouldBeOfType<TWallPaperNoFile>().Id.ShouldBe(WallPaperId);
@@ -102,7 +102,7 @@ public class ChatWallPaperTests
     public async Task An_unknown_slug_is_WALLPAPER_NOT_FOUND()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new ChatWallPaperService(mongo.Database);
+        var service = new ChatWallPaperService(mongo.Database, TestFileReferences.Helper);
 
         var exception = await Should.ThrowAsync<RpcException>(() =>
             service.ResolveWallPaperIdAsync(new TInputWallPaperSlug { Slug = "nope" }));
@@ -142,7 +142,7 @@ public class ChatWallPaperTests
         update.Peer.ShouldBeOfType<TPeerUser>().UserId.ShouldBe(CallerUserId);
         update.WallpaperOverridden.ShouldBeTrue();
 
-        var (wallPaper, overridden) = await new ChatWallPaperService(mongo.Database)
+        var (wallPaper, overridden) = await new ChatWallPaperService(mongo.Database, TestFileReferences.Helper)
             .GetChatWallPaperAsync(PeerUserId, CallerPeer);
         wallPaper!.ShouldBeOfType<TWallPaperNoFile>().Id.ShouldBe(WallPaperId);
         overridden.ShouldBeTrue();
@@ -162,7 +162,7 @@ public class ChatWallPaperTests
         sender.UpdateFor(ChannelId).Peer.ShouldBeOfType<TPeerChannel>().ChannelId.ShouldBe(ChannelId);
 
         // Stored under the channel itself, so every member reads the same wallpaper.
-        var (wallPaper, _) = await new ChatWallPaperService(mongo.Database)
+        var (wallPaper, _) = await new ChatWallPaperService(mongo.Database, TestFileReferences.Helper)
             .GetChatWallPaperAsync(ChannelId, new Peer(PeerType.Channel, ChannelId));
         wallPaper!.ShouldBeOfType<TWallPaperNoFile>().Id.ShouldBe(WallPaperId);
     }
@@ -219,7 +219,7 @@ public class ChatWallPaperTests
             binder: null,
             args:
             [
-                messageAppService.Object, new PeerHelper(), new ChatWallPaperService(database), sender,
+                messageAppService.Object, new PeerHelper(), new ChatWallPaperService(database, TestFileReferences.Helper), sender,
                 accessHashHelper.Object, adminRightsChecker.Object, ptsHelper.Object
             ],
             culture: null)!;

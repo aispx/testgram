@@ -114,8 +114,8 @@ public class StoryPrivacyRuleParsingTests
     {
         var story = StoryWithRules(StoryPrivacyRuleType.AllowContacts);
 
-        var forOwner = (TStoryItem)StoryHelper.ConvertToStoryItem(story, 100, includePrivacy: true);
-        var forViewer = (TStoryItem)StoryHelper.ConvertToStoryItem(story, 200);
+        var forOwner = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, story, 100, includePrivacy: true);
+        var forViewer = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, story, 200);
 
         forOwner.Privacy.ShouldNotBeNull();
         // A viewer must not learn the owner's audience configuration.
@@ -125,20 +125,20 @@ public class StoryPrivacyRuleParsingTests
     [Fact]
     public void Audience_flags_are_derived_for_every_viewer()
     {
-        var contactsOnly = (TStoryItem)StoryHelper.ConvertToStoryItem(
+        var contactsOnly = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper,
             StoryWithRules(StoryPrivacyRuleType.AllowContacts), 200);
         contactsOnly.Contacts.ShouldBeTrue();
         contactsOnly.Public.ShouldBeFalse();
 
-        var closeFriends = (TStoryItem)StoryHelper.ConvertToStoryItem(
+        var closeFriends = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper,
             StoryWithRules(StoryPrivacyRuleType.AllowCloseFriends), 200);
         closeFriends.CloseFriends.ShouldBeTrue();
 
-        var selected = (TStoryItem)StoryHelper.ConvertToStoryItem(
+        var selected = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper,
             StoryWithRules(StoryPrivacyRuleType.AllowUsers), 200);
         selected.SelectedContacts.ShouldBeTrue();
 
-        var everyone = (TStoryItem)StoryHelper.ConvertToStoryItem(
+        var everyone = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper,
             StoryWithRules(StoryPrivacyRuleType.AllowAll), 200);
         everyone.Public.ShouldBeTrue();
     }
@@ -148,11 +148,11 @@ public class StoryPrivacyRuleParsingTests
     {
         var story = StoryWithRules(StoryPrivacyRuleType.AllowAll);
 
-        var forOwner = (TStoryItem)StoryHelper.ConvertToStoryItem(story, 100);
+        var forOwner = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, story, 100);
         forOwner.Out.ShouldBeTrue();
         forOwner.Min.ShouldBeFalse();
 
-        var forViewer = (TStoryItem)StoryHelper.ConvertToStoryItem(story, 200);
+        var forViewer = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, story, 200);
         forViewer.Out.ShouldBeFalse();
         forViewer.Min.ShouldBeTrue();
     }
@@ -163,7 +163,7 @@ public class StoryPrivacyRuleParsingTests
         var story = StoryWithRules(StoryPrivacyRuleType.AllowAll);
         story.AlbumIds = [4, 9];
 
-        var item = (TStoryItem)StoryHelper.ConvertToStoryItem(
+        var item = (TStoryItem)StoryHelper.ConvertToStoryItem(TestFileReferences.Helper,
             story, 200, new TReactionEmoji { Emoticon = "🔥" });
 
         item.Albums.ShouldBe([4, 9]);
@@ -180,7 +180,7 @@ public class StoryPrivacyRuleParsingTests
         var story = StoryWithRules(StoryPrivacyRuleType.AllowAll);
         story.ExpireDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60;
 
-        StoryHelper.ConvertToStoryItem(story, 100).ShouldBeOfType<TStoryItem>();
+        StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, story, 100).ShouldBeOfType<TStoryItem>();
     }
 
     [Fact]
@@ -189,7 +189,7 @@ public class StoryPrivacyRuleParsingTests
         var story = StoryWithRules(StoryPrivacyRuleType.AllowAll);
         story.Deleted = true;
 
-        StoryHelper.ConvertToStoryItem(story, 100).ShouldBeOfType<TStoryItemDeleted>();
+        StoryHelper.ConvertToStoryItem(TestFileReferences.Helper, story, 100).ShouldBeOfType<TStoryItemDeleted>();
     }
 
     private static StoryDocument StoryWithRules(params int[] ruleTypes) => new()

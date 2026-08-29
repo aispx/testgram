@@ -11,6 +11,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Bots;
 internal sealed class GetPreviewInfoHandler(
     IMongoDatabase mongoDatabase,
     IPeerHelper peerHelper,
+    IFileReferenceHelper fileReferenceHelper,
     IQueryProcessor queryProcessor) : RpcResultObjectHandler<RequestGetPreviewInfo, IPreviewInfo>
 {
     protected override async Task<IPreviewInfo> HandleCoreAsync(IRequestInput input, RequestGetPreviewInfo obj)
@@ -87,7 +88,8 @@ internal sealed class GetPreviewInfoHandler(
                 {
                     Id = doc["PhotoId"].AsInt64,
                     AccessHash = doc["AccessHash"].AsInt64,
-                    FileReference = doc.Contains("FileReference") ? doc["FileReference"].AsByteArray : [],
+                    // See https://corefork.telegram.org/api/file-references
+                    FileReference = fileReferenceHelper.Create(AccessHashType.Photo, doc["PhotoId"].AsInt64),
                     Date = doc["Date"].AsInt32,
                     Sizes = new TVector<IPhotoSize>(),
                     DcId = doc.Contains("DcId") ? doc["DcId"].AsInt32 : 2
@@ -99,7 +101,8 @@ internal sealed class GetPreviewInfoHandler(
                 {
                     Id = doc["DocumentId"].AsInt64,
                     AccessHash = doc["AccessHash"].AsInt64,
-                    FileReference = doc.Contains("FileReference") ? doc["FileReference"].AsByteArray : [],
+                    // See https://corefork.telegram.org/api/file-references
+                    FileReference = fileReferenceHelper.Create(AccessHashType.Document, doc["DocumentId"].AsInt64),
                     Date = doc["Date"].AsInt32,
                     MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "video/mp4",
                     Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,

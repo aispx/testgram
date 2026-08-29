@@ -11,7 +11,7 @@ public class PhotoConverterStrippedThumbTests
     public void ToProfilePhoto_UsesValidStrippedThumbFromSizes2()
     {
         var strippedThumb = new byte[] { 1, 24, 24, 0x42 };
-        var converter = new PhotoConverter();
+        var converter = new PhotoConverter(TestFileReferences.Helper);
 
         var profilePhoto = converter.ToProfilePhoto(new PhotoReadModelStub
         {
@@ -28,7 +28,7 @@ public class PhotoConverterStrippedThumbTests
     [Fact]
     public void ToProfilePhoto_DropsEmptyStrippedThumbs()
     {
-        var converter = new PhotoConverter();
+        var converter = new PhotoConverter(TestFileReferences.Helper);
 
         var profilePhoto = converter.ToProfilePhoto(new PhotoReadModelStub
         {

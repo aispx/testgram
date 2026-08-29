@@ -11,11 +11,14 @@ internal sealed class UpdateBusinessIntroHandler : RpcResultObjectHandler<Reques
 {
     private readonly IMongoDatabase _database;
     private readonly IUserAppService _userAppService;
+    private readonly IFileReferenceHelper _fileReferenceHelper;
 
-    public UpdateBusinessIntroHandler(IMongoDatabase database, IUserAppService userAppService)
+    public UpdateBusinessIntroHandler(IMongoDatabase database, IUserAppService userAppService,
+        IFileReferenceHelper fileReferenceHelper)
     {
         _database = database;
         _userAppService = userAppService;
+        _fileReferenceHelper = fileReferenceHelper;
     }
 
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, RequestUpdateBusinessIntro obj)
@@ -34,7 +37,10 @@ internal sealed class UpdateBusinessIntroHandler : RpcResultObjectHandler<Reques
                 {
                     Id = inputDoc.Id,
                     AccessHash = inputDoc.AccessHash,
-                    FileReference = inputDoc.FileReference,
+                    // Derived here rather than echoed back from the request: the value is stored on the
+                    // user row and served to everyone who opens the profile, so it cannot be the client's
+                    // to choose. See https://corefork.telegram.org/api/file-references
+                    FileReference = _fileReferenceHelper.Create(AccessHashType.Document, inputDoc.Id),
                     Date = 0,
                     MimeType = string.Empty,
                     Size = 0,

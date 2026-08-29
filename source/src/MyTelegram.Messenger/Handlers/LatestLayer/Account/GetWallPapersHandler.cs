@@ -9,7 +9,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 /// </remarks>
-internal sealed class GetWallPapersHandler(IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetWallPapers, MyTelegram.Schema.Account.IWallPapers>
+internal sealed class GetWallPapersHandler(IMongoDatabase database, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetWallPapers, MyTelegram.Schema.Account.IWallPapers>
 {
     protected override async Task<MyTelegram.Schema.Account.IWallPapers> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetWallPapers obj)
     {
@@ -61,7 +61,7 @@ internal sealed class GetWallPapersHandler(IMongoDatabase database) : RpcResultO
                         Default = doc.Contains("IsDefault") && doc["IsDefault"].AsBoolean,
                         Pattern = doc.Contains("IsPattern") && doc["IsPattern"].AsBoolean,
                         Dark = doc.Contains("IsDark") && doc["IsDark"].AsBoolean,
-                        Document = ConvertToDocument(docDoc),
+                        Document = WallPaperDocumentReader.ToDocument(docDoc, fileReferenceHelper),
                         Settings = ConvertSettings(doc)
                     });
                 }
@@ -118,27 +118,6 @@ internal sealed class GetWallPapersHandler(IMongoDatabase database) : RpcResultO
             Emoticon = settings.Contains("Emoticon") ? settings["Emoticon"].AsString : null
         };
 
-        return result;
-    }
-
-    private static MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
-    {
-        var fileRef = doc.Contains("FileReference") && !doc["FileReference"].IsBsonNull
-            ? doc["FileReference"].AsBsonBinaryData.Bytes
-            : Array.Empty<byte>();
-
-        return new MyTelegram.Schema.TDocument
-        {
-            Id = doc["DocumentId"].AsInt64,
-            AccessHash = doc["AccessHash"].AsInt64,
-            FileReference = fileRef,
-            Date = doc["Date"].AsInt32,
-            MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "image/jpeg",
-            Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,
-            Thumbs = new TVector<MyTelegram.Schema.IPhotoSize>(),
-            VideoThumbs = new TVector<MyTelegram.Schema.IVideoSize>(),
-            DcId = doc.Contains("DcId") ? doc["DcId"].AsInt32 : 2,
-            Attributes = new TVector<MyTelegram.Schema.IDocumentAttribute>()
-        };
+        return WallPaperSettingsHelper.PairSharedFlags(result);
     }
 }

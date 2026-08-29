@@ -17,6 +17,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 internal sealed class GetSavedMusicByIDHandler(
     IPeerHelper peerHelper,
     IUserAppService userAppService,
+    IFileReferenceHelper fileReferenceHelper,
     IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetSavedMusicByID, MyTelegram.Schema.Users.ISavedMusic>, IObjectHandler
 {
     protected override async Task<MyTelegram.Schema.Users.ISavedMusic> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetSavedMusicByID obj)
@@ -85,12 +86,8 @@ internal sealed class GetSavedMusicByIDHandler(
         };
     }
 
-    private static MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
+    private MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
     {
-        var fileRef = doc.Contains("FileReference") && !doc["FileReference"].IsBsonNull
-            ? doc["FileReference"].AsBsonBinaryData.Bytes
-            : Array.Empty<byte>();
-
         var attributes = new TVector<MyTelegram.Schema.IDocumentAttribute>();
 
         // Use Attributes2 if available (proper serialization)
@@ -130,11 +127,14 @@ internal sealed class GetSavedMusicByIDHandler(
             }
         }
 
+        var documentId = doc["DocumentId"].AsInt64;
+
         return new MyTelegram.Schema.TDocument
         {
-            Id = doc["DocumentId"].AsInt64,
+            Id = documentId,
             AccessHash = doc["AccessHash"].AsInt64,
-            FileReference = fileRef,
+            // See https://corefork.telegram.org/api/file-references
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
             Date = doc["Date"].AsInt32,
             MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "audio/mpeg",
             Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,

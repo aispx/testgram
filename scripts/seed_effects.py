@@ -262,7 +262,6 @@ def cmd_import():
                         else "image/webp" if p.suffix == ".webp"
                         else "video/webm" if p.suffix == ".webm"
                         else "application/octet-stream")
-                file_ref    = list(os.urandom(16))
                 access_hash = int.from_bytes(os.urandom(8), "little", signed=True)
                 doc_id      = int(orig_tg_id) & 0x7FFFFFFFFFFFFFFF
 
@@ -275,7 +274,8 @@ def cmd_import():
                     "DocumentId": doc_id,
                     "LocalFile": f"effects_files/{name}",
                     "AccessHash": access_hash,
-                    "FileReference": file_ref,
+                    # No FileReference: derived from the document id on the way out.
+                    # See https://corefork.telegram.org/api/file-references
                     "Date": int(time.time()),
                     "DcId": DC_ID, "MimeType": mime, "Size": len(data),
                     "Name": name, "Thumbs": thumbs, "VideoThumbs": None,
@@ -293,7 +293,6 @@ def cmd_import():
                 effect_doc[mongo_field] = {
                     "Id": to_int64(doc_meta["DocumentId"]),
                     "AccessHash": to_int64(doc_meta["AccessHash"]),
-                    "FileReference": doc_meta["FileReference"],
                     "Date": doc_meta["Date"],
                     "MimeType": doc_meta["MimeType"],
                     "Size": doc_meta["Size"],

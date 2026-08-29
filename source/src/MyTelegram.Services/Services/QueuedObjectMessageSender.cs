@@ -4,7 +4,8 @@ namespace MyTelegram.Services.Services;
 
 public class QueuedObjectMessageSender(
     IMessageQueueProcessor<ISessionMessage> sessionMessageQueueProcessor,
-    IAccessHashHelper2 accessHashHelper2)
+    IAccessHashHelper2 accessHashHelper2,
+    IFileReferenceStamper fileReferenceStamper)
     : IObjectMessageSender, ITransientDependency
 {
     public Task PushSessionMessageToAuthKeyIdAsync<TData>(long authKeyId,
@@ -17,6 +18,7 @@ public class QueuedObjectMessageSender(
         // so normalize any invalid media DcId (<=0) before it reaches the client. Otherwise
         // the client hot-loops help.getConfig and floods the log with "skip queue: unknown dc".
         DcIdNormalizer.Normalize(data, nameof(PushSessionMessageToAuthKeyIdAsync));
+        fileReferenceStamper.Stamp(data);
 
         sessionMessageQueueProcessor.Enqueue(new LayeredAuthKeyIdMessageCreatedIntegrationEvent(
             authKeyId,
@@ -45,6 +47,7 @@ public class QueuedObjectMessageSender(
         // See PushSessionMessageToAuthKeyIdAsync: updates pushed to peers bypass the
         // RpcResultObjectHandler safety net, so normalize invalid media DcId here too.
         DcIdNormalizer.Normalize(data, nameof(PushMessageToPeerAsync));
+        fileReferenceStamper.Stamp(data);
 
         sessionMessageQueueProcessor.Enqueue(new LayeredPushMessageCreatedIntegrationEvent(peer.PeerType,
                 peer.PeerId,
@@ -68,6 +71,7 @@ public class QueuedObjectMessageSender(
         TData data) where TData : IObject
     {
         UpdateAccessHashIfNeeded(requestInfo, data);
+        fileReferenceStamper.Stamp(data);
 
         sessionMessageQueueProcessor.Enqueue(new DataResultResponseReceivedEvent(requestInfo.ConnectionId, requestInfo.AuthKeyId, requestInfo.SessionId, requestInfo.ReqMsgId, Array.Empty<byte>())
         {
@@ -82,6 +86,7 @@ public class QueuedObjectMessageSender(
         TData data) where TData : IObject
     {
         UpdateAccessHashIfNeeded(requestInfo, data);
+        fileReferenceStamper.Stamp(data);
 
         sessionMessageQueueProcessor.Enqueue(new FileDataResultResponseReceivedEvent(requestInfo.ConnectionId, requestInfo.AuthKeyId, requestInfo.SessionId, requestInfo.ReqMsgId, data.ToBytes()),
             requestInfo.PermAuthKeyId);
@@ -107,6 +112,7 @@ public class QueuedObjectMessageSender(
         // Updates built by domain event handlers reach the client through this path without
         // passing through RpcResultObjectHandler; normalize invalid media DcId before sending.
         DcIdNormalizer.Normalize(data, nameof(SendRpcMessageToClientAsync));
+        fileReferenceStamper.Stamp(data);
 
         var rpcResult = CreateRpcResult(reqMsgId, data);
 
@@ -125,6 +131,7 @@ public class QueuedObjectMessageSender(
     {
         UpdateAccessHashIfNeeded(requestInfo, data);
         DcIdNormalizer.Normalize(data, nameof(SendRpcMessageToClientAsync));
+        fileReferenceStamper.Stamp(data);
 
         var rpcResult = CreateRpcResult(requestInfo.ReqMsgId, data);
         sessionMessageQueueProcessor.Enqueue(

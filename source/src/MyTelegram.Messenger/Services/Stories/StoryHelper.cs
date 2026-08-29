@@ -46,6 +46,11 @@ public static partial class StoryHelper
     /// The document read model for a video story's media, when the caller loaded it. Supplies the
     /// thumbnail the client draws as the preview tile.
     /// </param>
+    /// <param name="fileReferenceHelper">
+    /// Mints the <c>file_reference</c> of the story's media. A story document stores the reference the
+    /// media carried when the story was posted, which is a value that expires, so it is re-derived on
+    /// every read. See https://corefork.telegram.org/api/file-references
+    /// </param>
     /// <remarks>
     /// Only a genuinely deleted story becomes <c>storyItemDeleted</c>. Expiry alone does not:
     /// per <a href="https://corefork.telegram.org/api/stories">the API</a> an expired story moves to
@@ -54,6 +59,7 @@ public static partial class StoryHelper
     /// expired stories to <c>storyItemDeleted</c> here emptied both of those listings.
     /// </remarks>
     public static IStoryItem ConvertToStoryItem(
+        IFileReferenceHelper fileReferenceHelper,
         StoryDocument doc,
         long requestingUserId = 0,
         IReaction? sentReaction = null,
@@ -74,7 +80,8 @@ public static partial class StoryHelper
             return ConvertToLiveStoryItem(doc, requestingUserId, sentReaction, includePrivacy);
         }
 
-        return ConvertToStoryItemInternal(doc, requestingUserId, sentReaction, includePrivacy, photo, document);
+        return ConvertToStoryItemInternal(fileReferenceHelper, doc, requestingUserId, sentReaction, includePrivacy,
+            photo, document);
     }
 
     private static IStoryItem ConvertToLiveStoryItem(
@@ -130,6 +137,7 @@ public static partial class StoryHelper
     }
 
     private static IStoryItem ConvertToStoryItemInternal(
+        IFileReferenceHelper fileReferenceHelper,
         StoryDocument doc,
         long requestingUserId,
         IReaction? sentReaction,
@@ -159,8 +167,8 @@ public static partial class StoryHelper
 
         IMessageMedia media = doc.MediaType switch
         {
-            1 => new TMessageMediaPhoto { Photo = BuildPhoto(doc, photo) },
-            2 => new TMessageMediaDocument { Document = BuildDocument(doc, document) },
+            1 => new TMessageMediaPhoto { Photo = BuildPhoto(fileReferenceHelper, doc, photo) },
+            2 => new TMessageMediaDocument { Document = BuildDocument(fileReferenceHelper, doc, document) },
             _ => new TMessageMediaEmpty()
         };
 
@@ -183,7 +191,7 @@ public static partial class StoryHelper
             Entities = ParseEntities(doc.Entities),
             MediaAreas = StoryMediaAreaHelper.ToMediaAreas(doc.MediaAreas),
             Albums = doc.AlbumIds is { Count: > 0 } ? new TVector<int>(doc.AlbumIds) : null,
-            Music = BuildMusic(doc),
+            Music = BuildMusic(fileReferenceHelper, doc),
             SentReaction = sentReaction,
             Views = BuildViews(doc)
         };
@@ -274,7 +282,7 @@ public static partial class StoryHelper
         };
     }
 
-    private static IDocument? BuildMusic(StoryDocument doc)
+    private static IDocument? BuildMusic(IFileReferenceHelper fileReferenceHelper, StoryDocument doc)
     {
         if (!doc.MusicDocumentId.HasValue || doc.MusicDocumentId.Value == 0)
         {
@@ -285,7 +293,7 @@ public static partial class StoryHelper
         {
             Id = doc.MusicDocumentId.Value,
             AccessHash = doc.MusicAccessHash ?? 0,
-            FileReference = ReadOnlyMemory<byte>.Empty,
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, doc.MusicDocumentId.Value),
             Date = (int)doc.Date,
             MimeType = "audio/mpeg",
             Size = 0,
@@ -301,13 +309,14 @@ public static partial class StoryHelper
     /// The photo read model for <c>doc.MediaFileId</c>, when the caller loaded it. It carries the
     /// real per-size breakdown; a story document only stores the media id, hash and file reference.
     /// </param>
-    public static IPhoto BuildPhoto(StoryDocument doc, IPhotoReadModel? photo = null)
+    public static IPhoto BuildPhoto(IFileReferenceHelper fileReferenceHelper, StoryDocument doc,
+        IPhotoReadModel? photo = null)
     {
         return new TPhoto
         {
             Id = doc.MediaFileId,
             AccessHash = doc.MediaAccessHash,
-            FileReference = doc.MediaFileReference ?? [],
+            FileReference = fileReferenceHelper.Create(AccessHashType.Photo, doc.MediaFileId),
             Date = (int)doc.Date,
             Sizes = BuildPhotoSizes(doc, photo),
             DcId = doc.MediaDcId > 0 ? doc.MediaDcId : 2
@@ -321,7 +330,8 @@ public static partial class StoryHelper
     /// thumbnail sizes; a story document only has an inline thumbnail if one was captured at upload
     /// time, and an empty <c>thumbs</c> leaves the client with nothing to draw as the preview tile.
     /// </param>
-    public static IDocument BuildDocument(StoryDocument doc, IDocumentReadModel? document = null)
+    public static IDocument BuildDocument(IFileReferenceHelper fileReferenceHelper, StoryDocument doc,
+        IDocumentReadModel? document = null)
     {
         var attributes = new TVector<IDocumentAttribute>();
         if (doc.VideoWidth.HasValue || doc.VideoHeight.HasValue || doc.VideoDuration.HasValue)
@@ -356,9 +366,7 @@ public static partial class StoryHelper
         {
             Id = doc.MediaFileId,
             AccessHash = doc.MediaAccessHash,
-            FileReference = doc.MediaFileReference != null
-                ? new ReadOnlyMemory<byte>(doc.MediaFileReference)
-                : ReadOnlyMemory<byte>.Empty,
+            FileReference = fileReferenceHelper.Create(AccessHashType.Document, doc.MediaFileId),
             Date = (int)doc.Date,
             MimeType = doc.MediaMimeType ?? "video/mp4",
             Size = doc.MediaSize,
@@ -443,25 +451,25 @@ public static partial class StoryHelper
     }
 
     /// <summary>Album cover photo, or null when the story is not a photo story.</summary>
-    public static IPhoto? BuildAlbumIconPhoto(StoryDocument? doc)
+    public static IPhoto? BuildAlbumIconPhoto(IFileReferenceHelper fileReferenceHelper, StoryDocument? doc)
     {
         if (doc == null || doc.MediaType != 1 || doc.MediaFileId == 0)
         {
             return null;
         }
 
-        return BuildPhoto(doc);
+        return BuildPhoto(fileReferenceHelper, doc);
     }
 
     /// <summary>Album cover video, or null when the story is not a video story.</summary>
-    public static IDocument? BuildAlbumIconVideo(StoryDocument? doc)
+    public static IDocument? BuildAlbumIconVideo(IFileReferenceHelper fileReferenceHelper, StoryDocument? doc)
     {
         if (doc == null || doc.MediaType != 2 || doc.MediaFileId == 0)
         {
             return null;
         }
 
-        return BuildDocument(doc);
+        return BuildDocument(fileReferenceHelper, doc);
     }
 
     /// <summary>

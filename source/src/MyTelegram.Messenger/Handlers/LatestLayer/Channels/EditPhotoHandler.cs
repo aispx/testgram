@@ -26,7 +26,7 @@ using MyTelegram.Messenger.Helpers;
 /// <remarks>
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
-internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IRandomHelper randomHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditPhoto, MyTelegram.Schema.IUpdates>
+internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus commandBus, IRandomHelper randomHelper, IChannelAdminRightsChecker channelAdminRightsChecker, IMongoDatabase mongoDatabase, IQueryProcessor queryProcessor, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Channels.RequestEditPhoto, MyTelegram.Schema.IUpdates>
 {
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestEditPhoto obj)
     {
@@ -81,6 +81,11 @@ internal sealed class EditPhotoHandler(IMediaHelper mediaHelper, ICommandBus com
                 switch (inputChatPhoto.Id)
                 {
                     case TInputPhoto inputPhoto:
+                        // channels.editPhoto is the one profile-photo method whose documented error list
+                        // carries FILE_REFERENCE_INVALID.
+                        // See https://corefork.telegram.org/api/file-references
+                        fileReferenceHelper.Check(inputPhoto.FileReference.Span, AccessHashType.Photo,
+                            inputPhoto.Id);
                         fileId = inputPhoto.Id;
                         break;
                     case TInputPhotoEmpty:

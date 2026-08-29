@@ -22,7 +22,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Stories;
 internal sealed class GetPinnedStoriesHandler(
     IMongoDatabase mongoDatabase,
     IStoryAccessService storyAccessService,
-    IStoryResponseBuilder storyResponseBuilder)
+    IStoryResponseBuilder storyResponseBuilder,
+    IFileReferenceHelper fileReferenceHelper)
     : RpcResultObjectHandler<RequestGetPinnedStories, IStories>
 {
     private const int MaxLimit = 100;
@@ -84,7 +85,7 @@ internal sealed class GetPinnedStoriesHandler(
             sentReactions.TryGetValue(story.StoryId, out var sentReaction);
             photos.TryGetValue(story.MediaFileId, out var photo);
             documents.TryGetValue(story.MediaFileId, out var document);
-            storyItems.Add(StoryHelper.ConvertToStoryItem(story, input.UserId, sentReaction, isOwner, photo, document));
+            storyItems.Add(StoryHelper.ConvertToStoryItem(fileReferenceHelper, story, input.UserId, sentReaction, isOwner, photo, document));
         }
 
         var pinnedToTopIds = visible.Where(s => s.PinnedToTop).Select(s => s.StoryId).ToList();

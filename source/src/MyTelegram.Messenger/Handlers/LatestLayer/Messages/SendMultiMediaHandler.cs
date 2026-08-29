@@ -48,12 +48,19 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class SendMultiMediaHandler(IMessageAppService messageAppService, IMediaHelper mediaHelper, //IRequestCacheAppService requestCacheAppService,
- IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService, IUserAppService userAppService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor, MyTelegram.Messenger.Services.Stickers.ISentStickerProcessor sentStickerProcessor, MyTelegram.Messenger.Services.Stickers.IAttachedStickerRecorder attachedStickerRecorder) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
+ IPeerHelper peerHelper, IRandomHelper randomHelper, IQueryProcessor queryProcessor, IMongoDatabase mongoDatabase, IPrivacyAppService privacyAppService, IMessageEffectAppService messageEffectAppService, IUserAppService userAppService, MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor, MyTelegram.Messenger.Services.Stickers.ISentStickerProcessor sentStickerProcessor, MyTelegram.Messenger.Services.Stickers.IAttachedStickerRecorder attachedStickerRecorder, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendMultiMedia, MyTelegram.Schema.IUpdates>
 {
     //private readonly IRequestCacheAppService _requestCacheAppService;
     //_requestCacheAppService = requestCacheAppService;
     protected override async Task<IUpdates> HandleCoreAsync(IRequestInput input, RequestSendMultiMedia obj)
     {
+        // The index in FILE_REFERENCE_%d_EXPIRED is the position in this vector, which is how the client
+        // knows which album entry to repair. See https://corefork.telegram.org/api/file-references
+        for (var i = 0; i < obj.MultiMedia.Count; i++)
+        {
+            InputMediaFileReferenceChecker.Check(fileReferenceHelper, obj.MultiMedia[i].Media, i);
+        }
+
         // A dice cannot be part of an album: TDLib's is_allowed_media_group_content is false for it, so no
         // client groups one. Checked before anything is charged or written.
         // See https://corefork.telegram.org/api/dice

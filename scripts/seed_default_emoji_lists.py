@@ -245,7 +245,8 @@ def import_orphans(db, minio, orphans: List[Dict[str, Any]], dry_run: bool) -> i
             "Id": f"documentreadmodel-{doc_id}",
             "DocumentId": doc_id,
             "AccessHash": document["access_hash"] & 0x7FFFFFFFFFFFFFFF,
-            "FileReference": list(os.urandom(16)),
+            # No FileReference: it is derived from the document id when the server serves the document.
+            # See https://corefork.telegram.org/api/file-references
             "Date": int(time.time()),
             "DcId": base.DC_ID,
             "MimeType": document["mime"],
@@ -267,9 +268,6 @@ def import_orphans(db, minio, orphans: List[Dict[str, Any]], dry_run: bool) -> i
         if dry_run:
             continue
 
-        existing = doc_col.find_one({"DocumentId": doc_id}, {"FileReference": 1})
-        if existing is not None:
-            row["FileReference"] = existing.get("FileReference") or row["FileReference"]
         doc_col.replace_one({"DocumentId": doc_id}, row, upsert=True)
 
     verb = "would write" if dry_run else "wrote"
