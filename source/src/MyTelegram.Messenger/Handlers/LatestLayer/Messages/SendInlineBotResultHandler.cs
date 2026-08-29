@@ -25,6 +25,7 @@ internal sealed class SendInlineBotResultHandler(
     MyTelegram.Messenger.Services.Gifs.IInlineResultMediaResolver mediaResolver,
     MyTelegram.Messenger.Services.Gifs.ISentGifProcessor sentGifProcessor,
     IBotUpdatesSender botUpdatesSender,
+    ITopPeerUsageRecorder topPeerUsageRecorder,
     IChannelAppService channelAppService,
     IQueryProcessor queryProcessor) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSendInlineBotResult, MyTelegram.Schema.IUpdates>
 {
@@ -108,6 +109,10 @@ internal sealed class SendInlineBotResultHandler(
             Query = query,
             Id = obj.Id
         });
+
+        // Picking a result is what topPeerCategoryBotsInline ranks — the inline query itself is not,
+        // since a client fires one per keystroke. See https://corefork.telegram.org/api/top-rating
+        await topPeerUsageRecorder.RecordAsync(input.UserId, TopPeerCategory.BotsInline, PeerType.User, botId);
 
         // The message itself reaches the client through the push pipeline.
         return new TUpdates

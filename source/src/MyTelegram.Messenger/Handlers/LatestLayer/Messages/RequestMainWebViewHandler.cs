@@ -16,6 +16,7 @@ internal sealed class RequestMainWebViewHandler(
     IPeerHelper peerHelper,
     IAccessHashHelper2 accessHashHelper,
     IWebViewSessionStore webViewSessionStore,
+    ITopPeerUsageRecorder topPeerUsageRecorder,
     ILayeredService<IWebViewResultUrlResponseConverter> webViewResultsLayeredService) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestRequestMainWebView, MyTelegram.Schema.IWebViewResult>
 {
     protected override async Task<MyTelegram.Schema.IWebViewResult> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestRequestMainWebView obj)
@@ -49,6 +50,11 @@ internal sealed class RequestMainWebViewHandler(
         }
 
         var queryId = await webViewSessionStore.CreateSessionAsync(inputBot.UserId, input.UserId, peer, url!);
+
+        // Opening a mini app is what topPeerCategoryBotsApp ranks; nothing else records it.
+        // See https://corefork.telegram.org/api/top-rating
+        await topPeerUsageRecorder.RecordAsync(input.UserId, TopPeerCategory.BotsApp, PeerType.User,
+            inputBot.UserId);
 
         var result = new TWebViewResultUrl
         {

@@ -49,6 +49,7 @@ global using MyTelegram.Messenger.Services.Caching;
 global using MyTelegram.Messenger.Services.Entities;
 global using MyTelegram.Messenger.Services.Folders;
 global using MyTelegram.Messenger.Services.Hashing;
+global using MyTelegram.Messenger.Services.TopPeers;
 global using MyTelegram.Messenger.Services.Interfaces;
 global using MyTelegram.Queries;
 global using MyTelegram.ReadModel.Impl;

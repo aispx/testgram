@@ -326,6 +326,9 @@ NullReferenceException.
 | `attached_stickers` | Sets baked into a photo/video | `_id` = `photo:{id}` or `document:{id}`, StickerSetIds |
 | `chatlist_invites` | Exported chat-folder links | `_id` = `chatlist-invite-{slug}`, Slug, CreatorUserId, FilterId, Title, PeerIds/PeerTypes, Revoked |
 | `chatlist_hidden_updates` | Peers dismissed in a shared folder | `_id` = `{UserId}:{FilterId}`, HiddenPeerIds |
+| `top_peers_settings` | `contacts.toggleTopPeers` opt-out | `_id` = UserId, Disabled |
+| `top_peers_excluded` | Peers reset out of the rating | `_id` = `{UserId}-{Category\|all}-{PeerType}-{PeerId}`, UserId, Category (absent = every category), PeerType, PeerId |
+| `top_peer_usage` | Recorded uses behind the categories no message expresses | UserId, Category, PeerType, PeerId, Date (unix), CreatedAt (TTL 90 days) |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -917,6 +920,87 @@ https://corefork.telegram.org/api/links#chat-folder-links
 
 ---
 
+## Top peer rating
+
+The frequently-messaged row in search, the "@" inline strip, the mini-app strip and the call
+destinations are one surface: `contacts.getTopPeers`, `resetTopPeerRating`, `toggleTopPeers`.
+Everything lives in `Services/TopPeers/`; per-user state is `top_peers_settings` (opt-out),
+`top_peers_excluded` (resets) and `top_peer_usage` (recorded uses, TTL = the 90-day rating window).
+
+* **The category order is a wire contract.** tdlib asks for every category at once and hashes
+  `get_vector_hash` over the bare peer ids of **all** its cached categories concatenated in
+  `TopDialogCategory` enum order (`do_get_top_peers`), so `TopPeerCategoryHelper.WireOrder` reproduces
+  that order — correspondents, botsPM, botsInline, **groups, channels, phoneCalls**, forwardUsers,
+  forwardChats, botsApp. Real Telegram serves them in exactly that order (measured). Emit them in any
+  other order and the hash can never match.
+* **The hash is the client's, computed by the client**, and real Telegram folds exactly the ids it
+  returned, in the order it returned them, with the
+  [documented unsigned accumulator](https://corefork.telegram.org/api/offsets#hash-generation) —
+  measured: `getTopPeers(correspondents, limit=64)`, re-quoted with that fold, answers
+  `topPeersNotModified`, and the same fold over the reversed list does not. Truncation does not change
+  it (the category had `count=109` behind a `limit=64`). Only two client families send a real hash:
+  tdlib (all categories at once) and tdesktop (`HashInit/HashUpdate/HashFinalize` over
+  `peerToUser(...).bare`, `take 64`). Android, iOS, macOS, tweb and telegram-tt send `0`.
+  `TopPeersHashHelper` therefore folds through `VectorHashHelper`;
+  `MessageSearchMongoHelper.CalcHash` shifts a **signed** long and disagrees with every client as soon
+  as the accumulator goes negative.
+* **We answer every requested category, empty ones included — real Telegram does not** (measured: nine
+  flags, seven categories back, `botsPM` and `groups` simply absent). This is a deliberate deviation:
+  tdlib clears its cached copy only for the categories present in the response, so once a category
+  empties out, an omitted one keeps stale ids in the vector tdlib hashes and its
+  `topPeersNotModified` can never fire again. No client minds an empty category — tweb guards on
+  `categories.length`, tdesktop compares the constructor, telegram-tt looks the category up by type,
+  and Android's catch-all branch just sets empty hints. Revert by skipping empty categories in
+  `GetTopPeersHandler` if matching prod byte-for-byte ever matters more.
+* **`getTopPeers` flood-waits hard on real Telegram** — a handful of calls in a minute bought a
+  3389-second wait. Budget one or two calls per probe run, or the cross-category comparison cannot be
+  finished at all.
+* **`rating` is on the clients' scale, or their local increments are meaningless.** Clients add
+  `exp((used - rating_timestamp) / config.rating_e_decay)` per use on top of what the server sent
+  (tdlib `rating_add`, Android `Math.exp(dt / ratingDecay)`), so the server rating is
+  `Σ exp((date - now) / rating_e_decay)` with the very same constant —
+  `TopPeerRatingConstants.RatingEDecaySeconds`, which `ConfigConverter` also emits, so the two cannot
+  drift. `count × exp(-Δ/30 days)` is not that number. tdlib also gates story display on the absolute
+  value (`MIN_STORY_RATING = 10`, correspondents only).
+* **A reset is per category.** Android sends `topPeerCategoryCorrespondents` from `removePeer`,
+  `BotsInline` from `removeInline`, `BotsApp` from `removeWebapp`; iOS and telegram-tt likewise.
+  Ignoring `category` means dismissing a bot from the inline strip also erases it from the hints row.
+  Rows written before this carry no `Category` and are still read as "every category".
+* **A counter the server owns is deleted; a message-derived rating is remembered.** Resetting
+  `botsInline`/`botsApp`/`phoneCalls`/`forward*` drops the `top_peer_usage` rows, so the peer may climb
+  back — which is what "reset the rating" means. Resetting correspondents/botsPM/groups/channels has to
+  persist an exclusion, because the messages behind it are still there and the next refresh would undo it.
+* **The five categories no message expresses are recorded explicitly.** `sendInlineBotResult` (the pick,
+  not the query — clients fire one per keystroke), the three `requestWebView` methods, `discardCall`
+  (both parties, once per call) and `forwardMessages` (once per action, before `drop_author` nulls the
+  header out) call `ITopPeerUsageRecorder`. Deriving them from messages ranked them by conversation
+  volume instead, and `botsInline` was every bot the user had ever messaged — Android feeds that
+  category straight into the "@" strip, so a bot with no inline mode there is a suggestion that cannot
+  work. `botfather-bot-state.InlineEnabled` is the filter.
+* **Saved Messages and deleted accounts are not correspondents** (Android drops the self peer on both
+  read and write), and `PeerType.Chat` never appears: every group here is a channel, and nothing in this
+  repo can build a legacy `chat` object to accompany a `peerChat`.
+* **`bots_guestchat` (flags.17, `topPeerCategoryBotsGuestChat`) is not in layer 222**, and
+  `MyTelegram.Schema` is generated — a client asking for that flag alone gets `TYPES_EMPTY`. tdesktop's
+  guest-bot strip does exactly that; iOS pairs it with `bots_inline` and is unaffected.
+* **The rating is cached in process for 60 s** (`ITopPeerRatingCache`) and invalidated on every use,
+  reset and toggle: tdesktop re-requests on every search-field open (10 s floor) and tdlib re-syncs on
+  demand, so this is not a once-a-day call. `idx_message_owner_out_date` covers the aggregation.
+  The invalidation is per process, and the recording happens in **command-server** while
+  `getTopPeers` is served by **query-server** — so a use is invisible for up to the TTL on the read
+  side (measured: a forward appeared 65 s later with rating 0.999962, i.e. exactly
+  `exp(-90 / 2419200)`). Harmless for a list clients refresh daily; anything that needs it immediately
+  would have to invalidate over RabbitMQ.
+* **Both dispatch paths of a forward have to record.** `ForwardMessagesHandler` leaves through
+  `StartForwardMessagesCommand` and returns for every ordinary forward; only a scheduled or monoforum
+  forward reaches the tail of the method. Recording only at the tail looked correct and silently counted
+  nothing — the tell was a `FwdHeader` message in `eventflow-messagereadmodel` with no matching
+  `top_peer_usage` row and no warning anywhere.
+
+See https://corefork.telegram.org/api/top-rating
+
+---
+
 ## Account deletion
 
 `account.deleteAccount` → `IAccountDeletionService.DeleteAccountAsync`: emits `UserDeletedEvent`
@@ -1106,6 +1190,8 @@ See https://corefork.telegram.org/api/pfs
 | An archived chat is still in the main list, or the archive looks empty | `getDialogs` folder predicate: an absent `folder_id` and `0` both mean the main list, and a dialog that was never archived stores no `FolderId` — see Dialog folders above. A second device that never learns about the archiving is the missing `updateFolderPeers` push |
 | Folder tabs revert their order, or folder tags turn themselves on | `eventflow-dialogfiltersettingsreadmodel` for that user: no `Order` means `updateDialogFiltersOrder` never reached the aggregate, and `TagsEnabled` is what `messages.dialogFilters.tags_enabled` must report — never a constant |
 | Part of a screen is empty, logs are clean | diff the surface's methods against **real Telegram** (see Verify above); an empty list with `hash = 0` logs nothing but gets re-requested forever, so a handler called far more often than its refresh interval is the tell |
+| The "@" strip suggests bots that answer nothing, or a bot dismissed from one strip vanishes from another | top peers: `botsInline` must be filtered by `botfather-bot-state.InlineEnabled`, and `resetTopPeerRating` must honour `obj.Category` — see Top peer rating above |
+| `contacts.getTopPeers` is called on every search open and never answers `topPeersNotModified` | the hash, the category order, or an omitted empty category — all three make tdlib's and tdesktop's hash unmatchable, and none of them logs anything |
 | Which connection is actually the user's | gateway `New client connected` by remote IP × `LocalPort`: `172.23.0.1` is the docker host (local scripts), an IP that only sends `req_pq_multi` and drops is a scanner — do not diagnose from their warnings |
 | Telethon cannot talk to the server at all | it ships Telegram's public keys and cannot match the fingerprint in our `res_pq`, so the handshake dies at step 1 with `auth_key generation failed` while auth-server logs only `[Step1] ReqPqMultiHandler` retries. Register the server key: `docker cp <auth-server>:/app/private.pkcs8.key`, `openssl rsa -pubout \| openssl rsa -pubin -RSAPublicKey_out`, then `telethon.crypto.rsa.add_key(pem, old=False)` — see `scripts/verify_stickers.py` |
 | Telethon connects, then hangs and drops | server→client msg_ids arriving ~743 days in the future, which Telethon discards (`Server sent a very new message`). **Check which host you are actually talking to** — this was traced to a *different* testgram deployment (`109.107.181.246`), not this one, where the skew is 0. A deployment shows it when its session-server carries the pre-fix `MessageIdHelper`, whose `last + 4` branch can never return to the clock; widen `MSG_TOO_NEW_DELTA`/`MSG_TOO_OLD_DELTA` in `telethon/network/mtprotostate.py` to probe such a host |

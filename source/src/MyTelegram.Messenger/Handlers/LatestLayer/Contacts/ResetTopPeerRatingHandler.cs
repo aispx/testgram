@@ -1,5 +1,3 @@
-using MongoDB.Driver;
-
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Contacts;
 /// <summary>
 /// Reset <a href="https://corefork.telegram.org/api/top-rating">rating</a> of top peer
@@ -9,9 +7,15 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Contacts;
 /// <para><c>See <a href="https://corefork.telegram.org/method/contacts.resetTopPeerRating"/> </c></para>
 /// </summary>
 /// <remarks>
-/// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+/// The reset is scoped to the category the client named. Clients reset one category at a time and
+/// expect the others to survive: Android sends <c>topPeerCategoryCorrespondents</c> from
+/// <c>removePeer</c>, <c>topPeerCategoryBotsInline</c> from <c>removeInline</c> and
+/// <c>topPeerCategoryBotsApp</c> from <c>removeWebapp</c>, and iOS and telegram-tt do the same — so
+/// ignoring the category means dismissing a bot from the inline strip also erases it from the
+/// frequently-messaged row.
+/// <para>Access: [User ✔] [Bot ✖] [Anonymous ✖]</para>
 /// </remarks>
-internal sealed class ResetTopPeerRatingHandler(IMongoDatabase mongoDatabase, IPeerHelper peerHelper)
+internal sealed class ResetTopPeerRatingHandler(ITopPeerRatingService ratingService, IPeerHelper peerHelper)
     : RpcResultObjectHandler<MyTelegram.Schema.Contacts.RequestResetTopPeerRating, IBool>
 {
     protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Contacts.RequestResetTopPeerRating obj)
@@ -22,7 +26,12 @@ internal sealed class ResetTopPeerRatingHandler(IMongoDatabase mongoDatabase, IP
             RpcErrors.RpcErrors400.PeerIdInvalid.ThrowRpcError();
         }
 
-        await TopPeerRatingHelper.ExcludePeerAsync(mongoDatabase, input.UserId, peer.PeerType, peer.PeerId);
+        // A category this layer does not model resolves to null, which resets every category — losing
+        // the peer everywhere is a better answer than silently resetting the wrong one.
+        var category = TopPeerCategoryHelper.FromTl(obj.Category);
+
+        await ratingService.ResetAsync(input.UserId, category, peer.PeerType, peer.PeerId);
+
         return new TBoolTrue();
     }
 }
