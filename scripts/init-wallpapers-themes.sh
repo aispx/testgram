@@ -395,7 +395,10 @@ db.chat_themes.insertMany([
 // 3. Create indexes
 print("Creating indexes...");
 db.wallpapers.createIndex({ "WallpaperId": 1 }, { unique: true });
-db.wallpapers.createIndex({ "Slug": 1 }, { unique: true });
+// NOT unique: a slug names the pattern image, not the wallpaper. Real Telegram serves six slugs twice or
+// three times over -- the same pattern recoloured light/dark or with different fill colours (measured
+// against account.getWallPapers). A unique index here makes seeding the real catalogue impossible.
+db.wallpapers.createIndex({ "Slug": 1 });
 db.chat_themes.createIndex({ "Emoticon": 1 }, { unique: true });
 db.user_wallpapers.createIndex({ "UserId": 1, "WallpaperId": 1 }, { unique: true });
 db.user_themes.createIndex({ "UserId": 1, "ThemeId": 1 }, { unique: true });

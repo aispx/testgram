@@ -1,7 +1,9 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.WallPapers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
+
 /// <summary>
 /// Install wallpaper
 /// Possible errors
@@ -11,71 +13,38 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>"When a client sets a wallpaper as the default chat background, call account.installWallPaper to
+/// signal this installation to the server. Note that calling this method will also automatically save the
+/// wallpaper, if it's not present in the saved wallpapers list."</para>
+///
+/// <para>The auto-save is the whole of the observable behaviour. <c>InstalledWallpaperId</c> below is
+/// deliberately written and never read: no method in the API reports the installed wallpaper back, so
+/// there is nothing to serve it to — the record exists because the method's stated purpose is to signal
+/// the installation. Do not go looking for the consumer.</para>
 /// </remarks>
-internal sealed class InstallWallPaperHandler(IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestInstallWallPaper, IBool>
+internal sealed class InstallWallPaperHandler(
+    IMongoDatabase database,
+    IWallPaperCatalog catalog,
+    IUserWallPaperStore userWallPaperStore)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestInstallWallPaper, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestInstallWallPaper obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Account.RequestInstallWallPaper obj)
     {
-        long wallpaperId = 0;
+        var row = await WallPaperInputResolver.ResolveInstallableAsync(catalog, obj.Wallpaper);
 
-        // Extract wallpaper ID
-        if (obj.Wallpaper is MyTelegram.Schema.TInputWallPaper inputWallpaper)
+        if (!await userWallPaperStore.IsSavedAsync(input.UserId, row.WallPaperId))
         {
-            wallpaperId = inputWallpaper.Id;
-        }
-        else if (obj.Wallpaper is MyTelegram.Schema.TInputWallPaperSlug inputSlug)
-        {
-            var wallpaperCol = database.GetCollection<BsonDocument>("wallpapers");
-            var slugFilter = Builders<BsonDocument>.Filter.Eq("Slug", inputSlug.Slug);
-            var doc = await wallpaperCol.Find(slugFilter).FirstOrDefaultAsync();
-            
-            if (doc == null)
-            {
-                RpcErrors.RpcErrors400.WallpaperInvalid.ThrowRpcError();
-            }
-            
-            wallpaperId = doc["WallpaperId"].AsInt64;
-        }
-        else if (obj.Wallpaper is MyTelegram.Schema.TInputWallPaperNoFile inputNoFile)
-        {
-            wallpaperId = inputNoFile.Id;
+            await userWallPaperStore.SaveAsync(input.UserId, row, obj.Settings);
         }
 
-        if (wallpaperId == 0)
-        {
-            RpcErrors.RpcErrors400.WallpaperInvalid.ThrowRpcError();
-        }
-
-        // Set as installed wallpaper
-        var collection = database.GetCollection<BsonDocument>("user_settings");
-        var filter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
-        var update = Builders<BsonDocument>.Update
-            .Set("InstalledWallpaperId", wallpaperId)
-            .Set("UpdatedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-
-        await collection.UpdateOneAsync(
-            filter,
-            update,
-            new UpdateOptions { IsUpsert = true }
-        );
-
-        // Also save to user_wallpapers if not already saved
-        var savedCol = database.GetCollection<BsonDocument>("user_wallpapers");
-        var savedFilter = Builders<BsonDocument>.Filter.And(
+        await database.GetCollection<BsonDocument>("user_settings").UpdateOneAsync(
             Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-            Builders<BsonDocument>.Filter.Eq("WallpaperId", wallpaperId)
-        );
-        
-        var exists = await savedCol.Find(savedFilter).AnyAsync();
-        if (!exists)
-        {
-            await savedCol.InsertOneAsync(new BsonDocument
-            {
-                ["UserId"] = input.UserId,
-                ["WallpaperId"] = wallpaperId,
-                ["SavedAt"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-            });
-        }
+            Builders<BsonDocument>.Update
+                .Set("InstalledWallpaperId", row.WallPaperId)
+                .Set("UpdatedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+            new UpdateOptions { IsUpsert = true });
 
         return new TBoolTrue();
     }

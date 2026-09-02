@@ -329,6 +329,9 @@ NullReferenceException.
 | `top_peers_settings` | `contacts.toggleTopPeers` opt-out | `_id` = UserId, Disabled |
 | `top_peers_excluded` | Peers reset out of the rating | `_id` = `{UserId}-{Category\|all}-{PeerType}-{PeerId}`, UserId, Category (absent = every category), PeerType, PeerId |
 | `top_peer_usage` | Recorded uses behind the categories no message expresses | UserId, Category, PeerType, PeerId, Date (unix), CreatedAt (TTL 90 days) |
+| `wallpapers` | Wallpaper catalogue (what exists) | WallpaperId, AccessHash, Slug, DocumentId, MimeType, Listed (in every account's starting list), IsDefault (the wire flag), IsPattern, IsDark, Order (asc), Settings |
+| `user_wallpapers` | The wallpaper list of one user (what they see) | `_id` = `{UserId}:{WallpaperId}`, Removed (tombstone for an unsaved preinstalled one), Order (desc = top), Settings |
+| `chat_wallpapers` | Per-chat wallpaper (`messages.setChatWallPaper`) | UserId (owner; the channel itself for a channel), PeerId/PeerType, WallpaperId (0 = settings only), Overridden, Settings, PreviousWallpaperId/PreviousSettings (for `revert`) |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -1105,6 +1108,135 @@ See https://corefork.telegram.org/api/top-rating
 
 ---
 
+## Wallpapers
+
+Two different things share one name. **The catalogue** (`wallpapers`) is what exists on the server;
+**the list** (`user_wallpapers`) is what one account sees, and `account.getWallPapers` answers the
+second. Everything else is `Services/WallPapers/`: `IWallPaperCatalog` owns the catalogue and is the only
+place that builds a `WallPaper` constructor, `IUserWallPaperStore` owns the list.
+
+* **`getWallPapers`' hash is the client's, computed by the client.** Android folds its own cached ids with
+  `MediaDataController.calcHash` and sends that (`WallpapersListActivity.loadWallpapers`), so the server
+  has to reproduce it from the same ids **in the order it served them** — `WallPaperListHashHelper` over
+  `VectorHashHelper`. tdesktop quotes the server's value back (`Session::setWallpapers`) and tdlib always
+  sends `0`, so Android is the only one that constrains the algorithm. It used to be `System.HashCode`,
+  which is seeded randomly per process: the value changed on every restart, never matched Android's, and
+  the list was re-downloaded on every poll. Android also skips ids `< 0` when folding, so a served id must
+  be positive.
+* **The list is per account, and that is what makes three of the six methods observable.**
+  `saveWallPaper(unsave: true)` removes a wallpaper "including preinstalled wallpapers", so removing one
+  leaves a **tombstone** (`Removed: true`) — the list is otherwise rebuilt from the catalogue on every
+  call and the wallpaper came straight back. `resetWallPapers` drops the saved rows *and* the tombstones.
+  `getWallPapers` used to answer with the whole catalogue for everybody and never read `user_wallpapers`
+  at all, so unsave and reset were no-ops as far as any client could tell.
+* **`Listed` is not the `default` flag.** Real Telegram serves **83** wallpapers — 45 `image/jpeg`, 30
+  `application/x-tgwallpattern` patterns, 8 fills — of which only 76 carry `default` (measured, and the
+  seven that do not sit at the top of the list). So the wire flag describes the wallpaper and `Listed`
+  decides membership of the starting list; using `IsDefault` for both would drop seven wallpapers.
+* **An empty list is an empty list**, never `wallPapersNotModified`, and `notModified` is only ever an
+  answer to a non-zero hash: zero is what a client sends when it has nothing cached.
+* **What `save`/`install` must refuse is a wallpaper the server does not have, not a constructor.** Fill
+  wallpapers "cannot be saved to the server … clients should install and keep track of them only
+  locally", and a client generates one with `id = 0`. But Android removes a *preinstalled* fill wallpaper
+  by sending `inputWallPaperNoFile{id}` with `unsave` (`WallpapersListActivity`), so refusing that
+  constructor outright breaks the documented removal path. `WallPaperInputResolver` therefore tests
+  whether the id names a row.
+* **`uploadWallPaper` goes through `IMediaHelper.SaveMediaAsync`** with an `inputMediaUploadedDocument` —
+  the same gRPC route `sendMedia`, `uploadMedia`, `photos.uploadProfilePhoto` and `channels.editPhoto`
+  take, and the file server writes the `eventflow-documentreadmodel` row. It used to answer
+  `documentEmpty` wrapped around the *upload* file id and create no document at all: tdesktop logs
+  "Got wallPaperNoFile after account.UploadWallPaper" and applies nothing, Android has no thumbnail, and
+  `getWallPapers` drops the row because the document does not exist. `inputFileBig` is accepted too — a
+  wallpaper past 10 MB arrives that way and used to be `WALLPAPER_FILE_INVALID`.
+* **`account.uploadWallPaper` has two constructors, and both have to be served.** Layer 224 defines
+  `#e39a8f03` with a `for_chat` flag — what Telethon and tdesktop send — while the generated
+  `LatestLayer` request is the older `#dd853661`, which is what this fork's Android client sends. A
+  constructor with no schema class makes `HandlerHelper.TryGetHandler` throw `NotImplementedException`
+  inside the fire-and-forget `Task.Run` of `DefaultDataProcessor`: **the request is never answered and the
+  client hangs forever**, leaving only a `Unsupported request, objectId: e39a8f03` warning. The newer form
+  is therefore served through the `LayerN` triple (schema class + `IRequestConverter` + a
+  `ForwardRequestToNewHandler`), the same way alternate constructors are served elsewhere.
+* **`for_chat` is accepted and ignored.** The API says it "must be set when uploading wallpapers to be
+  used with messages.setChatWallPaper", but Android uploads a chat wallpaper without it
+  (`MessagesController.uploadWallpaper` sets no flags) while tdesktop always sets it
+  (`background_preview_box.cpp`). Enforcing it would refuse what the official client does, so every
+  upload is saved to the uploader's list instead.
+* **`pattern` is inferred, not received.** The request carries no flag: a pattern is
+  `application/x-tgwallpattern`, or a PNG that arrives with a background colour (tdlib uploads patterns as
+  `image/png`, Android always sends `image/jpeg`). Read off the clients, not measured against prod.
+* **The declared mime has to match the bytes.** The file server decodes the body to make the thumbnail, so
+  a TGV pattern uploaded as `image/jpeg` comes back `FILE_ID_INVALID` from *its* side, not
+  `WALLPAPER_MIME_INVALID` from this one. Verified both ways: 30 of Telegram's 83 wallpapers are TGV
+  (`1f8b` gzip), and uploading one as `application/x-tgwallpattern` succeeds and comes back with
+  `pattern` set.
+* **`creator` means "the caller made this one"**, so it is `CreatedBy == input.UserId` rather than a
+  stored flag. All three read methods dropped it; Android copies it when applying a wallpaper it
+  received.
+* **A wallpaper whose document row is missing is left out — and logged.** Leaving it out is right, but it
+  is also the only way to lose the whole catalogue in silence, which is the state every image wallpaper
+  imported by `download_wallpapers_themes.py` was in: that script records `document.id` and never the
+  file behind it. `scripts/seed_wallpapers.py` is the one that mirrors bodies and thumbnails.
+
+### messages.setChatWallPaper
+
+Four intentions in one method, and telling them apart is the whole of it.
+
+* **`id` without `wallpaper` is the other user accepting the invitation**, and the wallpaper has to be
+  read out of the service message that `id` names — clients send no wallpaper at all here (Android
+  `ChatThemeController.setWallpaperToPeer`, tdlib `SetChatWallPaperQuery` with `ID_MASK`). This used to
+  resolve to "no wallpaper" and so **removed** the wallpaper it was asked to apply. The emitted action
+  carries `same`, which is what makes clients draw an acknowledgment instead of a second invitation.
+* **`inputWallPaperNoFile{id = 0}` plus `settings.emoticon` is a channel wallpaper**, not a removal:
+  it names no catalogue row and carries its whole identity in the settings
+  (`ChannelColorActivity`). Reading the zero id as "no wallpaper", as `ResolveWallPaperIdAsync` used to,
+  cleared the wallpaper the admin was setting. Removal is the *absence* of `wallpaper`.
+* **`revert` is a one-sided undo and announces nothing to the chat.** The rule used to be exactly
+  inverted — `shouldSendServiceMessage = obj.Revert || obj.Id.HasValue` stayed silent on the manual
+  change and spoke on the revert. It restores `PreviousWallpaperId`/`PreviousSettings`, which the
+  `for_both` write leaves behind on the other side.
+* **The response carries the `updatePeerWallpaper`, not a fabricated service message.** Android applies
+  the wallpaper straight from it (`ChatThemeController.processUpdate` writes `userFull.wallpaper` /
+  `chatFull.wallpaper` and persists it), so the calling session sees the change immediately while the
+  service message arrives by push with a real message id. The push excludes `PermAuthKeyId`, not
+  `AuthKeyId`: with PFS the request arrives on a temporary key.
+* **Boost gates**: a `getChatThemes` fill wallpaper needs `channel_wallpaper_level_min` /
+  `group_wallpaper_level_min` (9), anything else needs `channel_custom_wallpaper_level_min` /
+  `group_custom_wallpaper_level_min` (10), through the existing `IBoostLevelCalculator`. `for_both` is
+  meaningless for a channel and is **ignored** rather than refused — no error is documented for it.
+
+`account.getChatThemes` serves "the full list of channel/supergroup wallpapers", so each theme's fill
+wallpaper carries the theme's `emoticon` in its settings — without it a client cannot recognise the
+wallpaper as a channel one. Its hash *is* the server's to define (Android stores `resp.hash` verbatim),
+but it still has to survive a restart: `VectorHashHelper.ComputeNonZeroHash` plus FNV-1a over the text,
+and the fallback themes derive their `Id`/`AccessHash` from the emoticon instead of `Random.Shared`.
+
+```bash
+# 1. mirror the catalogue from real Telegram (bodies + thumbnails + flags + settings)
+TG_API_ID=... TG_API_HASH=... TG_SESSION=/root/sticker_seeder \
+  python3 scripts/seed_wallpapers.py --download
+# 2. import; upserts, so a user's own uploads survive a re-seed (--dry-run supported)
+MONGO_URL=mongodb://172.23.0.8:27017 MINIO_ENDPOINT=172.23.0.10:9000 \
+MINIO_ACCESS_KEY=... MINIO_SECRET_KEY=... \
+  python3 scripts/seed_wallpapers.py --import
+```
+
+Probing it needs a throwaway Telethon script (temp dir, not `scripts/`); copy the connection and RSA
+registration block out of `scripts/verify_stickers.py`. All of the following was measured once against this
+deployment: `getWallPapers` re-quoted with its own hash answers `wallPapersNotModified`; a port of
+Android's `calcHash` over the returned ids equals that hash; every document carries a non-empty
+`file_reference`, a slug and a thumbnail, and `upload.getFile` serves the body;
+`saveWallPaper(unsave=true)` on a **listed** wallpaper survives a second `getWallPapers` and
+`resetWallPapers` brings it back with the original hash; `getMultiWallPapers` keeps the request order and
+answers `WALLPAPER_INVALID` for an unknown entry; `installWallPaper(inputWallPaperNoFile{id=0})` is
+`WALLPAPER_INVALID`; and `uploadWallPaper` of a real JPEG comes back with a real `document` (id, thumbnail,
+`creator`), lands first in the caller's list and is found by its slug. Note that
+`resetWallPapers` does **not** restore a wallpaper the account uploaded itself — that one is not part of
+the default list.
+
+See https://corefork.telegram.org/api/wallpapers
+
+---
+
 ## Account deletion
 
 `account.deleteAccount` → `IAccountDeletionService.DeleteAccountAsync`: emits `UserDeletedEvent`
@@ -1298,6 +1430,11 @@ See https://corefork.telegram.org/api/pfs
 | The "@" strip suggests bots that answer nothing, or a bot dismissed from one strip vanishes from another | top peers: `botsInline` must be filtered by `botfather-bot-state.InlineEnabled`, and `resetTopPeerRating` must honour `obj.Category` — see Top peer rating above |
 | `contacts.getTopPeers` is called on every search open and never answers `topPeersNotModified` | the hash, the category order, or an omitted empty category — all three make tdlib's and tdesktop's hash unmatchable, and none of them logs anything |
 | Which connection is actually the user's | gateway `New client connected` by remote IP × `LocalPort`: `172.23.0.1` is the docker host (local scripts), an IP that only sends `req_pq_multi` and drops is a scanner — do not diagnose from their warnings |
+| The wallpaper picker only offers gradients | every image and pattern row names a `DocumentId` with no document: `db.wallpapers.countDocuments({DocumentId:{$ne:NumberLong(0)}})` against `eventflow-documentreadmodel`. `WallPaperCatalog` now logs `leaving it out of the response` for each one. Fix by seeding with `scripts/seed_wallpapers.py`, not `download_wallpapers_themes.py` — see Wallpapers above |
+| Removing a wallpaper from the list, or a whole reset, comes back on the next refresh | `user_wallpapers` for that user: an unsaved **preinstalled** wallpaper needs a `Removed: true` tombstone, because the list is rebuilt from the catalogue every call |
+| `account.getWallPapers` is called on every screen open and never answers `wallPapersNotModified` | the hash: Android computes its own with `calcHash` over the ids **in the order served**, so it must be `WallPaperListHashHelper`, and the served order must be stable. Nothing logs this |
+| Setting a chat or channel wallpaper clears it instead | `messages.setChatWallPaper` resolution: `id` without `wallpaper` means "apply the one in that service message", and `inputWallPaperNoFile{id = 0}` with an emoticon is a channel wallpaper — see Wallpapers above. Both look like a successful call in the log |
+| A method never answers at all and the client hangs | `logs \| grep "Unsupported request"` — a constructor with no schema class makes `HandlerHelper.TryGetHandler` throw inside the fire-and-forget `Task.Run` of `DefaultDataProcessor`, so nothing is sent back. Serve the second constructor through the `LayerN` triple, as `account.uploadWallPaper#e39a8f03` is |
 | Telethon cannot talk to the server at all | it ships Telegram's public keys and cannot match the fingerprint in our `res_pq`, so the handshake dies at step 1 with `auth_key generation failed` while auth-server logs only `[Step1] ReqPqMultiHandler` retries. Register the server key: `docker cp <auth-server>:/app/private.pkcs8.key`, `openssl rsa -pubout \| openssl rsa -pubin -RSAPublicKey_out`, then `telethon.crypto.rsa.add_key(pem, old=False)` — see `scripts/verify_stickers.py` |
 | Telethon connects, then hangs and drops | server→client msg_ids arriving ~743 days in the future, which Telethon discards (`Server sent a very new message`). **Check which host you are actually talking to** — this was traced to a *different* testgram deployment (`109.107.181.246`), not this one, where the skew is 0. A deployment shows it when its session-server carries the pre-fix `MessageIdHelper`, whose `last + 4` branch can never return to the clock; widen `MSG_TOO_NEW_DELTA`/`MSG_TOO_OLD_DELTA` in `telethon/network/mtprotostate.py` to probe such a host |
 | Clicking an animated emoji animates nothing on the other device | the interaction is relayed but its `msg_id` belongs to the clicking user's own numbering — see Animated emojis above; both sides log a healthy `setTyping`/`updateUserTyping`, so the only evidence is the id itself |

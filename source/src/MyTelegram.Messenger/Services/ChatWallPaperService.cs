@@ -1,55 +1,20 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Dialog;
+using MyTelegram.Messenger.Services.WallPapers;
 
 namespace MyTelegram.Messenger.Services;
 
-/// <summary>
-/// The per-chat wallpaper set with <c>messages.setChatWallPaper</c>.
-/// <para>
-/// It is reported back as <c>userFull.wallpaper</c> and kept fresh with <c>updatePeerWallpaper</c>,
-/// see <a href="https://corefork.telegram.org/api/wallpapers#installing-wallpapers-in-a-specific-chat-or-channel">wallpapers »</a>
-/// and <a href="https://corefork.telegram.org/api/peers#handling-updates">peer database »</a>.
-/// </para>
-/// </summary>
-public interface IChatWallPaperService
-{
-    /// <summary>
-    /// The wallpaper <paramref name="ownerId"/> sees in the chat with <paramref name="peer"/>, and
-    /// whether it was chosen by the other side with <c>for_both</c>. A channel wallpaper belongs to
-    /// the channel itself, so it is stored and read with the channel as its own owner.
-    /// </summary>
-    Task<(MyTelegram.Schema.IWallPaper? WallPaper, bool Overridden)> GetChatWallPaperAsync(long ownerId, Peer peer);
-
-    /// <inheritdoc cref="GetChatWallPaperAsync(long, Peer)"/>
-    Task SetChatWallPaperAsync(long ownerId, Peer peer, long? wallPaperId,
-        MyTelegram.Schema.IWallPaperSettings? settings, bool overridden);
-
-    /// <summary>
-    /// Resolves an <c>inputWallPaper</c> to its stored id, raising the documented errors for an
-    /// unknown slug or a zero id.
-    /// </summary>
-    Task<long?> ResolveWallPaperIdAsync(MyTelegram.Schema.IInputWallPaper? inputWallPaper);
-
-    /// <summary>
-    /// Builds the wallpaper constructor, applying the per-chat <paramref name="settings"/> on top of
-    /// the ones the wallpaper was uploaded with.
-    /// </summary>
-    Task<MyTelegram.Schema.IWallPaper?> GetWallPaperAsync(long wallPaperId,
-        MyTelegram.Schema.IWallPaperSettings? settings);
-}
-
-public sealed class ChatWallPaperService(IMongoDatabase database, IFileReferenceHelper fileReferenceHelper) : IChatWallPaperService, ITransientDependency
+/// <inheritdoc />
+public sealed class ChatWallPaperService(IMongoDatabase database, IWallPaperCatalog catalog)
+    : IChatWallPaperService, ITransientDependency
 {
     private const string ChatWallPapersCollection = "chat_wallpapers";
-    private const string WallPapersCollection = "wallpapers";
 
     public async Task<(MyTelegram.Schema.IWallPaper? WallPaper, bool Overridden)> GetChatWallPaperAsync(long ownerId,
         Peer peer)
     {
-        var doc = await database.GetCollection<BsonDocument>(ChatWallPapersCollection)
-            .Find(ChatFilter(ownerId, peer.PeerId))
-            .FirstOrDefaultAsync();
+        var doc = await Collection.Find(ChatFilter(ownerId, peer.PeerId)).FirstOrDefaultAsync();
 
         if (doc == null)
         {
@@ -70,7 +35,7 @@ public sealed class ChatWallPaperService(IMongoDatabase database, IFileReference
             return (null, false);
         }
 
-        var settings = ToWallPaperSettings(doc.GetValue("Settings", BsonNull.Value));
+        var settings = WallPaperSettingsSerializer.FromBson(doc.GetValue("Settings", BsonNull.Value));
         var overridden = doc.GetValue("Overridden", false).ToBoolean();
 
         return (await GetWallPaperAsync(storedId.ToInt64(), settings), overridden);
@@ -79,12 +44,12 @@ public sealed class ChatWallPaperService(IMongoDatabase database, IFileReference
     public async Task SetChatWallPaperAsync(long ownerId, Peer peer, long? wallPaperId,
         MyTelegram.Schema.IWallPaperSettings? settings, bool overridden)
     {
-        var collection = database.GetCollection<BsonDocument>(ChatWallPapersCollection);
         var writesLegacyField = peer.PeerType == PeerType.User;
+        var previous = await Collection.Find(ChatFilter(ownerId, peer.PeerId)).FirstOrDefaultAsync();
 
         if (!wallPaperId.HasValue)
         {
-            await collection.DeleteOneAsync(ChatFilter(ownerId, peer.PeerId));
+            await Collection.DeleteOneAsync(ChatFilter(ownerId, peer.PeerId));
             if (writesLegacyField)
             {
                 await SetLegacyWallPaperIdAsync(ownerId, peer.PeerId, null);
@@ -100,16 +65,44 @@ public sealed class ChatWallPaperService(IMongoDatabase database, IFileReference
             { "PeerType", (int)peer.PeerType },
             { "WallpaperId", wallPaperId.Value },
             { "Overridden", overridden },
-            { "Settings", ToBson(settings) }
+            { "Settings", WallPaperSettingsSerializer.ToBson(settings) }
         };
 
-        await collection.ReplaceOneAsync(ChatFilter(ownerId, peer.PeerId), document,
+        // Only revert needs this, and only the wallpaper being displaced is worth keeping: a chain of
+        // previous wallpapers is not something any method can ask for.
+        if (previous != null && !previous.GetValue("WallpaperId", BsonNull.Value).IsBsonNull)
+        {
+            document.Add("PreviousWallpaperId", previous["WallpaperId"].ToInt64());
+            document.Add("PreviousSettings", previous.GetValue("Settings", BsonNull.Value));
+        }
+
+        await Collection.ReplaceOneAsync(ChatFilter(ownerId, peer.PeerId), document,
             new ReplaceOptions { IsUpsert = true });
 
         if (writesLegacyField)
         {
-            await SetLegacyWallPaperIdAsync(ownerId, peer.PeerId, wallPaperId);
+            // A settings-only wallpaper has no catalogue row, so the legacy field cannot express it.
+            await SetLegacyWallPaperIdAsync(ownerId, peer.PeerId,
+                wallPaperId.Value == 0 ? null : wallPaperId.Value);
         }
+    }
+
+    public async Task<MyTelegram.Schema.IWallPaper?> RevertChatWallPaperAsync(long ownerId, Peer peer)
+    {
+        var doc = await Collection.Find(ChatFilter(ownerId, peer.PeerId)).FirstOrDefaultAsync();
+        var previousId = doc?.GetValue("PreviousWallpaperId", BsonNull.Value) ?? BsonNull.Value;
+
+        if (previousId.IsBsonNull)
+        {
+            await SetChatWallPaperAsync(ownerId, peer, null, null, overridden: false);
+
+            return null;
+        }
+
+        var previousSettings = WallPaperSettingsSerializer.FromBson(doc!.GetValue("PreviousSettings", BsonNull.Value));
+        await SetChatWallPaperAsync(ownerId, peer, previousId.ToInt64(), previousSettings, overridden: false);
+
+        return await GetWallPaperAsync(previousId.ToInt64(), previousSettings);
     }
 
     public async Task<long?> ResolveWallPaperIdAsync(MyTelegram.Schema.IInputWallPaper? inputWallPaper)
@@ -117,24 +110,22 @@ public sealed class ChatWallPaperService(IMongoDatabase database, IFileReference
         switch (inputWallPaper)
         {
             case null:
-            case MyTelegram.Schema.TInputWallPaperNoFile { Id: 0 }:
                 return null;
+            case MyTelegram.Schema.TInputWallPaperNoFile { Id: 0 }:
+                return 0;
             case MyTelegram.Schema.TInputWallPaper inputWallPaperById:
                 return NonZeroOrThrow(inputWallPaperById.Id);
             case MyTelegram.Schema.TInputWallPaperNoFile inputWallPaperNoFile:
                 return NonZeroOrThrow(inputWallPaperNoFile.Id);
             case MyTelegram.Schema.TInputWallPaperSlug inputWallPaperSlug:
             {
-                var doc = await database.GetCollection<BsonDocument>(WallPapersCollection)
-                    .Find(Builders<BsonDocument>.Filter.Eq("Slug", inputWallPaperSlug.Slug))
-                    .FirstOrDefaultAsync();
-
-                if (doc == null)
+                var row = await catalog.FindBySlugAsync(inputWallPaperSlug.Slug);
+                if (row == null)
                 {
                     RpcErrors.RpcErrors400.WallpaperNotFound.ThrowRpcError();
                 }
 
-                return doc!["WallpaperId"].ToInt64();
+                return row!.WallPaperId;
             }
             default:
                 RpcErrors.RpcErrors400.WallpaperInvalid.ThrowRpcError();
@@ -146,52 +137,22 @@ public sealed class ChatWallPaperService(IMongoDatabase database, IFileReference
     public async Task<MyTelegram.Schema.IWallPaper?> GetWallPaperAsync(long wallPaperId,
         MyTelegram.Schema.IWallPaperSettings? settings)
     {
-        var doc = await database.GetCollection<BsonDocument>(WallPapersCollection)
-            .Find(Builders<BsonDocument>.Filter.Eq("WallpaperId", wallPaperId))
-            .FirstOrDefaultAsync();
-
-        if (doc == null)
+        // Id 0 is a wallpaper made of nothing but its settings — a channel fill wallpaper, identified by
+        // its emoticon. There is no catalogue row to look up.
+        if (wallPaperId == 0)
         {
-            return null;
+            return settings == null ? null : catalog.BuildFill(0, settings);
         }
+
+        var row = await catalog.FindByIdAsync(wallPaperId);
 
         // The settings chosen for this chat win; the ones the wallpaper was uploaded with are the
         // fallback, so a wallpaper picked without customization still renders as intended.
-        var effectiveSettings = settings ?? ToWallPaperSettings(doc.GetValue("Settings", BsonNull.Value));
-        var documentId = doc.GetValue("DocumentId", 0L).ToInt64();
-
-        if (documentId == 0)
-        {
-            return new MyTelegram.Schema.TWallPaperNoFile
-            {
-                Id = wallPaperId,
-                Default = doc.GetValue("IsDefault", false).ToBoolean(),
-                Dark = doc.GetValue("IsDark", false).ToBoolean(),
-                Settings = effectiveSettings
-            };
-        }
-
-        var documentDoc = await database.GetCollection<BsonDocument>("eventflow-documentreadmodel")
-            .Find(Builders<BsonDocument>.Filter.Eq("DocumentId", documentId))
-            .FirstOrDefaultAsync();
-
-        if (documentDoc == null)
-        {
-            return null;
-        }
-
-        return new MyTelegram.Schema.TWallPaper
-        {
-            Id = wallPaperId,
-            AccessHash = doc.GetValue("AccessHash", 0L).ToInt64(),
-            Slug = doc.GetValue("Slug", string.Empty).AsString,
-            Default = doc.GetValue("IsDefault", false).ToBoolean(),
-            Pattern = doc.GetValue("IsPattern", false).ToBoolean(),
-            Dark = doc.GetValue("IsDark", false).ToBoolean(),
-            Document = ToDocument(documentDoc),
-            Settings = effectiveSettings
-        };
+        return row == null ? null : await catalog.BuildAsync(row, selfUserId: 0, settings ?? row.Settings);
     }
+
+    private IMongoCollection<BsonDocument> Collection =>
+        database.GetCollection<BsonDocument>(ChatWallPapersCollection);
 
     private static long NonZeroOrThrow(long wallPaperId)
     {
@@ -240,89 +201,5 @@ public sealed class ChatWallPaperService(IMongoDatabase database, IFileReference
         {
             await dialogs.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Unset("WallpaperId"));
         }
-    }
-
-    private static BsonValue ToBson(MyTelegram.Schema.IWallPaperSettings? settings)
-    {
-        if (settings is not MyTelegram.Schema.TWallPaperSettings wallPaperSettings)
-        {
-            return BsonNull.Value;
-        }
-
-        var doc = new BsonDocument
-        {
-            { "Blur", wallPaperSettings.Blur },
-            { "Motion", wallPaperSettings.Motion }
-        };
-
-        AddIfSet(doc, "BackgroundColor", wallPaperSettings.BackgroundColor);
-        AddIfSet(doc, "SecondBackgroundColor", wallPaperSettings.SecondBackgroundColor);
-        AddIfSet(doc, "ThirdBackgroundColor", wallPaperSettings.ThirdBackgroundColor);
-        AddIfSet(doc, "FourthBackgroundColor", wallPaperSettings.FourthBackgroundColor);
-        AddIfSet(doc, "Intensity", wallPaperSettings.Intensity);
-        AddIfSet(doc, "Rotation", wallPaperSettings.Rotation);
-
-        if (!string.IsNullOrEmpty(wallPaperSettings.Emoticon))
-        {
-            doc.Add("Emoticon", wallPaperSettings.Emoticon);
-        }
-
-        return doc;
-    }
-
-    private static void AddIfSet(BsonDocument doc, string name, int? value)
-    {
-        if (value.HasValue)
-        {
-            doc.Add(name, value.Value);
-        }
-    }
-
-    private static MyTelegram.Schema.IWallPaperSettings? ToWallPaperSettings(BsonValue value)
-    {
-        if (value.IsBsonNull || !value.IsBsonDocument)
-        {
-            return null;
-        }
-
-        var doc = value.AsBsonDocument;
-
-        return WallPaperSettingsHelper.PairSharedFlags(new MyTelegram.Schema.TWallPaperSettings
-        {
-            Blur = doc.GetValue("Blur", false).ToBoolean(),
-            Motion = doc.GetValue("Motion", false).ToBoolean(),
-            BackgroundColor = GetInt32(doc, "BackgroundColor"),
-            SecondBackgroundColor = GetInt32(doc, "SecondBackgroundColor"),
-            ThirdBackgroundColor = GetInt32(doc, "ThirdBackgroundColor"),
-            FourthBackgroundColor = GetInt32(doc, "FourthBackgroundColor"),
-            Intensity = GetInt32(doc, "Intensity"),
-            Rotation = GetInt32(doc, "Rotation"),
-            Emoticon = doc.Contains("Emoticon") && !doc["Emoticon"].IsBsonNull ? doc["Emoticon"].AsString : null
-        });
-    }
-
-    private static int? GetInt32(BsonDocument doc, string name)
-    {
-        return doc.Contains(name) && !doc[name].IsBsonNull ? doc[name].ToInt32() : null;
-    }
-
-    private MyTelegram.Schema.IDocument ToDocument(BsonDocument doc)
-    {
-        var documentId = doc["DocumentId"].ToInt64();
-
-        return new MyTelegram.Schema.TDocument
-        {
-            Id = documentId,
-            AccessHash = doc.GetValue("AccessHash", 0L).ToInt64(),
-            // See https://corefork.telegram.org/api/file-references
-            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
-            Date = doc.GetValue("Date", 0).ToInt32(),
-            MimeType = doc.GetValue("MimeType", "image/jpeg").AsString,
-            Size = doc.GetValue("Size", 0L).ToInt64(),
-            Thumbs = new TVector<MyTelegram.Schema.IPhotoSize>(),
-            VideoThumbs = new TVector<MyTelegram.Schema.IVideoSize>(),
-            DcId = doc.GetValue("DcId", 2).ToInt32(),
-            Attributes = new TVector<MyTelegram.Schema.IDocumentAttribute>()
-        };
     }
 }
