@@ -1,7 +1,7 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.WallPapers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
+
 /// <summary>
 /// Get info about multiple wallpapers
 /// Possible errors
@@ -11,115 +11,72 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The answer is positional: the caller passes wallpapers it is resolving for a theme and matches
+/// them up by index. This used to return whatever Mongo happened to hand back, in Mongo's order, and to
+/// silently drop anything it could not find — so a client received a shorter vector with no way to tell
+/// which entry was missing.</para>
 /// </remarks>
-internal sealed class GetMultiWallPapersHandler(IMongoDatabase database, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetMultiWallPapers, TVector<MyTelegram.Schema.IWallPaper>>
+internal sealed class GetMultiWallPapersHandler(IWallPaperCatalog catalog)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetMultiWallPapers,
+        TVector<MyTelegram.Schema.IWallPaper>>
 {
-    protected override async Task<TVector<MyTelegram.Schema.IWallPaper>> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetMultiWallPapers obj)
+    protected override async Task<TVector<MyTelegram.Schema.IWallPaper>> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Account.RequestGetMultiWallPapers obj)
     {
-        var wallpaperIds = new List<long>();
+        if (obj.Wallpapers == null || obj.Wallpapers.Count == 0)
+        {
+            return new TVector<MyTelegram.Schema.IWallPaper>();
+        }
+
+        var ids = new List<long>();
         var slugs = new List<string>();
 
-        // Extract IDs and slugs
-        foreach (var inputWallpaper in obj.Wallpapers)
+        foreach (var input1 in obj.Wallpapers)
         {
-            if (inputWallpaper is MyTelegram.Schema.TInputWallPaper wp)
+            switch (input1)
             {
-                wallpaperIds.Add(wp.Id);
-            }
-            else if (inputWallpaper is MyTelegram.Schema.TInputWallPaperSlug wpSlug)
-            {
-                slugs.Add(wpSlug.Slug);
-            }
-            else if (inputWallpaper is MyTelegram.Schema.TInputWallPaperNoFile wpNoFile)
-            {
-                wallpaperIds.Add(wpNoFile.Id);
+                case MyTelegram.Schema.TInputWallPaper byId:
+                    ids.Add(byId.Id);
+                    break;
+                case MyTelegram.Schema.TInputWallPaperNoFile noFile:
+                    ids.Add(noFile.Id);
+                    break;
+                case MyTelegram.Schema.TInputWallPaperSlug bySlug:
+                    slugs.Add(bySlug.Slug);
+                    break;
             }
         }
 
-        var collection = database.GetCollection<BsonDocument>("wallpapers");
-        var filter = Builders<BsonDocument>.Filter.Or(
-            Builders<BsonDocument>.Filter.In("WallpaperId", wallpaperIds),
-            Builders<BsonDocument>.Filter.In("Slug", slugs)
-        );
+        var rows = await catalog.FindManyAsync(ids, slugs);
+        var byIdMap = rows.ToDictionary(p => p.WallPaperId);
+        // A slug is not unique — it names the pattern image, and the same pattern is listed more than once
+        // with different colours — so the lowest catalogue order wins, as it does in FindBySlugAsync.
+        var bySlugMap = rows.Where(p => !string.IsNullOrEmpty(p.Slug))
+            .GroupBy(p => p.Slug)
+            .ToDictionary(p => p.Key, p => p.OrderBy(x => x.Order).ThenBy(x => x.WallPaperId).First());
 
-        var wallpaperDocs = await collection.Find(filter).ToListAsync();
         var result = new TVector<MyTelegram.Schema.IWallPaper>();
 
-        foreach (var doc in wallpaperDocs)
+        foreach (var requested in obj.Wallpapers)
         {
-            var documentId = doc.Contains("DocumentId") ? doc["DocumentId"].AsInt64 : 0;
-            
-            if (documentId == 0)
+            var row = requested switch
             {
-                result.Add(new MyTelegram.Schema.TWallPaperNoFile
-                {
-                    Id = doc["WallpaperId"].AsInt64,
-                    Default = doc.Contains("IsDefault") && doc["IsDefault"].AsBoolean,
-                    Dark = doc.Contains("IsDark") && doc["IsDark"].AsBoolean,
-                    Settings = ConvertSettings(doc)
-                });
-            }
-            else
+                MyTelegram.Schema.TInputWallPaper byId => byIdMap.GetValueOrDefault(byId.Id),
+                MyTelegram.Schema.TInputWallPaperNoFile noFile => byIdMap.GetValueOrDefault(noFile.Id),
+                MyTelegram.Schema.TInputWallPaperSlug bySlug => bySlugMap.GetValueOrDefault(bySlug.Slug),
+                _ => null
+            };
+
+            var wallPaper = row == null ? null : await catalog.BuildAsync(row, input.UserId);
+            if (wallPaper == null)
             {
-                var docCollection = database.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-                var docFilter = Builders<BsonDocument>.Filter.Eq("DocumentId", documentId);
-                var docDoc = await docCollection.Find(docFilter).FirstOrDefaultAsync();
-                
-                if (docDoc != null)
-                {
-                    result.Add(new MyTelegram.Schema.TWallPaper
-                    {
-                        Id = doc["WallpaperId"].AsInt64,
-                        AccessHash = doc["AccessHash"].AsInt64,
-                        Slug = doc["Slug"].AsString,
-                        Default = doc.Contains("IsDefault") && doc["IsDefault"].AsBoolean,
-                        Pattern = doc.Contains("IsPattern") && doc["IsPattern"].AsBoolean,
-                        Dark = doc.Contains("IsDark") && doc["IsDark"].AsBoolean,
-                        Document = WallPaperDocumentReader.ToDocument(docDoc, fileReferenceHelper),
-                        Settings = ConvertSettings(doc)
-                    });
-                }
+                RpcErrors.RpcErrors400.WallpaperInvalid.ThrowRpcError();
             }
+
+            result.Add(wallPaper!);
         }
 
         return result;
-    }
-
-    private static MyTelegram.Schema.IWallPaperSettings? ConvertSettings(BsonDocument doc)
-    {
-        if (!doc.Contains("Settings") || doc["Settings"].IsBsonNull)
-            return null;
-
-        var settings = doc["Settings"].AsBsonDocument;
-        var result = new MyTelegram.Schema.TWallPaperSettings();
-
-        if (settings.Contains("Blur"))
-            result.Blur = settings["Blur"].AsBoolean;
-        
-        if (settings.Contains("Motion"))
-            result.Motion = settings["Motion"].AsBoolean;
-        
-        if (settings.Contains("BackgroundColor"))
-            result.BackgroundColor = settings["BackgroundColor"].AsInt32;
-        
-        if (settings.Contains("SecondBackgroundColor"))
-            result.SecondBackgroundColor = settings["SecondBackgroundColor"].AsInt32;
-        
-        if (settings.Contains("ThirdBackgroundColor"))
-            result.ThirdBackgroundColor = settings["ThirdBackgroundColor"].AsInt32;
-        
-        if (settings.Contains("FourthBackgroundColor"))
-            result.FourthBackgroundColor = settings["FourthBackgroundColor"].AsInt32;
-        
-        if (settings.Contains("Intensity"))
-            result.Intensity = settings["Intensity"].AsInt32;
-        
-        if (settings.Contains("Rotation"))
-            result.Rotation = settings["Rotation"].AsInt32;
-        
-        if (settings.Contains("Emoticon"))
-            result.Emoticon = settings["Emoticon"].AsString;
-
-        return WallPaperSettingsHelper.PairSharedFlags(result);
     }
 }

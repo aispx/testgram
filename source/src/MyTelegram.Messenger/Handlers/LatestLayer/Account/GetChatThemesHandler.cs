@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Hashing;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 
@@ -63,7 +64,13 @@ internal sealed class GetChatThemesHandler(IMongoDatabase database) : RpcResultO
                             Settings = new MyTelegram.Schema.TWallPaperSettings
                             {
                                 BackgroundColor = wpSettings["BackgroundColor"].ToInt32(),
-                                Intensity = wpSettings["Intensity"].ToInt32()
+                                Intensity = wpSettings["Intensity"].ToInt32(),
+                                // The emoticon in the wallpaper's settings is what marks it as a
+                                // channel/supergroup wallpaper: clients read it back off this object and
+                                // send it to messages.setChatWallPaper. Without it the wallpapers this
+                                // method serves cannot be installed in a channel at all.
+                                // See https://corefork.telegram.org/api/wallpapers#channel-and-supergroup-wallpapers
+                                Emoticon = doc["Emoticon"].AsString
                             }
                         };
                     }
@@ -105,19 +112,38 @@ internal sealed class GetChatThemesHandler(IMongoDatabase database) : RpcResultO
         };
     }
 
+    /// <summary>
+    /// This hash is the <b>server's</b> to define — Android stores whatever comes back
+    /// (<c>themesHash = resp.hash</c>) and quotes it verbatim on the next call — but it has to be stable
+    /// across processes, which <c>System.HashCode</c> is not: it is seeded randomly at startup, so
+    /// <c>themesNotModified</c> could never fire after a restart. String content goes through FNV-1a for
+    /// the same reason, <c>string.GetHashCode</c> being randomized too.
+    /// </summary>
     private static long ComputeHash(IEnumerable<MyTelegram.Schema.ITheme> themes)
     {
-        var hash = new HashCode();
+        var values = new List<long>();
+
         foreach (var theme in themes.OfType<MyTelegram.Schema.TTheme>().OrderBy(x => x.Id))
         {
-            hash.Add(theme.Id);
-            hash.Add(theme.AccessHash);
-            hash.Add(theme.Slug);
-            hash.Add(theme.Title);
-            hash.Add(theme.Emoticon);
+            values.Add(theme.Id);
+            values.Add(theme.AccessHash);
+            values.Add(StableHash($"{theme.Slug}\n{theme.Title}\n{theme.Emoticon}"));
         }
 
-        return hash.ToHashCode();
+        return VectorHashHelper.ComputeNonZeroHash(values);
+    }
+
+    /// <summary>FNV-1a over UTF-8, so the same text always folds to the same number.</summary>
+    private static long StableHash(string value)
+    {
+        var hash = 0xcbf29ce484222325UL;
+
+        foreach (var b in System.Text.Encoding.UTF8.GetBytes(value))
+        {
+            hash = (hash ^ b) * 0x100000001b3UL;
+        }
+
+        return (long)(hash & long.MaxValue);
     }
 
     /// <summary>
@@ -155,7 +181,12 @@ internal sealed class GetChatThemesHandler(IMongoDatabase database) : RpcResultO
             Wallpaper = new MyTelegram.Schema.TWallPaperNoFile
             {
                 Id = 0,
-                Settings = new MyTelegram.Schema.TWallPaperSettings { BackgroundColor = unchecked((int)0xFFFFFFFF), Intensity = 0 }
+                Settings = new MyTelegram.Schema.TWallPaperSettings
+                {
+                    BackgroundColor = unchecked((int)0xFFFFFFFF),
+                    Intensity = 0,
+                    Emoticon = emoticon
+                }
             }
         });
 
@@ -169,17 +200,27 @@ internal sealed class GetChatThemesHandler(IMongoDatabase database) : RpcResultO
             {
                 Id = 0,
                 Dark = true,
-                Settings = new MyTelegram.Schema.TWallPaperSettings { BackgroundColor = unchecked((int)0xFF0F0F0F), Intensity = 0 }
+                Settings = new MyTelegram.Schema.TWallPaperSettings
+                {
+                    BackgroundColor = unchecked((int)0xFF0F0F0F),
+                    Intensity = 0,
+                    Emoticon = emoticon
+                }
             }
         });
+
+        // Both numbers are derived from the emoticon, not drawn at random on every call: a theme whose id
+        // and access hash change per response is a theme a client can never keep, and it made the list
+        // hash different every time even when nothing had changed.
+        var id = StableHash($"chat-theme-{emoticon}");
 
         return new MyTelegram.Schema.TTheme
         {
             ForChat = true,
             Creator = false,
             Default = false,
-            Id = Math.Abs(emoticon.GetHashCode()),
-            AccessHash = Random.Shared.NextInt64(),
+            Id = id,
+            AccessHash = StableHash($"chat-theme-access-{emoticon}"),
             Slug = $"chat-theme-{emoticon}",
             Title = $"{emoticon} Chat Theme",
             Emoticon = emoticon,

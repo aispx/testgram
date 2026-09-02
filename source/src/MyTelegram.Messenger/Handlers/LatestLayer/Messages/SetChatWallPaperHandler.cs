@@ -1,6 +1,6 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
 using MyTelegram.Domain.Aggregates.Dialog;
+using MyTelegram.Messenger.Services.Interfaces;
+using MyTelegram.Messenger.Services.WallPapers;
 using MyTelegram.Services.Services;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
@@ -17,17 +17,28 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Messages;
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
 ///
-/// IMPORTANT: This handler is called in TWO scenarios:
+/// <para>The method carries four different intentions, and telling them apart is the whole of it:</para>
+/// <list type="bullet">
+/// <item><description><b><c>wallpaper</c> given</b> — a manual change. Emits the
+/// <c>messageActionSetChatWallPaper</c> service message that invites the other user to apply the same
+/// wallpaper.</description></item>
+/// <item><description><b><c>id</c> given and <c>wallpaper</c> omitted</b> — the other user accepting that
+/// invitation. The wallpaper has to be read out of the service message named by <c>id</c>; clients send
+/// no wallpaper at all here (Android <c>ChatThemeController.setWallpaperToPeer</c>, tdlib
+/// <c>SetChatWallPaperQuery</c> with <c>ID_MASK</c>). This used to resolve to "no wallpaper" and so
+/// <b>removed</b> the wallpaper it was asked to apply. The emitted action carries <c>same</c>, which is
+/// what makes clients draw a plain acknowledgment instead of a second invitation.</description></item>
+/// <item><description><b><c>revert</c> given</b> — undoing a wallpaper the other side installed with
+/// <c>for_both</c>, on this side only. No service message: nothing is being announced to the
+/// chat.</description></item>
+/// <item><description><b>nothing given</b> — removal.</description></item>
+/// </list>
 ///
-/// 1. **Manual wallpaper change** (user explicitly changes wallpaper):
-///    - Should send service message "User changed wallpaper"
-///    - Indicators: obj.Revert == true OR obj.Id.HasValue (revert to previous message)
-///
-/// 2. **Automatic call after theme change** (client sets wallpaper as part of theme):
-///    - Should NOT send service message (theme handler already sent "User changed theme")
-///    - Indicators: obj.Revert == false AND obj.Id == null
-///
-/// Since we cannot modify the client, we use this heuristic to avoid duplicate messages.
+/// <para>The response carries the <c>updatePeerWallpaper</c> this produced rather than a fabricated
+/// service message. Android applies the wallpaper straight from it
+/// (<c>ChatThemeController.processUpdate</c> writes <c>userFull.wallpaper</c> / <c>chatFull.wallpaper</c>
+/// and persists it), so the caller sees the change immediately while the service message arrives by push
+/// with a real message id.</para>
 /// </remarks>
 internal sealed class SetChatWallPaperHandler(
     IMessageAppService messageAppService,
@@ -36,144 +47,189 @@ internal sealed class SetChatWallPaperHandler(
     IObjectMessageSender objectMessageSender,
     IAccessHashHelper2 accessHashHelper,
     IChannelAdminRightsChecker channelAdminRightsChecker,
-    IPtsHelper ptsHelper) : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSetChatWallPaper, MyTelegram.Schema.IUpdates>
+    IBoostLevelCalculator boostLevelCalculator,
+    IQueryProcessor queryProcessor)
+    : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestSetChatWallPaper, MyTelegram.Schema.IUpdates>
 {
-    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSetChatWallPaper obj)
+    /// <summary>Matches <c>channel_wallpaper_level_min</c> / <c>group_wallpaper_level_min</c>.</summary>
+    private const int ChatThemeWallPaperLevelMin = 9;
+
+    /// <summary>
+    /// Matches <c>channel_custom_wallpaper_level_min</c> / <c>group_custom_wallpaper_level_min</c>. The
+    /// numbers are equal for channels and groups in this deployment's app config, so one constant each.
+    /// </summary>
+    private const int CustomWallPaperLevelMin = 10;
+
+    protected override async Task<MyTelegram.Schema.IUpdates> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Messages.RequestSetChatWallPaper obj)
     {
         await accessHashHelper.CheckAccessHashAsync(input, obj.Peer);
 
-        // Get target peer
         var peer = peerHelper.GetPeer(obj.Peer, input.UserId);
+        var isChannel = peer.PeerType == PeerType.Channel;
 
-        // A channel wallpaper is the channel's own, seen by every member, so only an admin allowed to
-        // change the channel info may set it.
-        if (peer.PeerType == PeerType.Channel)
+        if (isChannel)
         {
+            // A channel wallpaper is the channel's own, seen by every member, so only an admin allowed to
+            // change the channel info may set it.
             await channelAdminRightsChecker.CheckAdminRightAsync(peer.PeerId, input.UserId, p => p.ChangeInfo);
-        }
-
-        var wallpaperId = await chatWallPaperService.ResolveWallPaperIdAsync(obj.Wallpaper);
-        MyTelegram.Schema.IWallPaper? wallpaper = null;
-
-        if (wallpaperId.HasValue)
-        {
-            wallpaper = await chatWallPaperService.GetWallPaperAsync(wallpaperId.Value, obj.Settings);
-            if (wallpaper == null)
-            {
-                RpcErrors.RpcErrors400.WallpaperNotFound.ThrowRpcError();
-            }
         }
 
         // The owner of the record is the channel itself for a channel, and the caller for a private
         // chat, where each side keeps its own wallpaper.
-        var ownerId = peer.PeerType == PeerType.Channel ? peer.PeerId : input.UserId;
-        await chatWallPaperService.SetChatWallPaperAsync(ownerId, peer, wallpaperId, obj.Settings, overridden: false);
+        var ownerId = isChannel ? peer.PeerId : input.UserId;
+
+        if (obj.Revert)
+        {
+            var reverted = await chatWallPaperService.RevertChatWallPaperAsync(ownerId, peer);
+
+            return await AnnounceAsync(input, peer, reverted, appliesToPeer: false);
+        }
+
+        var (wallPaperId, settings, fromServiceMessage) = await ResolveAsync(input, obj);
+
+        MyTelegram.Schema.IWallPaper? wallpaper = null;
+        if (wallPaperId.HasValue)
+        {
+            wallpaper = await chatWallPaperService.GetWallPaperAsync(wallPaperId.Value, settings);
+            if (wallpaper == null)
+            {
+                RpcErrors.RpcErrors400.WallpaperNotFound.ThrowRpcError();
+            }
+
+            if (isChannel)
+            {
+                await CheckBoostLevelAsync(peer.PeerId, wallPaperId.Value, settings);
+            }
+        }
+
+        await chatWallPaperService.SetChatWallPaperAsync(ownerId, peer, wallPaperId, settings, overridden: false);
 
         // for_both installs the same wallpaper on the other side of the chat, where it counts as
-        // overridden: the peer did not pick it themselves and may revert it.
-        // See https://corefork.telegram.org/api/wallpapers#installing-wallpapers-in-a-specific-chat-or-channel
+        // overridden: the peer did not pick it themselves and may revert it. It is meaningless for a
+        // channel — "When setting channel wallpapers, do not set the for_both flag" — and no error is
+        // documented for sending it anyway, so it is ignored there rather than refused.
         var appliesToPeer = obj.ForBoth && peer.PeerType == PeerType.User && peer.PeerId != input.UserId;
         if (appliesToPeer)
         {
             await chatWallPaperService.SetChatWallPaperAsync(peer.PeerId, new Peer(PeerType.User, input.UserId),
-                wallpaperId, obj.Settings, overridden: true);
+                wallPaperId, settings, overridden: true);
         }
 
-        await NotifyWallPaperChangedAsync(input, peer, wallpaper, appliesToPeer);
-
-        // Determine if we should send a service message
-        // Send message ONLY when:
-        // 1. obj.Revert == true (user is reverting to previous wallpaper)
-        // 2. obj.Id.HasValue (user is setting wallpaper from a specific message)
-        //
-        // Do NOT send message when:
-        // - This is an automatic call after setChatTheme (obj.Revert == false && obj.Id == null)
-        //
-        // This prevents duplicate messages when user sets a theme (which includes wallpaper).
-        bool shouldSendServiceMessage = obj.Revert || obj.Id.HasValue;
-
-        if (shouldSendServiceMessage)
+        // The service message belongs to a private chat: it shows the wallpaper and invites the other user
+        // to apply it. A channel wallpaper announces itself to every member through updatePeerWallpaper, and
+        // a removal has no wallpaper to show.
+        if (peer.PeerType == PeerType.User && wallpaper != null)
         {
-            // Manual wallpaper change - send service message
-            var action = new MyTelegram.Schema.TMessageActionSetChatWallPaper
-            {
-                Same = obj.Revert,
-                ForBoth = obj.ForBoth,
-                Wallpaper = wallpaper ?? new MyTelegram.Schema.TWallPaperNoFile { Id = 0 }
-            };
-
-            // Send service message
-            var sendInput = new SendMessageInput(
-                input.ToRequestInfo() with { ReqMsgId = 0 },
-                input.UserId,
-                peer,
-                string.Empty,
-                Random.Shared.NextInt64(),
-                sendMessageType: SendMessageType.MessageService,
-                messageType: MessageType.Text,
-                messageAction: action
-            );
-
-            await messageAppService.SendMessageAsync([sendInput]);
-
-            // Create immediate response with UpdateNewMessage
-            var pts = await ptsHelper.IncrementPtsAsync(input.UserId, ptsHelper.GetCachedPts(input.UserId));
-
-            MyTelegram.Schema.IPeer peerObj;
-            if (peer.PeerType == PeerType.User)
-            {
-                peerObj = new MyTelegram.Schema.TPeerUser { UserId = peer.PeerId };
-            }
-            else if (peer.PeerType == PeerType.Chat)
-            {
-                peerObj = new MyTelegram.Schema.TPeerChat { ChatId = peer.PeerId };
-            }
-            else
-            {
-                peerObj = new MyTelegram.Schema.TPeerChannel { ChannelId = peer.PeerId };
-            }
-
-            var serviceMsg = new MyTelegram.Schema.TMessageService
-            {
-                Id = pts,
-                FromId = new MyTelegram.Schema.TPeerUser { UserId = input.UserId },
-                PeerId = peerObj,
-                Date = CurrentDate,
-                Action = action,
-                Out = true,
-            };
-
-            return new TUpdates
-            {
-                Updates = new TVector<IUpdate> { new MyTelegram.Schema.TUpdateNewMessage { Message = serviceMsg, Pts = pts, PtsCount = 1 } },
-                Users = new TVector<IUser>(),
-                Chats = new TVector<IChat>(),
-                Date = CurrentDate,
-                Seq = 0
-            };
+            await SendServiceMessageAsync(input, peer, wallpaper, same: fromServiceMessage, obj.ForBoth);
         }
-        else
-        {
-            // Automatic call from theme change - do NOT send service message
-            // (SetChatThemeHandler already sent "User changed theme" message)
-            // Just return empty Updates - wallpaper is already saved in DB
-            return new TUpdates
-            {
-                Updates = new TVector<IUpdate>(),
-                Users = new TVector<IUser>(),
-                Chats = new TVector<IChat>(),
-                Date = CurrentDate,
-                Seq = 0
-            };
-        }
+
+        return await AnnounceAsync(input, peer, wallpaper, appliesToPeer);
     }
 
     /// <summary>
-    /// Pushes <c>updatePeerWallpaper</c>, without which the caller's other sessions and the peer keep
-    /// serving the previous <c>userFull.wallpaper</c>.
-    /// See https://corefork.telegram.org/api/peers#handling-updates
+    /// Which wallpaper is being set, and whether it came from the service message named by <c>id</c> —
+    /// the flag that becomes <c>messageActionSetChatWallPaper.same</c>.
     /// </summary>
-    private async Task NotifyWallPaperChangedAsync(IRequestInput input, Peer peer,
+    private async Task<(long? WallPaperId, MyTelegram.Schema.IWallPaperSettings? Settings, bool FromServiceMessage)>
+        ResolveAsync(IRequestInput input, MyTelegram.Schema.Messages.RequestSetChatWallPaper obj)
+    {
+        if (obj.Wallpaper == null && obj.Id.HasValue)
+        {
+            var (wallPaperId, storedSettings) = await ReadServiceMessageWallPaperAsync(input, obj.Id.Value);
+
+            return (wallPaperId, obj.Settings ?? storedSettings, true);
+        }
+
+        var resolved = await chatWallPaperService.ResolveWallPaperIdAsync(obj.Wallpaper);
+
+        // inputWallPaperNoFile{id = 0} is a wallpaper made of its settings alone. Without settings it
+        // names nothing at all.
+        if (resolved == 0 && obj.Settings == null)
+        {
+            RpcErrors.RpcErrors400.WallpaperInvalid.ThrowRpcError();
+        }
+
+        return (resolved, obj.Settings, false);
+    }
+
+    private async Task<(long WallPaperId, MyTelegram.Schema.IWallPaperSettings? Settings)>
+        ReadServiceMessageWallPaperAsync(IRequestInput input, int messageId)
+    {
+        var message = (await queryProcessor.ProcessAsync(new GetMessagesQuery(
+            input.UserId,
+            MessageType.Unknown,
+            null,
+            [messageId],
+            0,
+            1,
+            null,
+            null,
+            input.UserId,
+            0))).FirstOrDefault();
+
+        if (message?.MessageAction is not MyTelegram.Schema.TMessageActionSetChatWallPaper action)
+        {
+            RpcErrors.RpcErrors400.WallpaperInvalid.ThrowRpcError();
+
+            return (0, null);
+        }
+
+        return action.Wallpaper switch
+        {
+            MyTelegram.Schema.TWallPaper paper => (paper.Id, paper.Settings),
+            MyTelegram.Schema.TWallPaperNoFile noFile => (noFile.Id, noFile.Settings),
+            _ => (0, null)
+        };
+    }
+
+    /// <summary>
+    /// A channel or supergroup has to be boosted before it may carry a wallpaper: the fill wallpapers
+    /// <c>account.getChatThemes</c> serves need <c>channel_wallpaper_level_min</c>, anything else needs
+    /// <c>channel_custom_wallpaper_level_min</c>. A <c>getChatThemes</c> wallpaper is exactly the one that
+    /// names no catalogue row and carries an emoticon, which is what clients send for it.
+    /// </summary>
+    private async Task CheckBoostLevelAsync(long channelId, long wallPaperId,
+        MyTelegram.Schema.IWallPaperSettings? settings)
+    {
+        var isChatThemeWallPaper = wallPaperId == 0 && WallPaperSettingsSerializer.EmoticonOf(settings) != null;
+        var minLevel = isChatThemeWallPaper ? ChatThemeWallPaperLevelMin : CustomWallPaperLevelMin;
+
+        if (await boostLevelCalculator.GetLevelAsync(channelId) < minLevel)
+        {
+            RpcErrors.RpcErrors400.BoostsRequired.ThrowRpcError();
+        }
+    }
+
+    private async Task SendServiceMessageAsync(IRequestInput input, Peer peer,
+        MyTelegram.Schema.IWallPaper wallpaper, bool same, bool forBoth)
+    {
+        var action = new MyTelegram.Schema.TMessageActionSetChatWallPaper
+        {
+            Same = same,
+            ForBoth = forBoth,
+            Wallpaper = wallpaper
+        };
+
+        var sendInput = new SendMessageInput(
+            input.ToRequestInfo() with { ReqMsgId = 0 },
+            input.UserId,
+            peer,
+            string.Empty,
+            Random.Shared.NextInt64(),
+            sendMessageType: SendMessageType.MessageService,
+            messageType: MessageType.Text,
+            messageAction: action);
+
+        await messageAppService.SendMessageAsync([sendInput]);
+    }
+
+    /// <summary>
+    /// Pushes <c>updatePeerWallpaper</c> — "Wallpaper changes will also emit an updatePeerWallpaper
+    /// update" — and returns the caller's own copy of it, without which the session that made the change
+    /// keeps serving the previous <c>userFull.wallpaper</c> until it refetches.
+    /// </summary>
+    private async Task<MyTelegram.Schema.IUpdates> AnnounceAsync(IRequestInput input, Peer peer,
         MyTelegram.Schema.IWallPaper? wallpaper, bool appliesToPeer)
     {
         if (peer.PeerType == PeerType.Channel)
@@ -182,15 +238,15 @@ internal sealed class SetChatWallPaperHandler(
             var channelUpdates = WallPaperUpdates(new MyTelegram.Schema.TPeerChannel { ChannelId = peer.PeerId },
                 wallpaper, overridden: false);
             await objectMessageSender.PushMessageToPeerAsync(peer, channelUpdates,
-                excludeAuthKeyId: input.AuthKeyId);
+                excludeAuthKeyId: input.PermAuthKeyId);
 
-            return;
+            return channelUpdates;
         }
 
         var selfUpdates = WallPaperUpdates(new MyTelegram.Schema.TPeerUser { UserId = peer.PeerId }, wallpaper,
             overridden: false);
         await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, input.UserId), selfUpdates,
-            excludeAuthKeyId: input.AuthKeyId);
+            excludeAuthKeyId: input.PermAuthKeyId);
 
         if (appliesToPeer)
         {
@@ -198,6 +254,8 @@ internal sealed class SetChatWallPaperHandler(
                 overridden: true);
             await objectMessageSender.PushMessageToPeerAsync(new Peer(PeerType.User, peer.PeerId), peerUpdates);
         }
+
+        return selfUpdates;
     }
 
     private TUpdates WallPaperUpdates(MyTelegram.Schema.IPeer peer, MyTelegram.Schema.IWallPaper? wallpaper,

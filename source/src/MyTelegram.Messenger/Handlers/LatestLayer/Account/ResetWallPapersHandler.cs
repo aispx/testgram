@@ -1,35 +1,35 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MyTelegram.Messenger.Services.WallPapers;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
+
 /// <summary>
 /// Delete all installed wallpapers, reverting to the default wallpaper set.
 /// <para><c>See <a href="https://corefork.telegram.org/method/account.resetWallPapers"/> </c></para>
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>"To restore the default list, removing all installed wallpapers and reinstalling previously
+/// removed preinstalled wallpapers." Both halves matter: dropping the saved rows is not enough, the
+/// tombstones left by <c>saveWallPaper(unsave: true)</c> have to go too, or the preinstalled wallpapers
+/// the user removed stay removed.</para>
 /// </remarks>
-internal sealed class ResetWallPapersHandler(IMongoDatabase database) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestResetWallPapers, IBool>
+internal sealed class ResetWallPapersHandler(IMongoDatabase database, IUserWallPaperStore userWallPaperStore)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestResetWallPapers, IBool>
 {
-    protected override async Task<IBool> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestResetWallPapers obj)
+    protected override async Task<IBool> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Account.RequestResetWallPapers obj)
     {
-        // Remove all saved wallpapers
-        var savedCol = database.GetCollection<BsonDocument>("user_wallpapers");
-        await savedCol.DeleteManyAsync(
-            Builders<BsonDocument>.Filter.Eq("UserId", input.UserId)
-        );
+        await userWallPaperStore.ResetAsync(input.UserId);
 
-        // Reset installed wallpaper
-        var settingsCol = database.GetCollection<BsonDocument>("user_settings");
-        var update = Builders<BsonDocument>.Update
-            .Unset("InstalledWallpaperId")
-            .Set("UpdatedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-
-        await settingsCol.UpdateOneAsync(
+        await database.GetCollection<BsonDocument>("user_settings").UpdateOneAsync(
             Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-            update,
-            new UpdateOptions { IsUpsert = true }
-        );
+            Builders<BsonDocument>.Update
+                .Unset("InstalledWallpaperId")
+                .Set("UpdatedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+            new UpdateOptions { IsUpsert = true });
 
         return new TBoolTrue();
     }

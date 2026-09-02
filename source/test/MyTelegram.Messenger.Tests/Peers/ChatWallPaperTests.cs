@@ -1,4 +1,6 @@
 using System.Reflection;
+using EventFlow.Queries;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Moq;
@@ -7,7 +9,10 @@ using MyTelegram.Domain.Aggregates.Dialog;
 using MyTelegram.Messenger.Services;
 using MyTelegram.Messenger.Services.Caching;
 using MyTelegram.Messenger.Services.Interfaces;
+using MyTelegram.Messenger.Services.WallPapers;
 using MyTelegram.Messenger.Tests.Stats;
+using MyTelegram.Queries;
+using MyTelegram.ReadModel.Interfaces;
 using MyTelegram.Schema;
 using MyTelegram.Services.Services;
 
@@ -38,7 +43,7 @@ public class ChatWallPaperTests
     {
         using var mongo = EmbeddedMongoServer.Start();
         await SeedWallPaperAsync(mongo.Database);
-        var service = new ChatWallPaperService(mongo.Database, TestFileReferences.Helper);
+        var service = new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database));
 
         await service.SetChatWallPaperAsync(CallerUserId, PeerPeer, WallPaperId,
             new TWallPaperSettings { Blur = true, Intensity = 42 }, overridden: false);
@@ -56,7 +61,7 @@ public class ChatWallPaperTests
     {
         using var mongo = EmbeddedMongoServer.Start();
         await SeedWallPaperAsync(mongo.Database);
-        var service = new ChatWallPaperService(mongo.Database, TestFileReferences.Helper);
+        var service = new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database));
 
         await service.SetChatWallPaperAsync(PeerUserId, CallerPeer, WallPaperId, null, overridden: true);
 
@@ -70,7 +75,7 @@ public class ChatWallPaperTests
     {
         using var mongo = EmbeddedMongoServer.Start();
         await SeedWallPaperAsync(mongo.Database);
-        var service = new ChatWallPaperService(mongo.Database, TestFileReferences.Helper);
+        var service = new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database));
         await service.SetChatWallPaperAsync(CallerUserId, PeerPeer, WallPaperId, null, overridden: false);
 
         await service.SetChatWallPaperAsync(CallerUserId, PeerPeer, null, null, overridden: false);
@@ -91,7 +96,7 @@ public class ChatWallPaperTests
             { "WallpaperId", WallPaperId }
         });
 
-        var (wallPaper, overridden) = await new ChatWallPaperService(mongo.Database, TestFileReferences.Helper)
+        var (wallPaper, overridden) = await new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database))
             .GetChatWallPaperAsync(CallerUserId, PeerPeer);
 
         wallPaper!.ShouldBeOfType<TWallPaperNoFile>().Id.ShouldBe(WallPaperId);
@@ -102,7 +107,7 @@ public class ChatWallPaperTests
     public async Task An_unknown_slug_is_WALLPAPER_NOT_FOUND()
     {
         using var mongo = EmbeddedMongoServer.Start();
-        var service = new ChatWallPaperService(mongo.Database, TestFileReferences.Helper);
+        var service = new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database));
 
         var exception = await Should.ThrowAsync<RpcException>(() =>
             service.ResolveWallPaperIdAsync(new TInputWallPaperSlug { Slug = "nope" }));
@@ -142,7 +147,7 @@ public class ChatWallPaperTests
         update.Peer.ShouldBeOfType<TPeerUser>().UserId.ShouldBe(CallerUserId);
         update.WallpaperOverridden.ShouldBeTrue();
 
-        var (wallPaper, overridden) = await new ChatWallPaperService(mongo.Database, TestFileReferences.Helper)
+        var (wallPaper, overridden) = await new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database))
             .GetChatWallPaperAsync(PeerUserId, CallerPeer);
         wallPaper!.ShouldBeOfType<TWallPaperNoFile>().Id.ShouldBe(WallPaperId);
         overridden.ShouldBeTrue();
@@ -162,7 +167,7 @@ public class ChatWallPaperTests
         sender.UpdateFor(ChannelId).Peer.ShouldBeOfType<TPeerChannel>().ChannelId.ShouldBe(ChannelId);
 
         // Stored under the channel itself, so every member reads the same wallpaper.
-        var (wallPaper, _) = await new ChatWallPaperService(mongo.Database, TestFileReferences.Helper)
+        var (wallPaper, _) = await new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database))
             .GetChatWallPaperAsync(ChannelId, new Peer(PeerType.Channel, ChannelId));
         wallPaper!.ShouldBeOfType<TWallPaperNoFile>().Id.ShouldBe(WallPaperId);
     }
@@ -180,10 +185,152 @@ public class ChatWallPaperTests
         exception.RpcError.Message.ShouldBe("CHAT_ADMIN_REQUIRED");
     }
 
+    /// <summary>
+    /// The other user accepting the invitation sends the id of the service message and <b>no</b> wallpaper.
+    /// This used to resolve to "no wallpaper" and remove the wallpaper it was asked to apply.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task Applying_the_wallpaper_named_by_a_service_message_keeps_it()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        await SeedWallPaperAsync(mongo.Database);
+        var sent = new List<SendMessageInput>();
+        var handler = CreateHandler(mongo.Database, new RecordingWallPaperSender(),
+            serviceMessage: ServiceMessageWith(new TWallPaperNoFile { Id = WallPaperId }), sentMessages: sent);
+
+        await InvokeAsync(handler, ForBoth: false, messageId: 42);
+
+        var (wallPaper, _) = await new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database))
+            .GetChatWallPaperAsync(CallerUserId, PeerPeer);
+        wallPaper!.ShouldBeOfType<TWallPaperNoFile>().Id.ShouldBe(WallPaperId);
+
+        // same is what makes clients draw an acknowledgment instead of a second invitation.
+        var action = sent.Single().MessageAction.ShouldBeOfType<TMessageActionSetChatWallPaper>();
+        action.Same.ShouldBeTrue();
+    }
+
+    [RequiresMongoDbFact]
+    public async Task A_service_message_naming_something_else_is_WALLPAPER_INVALID()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        await SeedWallPaperAsync(mongo.Database);
+        var handler = CreateHandler(mongo.Database, new RecordingWallPaperSender());
+
+        var exception = await Should.ThrowAsync<RpcException>(() =>
+            InvokeAsync(handler, ForBoth: false, messageId: 42));
+
+        exception.RpcError.Message.ShouldBe("WALLPAPER_INVALID");
+    }
+
+    /// <summary>
+    /// A manual change announces itself to the chat; <c>revert</c> is a one-sided undo and announces
+    /// nothing. The rule used to be exactly inverted.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task A_manual_change_sends_a_service_message_and_a_revert_does_not()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        await SeedWallPaperAsync(mongo.Database);
+        var sent = new List<SendMessageInput>();
+        var handler = CreateHandler(mongo.Database, new RecordingWallPaperSender(), sentMessages: sent);
+
+        await InvokeAsync(handler, ForBoth: false);
+        sent.Count.ShouldBe(1);
+        sent.Single().MessageAction.ShouldBeOfType<TMessageActionSetChatWallPaper>().Same.ShouldBeFalse();
+
+        await InvokeAsync(handler, ForBoth: false, revert: true);
+        sent.Count.ShouldBe(1);
+    }
+
+    [RequiresMongoDbFact]
+    public async Task A_revert_puts_the_previous_wallpaper_back()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        await SeedWallPaperAsync(mongo.Database);
+        await mongo.Database.GetCollection<BsonDocument>("wallpapers").InsertOneAsync(new BsonDocument
+        {
+            { "WallpaperId", 6666L }, { "AccessHash", 1L }, { "Slug", "dawn" }, { "DocumentId", 0L }
+        });
+        var handler = CreateHandler(mongo.Database, new RecordingWallPaperSender());
+
+        await InvokeAsync(handler, ForBoth: false);
+        await InvokeAsync(handler, ForBoth: false, wallpaper: new TInputWallPaper { Id = 6666, AccessHash = 1 });
+        await InvokeAsync(handler, ForBoth: false, revert: true);
+
+        var (wallPaper, _) = await new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database))
+            .GetChatWallPaperAsync(CallerUserId, PeerPeer);
+        wallPaper!.ShouldBeOfType<TWallPaperNoFile>().Id.ShouldBe(WallPaperId);
+    }
+
+    /// <summary>
+    /// A channel fill wallpaper is <c>inputWallPaperNoFile{id = 0}</c> plus <c>settings.emoticon</c>, which
+    /// names no catalogue row. Reading the zero id as "remove" is why setting a channel wallpaper from
+    /// Android cleared it instead.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task A_channel_fill_wallpaper_is_stored_with_its_emoticon()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        var sender = new RecordingWallPaperSender();
+        var handler = CreateHandler(mongo.Database, sender);
+
+        await InvokeAsync(handler, ForBoth: false,
+            peer: new TInputPeerChannel { ChannelId = ChannelId, AccessHash = 1 },
+            wallpaper: new TInputWallPaperNoFile { Id = 0 },
+            settings: new TWallPaperSettings { Emoticon = "🌅", BackgroundColor = 123 });
+
+        var (wallPaper, _) = await new ChatWallPaperService(mongo.Database, CreateCatalog(mongo.Database))
+            .GetChatWallPaperAsync(ChannelId, new Peer(PeerType.Channel, ChannelId));
+
+        var settings = wallPaper.ShouldBeOfType<TWallPaperNoFile>().Settings.ShouldBeOfType<TWallPaperSettings>();
+        settings.Emoticon.ShouldBe("🌅");
+        sender.UpdateFor(ChannelId).Wallpaper.ShouldNotBeNull();
+    }
+
+    [RequiresMongoDbFact]
+    public async Task A_channel_wallpaper_below_the_boost_level_is_BOOSTS_REQUIRED()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        await SeedWallPaperAsync(mongo.Database);
+        var handler = CreateHandler(mongo.Database, new RecordingWallPaperSender(), boostLevel: 8);
+
+        var exception = await Should.ThrowAsync<RpcException>(() => InvokeAsync(handler, ForBoth: false,
+            peer: new TInputPeerChannel { ChannelId = ChannelId, AccessHash = 1 }));
+
+        exception.RpcError.Message.ShouldBe("BOOSTS_REQUIRED");
+    }
+
+    /// <summary>
+    /// A <c>getChatThemes</c> fill wallpaper needs <c>channel_wallpaper_level_min</c> (9), a custom one
+    /// needs <c>channel_custom_wallpaper_level_min</c> (10) — so level 9 takes the first and refuses the
+    /// second.
+    /// </summary>
+    [RequiresMongoDbFact]
+    public async Task At_level_nine_a_chat_theme_wallpaper_is_allowed_and_a_custom_one_is_not()
+    {
+        using var mongo = EmbeddedMongoServer.Start();
+        await SeedWallPaperAsync(mongo.Database);
+        var handler = CreateHandler(mongo.Database, new RecordingWallPaperSender(), boostLevel: 9);
+        var channel = new TInputPeerChannel { ChannelId = ChannelId, AccessHash = 1 };
+
+        await InvokeAsync(handler, ForBoth: false, peer: channel,
+            wallpaper: new TInputWallPaperNoFile { Id = 0 },
+            settings: new TWallPaperSettings { Emoticon = "🌅" });
+
+        var exception = await Should.ThrowAsync<RpcException>(() =>
+            InvokeAsync(handler, ForBoth: false, peer: channel));
+        exception.RpcError.Message.ShouldBe("BOOSTS_REQUIRED");
+    }
+
     // ---- Fixtures ------------------------------------------------------------------------------------
 
     private static Peer PeerPeer => new(PeerType.User, PeerUserId);
     private static Peer CallerPeer => new(PeerType.User, CallerUserId);
+
+    private static WallPaperCatalog CreateCatalog(IMongoDatabase database)
+    {
+        return new WallPaperCatalog(database, TestFileReferences.Helper, NullLogger<WallPaperCatalog>.Instance);
+    }
 
     private static Task SeedWallPaperAsync(IMongoDatabase database)
     {
@@ -196,11 +343,29 @@ public class ChatWallPaperTests
         });
     }
 
+    /// <summary>A stored service message whose action carries the given wallpaper.</summary>
+    private static IMessageReadModel ServiceMessageWith(IWallPaper wallPaper)
+    {
+        var message = new Mock<IMessageReadModel>(MockBehavior.Loose);
+        message.SetupGet(p => p.MessageAction)
+            .Returns(new TMessageActionSetChatWallPaper { Wallpaper = wallPaper });
+
+        return message.Object;
+    }
+
     private static object CreateHandler(IMongoDatabase database, IObjectMessageSender sender,
-        bool callerIsChannelAdmin = true)
+        bool callerIsChannelAdmin = true, int boostLevel = 10, IMessageReadModel? serviceMessage = null,
+        List<SendMessageInput>? sentMessages = null)
     {
         var messageAppService = new Mock<IMessageAppService>(MockBehavior.Loose);
-        var ptsHelper = new Mock<IPtsHelper>(MockBehavior.Loose);
+        messageAppService.Setup(p => p.SendMessageAsync(It.IsAny<List<SendMessageInput>>()))
+            .Returns((List<SendMessageInput> inputs) =>
+            {
+                sentMessages?.AddRange(inputs);
+
+                return Task.CompletedTask;
+            });
+
         var accessHashHelper = new Mock<IAccessHashHelper2>(MockBehavior.Loose);
 
         var adminRightsChecker = new Mock<IChannelAdminRightsChecker>(MockBehavior.Loose);
@@ -211,6 +376,16 @@ public class ChatWallPaperTests
                 ? Task.CompletedTask
                 : throw new RpcException(RpcErrors.RpcErrors400.ChatAdminRequired));
 
+        var boostLevelCalculator = new Mock<IBoostLevelCalculator>(MockBehavior.Loose);
+        boostLevelCalculator.Setup(p => p.GetLevelAsync(It.IsAny<long>())).ReturnsAsync(boostLevel);
+
+        var queryProcessor = new Mock<IQueryProcessor>(MockBehavior.Loose);
+        queryProcessor
+            .Setup(p => p.ProcessAsync(It.IsAny<GetMessagesQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(serviceMessage == null
+                ? new List<IMessageReadModel>()
+                : [serviceMessage]);
+
         var handlerType = typeof(ChatWallPaperService).Assembly.GetType(
             "MyTelegram.Messenger.Handlers.LatestLayer.Messages.SetChatWallPaperHandler", throwOnError: true)!;
 
@@ -219,22 +394,32 @@ public class ChatWallPaperTests
             binder: null,
             args:
             [
-                messageAppService.Object, new PeerHelper(), new ChatWallPaperService(database, TestFileReferences.Helper), sender,
-                accessHashHelper.Object, adminRightsChecker.Object, ptsHelper.Object
+                messageAppService.Object, new PeerHelper(),
+                new ChatWallPaperService(database, CreateCatalog(database)), sender,
+                accessHashHelper.Object, adminRightsChecker.Object, boostLevelCalculator.Object,
+                queryProcessor.Object
             ],
             culture: null)!;
     }
 
-    private static async Task InvokeAsync(object handler, bool ForBoth, IInputPeer? peer = null)
+    private static async Task InvokeAsync(object handler, bool ForBoth, IInputPeer? peer = null,
+        IInputWallPaper? wallpaper = null, IWallPaperSettings? settings = null, bool revert = false,
+        int? messageId = null)
     {
         var input = new Mock<IRequestInput>(MockBehavior.Loose);
         input.SetupGet(p => p.UserId).Returns(CallerUserId);
         input.SetupGet(p => p.AuthKeyId).Returns(AuthKeyId);
+        input.SetupGet(p => p.PermAuthKeyId).Returns(AuthKeyId);
 
         var request = new MyTelegram.Schema.Messages.RequestSetChatWallPaper
         {
             Peer = peer ?? new TInputPeerUser { UserId = PeerUserId, AccessHash = 0 },
-            Wallpaper = new TInputWallPaper { Id = WallPaperId, AccessHash = 99 },
+            Wallpaper = wallpaper ?? (messageId.HasValue || revert
+                ? null
+                : new TInputWallPaper { Id = WallPaperId, AccessHash = 99 }),
+            Settings = settings,
+            Revert = revert,
+            Id = messageId,
             ForBoth = ForBoth
         };
 

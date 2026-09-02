@@ -221,6 +221,11 @@ public partial class ObjectIdConsts
       { 0xe14c4a71, "UploadContactProfilePhotoHandler"},
       { 0x5057c497, "UploadEncryptedFileHandler"},
       { 0x0388a3b5, "UploadProfilePhotoHandler"},
+      // account.uploadWallPaper has two constructors: #e39a8f03 is layer 224's and carries for_chat,
+      // #dd853661 is the older one the generated schema holds and this fork's Android client sends. Both
+      // create a document and a catalogue row, so both belong in this table -- it is what gates the
+      // replay/dedupe check on a state-changing request.
+      { 0xdd853661, "UploadWallPaperHandler"},
       { 0xe39a8f03, "UploadWallPaperHandler"},
       { 0x032da4cf, "VerifyEmailHandler"},
       { 0x429547e8, "InitPasskeyRegistrationHandler"},
