@@ -1,0 +1,432 @@
+name: Testgram CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'scripts/**'
+      - 'bot/**'
+      - '.claude/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_rhel9:
+        description: 'Deploy to RHEL 9.8 host'
+        required: false
+        default: false
+        type: boolean
+      deploy_rhel10:
+        description: 'Deploy to RHEL 10.2 host'
+        required: false
+        default: false
+        type: boolean
+      target_rhel:
+        description: 'Target RHEL version for image build (rhel9 / rhel10 / both)'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - rhel9
+          - rhel10
+          - none
+
+env:
+  IMAGE_REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}/testgram
+  COMPOSE_PROJECT: mytelegram
+  VERSION_FILE: build/version.txt
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  # ─────────────────────────────────────────────
+  # 1. Run tests
+  # ─────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore source/MyTelegram.slnx
+        working-directory: source
+
+      - name: Build
+        run: dotnet build source/MyTelegram.slnx -c Release --no-restore
+        working-directory: source
+
+      - name: Test
+        run: dotnet test source/MyTelegram.slnx -c Release --no-build --verbosity normal
+        working-directory: source
+
+  # ─────────────────────────────────────────────
+  # 2. Read version
+  # ─────────────────────────────────────────────
+  version:
+    name: Read version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      semver: ${{ steps.v.outputs.semver }}
+      date_tag: ${{ steps.v.outputs.date_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          BASE=$(cat ${{ env.VERSION_FILE }} | tr -d '[:space:]')
+          DATE_TAG=$(date +%-m%d)
+          VERSION="${BASE}.${DATE_TAG}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "semver=${BASE}" >> "$GITHUB_OUTPUT"
+          echo "date_tag=${DATE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "## Version" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Base: \`${BASE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Full: \`${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────
+  # 3. Build default images (Debian/Ubuntu .NET)
+  # ─────────────────────────────────────────────
+  build-default:
+    name: Build (default)
+    needs: [test, version]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: messenger-command-server
+            project: MyTelegram.Messenger.CommandServer
+            dockerfile: build/docker/Dockerfile-mytelegram-messenger-command-server
+            ports: []
+          - name: messenger-query-server
+            project: MyTelegram.Messenger.QueryServer
+            dockerfile: build/docker/Dockerfile-mytelegram-messenger-query-server
+            ports: []
+          - name: gateway-server
+            project: MyTelegram.GatewayServer
+            dockerfile: build/docker/Dockerfile-mytelegram-gateway-server
+            ports: ["20443:20443","20543:20543","20643:20643","20644:20644","30443:30443","30444:30444"]
+          - name: auth-server
+            project: MyTelegram.AuthServer
+            dockerfile: build/docker/Dockerfile-mytelegram-auth-server
+            ports: []
+          - name: sms-sender
+            project: MyTelegram.SmsSender
+            dockerfile: build/docker/Dockerfile-mytelegram-sms-sender
+            ports: []
+          - name: data-seeder
+            project: MyTelegram.DataSeeder
+            dockerfile: build/docker/Dockerfile-mytelegram-data-seeder
+            ports: []
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: source
+          file: ${{ matrix.service.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: BUILD_CONFIGURATION=Release
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/mytelegram-${{ matrix.service.name }}:${{ needs.version.outputs.version }}
+            ${{ env.IMAGE_NAMESPACE }}/mytelegram-${{ matrix.service.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,scope=${{ matrix.service.name }},mode=max
+
+  # ─────────────────────────────────────────────
+  # 4. Build RHEL 9.8 images
+  # ─────────────────────────────────────────────
+  build-rhel9:
+    name: Build (RHEL 9.8)
+    needs: [test, version]
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' &&
+      (inputs.target_rhel == 'both' || inputs.target_rhel == 'rhel9')
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: messenger-command-server
+            dockerfile: build/docker/rhel/Dockerfile-messenger-command-server-rhel9
+          - name: messenger-query-server
+            dockerfile: build/docker/rhel/Dockerfile-messenger-query-server-rhel9
+          - name: gateway-server
+            dockerfile: build/docker/rhel/Dockerfile-gateway-server-rhel9
+          - name: auth-server
+            dockerfile: build/docker/rhel/Dockerfile-auth-server-rhel9
+          - name: sms-sender
+            dockerfile: build/docker/rhel/Dockerfile-sms-sender-rhel9
+          - name: data-seeder
+            dockerfile: build/docker/rhel/Dockerfile-data-seeder-rhel9
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (RHEL 9.8)
+        uses: docker/build-push-action@v6
+        with:
+          context: source
+          file: ${{ matrix.service.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          build-args: BUILD_CONFIGURATION=Release
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/mytelegram-${{ matrix.service.name }}-rhel9:${{ needs.version.outputs.version }}
+            ${{ env.IMAGE_NAMESPACE }}/mytelegram-${{ matrix.service.name }}-rhel9:latest
+          cache-from: type=gha,scope=${{ matrix.service.name }}-rhel9
+          cache-to: type=gha,scope=${{ matrix.service.name }}-rhel9,mode=max
+
+  # ─────────────────────────────────────────────
+  # 5. Build RHEL 10.2 images
+  # ─────────────────────────────────────────────
+  build-rhel10:
+    name: Build (RHEL 10.2)
+    needs: [test, version]
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' &&
+      (inputs.target_rhel == 'both' || inputs.target_rhel == 'rhel10')
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: messenger-command-server
+            dockerfile: build/docker/rhel/Dockerfile-messenger-command-server-rhel10
+          - name: messenger-query-server
+            dockerfile: build/docker/rhel/Dockerfile-messenger-query-server-rhel10
+          - name: gateway-server
+            dockerfile: build/docker/rhel/Dockerfile-gateway-server-rhel10
+          - name: auth-server
+            dockerfile: build/docker/rhel/Dockerfile-auth-server-rhel10
+          - name: sms-sender
+            dockerfile: build/docker/rhel/Dockerfile-sms-sender-rhel10
+          - name: data-seeder
+            dockerfile: build/docker/rhel/Dockerfile-data-seeder-rhel10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (RHEL 10.2)
+        uses: docker/build-push-action@v6
+        with:
+          context: source
+          file: ${{ matrix.service.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          build-args: BUILD_CONFIGURATION=Release
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/mytelegram-${{ matrix.service.name }}-rhel10:${{ needs.version.outputs.version }}
+            ${{ env.IMAGE_NAMESPACE }}/mytelegram-${{ matrix.service.name }}-rhel10:latest
+          cache-from: type=gha,scope=${{ matrix.service.name }}-rhel10
+          cache-to: type=gha,scope=${{ matrix.service.name }}-rhel10,mode=max
+
+  # ─────────────────────────────────────────────
+  # 6. Deploy to RHEL 9.8
+  # ─────────────────────────────────────────────
+  deploy-rhel9:
+    name: Deploy to RHEL 9.8
+    needs: [version, build-rhel9]
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' &&
+      (inputs.deploy_rhel9 == true || (github.ref == 'refs/heads/main' && github.event_name == 'push'))
+    environment:
+      name: rhel9-prod
+      url: ${{ vars.DEPLOY_URL || 'https://telegram.example.com' }}
+    concurrency:
+      group: deploy-rhel9
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.RHEL9_HOST }}
+          username: ${{ secrets.RHEL9_USER }}
+          key: ${{ secrets.RHEL9_SSH_KEY }}
+          port: ${{ secrets.RHEL9_PORT || 22 }}
+          script: |
+            set -euo pipefail
+
+            DEPLOY_DIR="${{ vars.DEPLOY_DIR || '/opt/testgram' }}"
+            COMPOSE_PROJECT="${{ env.COMPOSE_PROJECT }}"
+            VERSION="${{ needs.version.outputs.version }}"
+            REGISTRY="${{ env.IMAGE_REGISTRY }}"
+            NAMESPACE="${{ env.IMAGE_NAMESPACE }}"
+
+            echo "=== Deploying version ${VERSION} to RHEL 9.8 ==="
+            echo "Deploy dir: ${DEPLOY_DIR}"
+
+            # Ensure docker compose v2
+            if ! docker compose version &>/dev/null; then
+              echo "ERROR: docker compose v2 is required"
+              exit 1
+            fi
+
+            cd "${DEPLOY_DIR}"
+
+            # Pull new images
+            for svc in messenger-command-server messenger-query-server gateway-server \
+                       auth-server sms-sender data-seeder; do
+              IMAGE="${REGISTRY}/${NAMESPACE}/mytelegram-${svc}-rhel9:${VERSION}"
+              echo "Pulling ${IMAGE}..."
+              docker pull "${IMAGE}"
+              docker tag "${IMAGE}" "mytelegram-${svc}:latest"
+            done
+
+            # Rolling restart: infrastructure first, then app services
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps redis rabbitmq mongodb minio
+            sleep 10
+
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps messenger-command-server
+            sleep 5
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps messenger-query-server
+            sleep 5
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps auth-server gateway-server sms-sender
+            sleep 5
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps data-seeder
+
+            # Cleanup old images
+            docker image prune -f --filter "label!=keep"
+
+            echo "=== Deploy complete ==="
+            docker compose -p ${COMPOSE_PROJECT} ps
+
+  # ─────────────────────────────────────────────
+  # 7. Deploy to RHEL 10.2
+  # ─────────────────────────────────────────────
+  deploy-rhel10:
+    name: Deploy to RHEL 10.2
+    needs: [version, build-rhel10]
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' &&
+      (inputs.deploy_rhel10 == true || (github.ref == 'refs/heads/main' && github.event_name == 'push'))
+    environment:
+      name: rhel10-prod
+      url: ${{ vars.DEPLOY_URL || 'https://telegram10.example.com' }}
+    concurrency:
+      group: deploy-rhel10
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.RHEL10_HOST }}
+          username: ${{ secrets.RHEL10_USER }}
+          key: ${{ secrets.RHEL10_SSH_KEY }}
+          port: ${{ secrets.RHEL10_PORT || 22 }}
+          script: |
+            set -euo pipefail
+
+            DEPLOY_DIR="${{ vars.DEPLOY_DIR || '/opt/testgram' }}"
+            COMPOSE_PROJECT="${{ env.COMPOSE_PROJECT }}"
+            VERSION="${{ needs.version.outputs.version }}"
+            REGISTRY="${{ env.IMAGE_REGISTRY }}"
+            NAMESPACE="${{ env.IMAGE_NAMESPACE }}"
+
+            echo "=== Deploying version ${VERSION} to RHEL 10.2 ==="
+            echo "Deploy dir: ${DEPLOY_DIR}"
+
+            if ! docker compose version &>/dev/null; then
+              echo "ERROR: docker compose v2 is required"
+              exit 1
+            fi
+
+            cd "${DEPLOY_DIR}"
+
+            for svc in messenger-command-server messenger-query-server gateway-server \
+                       auth-server sms-sender data-seeder; do
+              IMAGE="${REGISTRY}/${NAMESPACE}/mytelegram-${svc}-rhel10:${VERSION}"
+              echo "Pulling ${IMAGE}..."
+              docker pull "${IMAGE}"
+              docker tag "${IMAGE}" "mytelegram-${svc}:latest"
+            done
+
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps redis rabbitmq mongodb minio
+            sleep 10
+
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps messenger-command-server
+            sleep 5
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps messenger-query-server
+            sleep 5
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps auth-server gateway-server sms-sender
+            sleep 5
+            docker compose -p ${COMPOSE_PROJECT} up -d --no-deps data-seeder
+
+            docker image prune -f --filter "label!=keep"
+
+            echo "=== Deploy complete ==="
+            docker compose -p ${COMPOSE_PROJECT} ps
+
+  # ─────────────────────────────────────────────
+  # 8. Notify
+  # ─────────────────────────────────────────────
+  notify:
+    name: Notify
+    needs: [version, deploy-rhel9, deploy-rhel10]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "## CI/CD Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** \`${{ needs.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Trigger:** \`${{ github.event_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Ref:** \`${{ github.ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Job | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-----|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Test | ${{ needs.test.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build (default) | ${{ needs.build-default.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build (RHEL 9.8) | ${{ needs.build-rhel9.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build (RHEL 10.2) | ${{ needs.build-rhel10.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy (RHEL 9.8) | ${{ needs.deploy-rhel9.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy (RHEL 10.2) | ${{ needs.deploy-rhel10.result || 'skipped' }} |" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,41 @@
+# RHEL 10.2 multi-stage build for mytelegram-gateway-server
+FROM registry.access.redhat.com/ubi10/ubi:10.2 AS base
+RUN rpm -Uvh https://packages.microsoft.com/config/rhel/10/packages-microsoft-prod.rpm 2>/dev/null || \
+    rpm -Uvh https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm 2>/dev/null || true
+RUN dnf install -y aspnetcore-runtime-10.0 || dnf install -y aspnetcore-runtime-10 || true
+RUN dnf clean all
+ENV APP_UID=1001
+RUN useradd -u $APP_UID -m -s /bin/bash default
+USER default
+WORKDIR /app
+EXPOSE 20443 20543 20643 20644 30443 30444
+
+FROM registry.access.redhat.com/ubi10/ubi:10.2 AS build
+RUN rpm -Uvh https://packages.microsoft.com/config/rhel/10/packages-microsoft-prod.rpm 2>/dev/null || \
+    rpm -Uvh https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm 2>/dev/null || true
+RUN dnf install -y dotnet-sdk-10.0 || dnf install -y dotnet-sdk-10 || true
+RUN dnf clean all
+ARG BUILD_CONFIGURATION=Release
+ARG TARGETARCH
+WORKDIR /src
+COPY ["Directory.Packages.props", "."]
+COPY ["Directory.Build.props", "."]
+COPY ["nuget.config", "."]
+COPY ["src/MyTelegram.GatewayServer/MyTelegram.GatewayServer.csproj", "src/MyTelegram.GatewayServer/"]
+COPY ["src/MyTelegram.Core/MyTelegram.Core.csproj", "src/MyTelegram.Core/"]
+COPY ["src/MyTelegram.Abstractions/MyTelegram.Abstractions.csproj", "src/MyTelegram.Abstractions/"]
+COPY ["src/MyTelegram.Domain.Shared/MyTelegram.Domain.Shared.csproj", "src/MyTelegram.Domain.Shared/"]
+COPY ["src/MyTelegram.Schema/MyTelegram.Schema.csproj", "src/MyTelegram.Schema/"]
+COPY ["src/MyTelegram.EventBus.RabbitMQ/MyTelegram.EventBus.RabbitMQ.csproj", "src/MyTelegram.EventBus.RabbitMQ/"]
+COPY ["src/MyTelegram.EventBus/MyTelegram.EventBus.csproj", "src/MyTelegram.EventBus/"]
+COPY ["src/MyTelegram.MTProto/MyTelegram.MTProto.csproj", "src/MyTelegram.MTProto/"]
+RUN dotnet restore "./src/MyTelegram.GatewayServer/MyTelegram.GatewayServer.csproj"
+COPY . .
+WORKDIR "/src/src/MyTelegram.GatewayServer"
+RUN dotnet build -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet publish -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+
+FROM base AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+ENTRYPOINT ["dotnet", "MyTelegram.GatewayServer.dll"]

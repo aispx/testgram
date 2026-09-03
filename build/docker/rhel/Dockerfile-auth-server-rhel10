@@ -1,0 +1,43 @@
+# RHEL 10.2 multi-stage build for mytelegram-auth-server
+FROM registry.access.redhat.com/ubi10/ubi:10.2 AS base
+RUN rpm -Uvh https://packages.microsoft.com/config/rhel/10/packages-microsoft-prod.rpm 2>/dev/null || \
+    rpm -Uvh https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm 2>/dev/null || true
+RUN dnf install -y dotnet-runtime-10.0 || dnf install -y dotnet-runtime-10 || true
+RUN dnf clean all
+ENV APP_UID=1001
+RUN useradd -u $APP_UID -m -s /bin/bash default
+USER default
+WORKDIR /app
+
+FROM registry.access.redhat.com/ubi10/ubi:10.2 AS build
+RUN rpm -Uvh https://packages.microsoft.com/config/rhel/10/packages-microsoft-prod.rpm 2>/dev/null || \
+    rpm -Uvh https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm 2>/dev/null || true
+RUN dnf install -y dotnet-sdk-10.0 || dnf install -y dotnet-sdk-10 || true
+RUN dnf clean all
+ARG BUILD_CONFIGURATION=Release
+ARG TARGETARCH
+WORKDIR /src
+COPY ["Directory.Packages.props", "."]
+COPY ["Directory.Build.props", "."]
+COPY ["nuget.config", "."]
+COPY ["src/MyTelegram.AuthServer/MyTelegram.AuthServer.csproj", "src/MyTelegram.AuthServer/"]
+COPY ["src/MyTelegram.Caching.Redis/MyTelegram.Caching.Redis.csproj", "src/MyTelegram.Caching.Redis/"]
+COPY ["src/MyTelegram.Core/MyTelegram.Core.csproj", "src/MyTelegram.Core/"]
+COPY ["src/MyTelegram.Abstractions/MyTelegram.Abstractions.csproj", "src/MyTelegram.Abstractions/"]
+COPY ["src/MyTelegram.Domain.Shared/MyTelegram.Domain.Shared.csproj", "src/MyTelegram.Domain.Shared/"]
+COPY ["src/MyTelegram.Schema/MyTelegram.Schema.csproj", "src/MyTelegram.Schema/"]
+COPY ["src/MyTelegram.EventBus.RabbitMQ/MyTelegram.EventBus.RabbitMQ.csproj", "src/MyTelegram.EventBus.RabbitMQ/"]
+COPY ["src/MyTelegram.EventBus/MyTelegram.EventBus.csproj", "src/MyTelegram.EventBus/"]
+COPY ["src/MyTelegram.Services/MyTelegram.Services.csproj", "src/MyTelegram.Services/"]
+COPY ["src/MyTelegram.EventFlow/MyTelegram.EventFlow.csproj", "src/MyTelegram.EventFlow/"]
+RUN dotnet restore "./src/MyTelegram.AuthServer/MyTelegram.AuthServer.csproj"
+COPY . .
+WORKDIR "/src/src/MyTelegram.AuthServer"
+RUN dotnet build -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet publish -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+
+FROM base AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+COPY --from=build /src/src/MyTelegram.AuthServer/private.pkcs8.key .
+ENTRYPOINT ["dotnet", "MyTelegram.AuthServer.dll"]
