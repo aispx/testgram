@@ -314,6 +314,8 @@ NullReferenceException.
 | `saved_gifs` | Saved GIFs (`messages.getSavedGifs`) | `_id` = `{UserId}:{DocumentId}`, UserId, DocumentId, Order (desc = newest first), Date |
 | `gif_mp4_conversions` | `image/gif` → MPEG4 twins | `_id` = source DocumentId, Mp4DocumentId, Date |
 | `tenor_gifs` | Tenor GIFs imported on send | `_id` = Tenor id, DocumentId, Date |
+| `saved_ringtones` | Saved notification sounds (`account.getSavedRingtones`) | `_id` = `{UserId}:{DocumentId}`, UserId, DocumentId (what the list serves), OriginalDocumentId (0 unless converted), Order (desc = newest first), Date, DurationSeconds/Title/Performer (probed at upload; the file-server's document row has no audio attribute) |
+| `ringtone_mp3_conversions` | non-MP3 sound → MP3 twin | `_id` = source DocumentId, Mp3DocumentId, Date |
 | `web_file_cache` | Bodies proxied for `upload.getWebFile` | `_id` = SHA-256 of the URL, Url, MimeType, Bytes, CachedAt (TTL `App__WebFiles__CacheSeconds`) |
 | `web_file_registrations` | URLs already registered with the file-server | `_id` = SHA-256 of the URL, Url, MimeType, FileId, Date |
 | `emoji_groups` | Emoji/sticker/GIF search categories | For (`default`/`stickers`/`status`/`profile_photo`), Kind (`default`/`greeting`/`premium`), Title, IconEmojiId, Emoticons, Order |
@@ -541,6 +543,128 @@ drops non-`isGifv()` documents out of the list it receives. Everything lives in 
   The messenger keeps its own `GetWebFileHandler` for a deployment without that file-server.
 
 See https://corefork.telegram.org/api/gifs
+
+---
+
+## Notification sounds (ringtones)
+
+Three methods and one setting, all in `Services/Ringtones/`: `account.uploadRingtone` /
+`saveRingtone` / `getSavedRingtones` keep the list (`saved_ringtones`), and
+`account.updateNotifySettings` is what actually assigns a sound to a chat.
+
+* **The upload is also the save.** Neither Android (`RingtoneUploader` →
+  `RingtoneDataStore.onRingtoneUploaded`), nor tdesktop (`Api::Ringtones::ready`, which inserts the
+  document into its own `_list.documents`), nor iOS (`_internal_uploadRingtone`, `[item] + sounds`) calls
+  `saveRingtone` after `uploadRingtone` — all three assume the server already keeps it, and Android
+  overwrites its cache with the server's list on the next refresh, so a sound the server did not save
+  silently disappears. **Measured against real Telegram**: after `uploadRingtone` and with no
+  `saveRingtone` at all, the sound is already in `getSavedRingtones` and it is first. tdlib *does* call
+  `saveRingtone` right after uploading, which is why that method has to be idempotent and must not reorder
+  an entry it already holds (prod answers `account.savedRingtone` to that call).
+* **The hash is the server's to define, unlike the saved-GIF one.** Every client stores the value from
+  the response and quotes it back unchanged (Android in preferences, tdesktop `_list.hash`, iOS in the
+  cached list, tdlib in its log event); none computes one. So it only has to survive a restart and never
+  be zero for a non-empty list — `SavedRingtoneHashHelper` over `VectorHashHelper.ComputeNonZeroHash`.
+  It used to echo `obj.Hash` back, so `savedRingtonesNotModified` could never fire and the list was
+  re-sent on every poll, which looks identical to healthy in the log.
+* **`documentAttributeAudio` needs a real duration, and the only way to get one is to probe the body.**
+  `IRingtoneAudioProbe` reads it with ffprobe; `IVideoTranscoder.ProbeAsync` cannot be used because it
+  selects the first *video* stream and returns null without a width and height. The staged parts in
+  `file_parts` are tried first (`UploadedFileReader`) so the attribute can travel to the file server with
+  the upload, but **on this deployment they are never there** — `upload.saveFilePart` is served by the
+  file-server, which keeps its own copy — so in practice the duration is read back from the object store
+  *after* `SaveMedia` (`IStoredFileStorage.DownloadToFileAsync`, which decrypts a client upload) and kept in
+  `saved_ringtones`. It is merged into the TL document on the way out by `RingtoneAudioAttribute`: the
+  document row belongs to the file-server's aggregate, and a field written into it by hand would be undone
+  by that aggregate's next event. With no ffprobe the response carries **no** audio attribute and
+  `ringtone_duration_max` is not enforced — deliberate, a made-up duration is worse.
+* **The duration is rounded to the nearest second, not up.** An MP3 encoder pads the stream, so a 3.0 s
+  source probes as 3.02 s; `Math.Ceiling` reported 4 and would have refused a genuine five-second tone as
+  six, because the client compares the number the server sent against the limit the server advertised.
+  Real Telegram reports `duration = 3` for that same file, and its uploaded tone carries exactly two
+  attributes — `documentAttributeAudio(duration, voice = false, title = null, performer = null,
+  waveform = null)` and `documentAttributeFilename` — with `dc_id = 2`, a 21-byte `file_reference` and no
+  thumbnails (measured). Whether it copies ID3 tags into `title`/`performer` when the file has any is
+  untested; this server fills them from ffprobe when present, which no client is harmed by.
+* **`RINGTONE_DURATION_TOO_LONG` and `RINGTONE_SIZE_TOO_BIG` are undocumented but mandatory.** The
+  method's error table lists only `RINGTONE_MIME_INVALID`, yet Android matches both strings literally
+  (`RingtoneUploader.error()`) and formats its own message with the limit from appConfig. They live in
+  `RingtoneExtraRpcErrors`, and the numbers come from the same appConfig fields the client was told
+  (`IRingtoneLimits`) — refusing at a different size than the advertised one produces a message that
+  contradicts itself.
+* **The document goes through `IMediaHelper.SaveMediaAsync`**, the same gRPC route `sendMedia` and
+  `account.uploadWallPaper` take. Writing the `eventflow-documentreadmodel` row by hand, as this used to,
+  leaves the uploaded body where no `upload.getFile` can reach it: the sound existed as metadata and
+  played for nobody, with a `Size` of `parts × 512 KB` and a hardcoded 5-second duration.
+* **MP3 or converted, and the converted document is a different one.** "If the notification sound is
+  already in MP3 format, `account.savedRingtone` will be returned. Otherwise, it will be automatically
+  converted and a `account.savedRingtoneConverted` will be returned, containing a new document object
+  that should be used to refer to the ringtone from now on." `RingtoneConverter` does that with ffmpeg
+  (`-vn -c:a libmp3lame`), publishes the twin the way `GifDocumentPublisher` publishes a server-made GIF
+  (same sanctioned exception: the owning aggregate is in the closed file server), and records the pair in
+  `ringtone_mp3_conversions` so a second save resolves to the same twin and an unsave quoting the
+  original still finds the row. **The twin replaces the original in the list** — the upload already saved
+  it, so keeping both would show one sound twice, once as the OGG nothing should refer to any more. With no
+  ffmpeg the original is saved and `savedRingtone` returned — worse than MP3 (iOS is picky about
+  notification formats) but not a dead entry.
+* **The conversion needs the MinIO credentials on whichever server runs it.** `query-server` had none, so
+  publishing the twin failed with `403 InvalidAccessKeyId` and every sound was silently saved unconverted;
+  `Minio__Endpoint`/`AccessKey`/`SecretKey`/`BucketName` are now on both messenger services in
+  `docker-compose.yml`.
+* **`saveRingtone` validates the access hash, not the `file_reference`.** The method documents no
+  `FILE_REFERENCE_*` error and Android and iOS both quote one out of their caches, so refusing a stale
+  one would break saving a sound whose only fault is an old cache. It used to validate neither, and
+  accepted any document at all — a sticker or a video became a "ringtone".
+* **`peerNotifySettings` reports one sound per platform, `inputPeerNotifySettings` carries one.** The
+  server does the split, from the session's `DeviceType`: Android reads `android_sound`, and TelegramCore
+  takes `ios_sound` under `#if os(iOS)` and `other_sound` otherwise — so Telegram for macOS belongs with
+  the desktop clients. An unknown platform fills all three rather than losing the choice.
+  `NotificationSoundConverter` owns both directions and the split.
+* **An absent field means "leave it alone".** `PeerNotifySettingsAggregate` merges into the current state
+  instead of replacing it; every field of `inputPeerNotifySettings` is behind a flag and clients send
+  only what they change, so replacing meant muting a chat cleared its sound and choosing a sound unmuted
+  the chat.
+* **A `notificationSoundRingtone` id is stored without checking the saved list.** Android sends the sound
+  in the same call as `mute_until`, so answering `SETTINGS_INVALID` for a list that went stale on another
+  device would also lose the mute; tdlib does not validate either, and a client whose id no longer
+  resolves falls back to its own default.
+* **The three category forms are part of this surface.** `inputNotifyUsers` / `inputNotifyChats` /
+  `inputNotifyBroadcasts` are stored under their peer type with no peer id, exactly how
+  `account.getNotifySettings` reads them back — that is where Android's "Notifications and Sounds" screen
+  sets a tone for all private chats, groups or channels at once. They used to throw
+  `NotImplementedException`, which left the request unanswered. `inputNotifyForumTopic` answers
+  `SETTINGS_INVALID`: per-topic settings need an aggregate id that can hold the topic, and storing it as
+  the channel's settings would mute the whole channel.
+* **`updateSavedRingtones` and `updateNotifySettings` are both pushed**, excluding `PermAuthKeyId` (with
+  PFS the request arrives on a temporary key). Neither existed: a sound added on one device never
+  appeared on another, and Android reads notify settings once and then waits for that update forever.
+* **`account.getNotifySettings` has to resolve the peer exactly like the write path.** It had its own
+  switch reading `inputPeerSelf` as `PeerType.User` while `IInputPeer.ToPeer` normalises any peer whose id
+  is your own to `PeerType.Self` (which is also what the Saved Messages dialog id is built from) — two
+  different aggregate ids, so a sound or a mute set for Saved Messages was stored and never read back. Both
+  handlers now call `IPeerHelper.GetPeer`.
+* **ffmpeg is now installed in both messenger images.** Which of the two queues serves
+  `account.uploadRingtone` is decided by the closed session-server, so `query-server`'s Dockerfile
+  carries the same conditional install block as `command-server`'s. It costs ~580 MB of image
+  (355 MB → 933 MB).
+
+Probing it needs a throwaway Telethon script (temp dir, not `scripts/`); copy the connection and RSA
+registration block out of `scripts/verify_stickers.py`. All of the following was measured once against this
+deployment: `uploadRingtone` of a real MP3 comes back with a non-empty `file_reference`, the real `size`, a
+`documentAttributeAudio` whose duration matches the file, and a working `upload.getFile`; the sound is in
+`getSavedRingtones` **without** any `saveRingtone` call; re-quoting the returned hash answers
+`savedRingtonesNotModified`, and both the hash and the order are stable across calls; re-saving neither
+duplicates nor reorders; an OGG through `saveRingtone` answers `savedRingtoneConverted` with a **different**
+id that downloads as `audio/mpeg` and **replaces** the original in the list, and `unsave` through the
+original id removes it; a body over `ringtone_size_max` answers `RINGTONE_SIZE_TOO_BIG`, one longer than
+`ringtone_duration_max` `RINGTONE_DURATION_TOO_LONG`, a `video/mp4` mime `RINGTONE_MIME_INVALID` and a wrong
+access hash an error rather than a save; and `updateNotifySettings` with `notificationSoundRingtone` comes back from `getNotifySettings` **and**
+`getDialogs`, in the field for the session's platform, and survives a later mute-only call; and a **second
+session** of the same account receives `updateSavedRingtones` (on the upload and on the unsave) and
+`updateNotifySettings`, while the writing session is excluded from both. Telethon humanizes error strings,
+so match on `error.message`.
+
+See https://corefork.telegram.org/api/ringtones
 
 ---
 
@@ -1433,6 +1557,11 @@ See https://corefork.telegram.org/api/pfs
 | The wallpaper picker only offers gradients | every image and pattern row names a `DocumentId` with no document: `db.wallpapers.countDocuments({DocumentId:{$ne:NumberLong(0)}})` against `eventflow-documentreadmodel`. `WallPaperCatalog` now logs `leaving it out of the response` for each one. Fix by seeding with `scripts/seed_wallpapers.py`, not `download_wallpapers_themes.py` — see Wallpapers above |
 | Removing a wallpaper from the list, or a whole reset, comes back on the next refresh | `user_wallpapers` for that user: an unsaved **preinstalled** wallpaper needs a `Removed: true` tombstone, because the list is rebuilt from the catalogue every call |
 | `account.getWallPapers` is called on every screen open and never answers `wallPapersNotModified` | the hash: Android computes its own with `calcHash` over the ids **in the order served**, so it must be `WallPaperListHashHelper`, and the served order must be stable. Nothing logs this |
+| An uploaded notification sound disappears after the tone list refreshes | `account.uploadRingtone` did not add it to `saved_ringtones`. Android, tdesktop and iOS never call `saveRingtone` after uploading and let the server's list overwrite their cache — see Notification sounds above. The upload itself logs a success |
+| A notification sound cannot be selected for a chat, or reverts to the default | `account.updateNotifySettings` must store `settings.sound` (it passed `string.Empty`) **and** `peerNotifySettings` must report it in the field for the caller's platform: `android_sound` for Android, `ios_sound` for iOS, `other_sound` for desktop/macOS/web/tdlib. A hardcoded `notificationSoundDefault` in `DialogMapper` looks exactly like the user's choice not sticking |
+| Muting a chat clears its notification sound, or choosing a sound unmutes it | `PeerNotifySettingsAggregate` must merge into the current settings: every `inputPeerNotifySettings` field is optional and clients send only what they change |
+| A sound set for Saved Messages is stored and then read back as the default | `account.getNotifySettings` must resolve the peer through `IPeerHelper` like the write path does: `inputPeerSelf` is `PeerType.Self`, and reading it as `PeerType.User` addresses a different aggregate id |
+| An OGG notification sound is never converted, `saveRingtone` always answers `savedRingtone` | the server running it has no MinIO credentials — the log carries `could not be stored` + `403 InvalidAccessKeyId` from `StoredFileStorage`. Both messenger services need `Minio__*`, see Notification sounds above |
 | Setting a chat or channel wallpaper clears it instead | `messages.setChatWallPaper` resolution: `id` without `wallpaper` means "apply the one in that service message", and `inputWallPaperNoFile{id = 0}` with an emoticon is a channel wallpaper — see Wallpapers above. Both look like a successful call in the log |
 | A method never answers at all and the client hangs | `logs \| grep "Unsupported request"` — a constructor with no schema class makes `HandlerHelper.TryGetHandler` throw inside the fire-and-forget `Task.Run` of `DefaultDataProcessor`, so nothing is sent back. Serve the second constructor through the `LayerN` triple, as `account.uploadWallPaper#e39a8f03` is |
 | Telethon cannot talk to the server at all | it ships Telegram's public keys and cannot match the fingerprint in our `res_pq`, so the handshake dies at step 1 with `auth_key generation failed` while auth-server logs only `[Step1] ReqPqMultiHandler` retries. Register the server key: `docker cp <auth-server>:/app/private.pkcs8.key`, `openssl rsa -pubout \| openssl rsa -pubin -RSAPublicKey_out`, then `telethon.crypto.rsa.add_key(pem, old=False)` — see `scripts/verify_stickers.py` |

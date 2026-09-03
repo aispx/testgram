@@ -16,6 +16,7 @@ public class OtherDomainEventHandler(
     IUpdatesConverterService updatesConverterService,
     IUserConverterService userConverterService,
     ILayeredService<IAuthorizationConverter> layeredAuthorizationService,
+    ILayeredService<IPeerNotifySettingsConverter> layeredPeerNotifySettingsService,
     ICacheManager<GlobalPrivacySettingsCacheItem> cacheManager,
     ILogger<OtherDomainEventHandler> logger)
     : DomainEventHandlerBase(objectMessageSender,
@@ -161,11 +162,56 @@ public class OtherDomainEventHandler(
     //    );
     //}
 
-    public Task HandleAsync(IDomainEvent<PeerNotifySettingsAggregate, PeerNotifySettingsId, PeerNotifySettingsUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    public async Task HandleAsync(IDomainEvent<PeerNotifySettingsAggregate, PeerNotifySettingsId, PeerNotifySettingsUpdatedEvent> domainEvent, CancellationToken cancellationToken)
     {
         var r = new TBoolTrue();
 
-        return SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, r);
+        await SendRpcMessageToClientAsync(domainEvent.AggregateEvent.RequestInfo, r);
+
+        // The other sessions learn about a settings change only from this update: Telegram Android reads the
+        // notify settings once and then keeps them until an updateNotifySettings arrives, so without it a
+        // notification sound (or a mute) picked on one device never reaches the rest.
+        // See https://corefork.telegram.org/api/ringtones#setting-notification-sounds
+        var notifySettings = layeredPeerNotifySettingsService.GetConverter(Layers.LayerLatest)
+            .ToPeerNotifySettings(domainEvent.AggregateEvent.PeerNotifySettings);
+
+        var updates = new TUpdates
+        {
+            Updates = new TVector<IUpdate>(new TUpdateNotifySettings
+            {
+                Peer = ToNotifyPeer(domainEvent.AggregateEvent.PeerType, domainEvent.AggregateEvent.PeerId),
+                NotifySettings = notifySettings
+            }),
+            Users = new TVector<IUser>(),
+            Chats = new TVector<IChat>(),
+            Date = DateTime.UtcNow.ToTimestamp()
+        };
+
+        // Excluded by permanent auth key id, not the temporary one the request arrived on: with PFS those
+        // differ, and the writing session already has the RPC result.
+        await _objectMessageSender.PushMessageToPeerAsync(
+            new Peer(PeerType.User, domainEvent.AggregateEvent.OwnerPeerId),
+            updates,
+            excludeAuthKeyId: domainEvent.AggregateEvent.RequestInfo.PermAuthKeyId);
+    }
+
+    /// <summary>
+    /// The settings row addresses either one peer or a whole category, which is stored as that category's
+    /// peer type with no peer id — the same convention <c>account.getNotifySettings</c> reads.
+    /// </summary>
+    private static INotifyPeer ToNotifyPeer(PeerType peerType, long peerId)
+    {
+        if (peerId != 0)
+        {
+            return new TNotifyPeer { Peer = new Peer(peerType, peerId).ToPeer()! };
+        }
+
+        return peerType switch
+        {
+            PeerType.Chat => new TNotifyChats(),
+            PeerType.Channel => new TNotifyBroadcasts(),
+            _ => new TNotifyUsers()
+        };
     }
 
     public Task HandleAsync(IDomainEvent<UserAggregate, UserId, UserGlobalPrivacySettingsChangedEvent> domainEvent, CancellationToken cancellationToken)

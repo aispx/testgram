@@ -1,108 +1,76 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Documents;
+using MyTelegram.Messenger.Services.Ringtones;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
+
 /// <summary>
 /// Fetch saved notification sounds
 /// <para><c>See <a href="https://corefork.telegram.org/method/account.getSavedRingtones"/> </c></para>
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The hash is the <b>server's</b> to define: every client stores the value from the response and
+/// quotes it back unchanged (Android keeps it in preferences, tdesktop in <c>_list.hash</c>, iOS in the
+/// cached sound list, tdlib in its log event) and none of them computes one. This used to answer
+/// <c>Hash = obj.Hash</c> — an echo of whatever the client sent — so <c>savedRingtonesNotModified</c>
+/// could never be reached and the whole list was re-sent on every poll, which nothing in the logs
+/// distinguishes from healthy.</para>
+///
+/// <para>The order is a contract too: clients render the vector as received, and a fresh sound belongs at
+/// the front. Loading the documents with one <c>$in</c> and iterating <i>that</i> result, as this used to,
+/// leaves the order up to Mongo — so the list changed between two calls with the same content.</para>
 /// </remarks>
-internal sealed class GetSavedRingtonesHandler(IMongoDatabase database, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetSavedRingtones, MyTelegram.Schema.Account.ISavedRingtones>
+internal sealed class GetSavedRingtonesHandler(
+    ISavedRingtoneStore savedRingtoneStore,
+    IRingtoneLimits limits,
+    IDocumentReader documentReader)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetSavedRingtones,
+        MyTelegram.Schema.Account.ISavedRingtones>
 {
-    protected override async Task<MyTelegram.Schema.Account.ISavedRingtones> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetSavedRingtones obj)
+    protected override async Task<MyTelegram.Schema.Account.ISavedRingtones> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Account.RequestGetSavedRingtones obj)
     {
-        var collection = database.GetCollection<BsonDocument>("saved_ringtones");
-        var filter = Builders<BsonDocument>.Filter.Eq("UserId", input.UserId);
-        var sort = Builders<BsonDocument>.Sort.Descending("SavedAt");
-        
-        var savedDocs = await collection.Find(filter).Sort(sort).ToListAsync();
-
-        if (savedDocs.Count == 0)
-        {
-            return new MyTelegram.Schema.Account.TSavedRingtones
-            {
-                Hash = obj.Hash,
-                Ringtones = new TVector<MyTelegram.Schema.IDocument>()
-            };
-        }
-
-        var documentIds = savedDocs.Select(d => d["DocumentId"].AsInt64).ToList();
-
-        // Load documents
-        var docCollection = database.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var docFilter = Builders<BsonDocument>.Filter.In("DocumentId", documentIds);
-        var docDocs = await docCollection.Find(docFilter).ToListAsync();
+        var savedRows = await savedRingtoneStore.GetOrderedAsync(input.UserId, limits.MaxSavedCount);
+        var documents = await documentReader.GetAsync(savedRows.ConvertAll(p => p.DocumentId));
 
         var ringtones = new TVector<MyTelegram.Schema.IDocument>();
-        
-        foreach (var docDoc in docDocs)
+        var orderedIds = new List<long>(savedRows.Count);
+        var staleIds = new List<long>();
+
+        foreach (var row in savedRows)
         {
-            ringtones.Add(ConvertToDocument(docDoc));
+            // A sound whose document is gone cannot be served, and leaving the row behind would keep it
+            // in the count forever while never appearing in the list.
+            if (!documents.TryGetValue(row.DocumentId, out var document))
+            {
+                staleIds.Add(row.DocumentId);
+                continue;
+            }
+
+            // The duration was probed when the sound was uploaded; the file server's row does not carry it,
+            // and a tone with no documentAttributeAudio shows no length in any client.
+            ringtones.Add(RingtoneAudioAttribute.Merge(documentReader.Map(document), row));
+            orderedIds.Add(row.DocumentId);
+        }
+
+        if (staleIds.Count > 0)
+        {
+            await savedRingtoneStore.RemoveManyAsync(input.UserId, staleIds);
+        }
+
+        var hash = SavedRingtoneHashHelper.ComputeHash(orderedIds);
+
+        // A zero hash is what a client sends when it has nothing cached, so it can never be up to date.
+        if (obj.Hash != 0 && obj.Hash == hash)
+        {
+            return new MyTelegram.Schema.Account.TSavedRingtonesNotModified();
         }
 
         return new MyTelegram.Schema.Account.TSavedRingtones
         {
-            Hash = obj.Hash,
+            Hash = hash,
             Ringtones = ringtones
-        };
-    }
-
-    private MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
-    {
-        var attributes = new TVector<MyTelegram.Schema.IDocumentAttribute>();
-
-        if (doc.Contains("Attributes2") && !doc["Attributes2"].IsBsonNull)
-        {
-            var attrs2 = doc["Attributes2"].AsBsonArray;
-            foreach (var attrBson in attrs2)
-            {
-                if (attrBson.IsBsonDocument)
-                {
-                    var attrDoc = attrBson.AsBsonDocument;
-                    var typeName = attrDoc["_t"].AsString;
-
-                    if (typeName.EndsWith("TDocumentAttributeAudio"))
-                    {
-                        attributes.Add(new MyTelegram.Schema.TDocumentAttributeAudio
-                        {
-                            Voice = attrDoc.Contains("Voice") && attrDoc["Voice"].AsBoolean,
-                            Duration = attrDoc.Contains("Duration") ? attrDoc["Duration"].AsInt32 : 0,
-                            Title = attrDoc.Contains("Title") ? attrDoc["Title"].AsString : null,
-                            Performer = attrDoc.Contains("Performer") ? attrDoc["Performer"].AsString : null,
-                            Waveform = attrDoc.Contains("Waveform") && !attrDoc["Waveform"].IsBsonNull
-                                ? attrDoc["Waveform"].AsByteArray : null
-                        });
-                    }
-                    else if (typeName.EndsWith("TDocumentAttributeFilename"))
-                    {
-                        attributes.Add(new MyTelegram.Schema.TDocumentAttributeFilename
-                        {
-                            FileName = attrDoc.Contains("FileName") ? attrDoc["FileName"].AsString : ""
-                        });
-                    }
-                }
-            }
-        }
-
-        var documentId = doc["DocumentId"].AsInt64;
-
-        return new MyTelegram.Schema.TDocument
-        {
-            Id = documentId,
-            AccessHash = doc["AccessHash"].AsInt64,
-            // A ringtone was stored with an empty reference by account.uploadRingtone, so this list used
-            // to hand out references no client could refresh.
-            // See https://corefork.telegram.org/api/file-references
-            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
-            Date = doc["Date"].AsInt32,
-            MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "audio/mpeg",
-            Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,
-            Thumbs = new TVector<MyTelegram.Schema.IPhotoSize>(),
-            VideoThumbs = new TVector<MyTelegram.Schema.IVideoSize>(),
-            DcId = doc.Contains("DcId") ? doc["DcId"].AsInt32 : 2,
-            Attributes = attributes
         };
     }
 }

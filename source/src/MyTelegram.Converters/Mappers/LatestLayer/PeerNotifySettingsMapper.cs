@@ -21,14 +21,18 @@ internal sealed class PeerNotifySettingsMapper
         destination.ShowPreviews = source.ShowPreviews;
         destination.Silent = source.Silent;
         destination.MuteUntil = source.MuteUntil;
-        //destination.IosSound = source.IosSound;
-        //destination.AndroidSound = source.AndroidSound;
-        //destination.OtherSound = source.OtherSound;
+
+        // Every client reads exactly one of these three and falls back to its own default when the field is
+        // absent, so leaving them unset (as this did) makes a chosen notification sound invisible even after
+        // it was stored. See https://corefork.telegram.org/api/ringtones#setting-notification-sounds
+        destination.IosSound = NotificationSoundConverter.ToTl(source.IosSound);
+        destination.AndroidSound = NotificationSoundConverter.ToTl(source.AndroidSound);
+        destination.OtherSound = NotificationSoundConverter.ToTl(source.OtherSound);
+        destination.StoriesIosSound = NotificationSoundConverter.ToTl(source.StoriesIosSound);
+        destination.StoriesAndroidSound = NotificationSoundConverter.ToTl(source.StoriesAndroidSound);
+        destination.StoriesOtherSound = NotificationSoundConverter.ToTl(source.StoriesOtherSound);
         //destination.StoriesMuted = source.StoriesMuted;
         //destination.StoriesHideSender = source.StoriesHideSender;
-        //destination.StoriesIosSound = source.StoriesIosSound;
-        //destination.StoriesAndroidSound = source.StoriesAndroidSound;
-        //destination.StoriesOtherSound = source.StoriesOtherSound;
 
         return destination;
     }

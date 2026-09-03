@@ -1,7 +1,8 @@
-using MongoDB.Bson;
-using MongoDB.Driver;
+using MyTelegram.Messenger.Services.Documents;
+using MyTelegram.Messenger.Services.Ringtones;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
+
 /// <summary>
 /// Save or remove saved notification sound.
 /// Possible errors
@@ -11,142 +12,149 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>"If the notification sound is already in MP3 format, <c>account.savedRingtone</c> will be
+/// returned. Otherwise, it will be automatically converted and a <c>account.savedRingtoneConverted</c>
+/// will be returned, containing a new document object that should be used to refer to the ringtone from
+/// now on (ie when deleting it using the unsave parameter, or when downloading it)." This used to answer
+/// <c>savedRingtoneConverted</c> with <b>the same</b> document it was given and a comment saying the
+/// conversion would be needed in a real implementation.</para>
+///
+/// <para>The <c>file_reference</c> the client sends is deliberately <b>not</b> validated: this method
+/// documents no <c>FILE_REFERENCE_*</c> error, and Android and iOS both quote one straight out of their
+/// caches (<c>MediaDataController.saveToRingtones</c>, <c>_internal_saveRingtone</c>), so refusing a stale
+/// one would break saving a sound whose only fault is an old cache. The access hash <i>is</i> validated,
+/// because upstream access-hash checking does not cover this request type.</para>
 /// </remarks>
-internal sealed class SaveRingtoneHandler(IMongoDatabase database, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSaveRingtone, MyTelegram.Schema.Account.ISavedRingtone>
+internal sealed class SaveRingtoneHandler(
+    ISavedRingtoneStore savedRingtoneStore,
+    IRingtoneLimits limits,
+    IRingtoneConverter ringtoneConverter,
+    IRingtoneMp3ConversionStore conversionStore,
+    ISavedRingtoneUpdateNotifier updateNotifier,
+    IDocumentReader documentReader,
+    IAccessHashHelper2 accessHashHelper,
+    ILogger<SaveRingtoneHandler> logger)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestSaveRingtone,
+        MyTelegram.Schema.Account.ISavedRingtone>
 {
-    protected override async Task<MyTelegram.Schema.Account.ISavedRingtone> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestSaveRingtone obj)
+    protected override async Task<MyTelegram.Schema.Account.ISavedRingtone> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Account.RequestSaveRingtone obj)
     {
-        // Extract document ID
-        long documentId = 0;
-        if (obj.Id is MyTelegram.Schema.TInputDocument inputDoc)
-        {
-            documentId = inputDoc.Id;
-        }
-        else
+        if (obj.Id is not MyTelegram.Schema.TInputDocument inputDocument)
         {
             RpcErrors.RpcErrors400.RingtoneInvalid.ThrowRpcError();
+
+            return null!;
         }
 
-        // Get document from database
-        var docCollection = database.GetCollection<BsonDocument>("eventflow-documentreadmodel");
-        var docFilter = Builders<BsonDocument>.Filter.Eq("DocumentId", documentId);
-        var docDoc = await docCollection.Find(docFilter).FirstOrDefaultAsync();
-
-        if (docDoc == null)
-        {
-            RpcErrors.RpcErrors400.RingtoneInvalid.ThrowRpcError();
-        }
-
-        var collection = database.GetCollection<BsonDocument>("saved_ringtones");
+        await accessHashHelper.CheckAccessHashAsync(input, inputDocument.Id, inputDocument.AccessHash,
+            AccessHashType.Document);
 
         if (obj.Unsave)
         {
-            // Remove from saved list
-            await collection.DeleteOneAsync(
-                Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-                    Builders<BsonDocument>.Filter.Eq("DocumentId", documentId)
-                )
-            );
-
-            // TSavedRingtone has no fields according to TL schema
-            return new MyTelegram.Schema.Account.TSavedRingtone();
+            return await UnsaveAsync(input, inputDocument.Id);
         }
-        else
-        {
-            // Check if already saved
-            var existsFilter = Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("UserId", input.UserId),
-                Builders<BsonDocument>.Filter.Eq("DocumentId", documentId)
-            );
-            var exists = await collection.Find(existsFilter).AnyAsync();
 
-            if (!exists)
-            {
-                // Add to saved list
-                var doc = new BsonDocument
-                {
-                    ["UserId"] = input.UserId,
-                    ["DocumentId"] = documentId,
-                    ["SavedAt"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                };
-
-                await collection.InsertOneAsync(doc);
-            }
-
-            // Check if document is MP3
-            var mimeType = docDoc.Contains("MimeType") ? docDoc["MimeType"].AsString : "";
-
-            if (mimeType == "audio/mpeg" || mimeType == "audio/mp3")
-            {
-                // Already MP3, return empty (no conversion needed)
-                return new MyTelegram.Schema.Account.TSavedRingtone();
-            }
-            else
-            {
-                // Would need conversion in real implementation
-                // Return converted with document
-                return new MyTelegram.Schema.Account.TSavedRingtoneConverted
-                {
-                    Document = ConvertToDocument(docDoc)
-                };
-            }
-        }
+        return await SaveAsync(input, inputDocument.Id);
     }
 
-    private MyTelegram.Schema.IDocument ConvertToDocument(BsonDocument doc)
+    /// <summary>
+    /// Removes the sound. The id may be either the one the list holds or the one the client saved before
+    /// the server converted it, so both are tried — a client that still refers to the original would
+    /// otherwise be unable to delete the entry at all. Removing something that is not saved is not an
+    /// error: tdlib and tdesktop treat a failure as "resync everything".
+    /// </summary>
+    private async Task<MyTelegram.Schema.Account.ISavedRingtone> UnsaveAsync(IRequestInput input, long documentId)
     {
-        var attributes = new TVector<MyTelegram.Schema.IDocumentAttribute>();
+        var removed = await savedRingtoneStore.RemoveAsync(input.UserId, documentId);
 
-        // Add audio attributes if available
-        if (doc.Contains("Attributes2") && !doc["Attributes2"].IsBsonNull)
+        var row = await savedRingtoneStore.FindAsync(input.UserId, documentId);
+        if (row != null)
         {
-            var attrs2 = doc["Attributes2"].AsBsonArray;
-            foreach (var attrBson in attrs2)
-            {
-                if (attrBson.IsBsonDocument)
-                {
-                    var attrDoc = attrBson.AsBsonDocument;
-                    var typeName = attrDoc["_t"].AsString;
-
-                    if (typeName.EndsWith("TDocumentAttributeAudio"))
-                    {
-                        attributes.Add(new MyTelegram.Schema.TDocumentAttributeAudio
-                        {
-                            Voice = attrDoc.Contains("Voice") && attrDoc["Voice"].AsBoolean,
-                            Duration = attrDoc.Contains("Duration") ? attrDoc["Duration"].AsInt32 : 0,
-                            Title = attrDoc.Contains("Title") ? attrDoc["Title"].AsString : null,
-                            Performer = attrDoc.Contains("Performer") ? attrDoc["Performer"].AsString : null,
-                            Waveform = attrDoc.Contains("Waveform") && !attrDoc["Waveform"].IsBsonNull
-                                ? attrDoc["Waveform"].AsByteArray : null
-                        });
-                    }
-                    else if (typeName.EndsWith("TDocumentAttributeFilename"))
-                    {
-                        attributes.Add(new MyTelegram.Schema.TDocumentAttributeFilename
-                        {
-                            FileName = attrDoc.Contains("FileName") ? attrDoc["FileName"].AsString : ""
-                        });
-                    }
-                }
-            }
+            removed |= await savedRingtoneStore.RemoveAsync(input.UserId, row.DocumentId);
         }
 
-        var documentId = doc["DocumentId"].AsInt64;
-
-        return new MyTelegram.Schema.TDocument
+        var convertedId = await conversionStore.GetMp3DocumentIdAsync(documentId);
+        if (convertedId.HasValue)
         {
-            Id = documentId,
-            AccessHash = doc["AccessHash"].AsInt64,
-            // See https://corefork.telegram.org/api/file-references
-            FileReference = fileReferenceHelper.Create(AccessHashType.Document, documentId),
-            Date = doc["Date"].AsInt32,
-            MimeType = doc.Contains("MimeType") ? doc["MimeType"].AsString : "audio/mpeg",
-            Size = doc.Contains("Size") ? doc["Size"].AsInt64 : 0,
-            Thumbs = new TVector<MyTelegram.Schema.IPhotoSize>(),
-            VideoThumbs = new TVector<MyTelegram.Schema.IVideoSize>(),
-            DcId = doc.Contains("DcId") ? doc["DcId"].AsInt32 : 2,
-            Attributes = attributes
-        };
+            removed |= await savedRingtoneStore.RemoveAsync(input.UserId, convertedId.Value);
+        }
+
+        if (removed)
+        {
+            await updateNotifier.NotifyAsync(input.UserId, input.PermAuthKeyId);
+        }
+
+        return new MyTelegram.Schema.Account.TSavedRingtone();
+    }
+
+    private async Task<MyTelegram.Schema.Account.ISavedRingtone> SaveAsync(IRequestInput input, long documentId)
+    {
+        var document = await documentReader.GetAsync(documentId);
+        if (document == null)
+        {
+            RpcErrors.RpcErrors400.RingtoneInvalid.ThrowRpcError();
+
+            return null!;
+        }
+
+        // Anything may be addressed by an InputDocument — a sticker, a video, a photo's document. Only a
+        // sound may become a notification sound, and the audio attribute is what every client reads the
+        // duration of the tone from.
+        if (!RingtoneMimeTypes.IsSaveable(document.MimeType) && !HasAudioAttribute(document))
+        {
+            logger.LogWarning("Refused document {DocumentId} ({MimeType}) as a notification sound",
+                documentId, document.MimeType);
+            RpcErrors.RpcErrors400.RingtoneInvalid.ThrowRpcError();
+        }
+
+        if (document.Size > limits.MaxSizeBytes || DurationOf(document) > limits.MaxDurationSeconds)
+        {
+            // Android checks both of these itself before sending (saveToRingtones), so this is the backstop
+            // for the clients that do not; RINGTONE_INVALID is the only error the method documents.
+            RpcErrors.RpcErrors400.RingtoneInvalid.ThrowRpcError();
+        }
+
+        var converted = await ringtoneConverter.EnsureMp3Async(input.UserId, document);
+        var savedId = converted?.Id ?? documentId;
+
+        // The twin supersedes the original: "a new document object that should be used to refer to the
+        // ringtone from now on". account.uploadRingtone has already put the original in the list, so without
+        // dropping it here the same sound would appear twice — once as the OGG nothing should refer to any
+        // more, once as the MP3.
+        if (converted != null)
+        {
+            await savedRingtoneStore.RemoveAsync(input.UserId, documentId);
+        }
+
+        var added = await savedRingtoneStore.AddAsync(input.UserId, savedId, limits.MaxSavedCount, documentId);
+        if (added)
+        {
+            await updateNotifier.NotifyAsync(input.UserId, input.PermAuthKeyId);
+        }
+
+        // The client must be told to refer to the new document from now on; when nothing was converted the
+        // plain constructor is the answer, including for a sound that was already in the list.
+        return converted == null
+            ? new MyTelegram.Schema.Account.TSavedRingtone()
+            : new MyTelegram.Schema.Account.TSavedRingtoneConverted { Document = converted };
+    }
+
+    private static bool HasAudioAttribute(IDocumentReadModel document)
+    {
+        return AudioAttributeOf(document) != null;
+    }
+
+    private static int DurationOf(IDocumentReadModel document)
+    {
+        return AudioAttributeOf(document)?.Duration ?? 0;
+    }
+
+    private static MyTelegram.Schema.TDocumentAttributeAudio? AudioAttributeOf(IDocumentReadModel document)
+    {
+        return document.Attributes2?
+            .OfType<MyTelegram.Schema.TDocumentAttributeAudio>()
+            .FirstOrDefault();
     }
 }
