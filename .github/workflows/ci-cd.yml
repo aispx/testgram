@@ -64,7 +64,7 @@ jobs:
         working-directory: source
 
       - name: Build
-        run: dotnet build -c Release --no-restore
+        run: dotnet build -c Release
         working-directory: source
 
       - name: Test
