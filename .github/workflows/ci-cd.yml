@@ -60,15 +60,15 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore source/MyTelegram.slnx
+        run: dotnet restore
         working-directory: source
 
       - name: Build
-        run: dotnet build source/MyTelegram.slnx -c Release --no-restore
+        run: dotnet build -c Release --no-restore
         working-directory: source
 
       - name: Test
-        run: dotnet test source/MyTelegram.slnx -c Release --no-build --verbosity normal
+        run: dotnet test -c Release --no-build --verbosity normal
         working-directory: source
 
   # ─────────────────────────────────────────────
@@ -167,7 +167,9 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event_name != 'pull_request' &&
-      (inputs.target_rhel == 'both' || inputs.target_rhel == 'rhel9')
+      (github.event_name == 'push' ||
+       inputs.target_rhel == 'both' ||
+       inputs.target_rhel == 'rhel9')
     strategy:
       fail-fast: false
       matrix:
@@ -220,7 +222,9 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event_name != 'pull_request' &&
-      (inputs.target_rhel == 'both' || inputs.target_rhel == 'rhel10')
+      (github.event_name == 'push' ||
+       inputs.target_rhel == 'both' ||
+       inputs.target_rhel == 'rhel10')
     strategy:
       fail-fast: false
       matrix:
