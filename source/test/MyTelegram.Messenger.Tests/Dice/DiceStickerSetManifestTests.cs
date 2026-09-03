@@ -61,6 +61,7 @@ public class DiceStickerSetManifestTests
 
     private static string? FindManifest()
     {
+        // Walk from the build output directory (covers local builds from repo root).
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null)
         {
@@ -68,6 +69,37 @@ public class DiceStickerSetManifestTests
             if (File.Exists(candidate))
             {
                 return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        // Walk from the current working directory (covers `dotnet test` run from source/).
+        directory = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (directory != null)
+        {
+            var candidate = Path.Combine(directory.FullName, "scripts", "stickers_manifest.json");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        // Fallback: find the repo root by .git or .slnx marker, then resolve from there.
+        directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (directory.GetDirectories(".git").Length > 0 ||
+                directory.GetFiles("*.slnx").Length > 0)
+            {
+                var candidate = Path.Combine(directory.FullName, "scripts", "stickers_manifest.json");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+                break;
             }
 
             directory = directory.Parent;
