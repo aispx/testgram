@@ -334,6 +334,10 @@ NullReferenceException.
 | `wallpapers` | Wallpaper catalogue (what exists) | WallpaperId, AccessHash, Slug, DocumentId, MimeType, Listed (in every account's starting list), IsDefault (the wire flag), IsPattern, IsDark, Order (asc), Settings |
 | `user_wallpapers` | The wallpaper list of one user (what they see) | `_id` = `{UserId}:{WallpaperId}`, Removed (tombstone for an unsaved preinstalled one), Order (desc = top), Settings |
 | `chat_wallpapers` | Per-chat wallpaper (`messages.setChatWallPaper`) | UserId (owner; the channel itself for a channel), PeerId/PeerType, WallpaperId (0 = settings only), Overridden, Settings, PreviousWallpaperId/PreviousSettings (for `revert`) |
+| `transcriptions` | Queued and finished voice transcriptions | `_id` = `MessageId.Create(ownerPeerId, msgId).Value`, OwnerPeerId/MsgId, PeerId/PeerType (echoed in the update), RequestedByUserId, DocumentId, TranscriptionId (never 0), Text, Pending, Failed, Attempts, ClaimedUntil (worker lease), TrialConsumed |
+| `transcription_texts` | Recognised text, shared by document | `_id` = DocumentId, Text (may be empty), Language, Date |
+| `transcribe_audio_trials` | Free-trial counter, per account | `_id` = UserId, Used, ResetDate (also the `FLOOD_WAIT_%d` deadline) |
+| `transcription_ratings` | `messages.rateTranscribedAudio` feedback | `_id` = `{UserId}:{TranscriptionId}`, DocumentId, Good, Date |
 | `eventflow-*` | Event sourcing | **do not modify directly** |
 
 ```bash
@@ -665,6 +669,139 @@ session** of the same account receives `updateSavedRingtones` (on the upload and
 so match on `error.message`.
 
 See https://corefork.telegram.org/api/ringtones
+
+---
+
+## Voice message transcription
+
+Two methods, one background worker and one external service: `messages.transcribeAudio` queues the work
+and answers `pending`, `TranscriptionBackgroundService` recognises it and pushes
+`updateTranscribedAudio`, `messages.rateTranscribedAudio` records the verdict. Recognition is
+**Deepgram** (`nova-3`) by default. Everything lives in `Services/Transcription/`; per-message state is
+`transcriptions`, the text cache `transcription_texts`, the free quota `transcribe_audio_trials`.
+
+* **The answer has to be `pending`, and that is a hard constraint rather than a design preference.**
+  tdlib caps this one request at **eight seconds** (`TranscribeAudioQuery::send` sets
+  `total_timeout_limit_ = 8`), which no download plus ffmpeg plus recognition round trip fits into. The
+  other end of the same constraint: tdlib fails a pending transcription after **60 seconds**
+  (`AUDIO_TRANSCRIPTION_TIMEOUT`), so the worker polls every second, leases for 120 s and backs off in
+  5 s steps rather than the minutes `VideoProcessingBackgroundService` can afford.
+* **`transcription_id` is the only thing that matches an update to a request, and it must never be 0.**
+  tdlib looks the id up in `pending_audio_transcriptions_` and returns silently when it is unknown —
+  *"flags_, peer_ and msg_id_ must not be used"* is a comment in its own source — while a zero id is
+  rejected outright (`"Receive no transcription identifier"`) and asserts fatally if it arrives in an
+  update. The stub this replaced answered `transcription_id = 0` with the text
+  `"TranscribeAudioHandler not implemented"`, which is both of those failures at once.
+* **An exhausted trial is `FLOOD_WAIT_%d`, not `PREMIUM_ACCOUNT_REQUIRED`.** Every client turns that
+  error into the cooldown it displays: Android's `TranscribeButton` sets the remaining count to 0 and
+  `cooldownUntil = now + X`, tdlib does the same through `Global::get_retry_after`, iOS maps it to
+  `limitExceeded`. Non-Premium Android even sends `RequestFlagDoNotWaitFloodWait` so the error reaches
+  the UI instead of being retried. `PREMIUM_ACCOUNT_REQUIRED` is only for a deployment that set
+  `transcribe_audio_trial_weekly_number` to 0, where there is no cooldown to report.
+* **`transcribe_audio_trial_weekly_number` is 3, not 0.** At 0 tdesktop hides the trial UI entirely
+  (`Transcribes::trialsSupport()` needs `weekly_number > 0 || cooldown_until > 0`) and no non-Premium
+  user is ever offered the button. Changing the table means bumping `AppConfigHelper._hash` in the same
+  commit — it is a constant, and clients sit on `appConfigNotModified` forever otherwise.
+* **`trial_remains_num` and `trial_remains_until_date` share flag bit 1**, so they travel together or
+  not at all: setting one dereferences the other while the response is being serialized, which is past
+  the point a handler can fail cleanly (the same trap `wallPaperSettings` fell into). iOS also reads the
+  date as the cooldown *exactly* when the count is 0 and **clears** its stored cooldown when the date is
+  missing, so the call that empties the quota must carry both.
+* **A try is spent at request time and refunded when recognition fails.** Request time is when the
+  number reaches the client — the response that starts the work carries it, and Android and tdesktop
+  render it at once. But nobody should lose one of three weekly tries to a provider outage, so a final
+  failure hands it back (logged).
+* **A repeat call is free and answers the same id.** Clients cache a finished transcription and never
+  re-ask (tdlib returns early on `is_transcribed_`, Android checks `voiceTranscriptionFinal`), so a
+  second call means a cleared cache or another device. The text cache is keyed by **document**, not by
+  message, so the same voice note forwarded into ten chats is recognised once. A *failed* row is the one
+  thing that is not an answer: tapping the button again is the only retry a user has, so `EnqueueAsync`
+  replaces it.
+* **Round video notes count.** tdlib's `can_recognize_message_speech` accepts exactly `VoiceNote` and
+  `VideoNote`, Android offers the button for `isVoice() || isRoundVideo()`, tdesktop marks the entry
+  `roundview` for `document->isVideoMessage()`. Ordinary music does **not**: it carries a
+  `documentAttributeAudio` too and only the `voice` flag separates the two, so accepting any audio
+  attachment spends a trial try on a track no client will draw the result for.
+* **A failure is pushed as an empty final update, not as silence.** The wire has no way to say
+  "recognition failed" — `updateTranscribedAudio` carries only `pending` and `text`. Left silent, tdlib
+  waits its full 60 s and **Android waits forever**: nothing in `TranscribeButton` times an operation
+  out, so the spinner stays until the app restarts. An empty final update is also exactly what Android
+  writes for itself when the RPC fails (`text = ""`, `isFinal = true`).
+* **The update is pushed to *all* the caller's sessions, including the calling one** — the opposite of
+  `updateSavedRingtones` and the other notifiers. The caller holds a *pending* result and the update is
+  the only thing that completes it. It carries no `pts` and tdlib handles it outside the pts machinery.
+* **A supergroup boosted to `group_transcribe_level_min` (6) transcribes free for its non-Premium
+  members**, which is what tdesktop's `Transcribes::freeFor()` compares against and the only reason that
+  appConfig field exists.
+* **`transcribe_audio_trial_cooldown_until` is per account**, so it cannot live in the shared
+  `AppConfigHelper.g.cs`; `GetAppConfigHandler` appends it per caller and folds it into the hash, the
+  same arrangement `emojies_sounds` uses. It is emitted **only** while a cooldown is pending — every
+  client defaults the key to 0 when absent, and a value that moved with every quota change would break
+  `appConfigNotModified` for everybody.
+* **OGG needs no transcode on Deepgram, and does on everything else.** A Telegram voice note is OGG
+  OPUS and a round video note is MP4. Measured against the live Deepgram API: both are transcribed **as
+  they are** in under a second — it sniffs the container and pulls the audio out of the MP4 itself — so
+  `TranscriptionAudioPreparer` only downloads the body and ffmpeg is not on this path at all. The
+  OpenAI-compatible shape is the opposite: VoidAI refuses OGG with *"unsupported audio format. Supported:
+  mp3, mp4, mpeg, mpga, m4a, wav, webm, flac"* although its docs list `ogg`, so there the body is
+  converted with `ffmpeg -vn -ac 1 -ar 16000 -c:a libmp3lame` first (which also drops a round message's
+  video track). `ISpeechRecognitionClient.AcceptsAsIs` is the switch, and it only says yes for containers
+  Deepgram was actually seen to take — a body it cannot parse comes back as a **non-retryable** 400
+  `failed to process audio: corrupt or unsupported data`.
+* **Two wire shapes, one setting.** `App__Transcription__Provider=Deepgram` (default) is
+  `POST {BaseUrl}/listen` with `Authorization: Token …`, the audio as the **raw request body** and the
+  options as query parameters; `OpenAiCompatible` is `POST {BaseUrl}/audio/transcriptions` with
+  `Authorization: Bearer …` and `multipart/form-data`. Nothing else in the surface knows the difference.
+* **`nova-3` + `detect_language=true` is the default because a messenger has no one language.** nova-3
+  covers 142 languages including Russian (`GET /v1/models`), and the detected value comes back as
+  `results.channels[0].detected_language` — verified end to end by round-tripping German TTS through OGG
+  OPUS and getting `de` with a perfect transcript. `smart_format=true` is what makes the text punctuated
+  and capitalised; without it the transcript is one lower-case run, which is what a client would draw.
+  The language is only recorded in `transcription_texts`, never sent to a client — the API has no field
+  for it.
+* **Deepgram reports errors as `{"err_code","err_msg","request_id"}`** with 401 `INVALID_AUTH`, 403
+  `INSUFFICIENT_PERMISSIONS` (the project cannot use that model) or 400 for an unparseable body — none of
+  them retryable. Only 429 and 5xx are retried, on either provider.
+* **The multipart field names are quoted explicitly** on the OpenAI path.
+  `MultipartFormDataContent` writes `name=file; filename=voice.mp3` when the values need no escaping,
+  while curl, the OpenAI SDKs and RFC 7578 all use the quoted form — a gateway that only accepts the
+  common spelling would answer "no file provided" for a request that looks perfectly well formed from
+  here.
+* **`response_format` follows the model** on the OpenAI path: `verbose_json` (which is what carries the
+  detected language) for the whisper family, plain `json` for the `gpt-4o-*-transcribe` models, which
+  answer 400 for it.
+* **An empty transcript is a success**, and it is cached. A voice note that is three seconds of silence
+  has been recognised; asking again would cost the same and answer the same.
+* **The recognition provider is configuration, not code** — `App__Transcription__{Provider,BaseUrl,ApiKey,Model}`.
+  The key belongs in `docker/compose/.env`, which is gitignored; `.env.example` carries only the
+  placeholder. Both messenger services need the settings, because which one serves the RPC is decided by
+  the closed session-server; the worker itself runs only in command-server.
+
+```bash
+# is the provider reachable at all? a non-200 here is not a code problem
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&detect_language=true" \
+  -H "Authorization: Token $KEY" -H "Content-Type: audio/ogg" --data-binary @voice.ogg
+
+docker compose -p mytelegram logs messenger-command-server | grep -i transcri
+docker compose -p mytelegram exec -T mongodb mongosh tg --quiet --eval \
+  'printjson(db.transcriptions.find().sort({Date:-1}).limit(3).toArray())'
+```
+
+Probing it needs a throwaway Telethon script (temp dir, not `scripts/`) with two logins of the same
+account, copying the connection and RSA registration block out of `scripts/verify_stickers.py`. Worth
+asserting: `transcribeAudio` answers in well under a second with `pending = True` and a non-zero
+`transcription_id`; the second session receives `updateTranscribedAudio` with **that** id,
+`pending = False` and the text, inside 60 s; a repeat call returns the same id and the finished text with
+`trial_remains_num` unchanged; a round video note transcribes; a music document and a text message both
+answer `MsgVoiceMissingError`; an unknown `msg_id` answers `MsgIdInvalidError`; on a non-Premium account
+calls 1..3 carry `trial_remains_num` 2/1/0 **with** `trial_remains_until_date` on all three and call 4
+answers `FLOOD_WAIT_%d`; a note longer than `transcribe_audio_trial_duration_max` answers
+`MSG_VOICE_TOO_LONG`; `rateTranscribedAudio` lands in `transcription_ratings`; and `help.getAppConfig`
+re-quoted with its own hash answers `appConfigNotModified` until the quota runs out, after which it
+carries `transcribe_audio_trial_cooldown_until`.
+
+See https://corefork.telegram.org/api/transcribe
 
 ---
 
@@ -1564,6 +1701,11 @@ See https://corefork.telegram.org/api/pfs
 | An OGG notification sound is never converted, `saveRingtone` always answers `savedRingtone` | the server running it has no MinIO credentials — the log carries `could not be stored` + `403 InvalidAccessKeyId` from `StoredFileStorage`. Both messenger services need `Minio__*`, see Notification sounds above |
 | Setting a chat or channel wallpaper clears it instead | `messages.setChatWallPaper` resolution: `id` without `wallpaper` means "apply the one in that service message", and `inputWallPaperNoFile{id = 0}` with an emoticon is a channel wallpaper — see Wallpapers above. Both look like a successful call in the log |
 | A method never answers at all and the client hangs | `logs \| grep "Unsupported request"` — a constructor with no schema class makes `HandlerHelper.TryGetHandler` throw inside the fire-and-forget `Task.Run` of `DefaultDataProcessor`, so nothing is sent back. Serve the second constructor through the `LayerN` triple, as `account.uploadWallPaper#e39a8f03` is |
+| The transcribe spinner never stops | no `updateTranscribedAudio` reached the caller, or it carried a different `transcription_id` than the RPC did — tdlib matches on that id alone and Android never times the operation out, so the spinner outlives the app. Check `db.transcriptions.findOne()` for `Pending: true` with an expired `ClaimedUntil` (no worker: `TranscriptionBackgroundService` runs in command-server only) and see Voice message transcription above |
+| Every transcription comes back empty | the recognition provider refused, or the body needed ffmpeg and it is missing. Both are logged by the worker (`Giving up on transcribing document …`). Test the endpoint with `curl` before reading any server code; on Deepgram a 403 means the project cannot use the configured `Model` |
+| `transcriptions` rows fail with "does not accept … and ffmpeg is not installed" | the provider is `OpenAiCompatible`, which refuses OGG, on an image without ffmpeg. Either install it or switch `App__Transcription__Provider` back to `Deepgram`, which takes a voice note unchanged |
+| Non-Premium users are never offered the transcribe button | `transcribe_audio_trial_weekly_number` is back at 0, or the table changed without `AppConfigHelper._hash` being bumped so clients never re-read it. tdesktop hides the trial UI entirely below 1 |
+| The transcription trial counter jumps back, or a "0 left" toast appears for a Premium account | the two trial fields of `messages.transcribedAudio` share flag bit 1: emitting them for an unlimited caller reads as an exhausted quota, and emitting only one throws inside the serializer so the request is never answered |
 | Telethon cannot talk to the server at all | it ships Telegram's public keys and cannot match the fingerprint in our `res_pq`, so the handshake dies at step 1 with `auth_key generation failed` while auth-server logs only `[Step1] ReqPqMultiHandler` retries. Register the server key: `docker cp <auth-server>:/app/private.pkcs8.key`, `openssl rsa -pubout \| openssl rsa -pubin -RSAPublicKey_out`, then `telethon.crypto.rsa.add_key(pem, old=False)` — see `scripts/verify_stickers.py` |
 | Telethon connects, then hangs and drops | server→client msg_ids arriving ~743 days in the future, which Telethon discards (`Server sent a very new message`). **Check which host you are actually talking to** — this was traced to a *different* testgram deployment (`109.107.181.246`), not this one, where the skew is 0. A deployment shows it when its session-server carries the pre-fix `MessageIdHelper`, whose `last + 4` branch can never return to the clock; widen `MSG_TOO_NEW_DELTA`/`MSG_TOO_OLD_DELTA` in `telethon/network/mtprotostate.py` to probe such a host |
 | Clicking an animated emoji animates nothing on the other device | the interaction is relayed but its `msg_id` belongs to the clicking user's own numbering — see Animated emojis above; both sides log a healthy `setTyping`/`updateUserTyping`, so the only evidence is the id itself |

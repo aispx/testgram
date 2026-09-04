@@ -465,6 +465,19 @@ services:
       Minio__BucketName: ${Minio__BucketName:-tg-files}
       App__VideoProcessing__Enabled: ${App__VideoProcessing__Enabled:-True}
       App__VideoProcessing__MinChannelParticipants: ${App__VideoProcessing__MinChannelParticipants:-1}
+      # Voice message transcription, see https://corefork.telegram.org/api/transcribe. The recognition
+      # worker runs in this container. Deepgram takes a Telegram voice note (OGG OPUS) and a round video
+      # note (MP4) as they are, so nothing is transcoded; Provider=OpenAiCompatible switches to the
+      # multipart /audio/transcriptions shape, which refuses OGG and needs ffmpeg.
+      App__Transcription__Enabled: ${App__Transcription__Enabled:-True}
+      App__Transcription__Provider: ${App__Transcription__Provider:-Deepgram}
+      App__Transcription__BaseUrl: ${App__Transcription__BaseUrl:-https://api.deepgram.com/v1}
+      App__Transcription__ApiKey: ${App__Transcription__ApiKey}
+      App__Transcription__Model: ${App__Transcription__Model:-nova-3}
+      App__Transcription__DetectLanguage: ${App__Transcription__DetectLanguage:-True}
+      App__Transcription__SmartFormat: ${App__Transcription__SmartFormat:-True}
+      App__Transcription__TimeoutSeconds: ${App__Transcription__TimeoutSeconds:-120}
+      App__Transcription__MaxDurationSeconds: ${App__Transcription__MaxDurationSeconds:-0}
       App__FixedVerifyCode: ${App__FixedVerifyCode}
       App__VerificationCodeLength: ${App__VerificationCodeLength}
       App__VerificationCodeExpirationSeconds: ${App__VerificationCodeExpirationSeconds}
@@ -571,6 +584,18 @@ services:
       Minio__AccessKey: ${Minio__AccessKey}
       Minio__SecretKey: ${Minio__SecretKey}
       Minio__BucketName: ${Minio__BucketName:-tg-files}
+      # messages.transcribeAudio may be served by either messenger queue, so this one also needs the
+      # recognition settings - it queues the work and the command server's worker performs it.
+      # See https://corefork.telegram.org/api/transcribe
+      App__Transcription__Enabled: ${App__Transcription__Enabled:-True}
+      App__Transcription__Provider: ${App__Transcription__Provider:-Deepgram}
+      App__Transcription__BaseUrl: ${App__Transcription__BaseUrl:-https://api.deepgram.com/v1}
+      App__Transcription__ApiKey: ${App__Transcription__ApiKey}
+      App__Transcription__Model: ${App__Transcription__Model:-nova-3}
+      App__Transcription__DetectLanguage: ${App__Transcription__DetectLanguage:-True}
+      App__Transcription__SmartFormat: ${App__Transcription__SmartFormat:-True}
+      App__Transcription__TimeoutSeconds: ${App__Transcription__TimeoutSeconds:-120}
+      App__Transcription__MaxDurationSeconds: ${App__Transcription__MaxDurationSeconds:-0}
       App__FixedVerifyCode: ${App__FixedVerifyCode}
       App__VerificationCodeLength: ${App__VerificationCodeLength}
       App__VerificationCodeExpirationSeconds: ${App__VerificationCodeExpirationSeconds}
