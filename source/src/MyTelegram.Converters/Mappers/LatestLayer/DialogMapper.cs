@@ -54,10 +54,17 @@ internal sealed class DialogMapper
         {
             destination.NotifySettings = new TPeerNotifySettings
             {
-                AndroidSound = new TNotificationSoundDefault(),
-                IosSound = new TNotificationSoundDefault(),
+                // These used to be a hardcoded notificationSoundDefault, which told every client that the
+                // chat plays the default sound no matter what the user had chosen. Each client reads exactly
+                // one of the three, so an absent field is what "use your own default" looks like.
+                // See https://corefork.telegram.org/api/ringtones#setting-notification-sounds
+                AndroidSound = NotificationSoundConverter.ToTl(source.NotifySettings.AndroidSound),
+                IosSound = NotificationSoundConverter.ToTl(source.NotifySettings.IosSound),
+                OtherSound = NotificationSoundConverter.ToTl(source.NotifySettings.OtherSound),
+                StoriesAndroidSound = NotificationSoundConverter.ToTl(source.NotifySettings.StoriesAndroidSound),
+                StoriesIosSound = NotificationSoundConverter.ToTl(source.NotifySettings.StoriesIosSound),
+                StoriesOtherSound = NotificationSoundConverter.ToTl(source.NotifySettings.StoriesOtherSound),
                 MuteUntil = source.NotifySettings.MuteUntil,
-                OtherSound = new TNotificationSoundDefault(),
                 ShowPreviews = source.NotifySettings.ShowPreviews,
                 Silent = source.NotifySettings.Silent
             };

@@ -10,60 +10,46 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Account;
 /// </summary>
 /// <remarks>
 /// Access: [User ✔] [Bot ✖] [Anonymous ✖]
+///
+/// <para>The peer is resolved through <see cref="IPeerHelper"/>, the same call
+/// <c>account.updateNotifySettings</c> makes. This used to have its own switch that read
+/// <c>inputPeerSelf</c> as <c>PeerType.User</c> while the write path stored <c>PeerType.Self</c>
+/// (<c>IInputPeer.ToPeer</c> normalises any peer whose id is your own to <c>Self</c>, and the Saved Messages
+/// dialog id is derived from that too). Those are two different aggregate ids, so a notification sound — or
+/// a mute — set for Saved Messages was written and then never read back. The three category forms carry no
+/// peer id, which is the convention the write path stores them under.</para>
 /// </remarks>
-internal sealed class GetNotifySettingsHandler(IQueryProcessor queryProcessor, ILayeredService<IPeerNotifySettingsConverter> layeredService) : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetNotifySettings, MyTelegram.Schema.IPeerNotifySettings>
+internal sealed class GetNotifySettingsHandler(
+    IQueryProcessor queryProcessor,
+    IPeerHelper peerHelper,
+    ILayeredService<IPeerNotifySettingsConverter> layeredService)
+    : RpcResultObjectHandler<MyTelegram.Schema.Account.RequestGetNotifySettings,
+        MyTelegram.Schema.IPeerNotifySettings>
 {
-    protected override async Task<MyTelegram.Schema.IPeerNotifySettings> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Account.RequestGetNotifySettings obj)
+    protected override async Task<MyTelegram.Schema.IPeerNotifySettings> HandleCoreAsync(IRequestInput input,
+        MyTelegram.Schema.Account.RequestGetNotifySettings obj)
     {
         var userId = input.UserId;
-        PeerNotifySettingsId id;
-        var peerType = PeerType.Unknown;
-        long peerId = 0;
-        switch (obj.Peer)
+
+        var (peerType, peerId) = obj.Peer switch
         {
-            case TInputNotifyForumTopic inputNotifyForumTopic:
-                peerType = PeerType.Channel;
-                break;
-            case TInputNotifyBroadcasts inputNotifyBroadcasts:
-                peerType = PeerType.Channel;
-                break;
-            case TInputNotifyChats inputNotifyChats:
-                peerType = PeerType.Chat;
-                break;
-            case TInputNotifyPeer inputNotifyPeer:
-                switch (inputNotifyPeer.Peer)
-                {
-                    case TInputPeerChannel inputPeerChannel:
-                        peerType = PeerType.Channel;
-                        peerId = inputPeerChannel.ChannelId;
-                        break;
-                    case TInputPeerChat inputPeerChat:
-                        peerType = PeerType.Chat;
-                        peerId = inputPeerChat.ChatId;
-                        break;
-                    case TInputPeerEmpty _:
-                    case TInputPeerSelf _:
-                        peerType = PeerType.User;
-                        peerId = userId;
-                        break;
-                    case TInputPeerUser inputPeerUser:
-                        peerType = PeerType.User;
-                        peerId = inputPeerUser.UserId;
-                        break;
-                    default:
-                        throw new NotSupportedException();
-                }
+            TInputNotifyPeer inputNotifyPeer => AsTarget(peerHelper.GetPeer(inputNotifyPeer.Peer, userId)),
+            TInputNotifyUsers => (PeerType.User, 0L),
+            TInputNotifyChats => (PeerType.Chat, 0L),
+            TInputNotifyBroadcasts => (PeerType.Channel, 0L),
+            // Per-topic settings are not stored — the aggregate id has nowhere to put the topic, which is why
+            // the write path refuses them — so a client asking for one gets the channel category, the same
+            // answer it would get for a topic nobody has ever configured.
+            TInputNotifyForumTopic => (PeerType.Channel, 0L),
+            _ => throw new ArgumentOutOfRangeException(nameof(obj))
+        };
 
-                break;
-            case TInputNotifyUsers inputNotifyUsers:
-                peerType = PeerType.User;
-                break;
-            default:
-                throw new ArgumentOutOfRangeException();
-        }
+        var id = PeerNotifySettingsId.Create(userId, peerType, peerId);
+        var peerNotifySettingsReadModel = await queryProcessor.ProcessAsync(
+            new GetPeerNotifySettingsByIdQuery(id.Value), CancellationToken.None);
 
-        id = PeerNotifySettingsId.Create(userId, peerType, peerId);
-        var peerNotifySettingsReadModel = await queryProcessor.ProcessAsync(new GetPeerNotifySettingsByIdQuery(id.Value), CancellationToken.None);
         return layeredService.GetConverter(input.Layer).ToPeerNotifySettings(peerNotifySettingsReadModel);
     }
+
+    private static (PeerType, long) AsTarget(Peer peer) => (peer.PeerType, peer.PeerId);
 }

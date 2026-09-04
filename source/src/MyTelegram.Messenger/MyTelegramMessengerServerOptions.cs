@@ -69,6 +69,102 @@ public class MyTelegramMessengerServerOptions
     public PaymentsConfig Payments { get; set; } = new();
     public GifsConfig Gifs { get; set; } = new();
     public WebFilesConfig WebFiles { get; set; } = new();
+    public TranscriptionConfig Transcription { get; set; } = new();
+}
+
+/// <summary>
+/// Which speech recognition API the transcription client speaks.
+/// </summary>
+public enum TranscriptionProvider
+{
+    /// <summary>
+    /// Deepgram: <c>POST {BaseUrl}/listen</c>, <c>Authorization: Token …</c>, the audio as the raw request
+    /// body. It accepts a Telegram voice note (OGG OPUS) and a round video note (MP4) as they are, so
+    /// nothing has to be transcoded first.
+    /// </summary>
+    Deepgram,
+
+    /// <summary>
+    /// The OpenAI-compatible shape: <c>POST {BaseUrl}/audio/transcriptions</c>,
+    /// <c>Authorization: Bearer …</c>, <c>multipart/form-data</c>. Reaches OpenAI itself, VoidAI, and most
+    /// self-hosted whisper servers — but refuses OGG, so the body is transcoded to MP3 first.
+    /// </summary>
+    OpenAiCompatible
+}
+
+/// <summary>
+/// Voice message transcription, see https://corefork.telegram.org/api/transcribe. Recognition itself is
+/// done by an external service, so a deployment can point this at Deepgram, OpenAI, VoidAI, or a locally
+/// hosted whisper without a rebuild.
+/// </summary>
+public class TranscriptionConfig
+{
+    /// <summary>
+    /// Master switch. Off means <c>messages.transcribeAudio</c> answers <c>TRANSCRIPTION_FAILED</c>
+    /// rather than queueing work nothing will ever pick up.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Which API shape <see cref="BaseUrl"/> speaks.</summary>
+    public TranscriptionProvider Provider { get; set; } = TranscriptionProvider.Deepgram;
+
+    /// <summary>Base URL including the version segment, without a trailing slash.</summary>
+    public string BaseUrl { get; set; } = "https://api.deepgram.com/v1";
+
+    /// <summary>
+    /// API key. Empty disables recognition the same way <see cref="Enabled"/> does. Belongs in
+    /// <c>docker/compose/.env</c>, never in a committed file.
+    /// </summary>
+    public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Recognition model. <c>nova-3</c> is Deepgram's current general model and covers 142 languages
+    /// including Russian; on the OpenAI-compatible path the equivalent is <c>whisper-1</c>.
+    /// </summary>
+    public string Model { get; set; } = "nova-3";
+
+    /// <summary>
+    /// Detect the spoken language instead of assuming one. A messenger has no single language, and the
+    /// detected value is only recorded — clients are never told it.
+    /// </summary>
+    public bool DetectLanguage { get; set; } = true;
+
+    /// <summary>
+    /// Deepgram's <c>smart_format</c>: punctuation, capitalisation and number formatting. Without it the
+    /// transcript arrives as one unpunctuated lower-case run, which is what a client would display.
+    /// </summary>
+    public bool SmartFormat { get; set; } = true;
+
+    /// <summary>Wall clock limit for one recognition call.</summary>
+    [Range(5, 600)]
+    public int TimeoutSeconds { get; set; } = 120;
+
+    /// <summary>
+    /// Ceiling on the duration a Premium caller may have transcribed, in seconds. 0 means only
+    /// <see cref="MaxUploadBytes"/> binds. Non-Premium callers are bounded by
+    /// <c>transcribe_audio_trial_duration_max</c> instead, which is the number their client was told.
+    /// </summary>
+    public int MaxDurationSeconds { get; set; }
+
+    /// <summary>
+    /// Largest body handed to the provider. 25 MB is the documented cap of the OpenAI-compatible
+    /// transcription endpoint; Deepgram's is far higher, but a voice note never comes close either way.
+    /// </summary>
+    public long MaxUploadBytes { get; set; } = 25L * 1024 * 1024;
+
+    /// <summary>
+    /// Recognition attempts before a transcription is given up on. tdlib fails a pending transcription
+    /// after 60 seconds (<c>AUDIO_TRANSCRIPTION_TIMEOUT</c>), so there is no point retrying for long.
+    /// </summary>
+    [Range(1, 10)]
+    public int MaxAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Length of the free-trial window for non-Premium callers, in days. The API calls the allowance
+    /// "per week" and every client renders the reset date it is given, so this should stay at 7.
+    /// </summary>
+    [Range(1, 90)]
+    public int TrialWindowDays { get; set; } = 7;
 }
 
 /// <summary>

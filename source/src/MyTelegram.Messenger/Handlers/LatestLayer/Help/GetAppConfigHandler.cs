@@ -1,4 +1,5 @@
 using MyTelegram.Messenger.Services.Emoji;
+using MyTelegram.Messenger.Services.Transcription;
 
 namespace MyTelegram.Messenger.Handlers.LatestLayer.Help;
 /// <summary>
@@ -10,7 +11,8 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Help;
 /// </remarks>
 internal sealed class GetAppConfigHandler(
     IAppConfigHelper appConfigHelper,
-    IEmojiSoundAppConfigBuilder emojiSoundAppConfigBuilder)
+    IEmojiSoundAppConfigBuilder emojiSoundAppConfigBuilder,
+    ITranscriptionAppConfigBuilder transcriptionAppConfigBuilder)
     : RpcResultObjectHandler<Schema.Help.RequestGetAppConfig, Schema.Help.IAppConfig>
 {
     protected override async Task<Schema.Help.IAppConfig> HandleCoreAsync(IRequestInput input,
@@ -34,6 +36,20 @@ internal sealed class GetAppConfigHandler(
             };
 
             hash = unchecked(hash * 31 + sounds.Hash);
+        }
+
+        // transcribe_audio_trial_cooldown_until is per account for the same reason, and appears only while
+        // that account's free transcription quota is actually spent - so the hash does not move for the
+        // callers who have tries left. See https://corefork.telegram.org/api/transcribe
+        var transcription = await transcriptionAppConfigBuilder.BuildAsync(input.UserId);
+        if (transcription != null && config is TJsonObject configObject)
+        {
+            config = new TJsonObject
+            {
+                Value = new TVector<IJSONObjectValue>(configObject.Value.Append(transcription.Value))
+            };
+
+            hash = unchecked(hash * 31 + transcription.Hash);
         }
 
         if (obj.Hash == hash)
