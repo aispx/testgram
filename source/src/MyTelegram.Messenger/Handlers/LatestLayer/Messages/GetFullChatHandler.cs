@@ -20,6 +20,7 @@ internal sealed class GetFullChatHandler(
     IPhotoAppService photoAppService,
     IChannelAppService channelAppService,
     IMongoDatabase mongoDatabase,
+    IPeerTranslationSettingsStore peerTranslationSettings,
     IPinnedMessageResolver pinnedMessageResolver)
     : RpcResultObjectHandler<MyTelegram.Schema.Messages.RequestGetFullChat, MyTelegram.Schema.Messages.IChatFull>
 {
@@ -51,6 +52,16 @@ internal sealed class GetFullChatHandler(
                 if (pinnedMsgId.HasValue && chatFull.FullChat is TChannelFull tChannelFull)
                 {
                     tChannelFull.PinnedMsgId = pinnedMsgId.Value;
+                }
+
+                // The same per-caller translation flag channels.getFullChannel reports. This method is
+                // the one Android calls for a group, so leaving it out here means the popup is
+                // dismissible in a channel and not in a supergroup.
+                // See https://corefork.telegram.org/api/translation
+                if (chatFull.FullChat is TChannelFull translatable)
+                {
+                    translatable.TranslationsDisabled = await peerTranslationSettings.IsDisabledAsync(
+                        input.UserId, new Peer(PeerType.Channel, obj.ChatId));
                 }
 
                 return chatFull;

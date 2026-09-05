@@ -29,6 +29,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
     IApply<ChannelParticipantCountChangedEvent>,
     IApply<ChannelTopMessageIdUpdatedEvent>,
     IApply<ChannelParticipantsHiddenUpdatedEvent>,
+    IApply<ChannelAutotranslationUpdatedEvent>,
     IApply<ChannelAvailableReactionsChangedEvent>,
     IApply<ChannelJoinRequestUpdatedEvent>,
     IApply<ChannelAdminRemovedEvent>,
@@ -81,6 +82,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
     public EmojiStatus? EmojiStatus { get; private set; }
     public bool Verified { get; private set; }
     public bool ParticipantsHidden { get; private set; }
+    public bool Autotranslation { get; private set; }
     public ReactionType ReactionType { get; private set; }
     public List<string>? AvailableReactions { get; private set; }
     public bool AllowCustomReaction { get; private set; }
@@ -351,6 +353,7 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
         EmojiStatus = snapshot.EmojiStatus;
         ParticipantsHidden = snapshot.ParticipantsHidden;
         JoinRequest = snapshot.JoinRequest;
+        Autotranslation = snapshot.Autotranslation;
     }
     public void Apply(ChannelTopMessageIdUpdatedEvent aggregateEvent)
     {
@@ -359,6 +362,10 @@ public class ChannelState : AggregateState<ChannelAggregate, ChannelId, ChannelS
     public void Apply(ChannelParticipantsHiddenUpdatedEvent aggregateEvent)
     {
         ParticipantsHidden = aggregateEvent.Enabled;
+    }
+    public void Apply(ChannelAutotranslationUpdatedEvent aggregateEvent)
+    {
+        Autotranslation = aggregateEvent.Enabled;
     }
     public void Apply(ChannelAvailableReactionsChangedEvent aggregateEvent)
     {

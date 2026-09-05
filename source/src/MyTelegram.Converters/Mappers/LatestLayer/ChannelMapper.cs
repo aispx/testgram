@@ -103,6 +103,12 @@ internal sealed class ChannelMapper
 
         destination.JoinRequest = source.JoinRequest;
         destination.JoinToSend = source.JoinToSend;
+
+        // channel.autotranslation (flags2.15). Nothing set it before, so the toggle was invisible to
+        // every client whatever the server stored, and it is this flag that lets a non-Premium member
+        // translate the channel at all (Android TranslateController.isFeatureAvailable).
+        // See https://corefork.telegram.org/api/translation#autotranslation-for-channels
+        destination.Autotranslation = source.Autotranslation;
         destination.Monoforum = source.IsMonoforum;
         destination.BroadcastMessagesAllowed = source.BroadcastMessagesAllowed;
         if (source.LinkedMonoforumId.HasValue) destination.LinkedMonoforumId = source.LinkedMonoforumId;

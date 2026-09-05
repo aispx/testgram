@@ -51,6 +51,12 @@ public interface IChannelReadModel : IReadModel
     bool HiddenPreHistory { get; }
     List<UsernameInfo>? Usernames { get; }
     bool ParticipantsHidden { get; }
+
+    /// <summary>
+    /// <c>channel.autotranslation</c>: the channel translates every post for all users, including those
+    /// without Premium. See https://corefork.telegram.org/api/translation#autotranslation-for-channels
+    /// </summary>
+    bool Autotranslation { get; }
     bool JoinToSend { get; }
     bool JoinRequest { get; }
     bool IsMonoforum { get; }

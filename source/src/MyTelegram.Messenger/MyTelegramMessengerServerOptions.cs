@@ -70,6 +70,7 @@ public class MyTelegramMessengerServerOptions
     public GifsConfig Gifs { get; set; } = new();
     public WebFilesConfig WebFiles { get; set; } = new();
     public TranscriptionConfig Transcription { get; set; } = new();
+    public TranslationConfig Translation { get; set; } = new();
 }
 
 /// <summary>
@@ -635,3 +636,81 @@ public class StripeConfig
     public string PublishableKey { get; set; } = string.Empty;
     public string SecretKey { get; set; } = string.Empty;
 }
+
+/// <summary>
+/// Which translation API the text translation client speaks.
+/// </summary>
+public enum TextTranslationProvider
+{
+    /// <summary>
+    /// DeepL: <c>POST {BaseUrl}/translate</c>, <c>Authorization: DeepL-Auth-Key …</c>,
+    /// <c>application/x-www-form-urlencoded</c> with the texts as repeated <c>text</c> fields.
+    /// A key ending in <c>:fx</c> is a free-tier key and only works against
+    /// <c>https://api-free.deepl.com</c>; a paid key only works against <c>https://api.deepl.com</c>.
+    /// </summary>
+    DeepL
+}
+
+/// <summary>
+/// Message translation, see https://corefork.telegram.org/api/translation. Translation itself is done by
+/// an external service, so a deployment can point this at DeepL without a rebuild.
+/// </summary>
+public class TranslationConfig
+{
+    /// <summary>
+    /// Master switch. Off — or an empty <see cref="ApiKey"/> — means <c>messages.translateText</c>
+    /// answers <c>406 TRANSLATIONS_DISABLED</c> plus an <c>updateServiceNotification</c>, which is what
+    /// the method documents for a deployment with no translation backend. Answering fabricated text
+    /// instead, as this used to, is indistinguishable from a working translation to every client.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Which API shape <see cref="BaseUrl"/> speaks.</summary>
+    public TextTranslationProvider Provider { get; set; } = TextTranslationProvider.DeepL;
+
+    /// <summary>
+    /// Base URL including the version segment, without a trailing slash. Must match the key's tier:
+    /// <c>https://api-free.deepl.com/v2</c> for a <c>:fx</c> key, <c>https://api.deepl.com/v2</c> otherwise.
+    /// </summary>
+    public string BaseUrl { get; set; } = "https://api-free.deepl.com/v2";
+
+    /// <summary>
+    /// API key. Empty disables translation the same way <see cref="Enabled"/> does. Belongs in
+    /// <c>docker/compose/.env</c>, never in a committed file.
+    /// </summary>
+    public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Whether styled text entities are carried through the translation for Premium callers. Off falls
+    /// back to plain text for everybody, which is what a provider without inline-markup support needs.
+    /// </summary>
+    public bool PreserveEntities { get; set; } = true;
+
+    /// <summary>Wall clock limit for one translation call. Past it the caller gets TRANSLATION_TIMEOUT.</summary>
+    [Range(3, 120)]
+    public int TimeoutSeconds { get; set; } = 20;
+
+    /// <summary>
+    /// How long a translated text stays in <c>translation_texts</c>. The cache is not an optimisation:
+    /// clients re-request the messages on screen, and DeepL bills per character.
+    /// </summary>
+    [Range(1, 365)]
+    public int CacheDays { get; set; } = 30;
+
+    /// <summary>
+    /// Largest number of texts in one request. Android caps itself at 20
+    /// (<c>MAX_MESSAGES_PER_REQUEST</c>) and so does tdesktop (<c>kRequestCountLimit</c>), so this must
+    /// not be lower than that or an ordinary batch is refused.
+    /// </summary>
+    [Range(1, 100)]
+    public int MaxMessagesPerRequest { get; set; } = 20;
+
+    /// <summary>
+    /// Largest total number of UTF-16 code units in one request. Android caps itself at 25000
+    /// (<c>MAX_SYMBOLS_PER_REQUEST</c>), tdesktop at 24576 (<c>kRequestLengthLimit</c>).
+    /// </summary>
+    [Range(1000, 200000)]
+    public int MaxCharactersPerRequest { get; set; } = 25000;
+}
+
+
