@@ -64,6 +64,16 @@ internal sealed class TranslateTextHandler(
             RpcErrors.RpcErrors400.ToLangInvalid.ThrowRpcError();
         }
 
+        // The count is checked against the request, before anything is loaded. Doing it after the
+        // message lookup means a batch of 21 ids whose last id is stale answers MSG_ID_INVALID, and the
+        // client repairs the wrong thing — it was over the limit, not pointing at a deleted message.
+        var requested = obj.Id?.Count > 0 ? obj.Id.Count : obj.Text?.Count ?? 0;
+
+        if (requested > config.MaxMessagesPerRequest)
+        {
+            RpcErrors.RpcErrors400.InputTextTooLong.ThrowRpcError();
+        }
+
         var items = obj.Id?.Count > 0
             ? await LoadMessagesAsync(input, obj)
             : LoadTexts(obj);
@@ -71,11 +81,6 @@ internal sealed class TranslateTextHandler(
         if (items.Count == 0)
         {
             RpcErrors.RpcErrors400.InputTextEmpty.ThrowRpcError();
-        }
-
-        if (items.Count > config.MaxMessagesPerRequest)
-        {
-            RpcErrors.RpcErrors400.InputTextTooLong.ThrowRpcError();
         }
 
         // UTF-16 code units, the unit the limits the clients enforce are expressed in.

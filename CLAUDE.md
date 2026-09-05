@@ -893,7 +893,11 @@ docker compose -p mytelegram exec -T mongodb mongosh tg --quiet --eval \
 ```
 
 Probing it needs a throwaway Telethon script (temp dir, not `scripts/`) with two logins of the same
-account; copy the connection and RSA registration block out of `scripts/verify_stickers.py`. Worth
+account; copy the connection and RSA registration block out of `scripts/verify_stickers.py`. Pick the
+message ids for the `peer`+`id` form out of `eventflow-messagereadmodel` with
+`Message: {$nin: ["", null]}` — a message sent by Telethon during the probe itself is stored on this
+deployment with an **empty** `Message`, so translating it correctly returns an empty entry and looks like
+a translation bug that is not one. Worth
 asserting: `translateText(peer, id=[…])` returns **exactly** as many entries as ids, in order; the `text`
 form works with no peer and comes back with repositioned entities on a Premium account and an empty
 entity vector on a non-Premium one; a repeat call costs no DeepL characters (`/v2/usage` before and
