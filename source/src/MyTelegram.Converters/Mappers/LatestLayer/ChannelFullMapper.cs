@@ -74,7 +74,10 @@ internal sealed class ChannelFullMapper
         }
 
         destination.Antispam = source.AntiSpam;
-        destination.TranslationsDisabled = false;
+        // channelFull.translations_disabled is per caller, not per channel, so it is set by the
+        // handlers that know who is asking (channels.getFullChannel, messages.getFullChat). It used to
+        // be hardcoded false here, which made messages.togglePeerTranslations unobservable.
+        // See https://corefork.telegram.org/api/translation
         if (source.TtlPeriod != 0)
         {
             destination.TtlPeriod = source.TtlPeriod;

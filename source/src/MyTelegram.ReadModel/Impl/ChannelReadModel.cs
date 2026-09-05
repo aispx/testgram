@@ -33,6 +33,7 @@ public class ChannelReadModel : IChannelReadModel,
     IAmReadModelFor<ChannelAggregate, ChannelId, ChannelTopMessageIdUpdatedEvent>,
     IAmReadModelFor<ChannelAggregate, ChannelId, PreHistoryHiddenChangedEvent>,
     IAmReadModelFor<ChannelAggregate, ChannelId, ChannelParticipantsHiddenUpdatedEvent>,
+    IAmReadModelFor<ChannelAggregate, ChannelId, ChannelAutotranslationUpdatedEvent>,
     IAmReadModelFor<ChannelAggregate, ChannelId, ChannelAvailableReactionsChangedEvent>,
     IAmReadModelFor<ChannelAggregate, ChannelId, ChannelJoinRequestUpdatedEvent>,
 	    IAmReadModelFor<ChannelAggregate, ChannelId, ChannelAdminRemovedEvent>,
@@ -88,6 +89,7 @@ public class ChannelReadModel : IChannelReadModel,
     public bool HiddenPreHistory { get; private set; }
     public List<UsernameInfo>? Usernames { get; private set; }
     public bool ParticipantsHidden { get; private set; }
+    public bool Autotranslation { get; private set; }
     public bool JoinToSend { get; private set; }
     public bool JoinRequest { get; private set; }
     public bool IsMonoforum { get; private set; }
@@ -444,6 +446,12 @@ public class ChannelReadModel : IChannelReadModel,
     public Task ApplyAsync(IReadModelContext context, IDomainEvent<ChannelAggregate, ChannelId, ChannelParticipantsHiddenUpdatedEvent> domainEvent, CancellationToken cancellationToken)
     {
         ParticipantsHidden = domainEvent.AggregateEvent.Enabled;
+
+        return Task.CompletedTask;
+    }
+    public Task ApplyAsync(IReadModelContext context, IDomainEvent<ChannelAggregate, ChannelId, ChannelAutotranslationUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        Autotranslation = domainEvent.AggregateEvent.Enabled;
 
         return Task.CompletedTask;
     }

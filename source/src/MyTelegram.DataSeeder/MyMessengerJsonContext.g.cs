@@ -32,6 +32,7 @@ namespace MyTelegram.Messenger.NativeAot;
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Channel.ChannelNoForwardsChangedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Channel.ChannelParticipantCountChangedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Channel.ChannelParticipantsHiddenUpdatedEvent))]
+[JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Channel.ChannelAutotranslationUpdatedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Channel.ChannelPhotoEditedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Channel.ChannelSignatureChangedEvent))]
 [JsonSerializable(typeof(MyTelegram.Domain.Aggregates.Channel.ChannelSnapshot))]

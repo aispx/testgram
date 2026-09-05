@@ -42,6 +42,22 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
     }
 
     /// <summary>
+    /// Turns autotranslation of every post on or off for all users of a channel, which is what the
+    /// <c>channel.autotranslation</c> flag reports. The boost level the feature needs
+    /// (<c>channel_autotranslation_level_min</c>) is checked by the handler, because the aggregate holds
+    /// no boosts; the right is <c>change_info</c>, like every sibling toggle, because clients put the
+    /// switch on the channel edit screen rather than behind ownership.
+    /// See https://corefork.telegram.org/api/translation#autotranslation-for-channels
+    /// </summary>
+    public void ToggleAutotranslation(RequestInfo requestInfo, bool enabled)
+    {
+        Specs.AggregateIsCreated.ThrowDomainErrorIfNotSatisfied(this);
+        CheckAdminRights(requestInfo, r => r.ChangeInfo);
+        Emit(new ChannelAutotranslationUpdatedEvent(requestInfo, _state.ChannelId, enabled));
+    }
+
+
+    /// <summary>
     /// Sets the reactions that are allowed in this channel/supergroup.
     /// See https://corefork.telegram.org/method/messages.setChatAvailableReactions
     /// </summary>
@@ -476,7 +492,8 @@ public class ChannelAggregate : MyInMemorySnapshotAggregateRoot<ChannelAggregate
             _state.EmojiStatus,
             _state.ParticipantsHidden,
             _state.JoinRequest,
-            _state.ProfileColor
+            _state.ProfileColor,
+            _state.Autotranslation
         ));
     }
     protected override Task LoadSnapshotAsync(ChannelSnapshot snapshot,

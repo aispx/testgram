@@ -478,6 +478,15 @@ services:
       App__Transcription__SmartFormat: ${App__Transcription__SmartFormat:-True}
       App__Transcription__TimeoutSeconds: ${App__Transcription__TimeoutSeconds:-120}
       App__Transcription__MaxDurationSeconds: ${App__Transcription__MaxDurationSeconds:-0}
+      App__Translation__Enabled: ${App__Translation__Enabled:-True}
+      App__Translation__Provider: ${App__Translation__Provider:-DeepL}
+      App__Translation__BaseUrl: ${App__Translation__BaseUrl:-https://api-free.deepl.com/v2}
+      App__Translation__ApiKey: ${App__Translation__ApiKey}
+      App__Translation__PreserveEntities: ${App__Translation__PreserveEntities:-True}
+      App__Translation__TimeoutSeconds: ${App__Translation__TimeoutSeconds:-20}
+      App__Translation__CacheDays: ${App__Translation__CacheDays:-30}
+      App__Translation__MaxMessagesPerRequest: ${App__Translation__MaxMessagesPerRequest:-20}
+      App__Translation__MaxCharactersPerRequest: ${App__Translation__MaxCharactersPerRequest:-25000}
       App__FixedVerifyCode: ${App__FixedVerifyCode}
       App__VerificationCodeLength: ${App__VerificationCodeLength}
       App__VerificationCodeExpirationSeconds: ${App__VerificationCodeExpirationSeconds}
@@ -596,6 +605,15 @@ services:
       App__Transcription__SmartFormat: ${App__Transcription__SmartFormat:-True}
       App__Transcription__TimeoutSeconds: ${App__Transcription__TimeoutSeconds:-120}
       App__Transcription__MaxDurationSeconds: ${App__Transcription__MaxDurationSeconds:-0}
+      App__Translation__Enabled: ${App__Translation__Enabled:-True}
+      App__Translation__Provider: ${App__Translation__Provider:-DeepL}
+      App__Translation__BaseUrl: ${App__Translation__BaseUrl:-https://api-free.deepl.com/v2}
+      App__Translation__ApiKey: ${App__Translation__ApiKey}
+      App__Translation__PreserveEntities: ${App__Translation__PreserveEntities:-True}
+      App__Translation__TimeoutSeconds: ${App__Translation__TimeoutSeconds:-20}
+      App__Translation__CacheDays: ${App__Translation__CacheDays:-30}
+      App__Translation__MaxMessagesPerRequest: ${App__Translation__MaxMessagesPerRequest:-20}
+      App__Translation__MaxCharactersPerRequest: ${App__Translation__MaxCharactersPerRequest:-25000}
       App__FixedVerifyCode: ${App__FixedVerifyCode}
       App__VerificationCodeLength: ${App__VerificationCodeLength}
       App__VerificationCodeExpirationSeconds: ${App__VerificationCodeExpirationSeconds}

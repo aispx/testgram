@@ -48,6 +48,7 @@ public class ChannelDomainEventHandler(
         ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelDeletedEvent>,
         //ISubscribeSynchronousTo<UpdatePinnedMessageSaga, UpdatePinnedMessageSagaId, UpdatePinnedMessageCompletedSagaEvent>,
         ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelParticipantsHiddenUpdatedEvent>,
+        ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelAutotranslationUpdatedEvent>,
         ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelAvailableReactionsChangedEvent>,
         ISubscribeSynchronousTo<ChannelAggregate, ChannelId, ChannelJoinRequestUpdatedEvent>,
         ISubscribeSynchronousTo<JoinChannelAggregate, JoinChannelId, JoinChannelRequestCreatedEvent>,
@@ -678,6 +679,15 @@ public class ChannelDomainEventHandler(
         await NotifyUpdateChannelAsync(requestInfo with { ReqMsgId = 0 }, channelId);
     }
     public Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, ChannelParticipantsHiddenUpdatedEvent> domainEvent, CancellationToken cancellationToken)
+    {
+        return NotifyUpdateChannelAsync(domainEvent.AggregateEvent.RequestInfo, domainEvent.AggregateEvent.ChannelId);
+    }
+    /// <summary>
+    /// Answers channels.toggleAutotranslation and tells the other sessions, which is what carries the
+    /// new channel.autotranslation flag to them.
+    /// See https://corefork.telegram.org/api/translation#autotranslation-for-channels
+    /// </summary>
+    public Task HandleAsync(IDomainEvent<ChannelAggregate, ChannelId, ChannelAutotranslationUpdatedEvent> domainEvent, CancellationToken cancellationToken)
     {
         return NotifyUpdateChannelAsync(domainEvent.AggregateEvent.RequestInfo, domainEvent.AggregateEvent.ChannelId);
     }

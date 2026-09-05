@@ -5,7 +5,7 @@ namespace MyTelegram.Messenger.Services.Impl;
 // https://corefork.telegram.org/api/config
 public partial class AppConfigHelper
 {
-    private static int _hash = -20708173;
+    private static int _hash = -20708174;
     private static TJsonObject? _jsonValue;
     public IJSONValue GetAppConfig()
     {
@@ -102,6 +102,17 @@ public partial class AppConfigHelper
 
                 //  
                 new TJsonObjectValue { Key = "channel_autotranslation_level_min", Value = new TJsonNumber { Value = 3 } },
+
+                // Whether manual message translation is available: "enabled" | "alternative" | "system" | "disabled".
+                // Absent is NOT a safe default — iOS (AccountContext.swift), Unigram (ClientService.cs) and
+                // tweb (usePeerTranslation.ts) all read a missing key as "disabled" and then draw no
+                // translation UI at all, which is why this surface looked absent on those clients.
+                // Real Telegram serves "enabled" for both. See https://corefork.telegram.org/api/translation
+                new TJsonObjectValue { Key = "translations_manual_enabled", Value = new TJsonString { Value = "enabled" } },
+
+                // Whether real-time chat translation is available. Android additionally hides the whole
+                // feature when this is "disabled" (MessagesController.isTranslationsAutoEnabled).
+                new TJsonObjectValue { Key = "translations_auto_enabled", Value = new TJsonString { Value = "enabled" } },
 
                 // After reaching at least this boost level », channels gain the ability to change their message accent palette emoji ».  (integer)
                 new TJsonObjectValue { Key = "channel_bg_icon_level_min", Value = new TJsonNumber { Value = 4 } },

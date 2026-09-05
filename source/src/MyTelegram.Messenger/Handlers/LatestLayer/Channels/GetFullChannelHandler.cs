@@ -20,7 +20,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Channels;
 /// Access: [User ✔] [Bot ✔] [Anonymous ✖]
 /// </remarks>
 internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //ILayeredService<IChatConverter> layeredService,
- IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IChatWallPaperService chatWallPaperService, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
+ IUserConverterService userConverterService, IChatConverterService chatConverterService, IPhotoAppService photoAppService, ILogger<GetFullChannelHandler> logger, IChannelAppService channelAppService, IChannelAdminRightsChecker channelAdminRightsChecker, IStoryResponseBuilder storyResponseBuilder, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IChatWallPaperService chatWallPaperService, IPeerTranslationSettingsStore peerTranslationSettings, IFileReferenceHelper fileReferenceHelper) : RpcResultObjectHandler<RequestGetFullChannel, MyTelegram.Schema.Messages.IChatFull>
 {
     protected override async Task<MyTelegram.Schema.Messages.IChatFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Channels.RequestGetFullChannel obj)
     {
@@ -93,6 +93,15 @@ internal sealed class GetFullChannelHandler(IQueryProcessor queryProcessor, //IL
                 await SetPinnedMsgIdAsync(channelId, layeredChannelFull);
                 await SetStoriesAsync(input, channelId, layeredChannelFull);
                 await SetWallPaperAsync(channelId, layeredChannelFull);
+            }
+
+            // channelFull.translations_disabled: whether this caller dismissed the translation popup
+            // for this channel. Per account, per peer, so it cannot come from the mapper — which used
+            // to hardcode it to false. See https://corefork.telegram.org/api/translation
+            if (fullChat is TChannelFull translatable)
+            {
+                translatable.TranslationsDisabled = await peerTranslationSettings.IsDisabledAsync(
+                    input.UserId, new Peer(PeerType.Channel, channelId));
             }
 
             IChat? linkedChannel = null;

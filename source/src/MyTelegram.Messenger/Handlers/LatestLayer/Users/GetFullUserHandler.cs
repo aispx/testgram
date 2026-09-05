@@ -14,7 +14,7 @@ namespace MyTelegram.Messenger.Handlers.LatestLayer.Users;
 /// Returns extended user info by ID.
 /// <para><c>See <a href="https://corefork.telegram.org/method/users.getFullUser"/> </c></para>
 /// </summary>
-internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IAccessHashHelper2 accessHashHelper, IFromMessagePeerResolver fromMessagePeerResolver, IChatWallPaperService chatWallPaperService, IFileReferenceHelper fileReferenceHelper, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
+internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor queryProcessor, IUserConverterService userConverterService, ILayeredService<IPeerSettingsConverter> peerSettingsLayeredService, ILayeredService<IPeerNotifySettingsConverter> peerNotifySettingsLayeredService, IBlockCacheAppService blockCacheAppService, IContactHelper contactHelper, IPeerSettingsAppService peerSettingsAppService, IPhotoAppService photoAppService, IUserAppService userAppService, IPrivacyAppService privacyAppService, IMongoDatabase mongoDatabase, IBotVerificationStore botVerificationStore, IPinnedMessageResolver pinnedMessageResolver, IAccessHashHelper2 accessHashHelper, IFromMessagePeerResolver fromMessagePeerResolver, IChatWallPaperService chatWallPaperService, IPeerTranslationSettingsStore peerTranslationSettings, IFileReferenceHelper fileReferenceHelper, ILogger<GetFullUserHandler> logger) : RpcResultObjectHandler<MyTelegram.Schema.Users.RequestGetFullUser, MyTelegram.Schema.Users.IUserFull>
 {
     protected override async Task<MyTelegram.Schema.Users.IUserFull> HandleCoreAsync(IRequestInput input, MyTelegram.Schema.Users.RequestGetFullUser obj)
     {
@@ -76,6 +76,12 @@ internal sealed class GetFullUserHandler(IPeerHelper peerHelper, IQueryProcessor
         await SetPinnedMsgIdAsync(input.UserId, targetUserId, userFull);
         await SetBotCanManageEmojiStatusAsync(input.UserId, targetUserId, userReadModel, userFull);
         await SetWallPaperAsync(input.UserId, targetUserId, userFull);
+
+        // Whether this caller dismissed the translation popup for this chat. Per account, per peer, so
+        // it belongs here rather than in UserFullMapper, which never sees who is asking.
+        // See https://corefork.telegram.org/api/translation
+        userFull.TranslationsDisabled =
+            await peerTranslationSettings.IsDisabledAsync(input.UserId, targetPeer);
 
         // CRITICAL: Cast to concrete TUser for proper serialization
         // ILayeredUser interface doesn't serialize correctly in TVector

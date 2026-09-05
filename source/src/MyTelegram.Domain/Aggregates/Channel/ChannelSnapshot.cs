@@ -45,7 +45,8 @@ public class ChannelSnapshot(
     EmojiStatus? emojiStatus,
     bool participantsHidden,
     bool joinRequest,
-    PeerColor? profileColor = null
+    PeerColor? profileColor = null,
+    bool autotranslation = false
 )
     : ISnapshot
 {
@@ -106,4 +107,11 @@ public class ChannelSnapshot(
     public bool ParticipantsHidden { get; } = participantsHidden;
     public bool JoinRequest { get; } = joinRequest;
     public PeerColor? ProfileColor { get; } = profileColor;
+
+    /// <summary>
+    /// Whether the channel autotranslates every post for all users. Defaults to false so a snapshot
+    /// written before this field existed still loads.
+    /// See https://corefork.telegram.org/api/translation#autotranslation-for-channels
+    /// </summary>
+    public bool Autotranslation { get; } = autotranslation;
 }
